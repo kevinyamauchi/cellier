@@ -1,0 +1,17 @@
+# Do not edit - changes here will be overwritten by Copier
+_commit: v1
+_src_path: gh:pydev-guide/pyrepo-copier
+author_email: kevin.yamauchi@gmail.com
+author_name: Kevin Yamauchi
+git_versioning: true
+github_username: kevinyamauchi
+mode: customize
+module_name: cellier
+project_license: BSD-3-Clause
+project_name: cellier
+project_short_description: A workshop for rendering cellular models.
+test_pre_release: false
+use_mypy: false
+use_pre_commit: true
+use_ruff: true
+
