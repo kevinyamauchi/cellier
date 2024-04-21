@@ -1,8 +1,10 @@
 """Model to express a scene."""
 
 from typing import List
+from uuid import uuid4
 
 from psygnal import EventedModel
+from pydantic import Field
 
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
@@ -20,3 +22,6 @@ class Scene(EventedModel):
     dims: DimsManager
     visuals: List[BaseVisual]
     canvases: List[Canvas]
+
+    # store a UUID to identify this specific scene.
+    id: str = Field(default_factory=lambda: uuid4().hex)
