@@ -1,6 +1,7 @@
 """Models for mesh data stores."""
 
 import numpy as np
+from pydantic import ConfigDict
 
 from cellier.models.data_stores.base_data_store import BaseDataStore
 
@@ -13,11 +14,7 @@ class BaseMeshDataStore(BaseDataStore):
 
     vertices: np.ndarray
     faces: np.ndarray
-
-    class Config:
-        """Configuration for the pydantic data model."""
-
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class MeshMemoryStore(BaseMeshDataStore):
