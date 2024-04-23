@@ -10,7 +10,7 @@ from cellier.models.scene.scene import Scene
 
 
 class DataManager(EventedModel):
-    """Class to model all data in the viewer.
+    """Class to model all data_stores in the viewer.
 
     todo: move to separate module.
     """

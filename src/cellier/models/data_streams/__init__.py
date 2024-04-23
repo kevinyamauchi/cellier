@@ -1,1 +1,1 @@
-"""Models for data streams."""
+"""Models for data_streams."""

@@ -3,6 +3,7 @@
 from typing import NamedTuple, Tuple
 
 from psygnal import EventedModel
+from pydantic import ValidationInfo, field_validator
 
 
 class CoordinateSystem(EventedModel):
@@ -18,6 +19,13 @@ class CoordinateSystem(EventedModel):
 
     name: str
     axis_labels: Tuple[str, ...] = ()
+
+    @field_validator("axis_labels", mode="before")
+    def coerce_to_tuple(cls, v, info: ValidationInfo):
+        """Coerce the axis label names to a tuple."""
+        if not isinstance(v, tuple):
+            v = tuple(v)
+        return v
 
     @property
     def ndim(self) -> int:
@@ -78,6 +86,15 @@ class DimsManager(EventedModel):
     range: Tuple[RangeTuple, ...] = ()
     margin_left: Tuple[float, ...] = ()
     margin_right: Tuple[float, ...] = ()
+
+    @field_validator(
+        "displayed_dimensions", "point", "margin_left", "margin_right", mode="before"
+    )
+    def coerce_to_tuple(cls, v, info: ValidationInfo):
+        """Coerce the axis label names to a tuple."""
+        if not isinstance(v, tuple):
+            v = tuple(v)
+        return v
 
     @property
     def ndisplay(self) -> int:

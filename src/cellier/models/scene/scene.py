@@ -8,7 +8,7 @@ from pydantic import Field
 
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
-from cellier.models.visuals.base_visual import BaseVisual
+from cellier.models.visuals.mesh_visual import MeshVisual
 
 
 class Scene(EventedModel):
@@ -20,7 +20,7 @@ class Scene(EventedModel):
     """
 
     dims: DimsManager
-    visuals: List[BaseVisual]
+    visuals: List[MeshVisual]
     canvases: List[Canvas]
 
     # store a UUID to identify this specific scene.

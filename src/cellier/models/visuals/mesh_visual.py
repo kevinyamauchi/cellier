@@ -1,8 +1,13 @@
 """Visual and material models for meshes."""
 
-from typing import Tuple
+from typing import Literal, Tuple, Union
 
-from cellier.models.data_streams.mesh import BaseMeshDataStream
+from pydantic import Field
+from typing_extensions import Annotated
+
+from cellier.models.data_streams.mesh import (
+    MeshSynchronousDataStream,
+)
 from cellier.models.visuals.base_visual import BaseMaterial, BaseVisual
 
 
@@ -35,6 +40,41 @@ class MeshPhongMaterial(BaseMeshMaterial):
     emissive: Tuple[float, float, float] = (0, 0, 0)
     specular: Tuple[float, float, float] = (0.28, 0.28, 0.28)
 
+    # this is used for a discriminated union
+    material_type: Literal["phong"] = "phong"
+
+
+class MeshStandardMaterial(BaseMaterial):
+    """Physically-based rendering shaded mesh.
+
+    See the PyGFX MeshStandardMaterial.
+
+    This is a psygnal EventedModel.
+    https://psygnal.readthedocs.io/en/latest/API/model/
+
+    Parameters
+    ----------
+    emissive : Tuple[float, float, float]
+        The emissive (light) color of the mesh.
+        This color is added to the final color and is unaffected by lighting.
+    metalness : float
+        How much the material looks like metal. 0.0 is no metal, and 1.0 is metal.
+    roughness : float
+        How rough the mesh appears. 0.0 is smooth and 1.0 is rough.
+    """
+
+    emissive: Tuple[float, float, float] = (0, 0, 0)
+    metalness: float = 0
+    roughness: float = 1.0
+
+    # this is used for a discriminated union
+    material_type: Literal["standard"] = "standard"
+
+
+MeshMaterialType = Annotated[
+    Union[MeshPhongMaterial, MeshStandardMaterial], Field(discriminator="material_type")
+]
+
 
 class MeshVisual(BaseVisual):
     """Model for a mesh visual.
@@ -47,10 +87,10 @@ class MeshVisual(BaseVisual):
     name : str
         The name of the visual
     data_stream : BaseMeshDataStream
-        The data to be visualized.
+        The data_stores to be visualized.
     material : BaseMeshMaterial
         The model for the appearance of the rendered mesh.
     """
 
-    data_stream: BaseMeshDataStream
-    material: BaseMeshMaterial
+    data_stream: MeshSynchronousDataStream
+    material: MeshMaterialType
