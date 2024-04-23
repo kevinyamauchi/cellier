@@ -15,7 +15,9 @@ def construct_pygfx_mesh_from_model(mesh_model: MeshVisual) -> gfx.WorldObject:
     # make the geometry
     # todo make initial slicing happen here
     data_stream = mesh_model.data_stream
-    geometry = gfx.Geometry(inidices=data_stream.faces, positions=data_stream.vertices)
+    geometry = gfx.Geometry(
+        indices=data_stream.data_store.faces, positions=data_stream.data_store.vertices
+    )
 
     # make the material model
     material_model = mesh_model.material

@@ -49,9 +49,15 @@ mesh_visual = MeshVisual(
 camera = PerspectiveCamera()
 canvas = Canvas(camera=camera)
 
+canvas_dict = {canvas.id: "hello"}
+print(canvas_dict)
+
 # make the scene
 scene = Scene(dims=dims, visuals=[mesh_visual], canvases=[canvas])
 scene_manager = SceneManager(scenes=[scene])
+
+scene_dict = {scene.id: "test"}
+print(scene_dict)
 
 
 viewer_model = ViewerModel(data=data, scenes=scene_manager)
