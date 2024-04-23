@@ -35,13 +35,21 @@ classifiers = [
     "Typing :: Typed",
 ]
 # add your package dependencies here
-dependencies = []
+dependencies = [
+    "psygnal",
+    "pydantic",
+    "pygfx",
+    "PyQt5"
+]
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 # "extras" (e.g. for `pip install .[test]`)
 [project.optional-dependencies]
 # add dependencies used for testing here
-test = ["pytest", "pytest-cov"]
+test = [
+    "pytest",
+    "pytest-cov"
+]
 # add anything else you like to have in your dev environment here
 dev = [
     "ipython",

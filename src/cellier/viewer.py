@@ -1,0 +1,92 @@
+"""Implementation of a viewer."""
+
+from cellier.gui.constants import GuiFramework
+from cellier.models.viewer import ViewerModel
+from cellier.render.render_manager import RenderManager
+
+
+class Viewer:
+    """The main viewer class."""
+
+    def __init__(
+        self,
+        model: ViewerModel,
+        gui_framework: GuiFramework = GuiFramework.QT,
+        widget_parent=None,
+    ):
+        self._model = model
+        self._gui_framework = gui_framework
+
+        # Make the widget
+        self._canvas_widgets = self._construct_canvas_widgets(
+            viewer_model=self._model, parent=widget_parent
+        )
+
+        # make the scene
+        self._render_manager = RenderManager(
+            viewer_model=model, canvases=self._canvas_widgets
+        )
+
+    def _construct_canvas_widgets(self, viewer_model: ViewerModel, parent=None):
+        """Make the canvas widgets based on the requested gui framework.
+
+        Parameters
+        ----------
+        viewer_model : ViewerModel
+            The viewer model to initialize the GUI from.
+        parent : Optional
+            The parent widget to assign to the constructed canvas widgets.
+            The default value is None.
+        """
+        if self.gui_framework == GuiFramework.QT:
+            # make a Qt widget
+            from cellier.gui.qt.utils import construct_qt_canvases_from_model
+
+            return construct_qt_canvases_from_model(
+                viewer_model=viewer_model, parent=parent
+            )
+        else:
+            raise ValueError(f"Unsupported GUI framework: {self.gui_framework}")
+
+    @property
+    def gui_framework(self) -> GuiFramework:
+        """The GUI framework used for this viewer."""
+        return self._gui_framework
+
+
+# class Viewer:
+#     """Viewer class."""
+#
+#     def __init__(self, camera: PerspectiveCamera):
+#         self._camera = camera
+#         self.backend = ViewerBackend.from_models(camera=camera)
+#
+#         self._layer_list = EventedList()
+#
+#     @property
+#     def camera(self) -> PerspectiveCamera:
+#         """The camera model."""
+#         return self._camera
+#
+#     @property
+#     def layer_list(self) -> EventedList:
+#         """The layers in the viewer."""
+#         return self._layer_list
+#
+#     def add_mesh(
+#         self,
+#         data_source,
+#         material,
+#     ) -> None:
+#         """Add a mesh to the viewer."""
+#         self._add_visual(MeshVisualModel(data_source=data_source, material=material))
+#
+#     def _add_visual(self, visual_model):
+#         # connect visual events
+#         visual_model.connect_events()
+#
+#         # add the visual to the list
+#         self.layer_list.append(visual_model)
+#
+#     def _on_layer_added(self, event):
+#         self.backend.add_layer(event.value)
