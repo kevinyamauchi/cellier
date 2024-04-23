@@ -1,0 +1,152 @@
+{
+  "data": {
+    "stores": [
+      {
+        "vertices": [
+          [
+            10.0,
+            10.0,
+            10.0
+          ],
+          [
+            10.0,
+            10.0,
+            20.0
+          ],
+          [
+            10.0,
+            20.0,
+            20.0
+          ]
+        ],
+        "faces": [
+          [
+            0,
+            1,
+            2
+          ]
+        ]
+      }
+    ],
+    "streams": [
+      {
+        "data_store": {
+          "vertices": [
+            [
+              10.0,
+              10.0,
+              10.0
+            ],
+            [
+              10.0,
+              10.0,
+              20.0
+            ],
+            [
+              10.0,
+              20.0,
+              20.0
+            ]
+          ],
+          "faces": [
+            [
+              0,
+              1,
+              2
+            ]
+          ]
+        },
+        "selectors": []
+      }
+    ]
+  },
+  "scenes": {
+    "scenes": [
+      {
+        "dims": {
+          "coordinate_system": {
+            "name": "scene_0",
+            "axis_labels": [
+              "z",
+              "y",
+              "x"
+            ]
+          },
+          "displayed_dimensions": [
+            "z",
+            "y",
+            "x"
+          ],
+          "point": [],
+          "range": [],
+          "margin_left": [],
+          "margin_right": []
+        },
+        "visuals": [
+          {
+            "name": "mesh_visual",
+            "id": "deaa1393793942acb9c32b3500035d0d",
+            "data_stream": {
+              "data_store": {
+                "vertices": [
+                  [
+                    10.0,
+                    10.0,
+                    10.0
+                  ],
+                  [
+                    10.0,
+                    10.0,
+                    20.0
+                  ],
+                  [
+                    10.0,
+                    20.0,
+                    20.0
+                  ]
+                ],
+                "faces": [
+                  [
+                    0,
+                    1,
+                    2
+                  ]
+                ]
+              },
+              "selectors": []
+            },
+            "material": {
+              "shininess": 30,
+              "emissive": [
+                0,
+                0,
+                0
+              ],
+              "specular": [
+                0.28,
+                0.28,
+                0.28
+              ],
+              "material_type": "phong"
+            }
+          }
+        ],
+        "canvases": [
+          {
+            "camera": {
+              "fov": 50,
+              "width": 10,
+              "height": 10,
+              "zoom": 1,
+              "near_clipping_plane": -500,
+              "far_clipping_plane": 500,
+              "camera_type": "perspective"
+            },
+            "id": "132c6fc5f16447858f5a9c80679fc362"
+          }
+        ],
+        "id": "a4dfd6c19f73410f94d00f1248af42d6"
+      }
+    ]
+  }
+}

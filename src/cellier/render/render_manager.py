@@ -41,17 +41,9 @@ class RenderManager:
         for scene_model in viewer_model.scenes.scenes:
             # make a scene
             scene = gfx.Scene()
+
+            # todo add lighting config
             scene.add(gfx.AmbientLight())
-            import numpy as np
-
-            positions = np.random.normal(15, 3, (100, 3)).astype(np.float32)
-            sizes = np.random.rand(100).astype(np.float32) * 50
-            colors = np.random.rand(100, 4).astype(np.float32)
-            geometry = gfx.Geometry(positions=positions, sizes=sizes, colors=colors)
-
-            material = gfx.PointsMaterial(color_mode="vertex", size_mode="vertex")
-            points = gfx.Points(geometry, material)
-            scene.add(points)
 
             # populate the scene
             for visual_model in scene_model.visuals:

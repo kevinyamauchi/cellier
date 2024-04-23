@@ -6,8 +6,8 @@ from typing import List
 from psygnal import EventedModel
 from pydantic_core import from_json
 
-from cellier.models.data_stores.base_data_store import BaseDataStore
-from cellier.models.data_streams.base_data_stream import BaseDataStream
+from cellier.models.data_stores.mesh import MeshMemoryStore
+from cellier.models.data_streams.mesh import MeshSynchronousDataStream
 from cellier.models.scene.scene import Scene
 
 
@@ -15,10 +15,11 @@ class DataManager(EventedModel):
     """Class to model all data_stores in the viewer.
 
     todo: move to separate module.
+    todo: add discrimitive union
     """
 
-    stores: List[BaseDataStore]
-    streams: List[BaseDataStream]
+    stores: List[MeshMemoryStore]
+    streams: List[MeshSynchronousDataStream]
 
 
 class SceneManager(EventedModel):
@@ -33,11 +34,11 @@ class ViewerModel(EventedModel):
     data: DataManager
     scenes: SceneManager
 
-    def to_json_file(self, file_path: str) -> None:
+    def to_json_file(self, file_path: str, indent: int = 2) -> None:
         """Save the viewer state as a JSON file."""
         with open(file_path, "w") as f:
             # serialize the model
-            json.dump(self.model_dump(), f)
+            json.dump(self.model_dump(), f, indent=indent)
 
     @classmethod
     def from_json_file(cls, file_path: str):

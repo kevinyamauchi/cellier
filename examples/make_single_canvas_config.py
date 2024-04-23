@@ -11,7 +11,7 @@ from cellier.models.scene.scene import Scene
 from cellier.models.viewer import DataManager, SceneManager, ViewerModel
 from cellier.models.visuals.mesh_visual import MeshPhongMaterial, MeshVisual
 
-# the mesh data
+# the mesh data_stores
 vertices = np.array([[10, 10, 10], [10, 10, 20], [10, 20, 20]], dtype=np.float32)
 faces = np.array([[0, 1, 2]], dtype=np.float32)
 
@@ -30,7 +30,7 @@ mesh_store = MeshMemoryStore(vertices=vertices, faces=faces)
 # make the mesh stream
 mesh_stream = MeshSynchronousDataStream(data_store=mesh_store, selectors=[])
 
-# make the data manager
+# make the data_stores manager
 data = DataManager(stores=[mesh_store], streams=[mesh_stream])
 
 # make the scene coordinate system
@@ -49,17 +49,13 @@ mesh_visual = MeshVisual(
 camera = PerspectiveCamera()
 canvas = Canvas(camera=camera)
 
-canvas_dict = {canvas.id: "hello"}
-print(canvas_dict)
-
 # make the scene
 scene = Scene(dims=dims, visuals=[mesh_visual], canvases=[canvas])
 scene_manager = SceneManager(scenes=[scene])
 
-scene_dict = {scene.id: "test"}
-print(scene_dict)
-
-
+# make the viewer model
 viewer_model = ViewerModel(data=data, scenes=scene_manager)
 
 print(viewer_model)
+
+viewer_model.to_json_file("single_canvas_config.json")
