@@ -1,9 +1,6 @@
 """Test the viewer model."""
 
-import json
-
 import numpy as np
-from pydantic_core import from_json
 
 from cellier.models.data_stores.mesh import MeshMemoryStore
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
@@ -52,15 +49,11 @@ def test_viewer(tmp_path):
 
     viewer_model = ViewerModel(data=data, scenes=scene_manager)
 
+    # serialize
     output_path = tmp_path / "test.json"
-    with open(output_path, "w") as f:
-        # serialize the model
-        json.dump(viewer_model.model_dump(), f)
+    viewer_model.to_json_file(output_path)
 
     # deserialize
-    with open(output_path, "rb") as f:
-        deserialized_viewer = ViewerModel.model_validate(
-            from_json(f.read(), allow_partial=False)
-        )
+    deserialized_viewer = ViewerModel.from_json_file(output_path)
 
     assert viewer_model.scenes == deserialized_viewer.scenes
