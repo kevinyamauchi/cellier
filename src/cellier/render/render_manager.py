@@ -1,7 +1,7 @@
 """RenderManager class contains all the rendering and visuals code."""
 
 from functools import partial
-from typing import Dict, NamedTuple
+from typing import Dict
 
 import pygfx
 import pygfx as gfx
@@ -12,20 +12,19 @@ from wgpu.gui import WgpuCanvasBase
 from cellier.models.viewer import ViewerModel
 from cellier.render.utils import construct_pygfx_object
 
-
-class VisualKey(NamedTuple):
-    """The key to a visual stored in the RenderManager.
-
-    Attributes
-    ----------
-    scene_id : str
-        The uid of the scene model this visual belongs to.
-    visual_id : str
-        The uid of the visual model this pygfx belongs to.
-    """
-
-    scene_id: str
-    visual_id: str
+# class VisualKey(NamedTuple):
+#     """The key to a visual stored in the RenderManager.
+#
+#     Attributes
+#     ----------
+#     scene_id : str
+#         The uid of the scene model this visual belongs to.
+#     visual_id : str
+#         The uid of the visual model this pygfx belongs to.
+#     """
+#
+#     scene_id: str
+#     visual_id: str
 
 
 class RenderManager:
@@ -38,7 +37,7 @@ class RenderManager:
         scenes = {}
         visuals = {}
         controllers = {}
-        for scene_model in viewer_model.scenes.scenes:
+        for scene_model in viewer_model.scenes.scenes.values():
             # make a scene
             scene = gfx.Scene()
 
@@ -47,10 +46,11 @@ class RenderManager:
 
             # populate the scene
             for visual_model in scene_model.visuals:
-                key = VisualKey(scene_id=scene_model.id, visual_id=visual_model.id)
-                world_object = construct_pygfx_object(visual_model=visual_model)
+                world_object = construct_pygfx_object(
+                    visual_model=visual_model, data_manager=viewer_model.data
+                )
                 scene.add(world_object)
-                visuals.update({key: world_object})
+                visuals.update({visual_model.id: world_object})
 
             # store the scene
             scene_id = scene_model.id

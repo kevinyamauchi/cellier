@@ -5,9 +5,6 @@ from typing import Literal, Tuple, Union
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.data_streams.mesh import (
-    MeshSynchronousDataStream,
-)
 from cellier.models.visuals.base_visual import BaseMaterial, BaseVisual
 
 
@@ -86,11 +83,11 @@ class MeshVisual(BaseVisual):
     ----------
     name : str
         The name of the visual
-    data_stream : BaseMeshDataStream
-        The data_stores to be visualized.
+    data_stream_id : str
+        The id of the data stream to be visualized.
     material : BaseMeshMaterial
         The model for the appearance of the rendered mesh.
     """
 
-    data_stream: MeshSynchronousDataStream
+    data_stream_id: str
     material: MeshMaterialType

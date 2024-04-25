@@ -45,7 +45,7 @@ def test_viewer(tmp_path):
 
     # make the scene
     scene = Scene(dims=dims, visuals=[mesh_visual], canvases=[canvas])
-    scene_manager = SceneManager(scenes=[scene])
+    scene_manager = SceneManager(scenes={scene.id: scene})
 
     viewer_model = ViewerModel(data=data, scenes=scene_manager)
 

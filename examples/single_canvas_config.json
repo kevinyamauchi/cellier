@@ -1,7 +1,8 @@
 {
   "data": {
-    "stores": [
-      {
+    "stores": {
+      "b407919c686d415ebc71a231103a3f66": {
+        "id": "b407919c686d415ebc71a231103a3f66",
         "vertices": [
           [
             10.0,
@@ -27,42 +28,18 @@
           ]
         ]
       }
-    ],
-    "streams": [
-      {
-        "data_store": {
-          "vertices": [
-            [
-              10.0,
-              10.0,
-              10.0
-            ],
-            [
-              10.0,
-              10.0,
-              20.0
-            ],
-            [
-              10.0,
-              20.0,
-              20.0
-            ]
-          ],
-          "faces": [
-            [
-              0,
-              1,
-              2
-            ]
-          ]
-        },
+    },
+    "streams": {
+      "e86c7b055e2845b4872952701ecc30b5": {
+        "id": "e86c7b055e2845b4872952701ecc30b5",
+        "data_store_id": "b407919c686d415ebc71a231103a3f66",
         "selectors": []
       }
-    ]
+    }
   },
   "scenes": {
-    "scenes": [
-      {
+    "scenes": {
+      "cbec8701525d4133bed92a3f034d0792": {
         "dims": {
           "coordinate_system": {
             "name": "scene_0",
@@ -85,36 +62,8 @@
         "visuals": [
           {
             "name": "mesh_visual",
-            "id": "deaa1393793942acb9c32b3500035d0d",
-            "data_stream": {
-              "data_store": {
-                "vertices": [
-                  [
-                    10.0,
-                    10.0,
-                    10.0
-                  ],
-                  [
-                    10.0,
-                    10.0,
-                    20.0
-                  ],
-                  [
-                    10.0,
-                    20.0,
-                    20.0
-                  ]
-                ],
-                "faces": [
-                  [
-                    0,
-                    1,
-                    2
-                  ]
-                ]
-              },
-              "selectors": []
-            },
+            "id": "698446f46fe64a30adf3607e4b8a7a51",
+            "data_stream_id": "e86c7b055e2845b4872952701ecc30b5",
             "material": {
               "shininess": 30,
               "emissive": [
@@ -142,11 +91,11 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "132c6fc5f16447858f5a9c80679fc362"
+            "id": "234894a3420340a29dadbff9e403e011"
           }
         ],
-        "id": "a4dfd6c19f73410f94d00f1248af42d6"
+        "id": "cbec8701525d4133bed92a3f034d0792"
       }
-    ]
+    }
   }
 }

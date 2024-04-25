@@ -3,10 +3,13 @@
 import pygfx as gfx
 from pygfx.materials import MeshPhongMaterial as GFXMeshPhongMaterial
 
+from cellier.models.viewer import DataManager
 from cellier.models.visuals.mesh_visual import MeshPhongMaterial, MeshVisual
 
 
-def construct_pygfx_mesh_from_model(mesh_model: MeshVisual) -> gfx.WorldObject:
+def construct_pygfx_mesh_from_model(
+    mesh_model: MeshVisual, data_manager: DataManager
+) -> gfx.WorldObject:
     """Make a PyGFX mesh object.
 
     This function dispatches to other constructor functions
@@ -14,10 +17,9 @@ def construct_pygfx_mesh_from_model(mesh_model: MeshVisual) -> gfx.WorldObject:
     """
     # make the geometry
     # todo make initial slicing happen here
-    data_stream = mesh_model.data_stream
-    geometry = gfx.Geometry(
-        indices=data_stream.data_store.faces, positions=data_stream.data_store.vertices
-    )
+    data_stream = data_manager.streams[mesh_model.data_stream_id]
+    data_store = data_manager.stores[data_stream.data_store_id]
+    geometry = gfx.Geometry(indices=data_store.faces, positions=data_store.vertices)
 
     # make the material model
     material_model = mesh_model.material

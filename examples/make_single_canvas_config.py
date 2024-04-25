@@ -28,10 +28,12 @@ colors = np.array(
 mesh_store = MeshMemoryStore(vertices=vertices, faces=faces)
 
 # make the mesh stream
-mesh_stream = MeshSynchronousDataStream(data_store=mesh_store, selectors=[])
+mesh_stream = MeshSynchronousDataStream(data_store_id=mesh_store.id, selectors=[])
 
 # make the data_stores manager
-data = DataManager(stores=[mesh_store], streams=[mesh_stream])
+data = DataManager(
+    stores={mesh_store.id: mesh_store}, streams={mesh_stream.id: mesh_stream}
+)
 
 # make the scene coordinate system
 coordinate_system = CoordinateSystem(name="scene_0", axis_labels=["z", "y", "x"])
@@ -42,7 +44,7 @@ dims = DimsManager(
 # make the mesh visual
 mesh_material = MeshPhongMaterial()
 mesh_visual = MeshVisual(
-    name="mesh_visual", data_stream=mesh_stream, material=mesh_material
+    name="mesh_visual", data_stream_id=mesh_stream.id, material=mesh_material
 )
 
 # make the canvas
@@ -51,7 +53,7 @@ canvas = Canvas(camera=camera)
 
 # make the scene
 scene = Scene(dims=dims, visuals=[mesh_visual], canvases=[canvas])
-scene_manager = SceneManager(scenes=[scene])
+scene_manager = SceneManager(scenes={scene.id: scene})
 
 # make the viewer model
 viewer_model = ViewerModel(data=data, scenes=scene_manager)

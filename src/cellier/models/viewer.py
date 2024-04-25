@@ -1,7 +1,7 @@
 """Model for the viewer."""
 
 import json
-from typing import List
+from typing import Dict
 
 from psygnal import EventedModel
 from pydantic_core import from_json
@@ -18,14 +18,14 @@ class DataManager(EventedModel):
     todo: add discrimitive union
     """
 
-    stores: List[MeshMemoryStore]
-    streams: List[MeshSynchronousDataStream]
+    stores: Dict[str, MeshMemoryStore]
+    streams: Dict[str, MeshSynchronousDataStream]
 
 
 class SceneManager(EventedModel):
     """Class to model all scenes in the viewer."""
 
-    scenes: List[Scene]
+    scenes: Dict[str, Scene]
 
 
 class ViewerModel(EventedModel):
