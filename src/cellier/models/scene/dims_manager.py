@@ -65,10 +65,10 @@ class DimsManager(EventedModel):
         coordinates space. Lower and upper bounds are inclusive.
     point : tuple of floats
         Dims position in world coordinates for each dimension.
-    margin_left : tuple of floats
-        Left margin in world pixels of the slice for each dimension.
-    margin_right : tuple of floats
-        Right margin in world pixels of the slice for each dimension.
+    margin_negative : tuple of floats
+        Negative margin in world units of the slice for each dimension.
+    margin_positive : tuple of floats
+        Positive margin in world units of the slice for each dimension.
     order : tuple of int
         Tuple of ordering the dimensions, where the last dimensions are rendered.
 
@@ -84,8 +84,8 @@ class DimsManager(EventedModel):
 
     point: Tuple[float, ...] = ()
     range: Tuple[RangeTuple, ...] = ()
-    margin_left: Tuple[float, ...] = ()
-    margin_right: Tuple[float, ...] = ()
+    margin_negative: Tuple[float, ...] = ()
+    margin_positive: Tuple[float, ...] = ()
 
     @field_validator(
         "displayed_dimensions", "point", "margin_left", "margin_right", mode="before"
