@@ -23,21 +23,23 @@ def test_viewer(tmp_path):
     mesh_store = MeshMemoryStore(vertices=vertices, faces=faces)
 
     # make the mesh stream
-    mesh_stream = MeshSynchronousDataStream(data_store=mesh_store, selectors=[])
+    mesh_stream = MeshSynchronousDataStream(data_store_id=mesh_store.id, selectors=[])
 
     # make the data_stores manager
-    data = DataManager(stores=[mesh_store], streams=[mesh_stream])
+    data = DataManager(
+        stores={mesh_store.id: mesh_store}, streams={mesh_stream.id: mesh_stream}
+    )
 
     # make the scene coordinate system
     coordinate_system = CoordinateSystem(name="scene_0", axis_labels=["z", "y", "x"])
     dims = DimsManager(
-        coordinate_system=coordinate_system, displayed_dimensions=("z", "y", "x")
+        coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
     )
 
     # make the mesh visual
     mesh_material = MeshPhongMaterial()
     mesh_visual = MeshVisual(
-        name="mesh_visual", data_stream=mesh_stream, material=mesh_material
+        name="mesh_visual", data_stream_id=mesh_stream.id, material=mesh_material
     )
 
     # make the canvas

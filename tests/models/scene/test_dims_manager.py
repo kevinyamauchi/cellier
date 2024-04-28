@@ -11,7 +11,7 @@ def test_dims_manager(tmp_path):
     """Test serialization/deserialization of DimsManager."""
     coordinate_system = CoordinateSystem(name="default", axis_label=("x", "y", "z"))
     dims_manager = DimsManager(
-        coordinate_system=coordinate_system, displayed_dimensions=("x", "y", "z")
+        coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
     )
 
     output_path = tmp_path / "test.json"
