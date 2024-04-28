@@ -1,6 +1,6 @@
 """Utilities for interfacing between cellier models and PyGFX objects."""
 
-from cellier.models.viewer import DataManager
+from cellier.models.data_manager import DataManager
 from cellier.models.visuals.base_visual import BaseVisual
 from cellier.models.visuals.mesh_visual import MeshVisual
 from cellier.render.mesh import construct_pygfx_mesh_from_model

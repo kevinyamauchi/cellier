@@ -1,8 +1,8 @@
 {
   "data": {
     "stores": {
-      "b407919c686d415ebc71a231103a3f66": {
-        "id": "b407919c686d415ebc71a231103a3f66",
+      "7a50b9dc5f5146dc894ea7a76a437385": {
+        "id": "7a50b9dc5f5146dc894ea7a76a437385",
         "vertices": [
           [
             10.0,
@@ -30,16 +30,16 @@
       }
     },
     "streams": {
-      "e86c7b055e2845b4872952701ecc30b5": {
-        "id": "e86c7b055e2845b4872952701ecc30b5",
-        "data_store_id": "b407919c686d415ebc71a231103a3f66",
+      "e3f16ac4b60046269792a0149b04b64a": {
+        "id": "e3f16ac4b60046269792a0149b04b64a",
+        "data_store_id": "7a50b9dc5f5146dc894ea7a76a437385",
         "selectors": []
       }
     }
   },
   "scenes": {
     "scenes": {
-      "cbec8701525d4133bed92a3f034d0792": {
+      "1e71729a990f41cd85a057046ba6cf6d": {
         "dims": {
           "coordinate_system": {
             "name": "scene_0",
@@ -50,20 +50,20 @@
             ]
           },
           "displayed_dimensions": [
-            "z",
-            "y",
-            "x"
+            0,
+            1,
+            2
           ],
           "point": [],
           "range": [],
-          "margin_left": [],
-          "margin_right": []
+          "margin_negative": [],
+          "margin_positive": []
         },
         "visuals": [
           {
             "name": "mesh_visual",
-            "id": "698446f46fe64a30adf3607e4b8a7a51",
-            "data_stream_id": "e86c7b055e2845b4872952701ecc30b5",
+            "id": "9541575231d846da9dd221720191d7bd",
+            "data_stream_id": "e3f16ac4b60046269792a0149b04b64a",
             "material": {
               "shininess": 30,
               "emissive": [
@@ -91,10 +91,10 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "234894a3420340a29dadbff9e403e011"
+            "id": "e4d150fcc7fc4b3b8ce2680c1261283f"
           }
         ],
-        "id": "cbec8701525d4133bed92a3f034d0792"
+        "id": "1e71729a990f41cd85a057046ba6cf6d"
       }
     }
   }

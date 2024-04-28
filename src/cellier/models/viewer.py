@@ -6,20 +6,8 @@ from typing import Dict
 from psygnal import EventedModel
 from pydantic_core import from_json
 
-from cellier.models.data_stores.mesh import MeshMemoryStore
-from cellier.models.data_streams.mesh import MeshSynchronousDataStream
+from cellier.models.data_manager import DataManager
 from cellier.models.scene.scene import Scene
-
-
-class DataManager(EventedModel):
-    """Class to model all data_stores in the viewer.
-
-    todo: move to separate module.
-    todo: add discrimitive union
-    """
-
-    stores: Dict[str, MeshMemoryStore]
-    streams: Dict[str, MeshSynchronousDataStream]
 
 
 class SceneManager(EventedModel):

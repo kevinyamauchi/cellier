@@ -1,50 +1,13 @@
 """Class for managing the data slicing."""
 
-from dataclasses import dataclass
 from functools import partial
 from uuid import uuid4
 
-import numpy as np
 from psygnal import Signal
 
 from cellier.models.viewer import ViewerModel
+from cellier.slicer.data_slice import DataSliceRequest, RenderedSliceData
 from cellier.slicer.utils import world_slice_from_dims_manager
-
-
-@dataclass
-class RenderedSliceData:
-    """Base class for rendered slice data classes.
-
-    Note: all data should be in data coordinates.
-    They will be transformed into world coordinates by
-    the visual.
-
-    Attributes
-    ----------
-    visual_id : str
-        The UID of the visual to be updated.
-    """
-
-    visual_id: str
-
-
-@dataclass
-class RenderedMeshDataSlice(RenderedSliceData):
-    """Data class for rendered mesh slice data.
-
-    Attributes
-    ----------
-    visual_id : str
-        The UID of the visual to be updated.
-    vertices : np.ndarray
-        The vertex coordinates of the new slice.
-    faces  : np.ndarray
-        The face indices of the new slices.
-
-    """
-
-    vertices: np.ndarray
-    faces: np.ndarray
 
 
 class DataSlicerEvents:
@@ -98,17 +61,36 @@ class SynchronousDataSlicer:
 
         for visual in scene.visuals:
             # get the transform
+            # todo add transformation
             data_to_world_transform = ""
 
             # apply the slice object to the data
-            data_stream_id = visual.data_stream.id
-            data_stream = self._viewer_model.data.streams[data_stream_id]
-            slice_response = data_stream.get_slice(
-                world_slice=world_slice,
-                visual_id=visual.id,
-                request_id=uuid4().hex,
-                data_to_world_transform=data_to_world_transform,
+            # todo move get_slice to DataManager?
+            slice_response = self.get_slice(
+                DataSliceRequest(
+                    world_slice=world_slice,
+                    resolution_level=0,
+                    data_stream_id=visual.data_stream_id,
+                    visual_id=visual.id,
+                    request_id=uuid4().hex,
+                    data_to_world_transform=data_to_world_transform,
+                )
             )
 
             # set the data
             self.events.new_slice.emit(slice_response)
+
+    def get_slice(self, slice_request: DataSliceRequest) -> RenderedSliceData:
+        """Get a slice of data specified by the DataSliceRequest."""
+        data_manager = self._viewer_model.data
+
+        # get the data stream
+        data_stream = data_manager.streams[slice_request.data_stream_id]
+
+        # get the data store
+        data_store = data_manager.stores[data_stream.data_store_id]
+
+        # get the store slice
+        data_store_slice = data_stream.get_data_store_slice(slice_request)
+
+        return data_store.get_slice(data_store_slice)

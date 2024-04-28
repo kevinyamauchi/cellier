@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from psygnal import EventedModel
-from pydantic import field_validator
+from pydantic import ConfigDict, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
 
@@ -50,6 +50,8 @@ class AffineTransform(BaseTransform):
 
     matrix: np.ndarray
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     def map(self, array: np.ndarray):
         """Apply the transformation to coordinates.
 
@@ -70,7 +72,7 @@ class AffineTransform(BaseTransform):
         """
         return np.dot(array, np.linalg.inv(self.matrix))
 
-    @field_validator("vertices", mode="before")
+    @field_validator("matrix", mode="before")
     @classmethod
     def coerce_to_ndarray_float32(cls, v: str, info: ValidationInfo):
         """Coerce to a float32 numpy array."""

@@ -1,9 +1,32 @@
 """Models for mesh data_stores stores."""
 
+from dataclasses import dataclass
+from typing import Tuple, Union
+
 import numpy as np
 from pydantic import ConfigDict, ValidationInfo, field_serializer, field_validator
 
-from cellier.models.data_stores.base_data_store import BaseDataStore
+from cellier.models.data_stores.base_data_store import BaseDataStore, DataStoreSlice
+from cellier.slicer.data_slice import RenderedMeshDataSlice
+
+
+@dataclass(frozen=True)
+class MeshDataStoreSlice(DataStoreSlice):
+    """Class containing data to slice a mesh data store.
+
+    Parameters
+    ----------
+    displayed_dimensions : Union[Tuple[int, int, int], Tuple[int, int]]
+        The indices of the displayed dimensions.
+        The indices are ordered in their display order.
+    visual_id : str
+        The UID of the corresponding visual.
+    resolution_level : int
+        The resolution level to render where 0 is the highest resolution
+        and high numbers correspond with more down sampling.
+    """
+
+    displayed_dimensions: Union[Tuple[int, int, int], Tuple[int, int]]
 
 
 class BaseMeshDataStore(BaseDataStore):
@@ -41,4 +64,14 @@ class BaseMeshDataStore(BaseDataStore):
 class MeshMemoryStore(BaseMeshDataStore):
     """Mesh data_stores store for arrays stored in memory."""
 
-    pass
+    def get_slice(self, slice_data: MeshDataStoreSlice) -> RenderedMeshDataSlice:
+        """Get the data required to render a slice of the mesh."""
+        displayed_dimensions = slice_data.displayed_dimensions
+        vertices = self.vertices[:, displayed_dimensions]
+
+        return RenderedMeshDataSlice(
+            visual_id=slice_data.visual_id,
+            resolution_level=slice_data.resolution_level,
+            vertices=vertices,
+            faces=self.faces,
+        )

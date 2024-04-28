@@ -6,8 +6,7 @@ from uuid import uuid4
 from psygnal import EventedModel
 from pydantic import Field
 
-from cellier.slicer.transform import BaseTransform
-from cellier.slicer.world_slice import BaseWorldSlice
+from cellier.slicer.data_slice import DataSliceRequest
 
 
 class BaseDataStream(EventedModel, ABC):
@@ -29,26 +28,12 @@ class BaseDataStream(EventedModel, ABC):
     id: str = Field(default_factory=lambda: uuid4().hex)
 
     @abstractmethod
-    def get_data_slice(
-        self,
-        world_slice: BaseWorldSlice,
-        visual_id: str,
-        request_id: str,
-        data_to_world_transform: BaseTransform,
-    ):
-        """Get a data slice from a world slice request.
+    def get_data_store_slice(self, slice_request: DataSliceRequest):
+        """Get slice object to get the requested world data slice from the data store.
 
         Parameters
         ----------
-        world_slice : BaseWorldSlice
-            The data of the world slice to get from the data stream.
-            The coordinates are in world coordinates.
-        visual_id : str
-            The unique identifier for which visual this data slice
-            will be sent to.
-        request_id : str
-            The unique identifier for this request.
-        data_to_world_transform : BaseTransform
-            The transformation from the data coordinates to the world coordinates.
+        slice_request : DataSliceRequest
+            The requested data slice to generate the data store slice from.
         """
         raise NotImplementedError

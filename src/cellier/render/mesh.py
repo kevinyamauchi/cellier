@@ -3,7 +3,7 @@
 import pygfx as gfx
 from pygfx.materials import MeshPhongMaterial as GFXMeshPhongMaterial
 
-from cellier.models.viewer import DataManager
+from cellier.models.data_manager import DataManager
 from cellier.models.visuals.mesh_visual import MeshPhongMaterial, MeshVisual
 
 

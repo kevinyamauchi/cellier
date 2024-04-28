@@ -56,10 +56,10 @@ class DimsManager(EventedModel):
     ----------
     coordinate_system: CoordinateSystem
         The coordinate system the dimensions belong to.
-    displayed_dimensions: Tuple[str,...]
+    displayed_dimensions: Tuple[int,...]
         The names of the displayed dimensions. The order indicates the order of
-        the axes. For example ["x", "z", "y"] means that "x" is the 0th dimension,
-        "z" is the 1st dimension, and "y" is the 2nd dimension.
+        the axes. For example [0, 2, 1] means that 0 is the 0th dimension,
+        2 is the 1st dimension, and 1 is the 2nd dimension.
     range : tuple of 3-tuple of float
         List of tuples (min, max, step), one for each dimension in world
         coordinates space. Lower and upper bounds are inclusive.
@@ -80,7 +80,7 @@ class DimsManager(EventedModel):
     """
 
     coordinate_system: CoordinateSystem
-    displayed_dimensions: Tuple[str, ...]
+    displayed_dimensions: Tuple[int, ...]
 
     point: Tuple[float, ...] = ()
     range: Tuple[RangeTuple, ...] = ()
@@ -88,7 +88,11 @@ class DimsManager(EventedModel):
     margin_positive: Tuple[float, ...] = ()
 
     @field_validator(
-        "displayed_dimensions", "point", "margin_left", "margin_right", mode="before"
+        "displayed_dimensions",
+        "point",
+        "margin_negative",
+        "margin_positive",
+        mode="before",
     )
     def coerce_to_tuple(cls, v, info: ValidationInfo):
         """Coerce the axis label names to a tuple."""
