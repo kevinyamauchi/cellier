@@ -30,7 +30,7 @@ class MeshDataStoreSlice(DataStoreSlice):
 
 
 class BaseMeshDataStore(BaseDataStore):
-    """The base class for all mesh data_stores streams.
+    """The base class for all mesh data_stores.
 
     todo: properly set up. this shouldn't specify ndarrays.
     """

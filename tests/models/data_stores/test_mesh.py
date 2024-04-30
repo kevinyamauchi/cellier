@@ -6,7 +6,7 @@ from pydantic_core import from_json
 from cellier.models.data_stores.mesh import MeshMemoryStore
 
 
-def test_mesh_data_sources():
+def test_mesh_data_store():
     vertices = np.array(
         [[10, 10, 10], [10, 10, 20], [10, 20, 20], [10, 20, 10]], dtype=np.float32
     )
