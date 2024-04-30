@@ -70,6 +70,7 @@ class MeshMemoryStore(BaseMeshDataStore):
         vertices = self.vertices[:, displayed_dimensions]
 
         return RenderedMeshDataSlice(
+            scene_id=slice_data.scene_id,
             visual_id=slice_data.visual_id,
             resolution_level=slice_data.resolution_level,
             vertices=vertices,

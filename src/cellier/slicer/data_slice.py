@@ -22,6 +22,8 @@ class DataSliceRequest:
     visual_id : str
         The unique identifier for which visual this data slice
         will be sent to.
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
     request_id : str
         The unique identifier for this request.
     data_to_world_transform : BaseTransform
@@ -40,6 +42,8 @@ class DataSliceRequest:
     visual_id : str
         The unique identifier for which visual this data slice
         will be sent to.
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
     request_id : str
         The unique identifier for this request.
     data_to_world_transform : BaseTransform
@@ -49,6 +53,7 @@ class DataSliceRequest:
     world_slice: BaseWorldSlice
     resolution_level: int
     data_stream_id: str
+    scene_id: str
     visual_id: str
     request_id: str
     data_to_world_transform: BaseTransform
@@ -64,6 +69,8 @@ class RenderedSliceData:
 
     Attributes
     ----------
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
     visual_id : str
         The UID of the visual to be updated.
     resolution_level : int
@@ -71,6 +78,7 @@ class RenderedSliceData:
         and larger numbers are lower resolution.
     """
 
+    scene_id: str
     visual_id: str
     resolution_level: int
 
@@ -81,8 +89,13 @@ class RenderedMeshDataSlice(RenderedSliceData):
 
     Attributes
     ----------
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
     visual_id : str
         The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
     vertices : np.ndarray
         The vertex coordinates of the new slice.
     faces  : np.ndarray

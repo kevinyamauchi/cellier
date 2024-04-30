@@ -33,6 +33,7 @@ class MeshSynchronousDataStream(BaseMeshDataStream):
             The requested data slice to generate the data store slice from.
         """
         return MeshDataStoreSlice(
+            scene_id=slice_request.scene_id,
             visual_id=slice_request.visual_id,
             resolution_level=slice_request.resolution_level,
             displayed_dimensions=slice_request.world_slice.displayed_dimensions,

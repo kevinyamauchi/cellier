@@ -48,37 +48,10 @@ class SynchronousDataSlicer:
             dims_manager.events.all.connect(callback_function)
 
     def _on_dims_update(self, event, scene_id: str):
+        """Callback for updating a scene when a dims model changes."""
         print(f"event: {event}")
         print(f"scene_id: {scene_id}")
-
-        # get the DimsManager
-        scene = self._viewer_model.scenes.scenes[scene_id]
-        dims_manager = scene.dims
-
-        # get the region to select in world coordinates
-        # from the dims state
-        world_slice = world_slice_from_dims_manager(dims_manager=dims_manager)
-
-        for visual in scene.visuals:
-            # get the transform
-            # todo add transformation
-            data_to_world_transform = ""
-
-            # apply the slice object to the data
-            # todo move get_slice to DataManager?
-            slice_response = self.get_slice(
-                DataSliceRequest(
-                    world_slice=world_slice,
-                    resolution_level=0,
-                    data_stream_id=visual.data_stream_id,
-                    visual_id=visual.id,
-                    request_id=uuid4().hex,
-                    data_to_world_transform=data_to_world_transform,
-                )
-            )
-
-            # set the data
-            self.events.new_slice.emit(slice_response)
+        self.reslice_scene(scene_id=scene_id)
 
     def get_slice(self, slice_request: DataSliceRequest) -> RenderedSliceData:
         """Get a slice of data specified by the DataSliceRequest."""
@@ -94,3 +67,40 @@ class SynchronousDataSlicer:
         data_store_slice = data_stream.get_data_store_slice(slice_request)
 
         return data_store.get_slice(data_store_slice)
+
+    def reslice_scene(self, scene_id: str):
+        """Update all objects in a given scene."""
+        # get the DimsManager
+        scene = self._viewer_model.scenes.scenes[scene_id]
+        dims_manager = scene.dims
+
+        # get the region to select in world coordinates
+        # from the dims state
+        world_slice = world_slice_from_dims_manager(dims_manager=dims_manager)
+
+        for visual in scene.visuals:
+            # get the transform
+            # todo add transformation
+            data_to_world_transform = None
+
+            # apply the slice object to the data
+            # todo move get_slice to DataManager?
+            slice_response = self.get_slice(
+                DataSliceRequest(
+                    world_slice=world_slice,
+                    resolution_level=0,
+                    data_stream_id=visual.data_stream_id,
+                    visual_id=visual.id,
+                    scene_id=scene.id,
+                    request_id=uuid4().hex,
+                    data_to_world_transform=data_to_world_transform,
+                )
+            )
+
+            # set the data
+            self.events.new_slice.emit(slice_response)
+
+    def reslice_all(self):
+        """Reslice all scenes in the viewer."""
+        for scene_id in self._viewer_model.scenes.scenes.keys():
+            self.reslice_scene(scene_id=scene_id)

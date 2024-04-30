@@ -30,5 +30,6 @@ class BaseDataStore(EventedModel):
 class DataStoreSlice:
     """Base class for all data store slices."""
 
+    scene_id: str
     visual_id: str
     resolution_level: int

@@ -1,5 +1,6 @@
 """Functions to make PyGFX mesh objects from Cellier models."""
 
+import numpy as np
 import pygfx as gfx
 from pygfx.materials import MeshPhongMaterial as GFXMeshPhongMaterial
 
@@ -16,10 +17,15 @@ def construct_pygfx_mesh_from_model(
     based on the material, etc. and returns a PyGFX mesh object.
     """
     # make the geometry
-    # todo make initial slicing happen here
-    data_stream = data_manager.streams[mesh_model.data_stream_id]
-    data_store = data_manager.stores[data_stream.data_store_id]
-    geometry = gfx.Geometry(indices=data_store.faces, positions=data_store.vertices)
+    # todo make initial slicing happen here or initialize with something more sensible
+
+    # initialize with an empty geometry
+    geometry = gfx.Geometry(
+        indices=np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int32),
+        positions=np.array(
+            [[0, 0, 0], [0, 1, 0], [0, 0, 1], [0, 1, 1]], dtype=np.float32
+        ),
+    )
 
     # make the material model
     material_model = mesh_model.material
