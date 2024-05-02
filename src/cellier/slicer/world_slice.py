@@ -48,6 +48,12 @@ class AxisAligned3DWorldSlice(BaseWorldSlice):
     displayed_dimensions : Tuple[int, ...]
         The indices of the displayed dimensions.
         The order is matched to the displayed order.
+    point : tuple of floats
+        Dims position in world coordinates for each dimension.
+    margin_negative : tuple of floats
+        Negative margin in world units of the slice for each dimension.
+    margin_positive : tuple of floats
+        Positive margin in world units of the slice for each dimension.
     world_coordinate_system : CoordinateSystem
         The data model of the world coordinate system.
     id : str
@@ -61,6 +67,12 @@ class AxisAligned3DWorldSlice(BaseWorldSlice):
     displayed_dimensions : Tuple[int, ...]
         The indices of the displayed dimensions.
         The order is matched to the displayed order.
+    point : tuple of floats
+        Dims position in world coordinates for each dimension.
+    margin_negative : tuple of floats
+        Negative margin in world units of the slice for each dimension.
+    margin_positive : tuple of floats
+        Positive margin in world units of the slice for each dimension.
     world_coordinate_system : CoordinateSystem
         The data model of the world coordinate system.
     id : str
@@ -68,6 +80,9 @@ class AxisAligned3DWorldSlice(BaseWorldSlice):
     """
 
     displayed_dimensions: Tuple[int, ...]
+    point: Tuple[int, ...]
+    margin_negative: Tuple[float, ...]
+    margin_positive: Tuple[float, ...]
     world_coordinate_system: CoordinateSystem
 
     # store a UUID to identify this specific scene.

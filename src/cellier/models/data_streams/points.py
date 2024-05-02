@@ -14,7 +14,7 @@ class BasePointDataStream(BaseDataStream, ABC):
     pass
 
 
-class PointynchronousDataStream(BasePointDataStream):
+class PointsSynchronousDataStream(BasePointDataStream):
     """Class for synchronous mesh data_stores streams."""
 
     data_store_id: str
@@ -37,4 +37,7 @@ class PointynchronousDataStream(BasePointDataStream):
             visual_id=slice_request.visual_id,
             resolution_level=slice_request.resolution_level,
             displayed_dimensions=slice_request.world_slice.displayed_dimensions,
+            point=slice_request.point,
+            margin_negative=slice_request.margin_negative,
+            margin_positive=slice_request.margin_positive,
         )
