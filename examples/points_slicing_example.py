@@ -30,7 +30,7 @@ class Main(QtWidgets.QWidget):
             layout.addWidget(canvas)
 
 
-CONFIG_PATH = "single_canvas_config.json"
+CONFIG_PATH = "points_example_config.json"
 
 app = QtWidgets.QApplication([])
 m = Main(CONFIG_PATH)

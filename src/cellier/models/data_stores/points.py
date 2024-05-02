@@ -1,10 +1,10 @@
 """Classes for Point DataStores."""
 
 from dataclasses import dataclass
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 import numpy as np
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_serializer, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
 from cellier.models.data_stores.base_data_store import BaseDataStore, DataStoreSlice
@@ -62,6 +62,14 @@ class BasePointsDataStore(BaseDataStore):
 
 class PointsMemoryStore(BasePointsDataStore):
     """Point data_stores store for arrays stored in memory."""
+
+    # this is used for a discriminated union
+    store_type: Literal["points_memory"] = "points_memory"
+
+    @field_serializer("coordinates")
+    def serialize_ndarray(self, array: np.ndarray, _info) -> list:
+        """Coerce numpy arrays into lists for serialization."""
+        return array.tolist()
 
     def get_slice(self, slice_data: PointDataStoreSlice) -> RenderedPointsDataSlice:
         """Get the data required to render a slice of the mesh.

@@ -91,3 +91,6 @@ class MeshVisual(BaseVisual):
 
     data_stream_id: str
     material: MeshMaterialType
+
+    # this is used for a discriminated union
+    visual_type: Literal["mesh"] = "mesh"

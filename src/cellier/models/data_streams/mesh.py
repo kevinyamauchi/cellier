@@ -1,7 +1,7 @@
 """Models for mesh data_stores streams."""
 
 from abc import ABC
-from typing import List
+from typing import List, Literal
 
 from cellier.models.data_stores.mesh import MeshDataStoreSlice
 from cellier.models.data_streams.base_data_stream import BaseDataStream
@@ -19,6 +19,9 @@ class MeshSynchronousDataStream(BaseMeshDataStream):
 
     data_store_id: str
     selectors: List[str]
+
+    # this is used for a discriminated union
+    stream_type: Literal["mesh_synchronous"] = "mesh_synchronous"
 
     def get_data_store_slice(
         self, slice_request: DataSliceRequest

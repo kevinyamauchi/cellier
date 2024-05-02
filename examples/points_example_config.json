@@ -1,0 +1,112 @@
+{
+  "data": {
+    "stores": {
+      "0e3f35cd59cc48fb9b590e273f7a5673": {
+        "id": "0e3f35cd59cc48fb9b590e273f7a5673",
+        "coordinates": [
+          [
+            0.0,
+            10.0,
+            10.0,
+            10.0
+          ],
+          [
+            0.0,
+            10.0,
+            10.0,
+            20.0
+          ],
+          [
+            5.0,
+            10.0,
+            20.0,
+            20.0
+          ]
+        ],
+        "store_type": "points_memory"
+      }
+    },
+    "streams": {
+      "6ad04838391b443e9c2bfcc2fb677ed2": {
+        "id": "6ad04838391b443e9c2bfcc2fb677ed2",
+        "data_store_id": "0e3f35cd59cc48fb9b590e273f7a5673",
+        "selectors": [],
+        "stream_type": "points_synchronous"
+      }
+    }
+  },
+  "scenes": {
+    "scenes": {
+      "93af5c97227b4550b8c2bd8a76e83e8a": {
+        "dims": {
+          "coordinate_system": {
+            "name": "scene_0",
+            "axis_labels": [
+              "t",
+              "z",
+              "y",
+              "x"
+            ]
+          },
+          "displayed_dimensions": [
+            1,
+            2,
+            3
+          ],
+          "point": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "range": [],
+          "margin_negative": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "margin_positive": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "visuals": [
+          {
+            "name": "points_visual",
+            "id": "6024793f5e2f4d12a67472c67d643e00",
+            "data_stream_id": "6ad04838391b443e9c2bfcc2fb677ed2",
+            "material": {
+              "size": 1.0,
+              "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "size_coordinate_space": "data"
+            },
+            "visual_type": "points"
+          }
+        ],
+        "canvases": [
+          {
+            "camera": {
+              "fov": 50,
+              "width": 10,
+              "height": 10,
+              "zoom": 1,
+              "near_clipping_plane": -500,
+              "far_clipping_plane": 500,
+              "camera_type": "perspective"
+            },
+            "id": "94e804280eb14e1a9fc08247b5b8b591"
+          }
+        ],
+        "id": "93af5c97227b4550b8c2bd8a76e83e8a"
+      }
+    }
+  }
+}

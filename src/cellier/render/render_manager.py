@@ -13,7 +13,11 @@ from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.viewer import ViewerModel
 from cellier.render.utils import construct_pygfx_object
-from cellier.slicer.data_slice import RenderedMeshDataSlice, RenderedSliceData
+from cellier.slicer.data_slice import (
+    RenderedMeshDataSlice,
+    RenderedPointsDataSlice,
+    RenderedSliceData,
+)
 
 # class VisualKey(NamedTuple):
 #     """The key to a visual stored in the RenderManager.
@@ -152,6 +156,12 @@ class RenderManager:
                 positions=slice_data.vertices, indices=slice_data.faces
             )
             visual_object.geometry = new_geometry
+
+        if isinstance(slice_data, RenderedPointsDataSlice):
+            new_geometry = gfx.Geometry(positions=slice_data.coordinates)
+            visual_object.geometry = new_geometry
+        else:
+            raise ValueError(f"Unrecognized slice data type: {slice_data}")
 
         if redraw_canvas:
             self.events.redraw_canvas.emit(

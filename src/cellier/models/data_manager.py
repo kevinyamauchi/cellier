@@ -1,11 +1,24 @@
 """Class to hold all of the data stores and streams."""
 
-from typing import Dict
+from typing import Dict, Union
 
 from psygnal import EventedModel
+from pydantic import Field
+from typing_extensions import Annotated
 
 from cellier.models.data_stores.mesh import MeshMemoryStore
+from cellier.models.data_stores.points import PointsMemoryStore
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
+from cellier.models.data_streams.points import PointsSynchronousDataStream
+
+# types for discrimitive unions
+DataStoreType = Annotated[
+    Union[MeshMemoryStore, PointsMemoryStore], Field(discriminator="store_type")
+]
+DataStreamType = Annotated[
+    Union[MeshSynchronousDataStream, PointsSynchronousDataStream],
+    Field(discriminator="stream_type"),
+]
 
 
 class DataManager(EventedModel):
@@ -14,5 +27,5 @@ class DataManager(EventedModel):
     todo: add discrimitive union
     """
 
-    stores: Dict[str, MeshMemoryStore]
-    streams: Dict[str, MeshSynchronousDataStream]
+    stores: Dict[str, DataStoreType]
+    streams: Dict[str, DataStreamType]

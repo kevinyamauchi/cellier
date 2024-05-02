@@ -1,7 +1,7 @@
 """Classes for Points Data Streams."""
 
 from abc import ABC
-from typing import List
+from typing import List, Literal
 
 from cellier.models.data_stores.points import PointDataStoreSlice
 from cellier.models.data_streams.base_data_stream import BaseDataStream
@@ -20,6 +20,9 @@ class PointsSynchronousDataStream(BasePointDataStream):
     data_store_id: str
     selectors: List[str]
 
+    # this is used for a discriminated union
+    stream_type: Literal["points_synchronous"] = "points_synchronous"
+
     def get_data_store_slice(
         self, slice_request: DataSliceRequest
     ) -> PointDataStoreSlice:
@@ -37,7 +40,7 @@ class PointsSynchronousDataStream(BasePointDataStream):
             visual_id=slice_request.visual_id,
             resolution_level=slice_request.resolution_level,
             displayed_dimensions=slice_request.world_slice.displayed_dimensions,
-            point=slice_request.point,
-            margin_negative=slice_request.margin_negative,
-            margin_positive=slice_request.margin_positive,
+            point=slice_request.world_slice.point,
+            margin_negative=slice_request.world_slice.margin_negative,
+            margin_positive=slice_request.world_slice.margin_positive,
         )

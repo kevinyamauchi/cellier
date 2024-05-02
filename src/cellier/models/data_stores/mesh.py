@@ -1,7 +1,7 @@
 """Models for mesh data_stores stores."""
 
 from dataclasses import dataclass
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 import numpy as np
 from pydantic import ConfigDict, ValidationInfo, field_serializer, field_validator
@@ -63,6 +63,9 @@ class BaseMeshDataStore(BaseDataStore):
 
 class MeshMemoryStore(BaseMeshDataStore):
     """Mesh data_stores store for arrays stored in memory."""
+
+    # this is used for a discriminated union
+    store_type: Literal["mesh_memory"] = "mesh_memory"
 
     def get_slice(self, slice_data: MeshDataStoreSlice) -> RenderedMeshDataSlice:
         """Get the data required to render a slice of the mesh."""
