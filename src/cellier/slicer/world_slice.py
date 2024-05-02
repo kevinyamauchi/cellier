@@ -98,6 +98,9 @@ class AxisAligned3DWorldSlice(BaseWorldSlice):
         """Construct a world slice from the DimsManager object."""
         return cls(
             displayed_dimensions=dims.displayed_dimensions,
+            point=dims.point,
+            margin_negative=dims.margin_negative,
+            margin_positive=dims.margin_positive,
             world_coordinate_system=dims.coordinate_system,
         )
 
