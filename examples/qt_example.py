@@ -1,9 +1,9 @@
-"""Example displaying viewer in a Qt widget."""
+"""Example displaying and slicing points in a Qt widget."""
 
 from qtpy import QtWidgets
 
 from cellier.models.viewer import ViewerModel
-from cellier.viewer import Viewer
+from cellier.viewer_controller import ViewerController
 
 
 class Main(QtWidgets.QWidget):
@@ -17,7 +17,7 @@ class Main(QtWidgets.QWidget):
         viewer_model = ViewerModel.from_json_file(viewer_config_path)
 
         # make the viewer
-        self.viewer = Viewer(model=viewer_model, widget_parent=self)
+        self.viewer = ViewerController(model=viewer_model, widget_parent=self)
 
         for cam in self.viewer._render_manager.cameras.values():
             cam.show_pos((20, 15, 15), up=(0, 1, 0))

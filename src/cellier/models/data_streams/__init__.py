@@ -1,1 +1,1 @@
-"""Models for data_streams."""
+"""Models for data_storesstreams."""

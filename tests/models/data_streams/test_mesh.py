@@ -15,7 +15,7 @@ def test_mesh_synchronous_data_stream(tmp_path):
     faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.float32)
 
     mesh = MeshMemoryStore(vertices=vertices, faces=faces)
-    mesh_stream = MeshSynchronousDataStream(data_store=mesh, selectors=[])
+    mesh_stream = MeshSynchronousDataStream(data_store_id=mesh.id, selectors=[])
 
     output_path = tmp_path / "test.json"
     with open(output_path, "w") as f:
@@ -29,5 +29,4 @@ def test_mesh_synchronous_data_stream(tmp_path):
         )
 
     # the that the values are correct
-    np.testing.assert_allclose(vertices, deserialized_stream.data_store.vertices)
-    np.testing.assert_allclose(faces, deserialized_stream.data_store.faces)
+    assert mesh.id == deserialized_stream.data_store_id

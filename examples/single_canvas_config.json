@@ -1,7 +1,8 @@
 {
   "data": {
-    "stores": [
-      {
+    "stores": {
+      "73378cbfef474a1fb022bec2ed96d8e7": {
+        "id": "73378cbfef474a1fb022bec2ed96d8e7",
         "vertices": [
           [
             10.0,
@@ -25,44 +26,22 @@
             1,
             2
           ]
-        ]
+        ],
+        "store_type": "mesh_memory"
       }
-    ],
-    "streams": [
-      {
-        "data_store": {
-          "vertices": [
-            [
-              10.0,
-              10.0,
-              10.0
-            ],
-            [
-              10.0,
-              10.0,
-              20.0
-            ],
-            [
-              10.0,
-              20.0,
-              20.0
-            ]
-          ],
-          "faces": [
-            [
-              0,
-              1,
-              2
-            ]
-          ]
-        },
-        "selectors": []
+    },
+    "streams": {
+      "eef961ca7dd0426192ec68e84125ab5a": {
+        "id": "eef961ca7dd0426192ec68e84125ab5a",
+        "data_store_id": "73378cbfef474a1fb022bec2ed96d8e7",
+        "selectors": [],
+        "stream_type": "mesh_synchronous"
       }
-    ]
+    }
   },
   "scenes": {
-    "scenes": [
-      {
+    "scenes": {
+      "53b8dca833f14f51856848329129fdeb": {
         "dims": {
           "coordinate_system": {
             "name": "scene_0",
@@ -73,48 +52,20 @@
             ]
           },
           "displayed_dimensions": [
-            "z",
-            "y",
-            "x"
+            0,
+            1,
+            2
           ],
           "point": [],
           "range": [],
-          "margin_left": [],
-          "margin_right": []
+          "margin_negative": [],
+          "margin_positive": []
         },
         "visuals": [
           {
             "name": "mesh_visual",
-            "id": "deaa1393793942acb9c32b3500035d0d",
-            "data_stream": {
-              "data_store": {
-                "vertices": [
-                  [
-                    10.0,
-                    10.0,
-                    10.0
-                  ],
-                  [
-                    10.0,
-                    10.0,
-                    20.0
-                  ],
-                  [
-                    10.0,
-                    20.0,
-                    20.0
-                  ]
-                ],
-                "faces": [
-                  [
-                    0,
-                    1,
-                    2
-                  ]
-                ]
-              },
-              "selectors": []
-            },
+            "id": "f244d11a243f4471bf3ecbf871022838",
+            "data_stream_id": "eef961ca7dd0426192ec68e84125ab5a",
             "material": {
               "shininess": 30,
               "emissive": [
@@ -128,7 +79,8 @@
                 0.28
               ],
               "material_type": "phong"
-            }
+            },
+            "visual_type": "mesh"
           }
         ],
         "canvases": [
@@ -142,11 +94,11 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "132c6fc5f16447858f5a9c80679fc362"
+            "id": "aca60bb05c444711abff728a199705b3"
           }
         ],
-        "id": "a4dfd6c19f73410f94d00f1248af42d6"
+        "id": "53b8dca833f14f51856848329129fdeb"
       }
-    ]
+    }
   }
 }

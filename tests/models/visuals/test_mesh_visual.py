@@ -18,11 +18,11 @@ def test_mesh_visual(tmp_path):
     faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.float32)
 
     mesh = MeshMemoryStore(vertices=vertices, faces=faces)
-    mesh_stream = MeshSynchronousDataStream(data_store=mesh, selectors=[])
+    mesh_stream = MeshSynchronousDataStream(data_store_id=mesh.id, selectors=[])
     mesh_material = MeshPhongMaterial()
 
     mesh_visual = MeshVisual(
-        name="test", data_stream=mesh_stream, material=mesh_material
+        name="test", data_stream_id=mesh_stream.id, material=mesh_material
     )
 
     output_path = tmp_path / "test.json"
@@ -39,7 +39,5 @@ def test_mesh_visual(tmp_path):
     assert deserialized_visual.material == mesh_visual.material
 
     # test the mesh data is correct
-    np.testing.assert_allclose(
-        vertices, deserialized_visual.data_stream.data_store.vertices
-    )
-    np.testing.assert_allclose(faces, deserialized_visual.data_stream.data_store.faces)
+    assert mesh_stream.id == deserialized_visual.data_stream_id
+    assert mesh_material == deserialized_visual.material

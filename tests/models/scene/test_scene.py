@@ -22,7 +22,7 @@ def test_scene_model(tmp_path):
 
     coordinate_system = CoordinateSystem(name="default", axis_label=("x", "y", "z"))
     dims = DimsManager(
-        coordinate_system=coordinate_system, displayed_dimensions=("x", "y", "z")
+        coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
     )
 
     vertices = np.array(
@@ -32,11 +32,11 @@ def test_scene_model(tmp_path):
 
     # make the mesh visual
     mesh = MeshMemoryStore(vertices=vertices, faces=faces)
-    mesh_stream = MeshSynchronousDataStream(data_store=mesh, selectors=[])
+    mesh_stream = MeshSynchronousDataStream(data_store_id=mesh.id, selectors=[])
     mesh_material = MeshPhongMaterial()
 
     mesh_visual = MeshVisual(
-        name="test", data_stream=mesh_stream, material=mesh_material
+        name="test", data_stream_id=mesh_stream.id, material=mesh_material
     )
 
     # make the canvas
