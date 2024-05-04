@@ -1,4 +1,8 @@
-"""Example displaying and slicing points in a Qt widget."""
+"""Example displaying and slicing points in a Qt widget.
+
+These are 4D points in a single array source rendered to two canvases:
+a 3D view and a 2D view. The slider controls the position of the 2D slice.
+"""
 
 from qtpy import QtWidgets
 from superqt import QLabeledSlider
