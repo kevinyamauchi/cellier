@@ -28,7 +28,7 @@ def construct_pygfx_points_from_model(
     # initialize with an empty geometry
     geometry = gfx.Geometry(
         positions=np.array(
-            [[0, 0, 0], [0, 1, 0], [0, 0, 1], [0, 1, 1]], dtype=np.float32
+            [[0, 0, 0], [0, 10, 0], [0, 0, 10], [5, 1, 10]], dtype=np.float32
         ),
     )
 

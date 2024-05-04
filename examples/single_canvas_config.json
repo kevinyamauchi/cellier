@@ -1,8 +1,8 @@
 {
   "data": {
     "stores": {
-      "7a50b9dc5f5146dc894ea7a76a437385": {
-        "id": "7a50b9dc5f5146dc894ea7a76a437385",
+      "73378cbfef474a1fb022bec2ed96d8e7": {
+        "id": "73378cbfef474a1fb022bec2ed96d8e7",
         "vertices": [
           [
             10.0,
@@ -26,20 +26,22 @@
             1,
             2
           ]
-        ]
+        ],
+        "store_type": "mesh_memory"
       }
     },
     "streams": {
-      "e3f16ac4b60046269792a0149b04b64a": {
-        "id": "e3f16ac4b60046269792a0149b04b64a",
-        "data_store_id": "7a50b9dc5f5146dc894ea7a76a437385",
-        "selectors": []
+      "eef961ca7dd0426192ec68e84125ab5a": {
+        "id": "eef961ca7dd0426192ec68e84125ab5a",
+        "data_store_id": "73378cbfef474a1fb022bec2ed96d8e7",
+        "selectors": [],
+        "stream_type": "mesh_synchronous"
       }
     }
   },
   "scenes": {
     "scenes": {
-      "1e71729a990f41cd85a057046ba6cf6d": {
+      "53b8dca833f14f51856848329129fdeb": {
         "dims": {
           "coordinate_system": {
             "name": "scene_0",
@@ -62,8 +64,8 @@
         "visuals": [
           {
             "name": "mesh_visual",
-            "id": "9541575231d846da9dd221720191d7bd",
-            "data_stream_id": "e3f16ac4b60046269792a0149b04b64a",
+            "id": "f244d11a243f4471bf3ecbf871022838",
+            "data_stream_id": "eef961ca7dd0426192ec68e84125ab5a",
             "material": {
               "shininess": 30,
               "emissive": [
@@ -77,7 +79,8 @@
                 0.28
               ],
               "material_type": "phong"
-            }
+            },
+            "visual_type": "mesh"
           }
         ],
         "canvases": [
@@ -91,10 +94,10 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "e4d150fcc7fc4b3b8ce2680c1261283f"
+            "id": "aca60bb05c444711abff728a199705b3"
           }
         ],
-        "id": "1e71729a990f41cd85a057046ba6cf6d"
+        "id": "53b8dca833f14f51856848329129fdeb"
       }
     }
   }

@@ -1,9 +1,10 @@
 """Example displaying and slicing points in a Qt widget."""
 
 from qtpy import QtWidgets
+from superqt import QLabeledSlider
 
 from cellier.models.viewer import ViewerModel
-from cellier.viewer import Viewer
+from cellier.viewer_controller import ViewerController
 
 
 class Main(QtWidgets.QWidget):
@@ -17,17 +18,31 @@ class Main(QtWidgets.QWidget):
         viewer_model = ViewerModel.from_json_file(viewer_config_path)
 
         # make the viewer
-        self.viewer = Viewer(model=viewer_model, widget_parent=self)
+        self.viewer = ViewerController(model=viewer_model, widget_parent=self)
 
         for cam in self.viewer._render_manager.cameras.values():
             cam.show_pos((20, 15, 15), up=(0, 1, 0))
 
+        # make the slider for the z axis in the 2D canvas
+        self.z_slider_widget = QLabeledSlider(parent=self)
+        self.z_slider_widget.valueChanged.connect(self._on_z_slider_changed)
+        self.z_slider_widget.setValue(25)
+
         layout = QtWidgets.QHBoxLayout()
-        self.setLayout(layout)
         for canvas in self.viewer._canvas_widgets.values():
             # add the canvas widgets
             canvas.update()
             layout.addWidget(canvas)
+        self.setLayout(layout)
+
+    def _on_z_slider_changed(self, slider_value: int):
+        for scene in self.viewer._model.scenes.scenes.values():
+            dims_manager = scene.dims
+            coordinate_system = dims_manager.coordinate_system
+            if coordinate_system.name == "scene_2d":
+                dims_point = list(dims_manager.point)
+                dims_point[1] = slider_value
+                dims_manager.point = dims_point
 
 
 CONFIG_PATH = "points_example_config.json"

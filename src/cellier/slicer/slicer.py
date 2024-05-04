@@ -49,8 +49,6 @@ class SynchronousDataSlicer:
 
     def _on_dims_update(self, event, scene_id: str):
         """Callback for updating a scene when a dims model changes."""
-        print(f"event: {event}")
-        print(f"scene_id: {scene_id}")
         self.reslice_scene(scene_id=scene_id)
 
     def get_slice(self, slice_request: DataSliceRequest) -> RenderedSliceData:

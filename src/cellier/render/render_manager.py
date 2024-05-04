@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Dict
 
+import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
@@ -67,6 +68,10 @@ class RenderManager:
             # todo add lighting config
             scene.add(gfx.AmbientLight())
 
+            # todo add scene decorations config
+            axes = gfx.AxesHelper(size=5, thickness=8)
+            scene.add(axes)
+
             # populate the scene
             for visual_model in scene_model.visuals:
                 world_object = construct_pygfx_object(
@@ -74,6 +79,12 @@ class RenderManager:
                 )
                 scene.add(world_object)
                 visuals.update({visual_model.id: world_object})
+
+                # add a bounding box
+                # todo make configurable
+                # box_world = gfx.BoxHelper(color="red")
+                # box_world.set_transform_by_object(world_object)
+                # scene.add(box_world)
 
             # store the scene
             scene_id = scene_model.id
@@ -157,8 +168,19 @@ class RenderManager:
             )
             visual_object.geometry = new_geometry
 
-        if isinstance(slice_data, RenderedPointsDataSlice):
-            new_geometry = gfx.Geometry(positions=slice_data.coordinates)
+        elif isinstance(slice_data, RenderedPointsDataSlice):
+            coordinates = slice_data.coordinates
+            if coordinates.shape[1] == 2:
+                # pygfx expects 3D points
+                n_points = coordinates.shape[0]
+                zeros_column = np.zeros((n_points, 1), dtype=np.float32)
+                coordinates = np.column_stack((coordinates, zeros_column))
+
+            if coordinates.shape[0] == 0:
+                # coordinates must not be empty
+                # todo do something smarter?
+                coordinates = np.array([[0, 0, 0]], dtype=np.float32)
+            new_geometry = gfx.Geometry(positions=coordinates)
             visual_object.geometry = new_geometry
         else:
             raise ValueError(f"Unrecognized slice data type: {slice_data}")
