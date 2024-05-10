@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
+import pygfx as gfx
+from qtpy.QtWidgets import QApplication, QGridLayout, QLabel, QWidget
+from wgpu.gui.qt import WgpuCanvas
 
 
 def make_plane_mesh(
@@ -230,8 +233,8 @@ class AffineTransform:
 n_points = 100
 ndim_data = 4
 rng = np.random.default_rng()
-point_spatial_coordinates = 50 * rng.random((n_points, 3))
-point_time_coordinates = 5 * rng.random((n_points, 1))
+point_spatial_coordinates = 50 * rng.random((n_points, 3), dtype=np.float32)
+point_time_coordinates = 5 * rng.random((n_points, 1), dtype=np.float32)
 point_coordinates = np.column_stack((point_time_coordinates, point_spatial_coordinates))
 
 # define the transformation from data to world coordinates
@@ -295,7 +298,8 @@ print(data_slice)
 # get the data
 
 # determine if points on the correct side of the positive plane
-positive_plane_point = data_slice.point + (
+point_3d = data_slice.point[list(data_slice.spatial_dims)]
+positive_plane_point = point_3d + (
     data_slice.slice_positive_extent * data_slice.normal_vector
 )
 in_front_positive_plane = points_in_front_of_plane(
@@ -305,7 +309,7 @@ in_front_positive_plane = points_in_front_of_plane(
 )
 
 # determine if the point is ont he correct side of the negative points
-negative_plane_point = data_slice.point - (
+negative_plane_point = point_3d - (
     data_slice.slice_positive_extent * data_slice.normal_vector
 )
 in_front_negative_plane = points_in_front_of_plane(
@@ -316,3 +320,59 @@ in_front_negative_plane = points_in_front_of_plane(
 
 # points in the slice are on the correct side of both planes
 points_in_slice_mask = np.logical_and(in_front_positive_plane, in_front_negative_plane)
+
+
+class Main(QWidget):
+    """Example widget with viewer."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.resize(640, 480)
+
+        self._3d_world_canvas = WgpuCanvas(parent=self)
+        self._renderer = gfx.WgpuRenderer(self._3d_world_canvas)
+        self._scene = gfx.Scene()
+        self._camera = gfx.OrthographicCamera(110, 110)
+
+        geometry = gfx.Geometry(positions=point_coordinates[:, -3:])
+        self._3d_world_points = gfx.Points(
+            geometry,
+            gfx.PointsMaterial(
+                color=(0, 0, 1, 1), size=1, pick_write=True, size_space="model"
+            ),
+        )
+        self._scene.add(self._3d_world_points)
+
+        box_3d_world_points = gfx.BoxHelper(color="red")
+        box_3d_world_points.set_transform_by_object(self._3d_world_points)
+        self._scene.add(box_3d_world_points)
+
+        self._camera.show_object(self._3d_world_points)
+        self.controller = gfx.TrackballController(
+            self._camera, register_events=self._renderer
+        )
+
+        # Hook up the animate callback
+        self._3d_world_canvas.request_draw(self.animate)
+
+        layout = QGridLayout()
+        layout.addWidget(QLabel("dims"), 0, 0)
+        layout.addWidget(QLabel("3D world"), 0, 1)
+        layout.addWidget(self._3d_world_canvas, 1, 1)
+        layout.addWidget(QLabel("3D data"), 0, 2)
+        layout.addWidget(QLabel("2D world"), 0, 3)
+
+        self.setLayout(layout)
+
+    def animate(self):
+        """Callback to render the scene."""
+        self._renderer.render(self._scene, self._camera)
+
+
+app = QApplication([])
+m = Main()
+m.show()
+
+
+if __name__ == "__main__":
+    app.exec()
