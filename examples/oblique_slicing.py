@@ -29,6 +29,72 @@ def to_vec4(coordinates: np.ndarray) -> np.ndarray:
         raise ValueError(f"Coordinates should be 3D or 4D, coordinates were {ndim}D")
 
 
+def compute_plane_coefficients(
+    point: np.ndarray, normal_vector: np.ndarray
+) -> Tuple[float, float, float, float]:
+    """Compute the coefficients for the 3D plane equation..
+
+    Ax_0 + Bx_1 + Cx_2 + d = 0
+
+
+    Parameters
+    ----------
+    point : np.ndarray
+        A point on the plane.
+    normal_vector : np.ndarray
+        The unit normal vector of the plane.
+
+    Returns
+    -------
+    a : float
+        The coefficient for the 0th axis.
+    b : float
+        The coefficient for the 1st axis.
+    c : float
+        The coefficient for the 2nd axis.
+    d : float
+        The final coefficient.
+    """
+    a, b, c = normal_vector
+    d = np.dot(-point, normal_vector)
+    return a, b, c, d
+
+
+def points_in_front_of_plane(
+    point_coordinates: np.ndarray, plane_point: np.ndarray, plane_normal: np.ndarray
+) -> np.ndarray:
+    """Determine if points are in front of a plane.
+
+    In front is defined as the side the normal vector is point to.
+
+    Parameters
+    ----------
+    point_coordinates : np.ndarray
+        The coordinates of the points to test.
+    plane_point : np.ndarray
+        A point on the plane.
+    plane_normal : np.ndarray
+        The unit normal vector of the plane. Points on the side
+        this normal vector is pointing to are considered "in front".
+
+    Returns
+    -------
+    in_front : np.ndarray
+        (n,) boolean array where each elemennt is True if the index-matched
+        point is "in front" of the plane. "in front" is defined as on the same
+        side the normal vector is pointing.
+    """
+    plane_coefficients = compute_plane_coefficients(
+        point=plane_point, normal_vector=plane_normal
+    )
+    return (
+        plane_coefficients[0] * point_coordinates[:, 0]
+        + plane_coefficients[1] * point_coordinates[:, 1]
+        + plane_coefficients[2] * point_coordinates[:, 2]
+        + plane_coefficients[3]
+    ) >= 0
+
+
 @dataclass(frozen=True)
 class Oblique2DWorldSliceRequest:
     """Data to request an oblique 2D slice in world coordinates.
@@ -228,10 +294,25 @@ print(data_slice)
 
 # get the data
 
-# rotate the points to be parallel to the plane
+# determine if points on the correct side of the positive plane
+positive_plane_point = data_slice.point + (
+    data_slice.slice_positive_extent * data_slice.normal_vector
+)
+in_front_positive_plane = points_in_front_of_plane(
+    point_coordinates=point_coordinates,
+    plane_point=positive_plane_point,
+    plane_normal=-data_slice.normal_vector,
+)
 
-# take points within the extents
+# determine if the point is ont he correct side of the negative points
+negative_plane_point = data_slice.point - (
+    data_slice.slice_positive_extent * data_slice.normal_vector
+)
+in_front_negative_plane = points_in_front_of_plane(
+    point_coordinates=point_coordinates,
+    plane_point=negative_plane_point,
+    plane_normal=data_slice.normal_vector,
+)
 
-# project the selected points onto the plane
-
-# compute the offset between the origin (projected onto the plane) and the slice point
+# points in the slice are on the correct side of both planes
+points_in_slice_mask = np.logical_and(in_front_positive_plane, in_front_negative_plane)
