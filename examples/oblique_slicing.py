@@ -225,3 +225,13 @@ data_slice = Oblique2DDataSliceRequest(
     slice_negative_extent=0.5,
 )
 print(data_slice)
+
+# get the data
+
+# rotate the points to be parallel to the plane
+
+# take points within the extents
+
+# project the selected points onto the plane
+
+# compute the offset between the origin (projected onto the plane) and the slice point
