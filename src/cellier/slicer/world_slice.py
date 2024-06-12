@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Tuple
 from uuid import uuid4
 
+import numpy as np
+
 from cellier.models.scene import CoordinateSystem, DimsManager
 
 
@@ -174,3 +176,28 @@ class AxisAligned3DWorldSlice(BaseWorldSlice):
             margin_positive=dims.margin_positive,
             world_coordinate_system=dims.coordinate_system,
         )
+
+
+@dataclass(frozen=True)
+class ObliqueWorldSlice(BaseWorldSlice):
+    """Data for an oblique world slice.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        The affine matrix defining the slice.
+    projection : str
+        The function to use to project non-displayed dimensions.
+    """
+
+    matrix: np.ndarray
+    projected_dimensions: Tuple[int, ...]
+    projection: str = "sum"
+
+    def world_ndim(self) -> int:
+        """The number of dimensions in the world."""
+        return self.matrix.shape[0] - 1
+
+    def slice_ndim(self) -> int:
+        """The number of dimensions in the slice."""
+        return 2

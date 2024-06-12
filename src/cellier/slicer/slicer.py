@@ -1,13 +1,16 @@
 """Class for managing the data slicing."""
 
 from functools import partial
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from psygnal import Signal
 
-from cellier.models.viewer import ViewerModel
 from cellier.slicer.data_slice import DataSliceRequest, RenderedSliceData
 from cellier.slicer.utils import world_slice_from_dims_manager
+
+if TYPE_CHECKING:
+    from cellier.models.viewer import ViewerModel
 
 
 class DataSlicerEvents:
@@ -27,7 +30,7 @@ class DataSlicerEvents:
 class SynchronousDataSlicer:
     """A data slicer for synchronous slicing of data."""
 
-    def __init__(self, viewer_model: ViewerModel):
+    def __init__(self, viewer_model: "ViewerModel"):
         self._viewer_model = viewer_model
 
         # add the events

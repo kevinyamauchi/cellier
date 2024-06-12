@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from cellier.slicer.transform import BaseTransform
+from cellier.slicer.transforms import BaseTransform
 from cellier.slicer.world_slice import BaseWorldSlice
 
 
