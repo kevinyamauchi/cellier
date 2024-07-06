@@ -7,6 +7,7 @@ from pydantic_core import from_json
 
 from cellier.models.data_stores.mesh import MeshMemoryStore
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
+from cellier.models.nodes.mesh_visual import MeshNode, MeshPhongMaterial
 from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
@@ -14,7 +15,6 @@ from cellier.models.scene import (
     PerspectiveCamera,
     Scene,
 )
-from cellier.models.visuals.mesh_visual import MeshPhongMaterial, MeshVisual
 
 
 def test_scene_model(tmp_path):
@@ -35,7 +35,7 @@ def test_scene_model(tmp_path):
     mesh_stream = MeshSynchronousDataStream(data_store_id=mesh.id, selectors=[])
     mesh_material = MeshPhongMaterial()
 
-    mesh_visual = MeshVisual(
+    mesh_visual = MeshNode(
         name="test", data_stream_id=mesh_stream.id, material=mesh_material
     )
 

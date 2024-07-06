@@ -1,8 +1,8 @@
 {
   "data": {
     "stores": {
-      "0e40cc041f3244168154f5ddb5a60410": {
-        "id": "0e40cc041f3244168154f5ddb5a60410",
+      "5c6eb29e96b545749d00cf8d4cf1f0b5": {
+        "id": "5c6eb29e96b545749d00cf8d4cf1f0b5",
         "coordinates": [
           [
             2.0,
@@ -3009,9 +3009,9 @@
       }
     },
     "streams": {
-      "4de5ffe420d3494db5852e6e3f575f5b": {
-        "id": "4de5ffe420d3494db5852e6e3f575f5b",
-        "data_store_id": "0e40cc041f3244168154f5ddb5a60410",
+      "7abeb45fcf10497b9a129c4cd51dacb3": {
+        "id": "7abeb45fcf10497b9a129c4cd51dacb3",
+        "data_store_id": "5c6eb29e96b545749d00cf8d4cf1f0b5",
         "selectors": [],
         "stream_type": "points_synchronous"
       }
@@ -3019,7 +3019,7 @@
   },
   "scenes": {
     "scenes": {
-      "d683dde8813a4c15a80c8e09c67d057a": {
+      "4f60344ec9da49f79d8d336470264e24": {
         "dims": {
           "coordinate_system": {
             "name": "scene_3d",
@@ -3057,9 +3057,9 @@
         },
         "visuals": [
           {
-            "name": "points_visual",
-            "id": "5dde69ebfd6d44f38f14951806504e30",
-            "data_stream_id": "4de5ffe420d3494db5852e6e3f575f5b",
+            "name": "points_node_3d",
+            "id": "7d31bf46f9354bb487743824c506869c",
+            "data_stream_id": "7abeb45fcf10497b9a129c4cd51dacb3",
             "material": {
               "size": 1.0,
               "color": [
@@ -3084,12 +3084,12 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "dc20c932a8bf4ef294dc838eba58bac1"
+            "id": "e7a8ef9f6bac4f9a9a0e2e16692279aa"
           }
         ],
-        "id": "d683dde8813a4c15a80c8e09c67d057a"
+        "id": "4f60344ec9da49f79d8d336470264e24"
       },
-      "4380cd225842453fab05bcd47093ae2d": {
+      "3cd51a8864504527b8524afb12b28ae0": {
         "dims": {
           "coordinate_system": {
             "name": "scene_2d",
@@ -3126,9 +3126,9 @@
         },
         "visuals": [
           {
-            "name": "points_visual",
-            "id": "e468264e70c5497d919a898b633c0a53",
-            "data_stream_id": "4de5ffe420d3494db5852e6e3f575f5b",
+            "name": "points_node_2d",
+            "id": "20c401e4cf1d4fa7a2123a24f0c8b7a3",
+            "data_stream_id": "7abeb45fcf10497b9a129c4cd51dacb3",
             "material": {
               "size": 5.0,
               "color": [
@@ -3153,10 +3153,10 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "028a02eb58d4445282dc19a345064e59"
+            "id": "7e454967ea1a4dc29ddd55474089c8e3"
           }
         ],
-        "id": "4380cd225842453fab05bcd47093ae2d"
+        "id": "3cd51a8864504527b8524afb12b28ae0"
       }
     }
   }

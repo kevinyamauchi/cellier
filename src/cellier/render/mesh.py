@@ -8,12 +8,12 @@ from pygfx.materials import MeshAbstractMaterial
 from pygfx.materials import MeshPhongMaterial as GFXMeshPhongMaterial
 from pygfx.materials import MeshStandardMaterial as GFXMeshStandardMaterial
 
-from cellier.models.visuals.mesh_visual import MeshPhongMaterial, MeshVisual
+from cellier.models.nodes.mesh_visual import MeshNode, MeshPhongMaterial
 from cellier.slicer.data_slice import RenderedMeshDataSlice
 
 
 def construct_pygfx_mesh_from_model(
-    model: MeshVisual, empty_material: MeshAbstractMaterial
+    model: MeshNode, empty_material: MeshAbstractMaterial
 ) -> Tuple[gfx.WorldObject, MeshAbstractMaterial]:
     """Make a PyGFX mesh object.
 
@@ -51,7 +51,7 @@ class GFXMeshNode:
     transparent data when the slice is empty.
     """
 
-    def __init__(self, model: MeshVisual):
+    def __init__(self, model: MeshNode):
         # This is the material given when the visual is "empty"
         # since pygfx doesn't support empty World Objects, we
         # initialize with a single point

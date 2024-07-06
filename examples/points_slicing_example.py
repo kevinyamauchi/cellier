@@ -26,6 +26,7 @@ class Main(QtWidgets.QWidget):
 
         for cam in self.viewer._render_manager.cameras.values():
             cam.show_pos((20, 15, 15), up=(0, 1, 0))
+            print(cam.get_state())
 
         # make the slider for the z axis in the 2D canvas
         self.z_slider_widget = QLabeledSlider(parent=self)

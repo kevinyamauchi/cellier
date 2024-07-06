@@ -5,12 +5,12 @@ import numpy as np
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores.points import PointsMemoryStore
 from cellier.models.data_streams.points import PointsSynchronousDataStream
+from cellier.models.nodes.points_visual import PointsNode, PointsUniformMaterial
 from cellier.models.scene.cameras import PerspectiveCamera
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import CoordinateSystem, DimsManager
 from cellier.models.scene.scene import Scene
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals.points_visual import PointsUniformMaterial, PointsVisual
 
 # make a 4D point cloud
 n_points = 500
@@ -59,15 +59,15 @@ dims_2d = DimsManager(
 points_material_3d = PointsUniformMaterial(
     size=1, color=(1, 1, 1, 1), size_coordinate_space="data"
 )
-points_visual_3d = PointsVisual(
-    name="points_visual", data_stream_id=points_stream.id, material=points_material_3d
+points_visual_3d = PointsNode(
+    name="points_node_3d", data_stream_id=points_stream.id, material=points_material_3d
 )
 
 points_material_2d = PointsUniformMaterial(
     size=5, color=(1, 1, 1, 1), size_coordinate_space="data"
 )
-points_visual_2d = PointsVisual(
-    name="points_visual", data_stream_id=points_stream.id, material=points_material_2d
+points_visual_2d = PointsNode(
+    name="points_node_2d", data_stream_id=points_stream.id, material=points_material_2d
 )
 
 # make the canvas

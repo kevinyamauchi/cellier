@@ -1,4 +1,4 @@
-"""RenderManager class contains all the rendering and visuals code."""
+"""RenderManager class contains all the rendering and nodes code."""
 
 from dataclasses import dataclass
 from functools import partial
