@@ -7,8 +7,8 @@ from psygnal import EventedModel
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.nodes.mesh_visual import MeshNode
-from cellier.models.nodes.points_visual import PointsNode
+from cellier.models.nodes.mesh_node import MeshNode
+from cellier.models.nodes.points_node import PointsNode
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
 

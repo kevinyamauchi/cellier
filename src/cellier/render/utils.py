@@ -2,8 +2,8 @@
 
 from cellier.models.data_manager import DataManager
 from cellier.models.nodes.base_node import BaseNode
-from cellier.models.nodes.mesh_visual import MeshNode
-from cellier.models.nodes.points_visual import PointsNode
+from cellier.models.nodes.mesh_node import MeshNode
+from cellier.models.nodes.points_node import PointsNode
 from cellier.render.mesh import construct_pygfx_mesh_from_model
 from cellier.render.points import GFXPointsNode
 

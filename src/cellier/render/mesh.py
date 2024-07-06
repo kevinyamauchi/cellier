@@ -8,7 +8,7 @@ from pygfx.materials import MeshAbstractMaterial
 from pygfx.materials import MeshPhongMaterial as GFXMeshPhongMaterial
 from pygfx.materials import MeshStandardMaterial as GFXMeshStandardMaterial
 
-from cellier.models.nodes.mesh_visual import MeshNode, MeshPhongMaterial
+from cellier.models.nodes.mesh_node import MeshNode, MeshPhongMaterial
 from cellier.slicer.data_slice import RenderedMeshDataSlice
 
 

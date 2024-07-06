@@ -5,7 +5,7 @@ import numpy as np
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores.mesh import MeshMemoryStore
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
-from cellier.models.nodes.mesh_visual import MeshNode, MeshPhongMaterial
+from cellier.models.nodes.mesh_node import MeshNode, MeshPhongMaterial
 from cellier.models.scene.cameras import PerspectiveCamera
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import CoordinateSystem, DimsManager

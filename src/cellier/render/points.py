@@ -6,7 +6,7 @@ import numpy as np
 import pygfx as gfx
 from pygfx import PointsMaterial as GFXPointsMaterial
 
-from cellier.models.nodes.points_visual import PointsNode, PointsUniformMaterial
+from cellier.models.nodes.points_node import PointsNode, PointsUniformMaterial
 from cellier.slicer.data_slice import RenderedPointsDataSlice
 
 # conversion of the coordinate space names from

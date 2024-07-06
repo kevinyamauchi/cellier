@@ -7,7 +7,7 @@ from pydantic_core import from_json
 
 from cellier.models.data_stores.mesh import MeshMemoryStore
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
-from cellier.models.nodes.mesh_visual import MeshNode, MeshPhongMaterial
+from cellier.models.nodes.mesh_node import MeshNode, MeshPhongMaterial
 from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
