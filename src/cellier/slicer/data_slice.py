@@ -125,3 +125,23 @@ class RenderedPointsDataSlice(RenderedSliceData):
     """
 
     coordinates: np.ndarray
+
+
+@dataclass(frozen=True)
+class RenderedImageDataSlice(RenderedSliceData):
+    """Data class for rendered mesh slice data.
+
+    Attributes
+    ----------
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
+    visual_id : str
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    data : np.ndarray
+        The point coordinates of the new slice.
+    """
+
+    data: np.ndarray
