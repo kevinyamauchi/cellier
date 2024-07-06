@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Dict
 
-import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
@@ -13,10 +12,9 @@ from pygfx.renderers import WgpuRenderer
 from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.viewer import ViewerModel
+from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
 from cellier.slicer.data_slice import (
-    RenderedMeshDataSlice,
-    RenderedPointsDataSlice,
     RenderedSliceData,
 )
 
@@ -75,9 +73,9 @@ class RenderManager:
             # populate the scene
             for visual_model in scene_model.visuals:
                 world_object = construct_pygfx_object(
-                    visual_model=visual_model, data_manager=viewer_model.data
+                    node_model=visual_model, data_manager=viewer_model.data
                 )
-                scene.add(world_object)
+                scene.add(world_object.node)
                 visuals.update({visual_model.id: world_object})
 
                 # add a bounding box
@@ -98,10 +96,10 @@ class RenderManager:
                 renderers.update({canvas_id: renderer})
 
                 # make a camera for each canvas
-                # camera = construct_pygfx_camera_from_model(
-                #         camera_model=canvas_model.camera
-                # )
-                camera = gfx.OrthographicCamera(110, 110)
+                camera = construct_pygfx_camera_from_model(
+                    camera_model=canvas_model.camera
+                )
+                # camera = gfx.PerspectiveCamera(width=110, height=110)
                 # camera.show_object(scene)
                 cameras.update({canvas_id: camera})
 
@@ -161,29 +159,7 @@ class RenderManager:
     ) -> None:
         """Callback to update objects when a new slice is received."""
         visual_object = self._visuals[slice_data.visual_id]
-
-        if isinstance(slice_data, RenderedMeshDataSlice):
-            new_geometry = gfx.Geometry(
-                positions=slice_data.vertices, indices=slice_data.faces
-            )
-            visual_object.geometry = new_geometry
-
-        elif isinstance(slice_data, RenderedPointsDataSlice):
-            coordinates = slice_data.coordinates
-            if coordinates.shape[1] == 2:
-                # pygfx expects 3D points
-                n_points = coordinates.shape[0]
-                zeros_column = np.zeros((n_points, 1), dtype=np.float32)
-                coordinates = np.column_stack((coordinates, zeros_column))
-
-            if coordinates.shape[0] == 0:
-                # coordinates must not be empty
-                # todo do something smarter?
-                coordinates = np.array([[0, 0, 0]], dtype=np.float32)
-            new_geometry = gfx.Geometry(positions=coordinates)
-            visual_object.geometry = new_geometry
-        else:
-            raise ValueError(f"Unrecognized slice data type: {slice_data}")
+        visual_object.set_slice(slice_data=slice_data)
 
         if redraw_canvas:
             self.events.redraw_canvas.emit(

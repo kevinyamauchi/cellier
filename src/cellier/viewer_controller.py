@@ -34,6 +34,9 @@ class ViewerController:
         # connect events
         self._connect_render_events()
 
+        # connect events for synchronizing the model and renderer
+        # self._connect_model_renderer_events()
+
         # update all of the slices
         self._slicer.reslice_all()
 
@@ -65,6 +68,12 @@ class ViewerController:
 
         # add a callback to refresh the canvas when the scene has been updated
         self._render_manager.events.redraw_canvas.connect(self._on_canvas_redraw_event)
+
+    # def _connect_model_renderer_events(self):
+    #     """Connect callbacks to keep the model and the renderer in sync."""
+    #     # callback to update the camera model on each draw
+    #     for canvas_id, renderer in self._render_manager._renderers.items():
+    #         #
 
     def _on_canvas_redraw_event(self, event: CanvasRedrawRequest) -> None:
         """Called by the RenderManager when the canvas needs to be redrawn."""

@@ -23,5 +23,4 @@ def construct_pygfx_camera_from_model(
         width=camera_model.width,
         height=camera_model.height,
         zoom=camera_model.zoom,
-        depth_range=(camera_model.near_clipping_plane, camera_model.far_clipping_plane),
     )
