@@ -1,8 +1,8 @@
 {
   "data": {
     "stores": {
-      "9992e7d87cdb4eeabcd9e9c22eb30469": {
-        "id": "9992e7d87cdb4eeabcd9e9c22eb30469",
+      "581729b973b240fcb6c2d56af03d3068": {
+        "id": "581729b973b240fcb6c2d56af03d3068",
         "name": "image store",
         "data": [
           [
@@ -3676,9 +3676,9 @@
       }
     },
     "streams": {
-      "b5922c9897494ea9afc7bd20beae8b79": {
-        "id": "b5922c9897494ea9afc7bd20beae8b79",
-        "data_store_id": "9992e7d87cdb4eeabcd9e9c22eb30469",
+      "5d2b4be48103411c94da905c4d18a0a1": {
+        "id": "5d2b4be48103411c94da905c4d18a0a1",
+        "data_store_id": "581729b973b240fcb6c2d56af03d3068",
         "selectors": [],
         "stream_type": "image_synchronous"
       }
@@ -3686,7 +3686,7 @@
   },
   "scenes": {
     "scenes": {
-      "9b3428f2152a48028eb0d8c6073db65d": {
+      "4be3ec831afb436a9b1d98caceb7cd97": {
         "dims": {
           "coordinate_system": {
             "name": "scene_3d",
@@ -3725,8 +3725,8 @@
         "visuals": [
           {
             "name": "points_node_3d",
-            "id": "fde3f9be838e4ece8c0b3ec232185c9e",
-            "data_stream_id": "b5922c9897494ea9afc7bd20beae8b79",
+            "id": "b0b0854ab8674536a2558eb81bacf807",
+            "data_stream_id": "5d2b4be48103411c94da905c4d18a0a1",
             "material": {
               "clim": [
                 0,
@@ -3736,8 +3736,8 @@
             "visual_type": "image"
           }
         ],
-        "canvases": [
-          {
+        "canvases": {
+          "6d08d8c7c6b14b55b5a578c9c9daefba": {
             "camera": {
               "fov": 50,
               "width": 10,
@@ -3745,12 +3745,74 @@
               "zoom": 1,
               "near_clipping_plane": -500,
               "far_clipping_plane": 500,
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "up_direction": [
+                0,
+                0,
+                0
+              ],
+              "frustum": [
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ],
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ]
+              ],
               "camera_type": "perspective"
             },
-            "id": "cc5396f37bd74e1294967f451b846be3"
+            "id": "6d08d8c7c6b14b55b5a578c9c9daefba"
           }
-        ],
-        "id": "9b3428f2152a48028eb0d8c6073db65d"
+        },
+        "id": "4be3ec831afb436a9b1d98caceb7cd97"
       }
     }
   }

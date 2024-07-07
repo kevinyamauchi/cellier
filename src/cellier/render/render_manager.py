@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Dict
 
+import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
@@ -40,10 +41,32 @@ class CanvasRedrawRequest:
     scene_id: str
 
 
+@dataclass(frozen=True)
+class CameraState:
+    """The current state of a camera.
+
+    This should be the uniform across renderer implementations. Thus, should
+    probably be moved outside the pygfx implementation.
+    """
+
+    scene_id: str
+    canvas_id: str
+    camera_id: str
+    position: np.ndarray
+    rotation: np.ndarray
+    fov: float
+    width: float
+    height: float
+    zoom: float
+    up_direction: np.ndarray
+    frustum: np.ndarray
+
+
 class RenderManagerEvents:
     """Events for the RenderManager class."""
 
     redraw_canvas: Signal = Signal(CanvasRedrawRequest)
+    camera_updated: Signal = Signal(CameraState)
 
 
 class RenderManager:
@@ -88,9 +111,8 @@ class RenderManager:
             scene_id = scene_model.id
             scenes.update({scene_id: scene})
 
-            for canvas_model in scene_model.canvases:
+            for canvas_id, canvas_model in scene_model.canvases.items():
                 # make a renderer for each canvas
-                canvas_id = canvas_model.id
                 canvas = canvases[canvas_id]
                 renderer = WgpuRenderer(canvas)
                 renderers.update({canvas_id: renderer})
@@ -123,6 +145,8 @@ class RenderManager:
         self._cameras = cameras
         self._controllers = controllers
 
+        self.render_calls = 0
+
     @property
     def renderers(self) -> Dict[str, WgpuRenderer]:
         """Dictionary of pygfx renderers.
@@ -153,6 +177,29 @@ class RenderManager:
         """Callback to render a given canvas."""
         renderer = self.renderers[canvas_id]
         renderer.render(self.scenes[scene_id], self.cameras[canvas_id])
+
+        # Send event to update the cameras
+        camera = self.cameras[canvas_id]
+        camera_state = camera.get_state()
+
+        self.events.camera_updated.emit(
+            CameraState(
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                camera_id=camera.id,
+                position=camera_state["position"],
+                rotation=camera_state["rotation"],
+                fov=camera_state["fov"],
+                width=camera_state["width"],
+                height=camera_state["height"],
+                zoom=camera_state["zoom"],
+                up_direction=camera_state["reference_up"],
+                frustum=camera.frustum,
+            )
+        )
+
+        self.render_calls += 1
+        print(f"render: {self.render_calls}")
 
     def _on_new_slice(
         self, slice_data: RenderedSliceData, redraw_canvas: bool = True

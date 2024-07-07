@@ -2,7 +2,11 @@
 
 from cellier.gui.constants import GuiFramework
 from cellier.models.viewer import ViewerModel
-from cellier.render.render_manager import CanvasRedrawRequest, RenderManager
+from cellier.render.render_manager import (
+    CameraState,
+    CanvasRedrawRequest,
+    RenderManager,
+)
 from cellier.slicer.slicer import SynchronousDataSlicer
 
 
@@ -31,11 +35,11 @@ class ViewerController:
         # make the slicer
         self._slicer = SynchronousDataSlicer(viewer_model=self._model)
 
-        # connect events
+        # connect events for rendering
         self._connect_render_events()
 
         # connect events for synchronizing the model and renderer
-        # self._connect_model_renderer_events()
+        self._connect_model_renderer_events()
 
         # update all of the slices
         self._slicer.reslice_all()
@@ -69,16 +73,32 @@ class ViewerController:
         # add a callback to refresh the canvas when the scene has been updated
         self._render_manager.events.redraw_canvas.connect(self._on_canvas_redraw_event)
 
-    # def _connect_model_renderer_events(self):
-    #     """Connect callbacks to keep the model and the renderer in sync."""
-    #     # callback to update the camera model on each draw
-    #     for canvas_id, renderer in self._render_manager._renderers.items():
-    #         #
+    def _connect_model_renderer_events(self):
+        """Connect callbacks to keep the model and the renderer in sync."""
+        # callback to update the camera model on each draw
+        self._render_manager.events.camera_updated.connect(self._update_camera_model)
+
+    def _update_camera_model(self, camera_state: CameraState):
+        scene_model = self._model.scenes.scenes[camera_state.scene_id]
+        canvas_model = scene_model.canvases[camera_state.canvas_id]
+        camera_model = canvas_model.camera
+        camera_model.update(
+            {
+                "position": camera_state.position,
+                "rotation": camera_state.rotation,
+                "fov": camera_state.fov,
+                "width": camera_state.width,
+                "height": camera_state.height,
+                "zoom": camera_state.zoom,
+                "up_direction": camera_state.up_direction,
+                "frustum": camera_state.frustum,
+            }
+        )
 
     def _on_canvas_redraw_event(self, event: CanvasRedrawRequest) -> None:
         """Called by the RenderManager when the canvas needs to be redrawn."""
         scene_model = self._model.scenes.scenes[event.scene_id]
-        for canvas_model in scene_model.canvases:
+        for canvas_model in scene_model.canvases.values():
             # refresh the canvas
             self._canvas_widgets[canvas_model.id].update()
 

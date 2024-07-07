@@ -1,5 +1,6 @@
 """Classes for Image data stores."""
 
+import time
 from dataclasses import dataclass
 from typing import Literal, Tuple, Union
 
@@ -76,6 +77,56 @@ class ImageMemoryStore(BaseImageDataStore):
         todo: generalize to oblique slicing
         """
         displayed_dimensions = list(slice_data.displayed_dimensions)
+
+        slice_objects = [
+            int(point_value)
+            if (dimension_index not in displayed_dimensions)
+            else slice(None)
+            for dimension_index, point_value in enumerate(slice_data.point)
+        ]
+
+        return RenderedImageDataSlice(
+            scene_id=slice_data.scene_id,
+            visual_id=slice_data.visual_id,
+            resolution_level=slice_data.resolution_level,
+            data=self.data[tuple(slice_objects)],
+        )
+
+
+class MockLatentImageStore(BaseImageDataStore):
+    """Point data_stores store for arrays stored in memory."""
+
+    data: np.ndarray
+
+    # the time to pause for each slice
+    slice_time: float = 1
+
+    # this is used for a discriminated union
+    store_type: Literal["mock_latent_image"] = "mock_latent_image"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def coerce_to_ndarray_float32(cls, v: str, info: ValidationInfo):
+        """Coerce to a float32 numpy array."""
+        if not isinstance(v, np.ndarray):
+            v = np.asarray(v, dtype=np.float32)
+        return v.astype(np.float32)
+
+    @field_serializer("data")
+    def serialize_ndarray(self, array: np.ndarray, _info) -> list:
+        """Coerce numpy arrays into lists for serialization."""
+        return array.tolist()
+
+    def get_slice(self, slice_data: ImageDataStoreSlice) -> RenderedImageDataSlice:
+        """Get the data required to render a slice of the mesh.
+
+        todo: generalize to oblique slicing
+        """
+        displayed_dimensions = list(slice_data.displayed_dimensions)
+
+        time.sleep(self.slice_time)
 
         slice_objects = [
             int(point_value)

@@ -1,6 +1,6 @@
 """Model to express a scene."""
 
-from typing import List, Union
+from typing import Dict, List, Union
 from uuid import uuid4
 
 from psygnal import EventedModel
@@ -28,7 +28,9 @@ class Scene(EventedModel):
 
     dims: DimsManager
     visuals: List[VisualType]
-    canvases: List[Canvas]
+
+    # key is the canvas id
+    canvases: Dict[str, Canvas]
 
     # store a UUID to identify this specific scene.
     id: str = Field(default_factory=lambda: uuid4().hex)
