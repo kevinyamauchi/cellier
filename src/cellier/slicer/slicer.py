@@ -1,8 +1,9 @@
 """Class for managing the data slicing."""
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 from uuid import uuid4
 
 from psygnal import Signal
@@ -12,6 +13,17 @@ from cellier.slicer.utils import world_slice_from_dims_manager
 
 if TYPE_CHECKING:
     from cellier.models.viewer import ViewerModel
+
+
+class SlicerType(Enum):
+    """Enum for supported slicer types.
+
+    SYNCHRONOUS will use SynchronousDataSlicer
+    ASYNCHRONOUS will use AsynchronousDataSlicer
+    """
+
+    SYNCHRONOUS = "synchronous"
+    ASYNCHRONOUS = "asynchronous"
 
 
 class DataSlicerEvents:
@@ -111,7 +123,7 @@ class SynchronousDataSlicer:
 class AsynchronousDataSlicer:
     """Asynchronous data slicer class."""
 
-    def __init__(self, viewer_model: "ViewerModel", max_workers: int = 3):
+    def __init__(self, viewer_model: "ViewerModel", max_workers: int = 2):
         self._viewer_model = viewer_model
 
         # add the events
@@ -119,6 +131,11 @@ class AsynchronousDataSlicer:
 
         # attach the dims callbacks
         self._attach_dims_callbacks()
+
+        # Storage for pending futures.
+        # The key is the visual id the slice request originated from.
+        self._pending_futures: Dict[str, Future[RenderedSliceData]] = {}
+        self._futures_to_ignore: List[Future[RenderedSliceData]] = []
 
         self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -137,7 +154,7 @@ class AsynchronousDataSlicer:
         """Callback for updating a scene when a dims model changes."""
         self.reslice_scene(scene_id=scene_id)
 
-    def get_slice(self, slice_request: DataSliceRequest) -> RenderedSliceData:
+    def get_slice(self, slice_request: DataSliceRequest) -> Future[RenderedSliceData]:
         """Get a slice of data specified by the DataSliceRequest."""
         data_manager = self._viewer_model.data
 
@@ -150,7 +167,7 @@ class AsynchronousDataSlicer:
         # get the store slice
         data_store_slice = data_stream.get_data_store_slice(slice_request)
 
-        return data_store.get_slice(data_store_slice)
+        return self._thread_pool.submit(data_store.get_slice, data_store_slice)
 
     def reslice_scene(self, scene_id: str):
         """Update all objects in a given scene."""
@@ -167,9 +184,18 @@ class AsynchronousDataSlicer:
             # todo add transformation
             data_to_world_transform = None
 
+            # check if this visual has a pending future and
+            # cancel it
+            if visual.id in self._pending_futures:
+                # try to cancel the future
+                future_to_cancel = self._pending_futures.pop(visual.id)
+                cancelled = future_to_cancel.cancel()
+
+                if not cancelled:
+                    self._futures_to_ignore.append(future_to_cancel)
+
             # apply the slice object to the data
-            # todo move get_slice to DataManager?
-            slice_response = self.get_slice(
+            slice_future = self.get_slice(
                 DataSliceRequest(
                     world_slice=world_slice,
                     resolution_level=0,
@@ -181,10 +207,40 @@ class AsynchronousDataSlicer:
                 )
             )
 
-            # set the data
-            self.events.new_slice.emit(slice_response)
+            # add the callback to send the data when the slice is received
+            slice_future.add_done_callback(self._on_slice_response)
+
+            # store the future
+            self._pending_futures[visual.id] = slice_future
+
+    def _on_slice_response(self, future: Future[RenderedSliceData]):
+        if future.cancelled():
+            # if the future was cancelled, return early
+            return
+
+        if future in self._futures_to_ignore:
+            print("ignoring")
+            self._futures_to_ignore.remove(future)
+            return
+
+        # get the data
+        slice_response = future.result()
+
+        # remove the future from the pending dict
+        visual_id = slice_response.visual_id
+        if visual_id in self._pending_futures:
+            del self._pending_futures[visual_id]
+
+        # emit the slice
+        self.events.new_slice.emit(slice_response)
 
     def reslice_all(self):
         """Reslice all scenes in the viewer."""
         for scene_id in self._viewer_model.scenes.scenes.keys():
             self.reslice_scene(scene_id=scene_id)
+
+
+# @dataclass
+# class PendingFuture:
+#     visual_id: str
+#     future: Future[RenderedSliceData]

@@ -7,7 +7,11 @@ from cellier.render.render_manager import (
     CanvasRedrawRequest,
     RenderManager,
 )
-from cellier.slicer.slicer import SynchronousDataSlicer
+from cellier.slicer.slicer import (
+    AsynchronousDataSlicer,
+    SlicerType,
+    SynchronousDataSlicer,
+)
 
 
 class ViewerController:
@@ -17,6 +21,7 @@ class ViewerController:
         self,
         model: ViewerModel,
         gui_framework: GuiFramework = GuiFramework.QT,
+        slicer_type: SlicerType = SlicerType.SYNCHRONOUS,
         widget_parent=None,
     ):
         self._model = model
@@ -33,7 +38,12 @@ class ViewerController:
         )
 
         # make the slicer
-        self._slicer = SynchronousDataSlicer(viewer_model=self._model)
+        if slicer_type == SlicerType.SYNCHRONOUS:
+            self._slicer = SynchronousDataSlicer(viewer_model=self._model)
+        elif slicer_type == SlicerType.ASYNCHRONOUS:
+            self._slicer = AsynchronousDataSlicer(viewer_model=self._model)
+        else:
+            raise ValueError(f"Unknown slicer type: {slicer_type}")
 
         # connect events for rendering
         self._connect_render_events()

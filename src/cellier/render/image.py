@@ -26,7 +26,7 @@ def construct_pygfx_image_from_model(
     # initialize with a dummy image
     # since we can't initialize an empty node.
     geometry = gfx.Geometry(
-        grix=np.ones((5, 5, 5), dtype=np.float32),
+        grid=np.ones((5, 5, 5), dtype=np.float32),
     )
 
     # make the material model
