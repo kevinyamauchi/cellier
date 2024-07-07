@@ -43,7 +43,7 @@ def test_scene_model(tmp_path):
     canvas = Canvas(camera=PerspectiveCamera())
 
     # make the scene
-    scene = Scene(dims=dims, visuals=[mesh_visual], canvases=[canvas])
+    scene = Scene(dims=dims, visuals=[mesh_visual], canvases={canvas.id: canvas})
 
     output_path = tmp_path / "test.json"
     with open(output_path, "w") as f:

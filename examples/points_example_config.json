@@ -1,8 +1,9 @@
 {
   "data": {
     "stores": {
-      "5c6eb29e96b545749d00cf8d4cf1f0b5": {
-        "id": "5c6eb29e96b545749d00cf8d4cf1f0b5",
+      "7adddb3051854bd6b45b341dc51ebc63": {
+        "id": "7adddb3051854bd6b45b341dc51ebc63",
+        "name": "data store",
         "coordinates": [
           [
             2.0,
@@ -3009,9 +3010,9 @@
       }
     },
     "streams": {
-      "7abeb45fcf10497b9a129c4cd51dacb3": {
-        "id": "7abeb45fcf10497b9a129c4cd51dacb3",
-        "data_store_id": "5c6eb29e96b545749d00cf8d4cf1f0b5",
+      "f5eb417bcbd44b7a8587ba2fccc4f116": {
+        "id": "f5eb417bcbd44b7a8587ba2fccc4f116",
+        "data_store_id": "7adddb3051854bd6b45b341dc51ebc63",
         "selectors": [],
         "stream_type": "points_synchronous"
       }
@@ -3019,7 +3020,7 @@
   },
   "scenes": {
     "scenes": {
-      "4f60344ec9da49f79d8d336470264e24": {
+      "2c2cb24fda104c3ea0383d4b9185cf76": {
         "dims": {
           "coordinate_system": {
             "name": "scene_3d",
@@ -3058,8 +3059,8 @@
         "visuals": [
           {
             "name": "points_node_3d",
-            "id": "7d31bf46f9354bb487743824c506869c",
-            "data_stream_id": "7abeb45fcf10497b9a129c4cd51dacb3",
+            "id": "6a651e46d85741848828dd21854f9d98",
+            "data_stream_id": "f5eb417bcbd44b7a8587ba2fccc4f116",
             "material": {
               "size": 1.0,
               "color": [
@@ -3073,8 +3074,8 @@
             "visual_type": "points"
           }
         ],
-        "canvases": [
-          {
+        "canvases": {
+          "e6382ed3f09d44338ac14887e92fac7f": {
             "camera": {
               "fov": 50,
               "width": 10,
@@ -3082,14 +3083,76 @@
               "zoom": 1,
               "near_clipping_plane": -500,
               "far_clipping_plane": 500,
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "up_direction": [
+                0,
+                0,
+                0
+              ],
+              "frustum": [
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ],
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ]
+              ],
               "camera_type": "perspective"
             },
-            "id": "e7a8ef9f6bac4f9a9a0e2e16692279aa"
+            "id": "e6382ed3f09d44338ac14887e92fac7f"
           }
-        ],
-        "id": "4f60344ec9da49f79d8d336470264e24"
+        },
+        "id": "2c2cb24fda104c3ea0383d4b9185cf76"
       },
-      "3cd51a8864504527b8524afb12b28ae0": {
+      "14fda165252b4877ba5bba493711617c": {
         "dims": {
           "coordinate_system": {
             "name": "scene_2d",
@@ -3127,8 +3190,8 @@
         "visuals": [
           {
             "name": "points_node_2d",
-            "id": "20c401e4cf1d4fa7a2123a24f0c8b7a3",
-            "data_stream_id": "7abeb45fcf10497b9a129c4cd51dacb3",
+            "id": "3b88a02e1b06404ca6891424aadd4c3c",
+            "data_stream_id": "f5eb417bcbd44b7a8587ba2fccc4f116",
             "material": {
               "size": 5.0,
               "color": [
@@ -3142,8 +3205,8 @@
             "visual_type": "points"
           }
         ],
-        "canvases": [
-          {
+        "canvases": {
+          "b0f0b92ccf5c4e159a06a684221c27ce": {
             "camera": {
               "fov": 50,
               "width": 10,
@@ -3151,12 +3214,74 @@
               "zoom": 1,
               "near_clipping_plane": -500,
               "far_clipping_plane": 500,
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "up_direction": [
+                0,
+                0,
+                0
+              ],
+              "frustum": [
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ],
+                [
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                ]
+              ],
               "camera_type": "perspective"
             },
-            "id": "7e454967ea1a4dc29ddd55474089c8e3"
+            "id": "b0f0b92ccf5c4e159a06a684221c27ce"
           }
-        ],
-        "id": "3cd51a8864504527b8524afb12b28ae0"
+        },
+        "id": "14fda165252b4877ba5bba493711617c"
       }
     }
   }

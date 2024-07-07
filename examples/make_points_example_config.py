@@ -78,8 +78,12 @@ camera_2d = PerspectiveCamera()
 canvas_2d = Canvas(camera=camera_2d)
 
 # make the scene
-scene_3d = Scene(dims=dims_3d, visuals=[points_visual_3d], canvases=[canvas_3d])
-scene_2d = Scene(dims=dims_2d, visuals=[points_visual_2d], canvases=[canvas_2d])
+scene_3d = Scene(
+    dims=dims_3d, visuals=[points_visual_3d], canvases={canvas_3d.id: canvas_3d}
+)
+scene_2d = Scene(
+    dims=dims_2d, visuals=[points_visual_2d], canvases={canvas_2d.id: canvas_2d}
+)
 
 scene_manager = SceneManager(scenes={scene_3d.id: scene_3d, scene_2d.id: scene_2d})
 
