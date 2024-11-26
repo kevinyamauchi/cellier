@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from cellier.util.geometry import points_in_frustum
+
 
 def compute_chunk_corners_3d(
     array_shape: np.ndarray, chunk_shape: np.ndarray
@@ -68,6 +70,11 @@ class ChunkData3D:
         )
 
     @property
+    def n_chunks(self) -> int:
+        """Number of chunks in the array."""
+        return self.chunk_corners.shape[0]
+
+    @property
     def chunk_corners(self) -> np.ndarray:
         """(N, 8, 3) array containing the coordinates for the corners of each chunk.
 
@@ -84,6 +91,25 @@ class ChunkData3D:
         return self._chunk_coordinates
 
     @property
+    def chunk_corners_flat(self) -> np.ndarray:
+        """(N*8, 3) array containing the corners of all chunks."""
+        n_corners = self.chunk_corners.shape[0] * 8
+        return self.chunk_corners.reshape(n_corners, 3)
+
+    @property
     def chunk_centers(self) -> np.ndarray:
         """(N, 3) array containing the center coordinate of each chunk."""
         return np.mean(self.chunk_corners, axis=1)
+
+    def chunks_in_frustum(self, planes: np.ndarray, mode="any") -> np.ndarray:
+        """Determine which chunks are in the frustum plane."""
+        points_mask = points_in_frustum(
+            points=self.chunk_corners_flat, planes=planes
+        ).reshape(self.n_chunks, 8)
+
+        if mode == "any":
+            return np.any(points_mask, axis=1)
+        elif mode == "all":
+            return np.all(points_mask, axis=1)
+        else:
+            raise ValueError(f"{mode} is not a valid. Should be any or all")
