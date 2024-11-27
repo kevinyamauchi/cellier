@@ -1,6 +1,10 @@
 import numpy as np
 
-from cellier.util.geometry import frustum_planes_from_corners, points_in_frustum
+from cellier.util.geometry import (
+    frustum_planes_from_corners,
+    near_far_plane_edge_lengths,
+    points_in_frustum,
+)
 
 
 def test_points_in_frustum():
@@ -62,3 +66,28 @@ def test_frustum_planes_from_corners():
         ]
     )
     np.testing.assert_allclose(planes, expected_planes)
+
+
+def test_near_far_plane_edge_lengths():
+    """Test calculated the edge lengths of the near and far plane."""
+
+    corners = np.array(
+        [
+            [
+                [-1, -2, -1],
+                [1, -2, -1],
+                [1, 2, -1],
+                [-1, 2, -1],
+            ],
+            [
+                [-2, -4, 10],
+                [2, -4, 10],
+                [2, 4, 10],
+                [-2, 4, 10],
+            ],
+        ]
+    )
+    edge_lengths = near_far_plane_edge_lengths(corners=corners)
+
+    expected_edge_lengths = np.array([[2, 4, 2, 4], [4, 8, 4, 8]])
+    np.testing.assert_allclose(edge_lengths, expected_edge_lengths)

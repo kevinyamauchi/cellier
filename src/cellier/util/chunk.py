@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cellier.util.geometry import points_in_frustum
+from cellier.util.geometry import near_far_plane_edge_lengths, points_in_frustum
 
 
 def compute_chunk_corners_3d(
@@ -59,12 +59,23 @@ def compute_chunk_corners_3d(
     return np.array(all_corners, dtype=int)
 
 
-class ChunkData3D:
-    """Data structure for querying chunks from a chunked array."""
+class ChunkedArray3D:
+    """Data structure for querying chunks from a chunked array.
 
-    def __init__(self, array_shape, chunk_shape):
+    Transforms are defined from the chunked array to the parent coordinate system.
+    """
+
+    def __init__(
+        self,
+        array_shape,
+        chunk_shape,
+        scale: tuple[float, float, float] = (1, 1, 1),
+        translation: tuple[float, float, float] = (0, 0, 0),
+    ):
         self.array_shape = np.asarray(array_shape)
         self.chunk_shape = np.asarray(chunk_shape)
+        self.scale = np.asarray(scale)
+        self.translation = np.asarray(translation)
         self._chunk_coordinates = compute_chunk_corners_3d(
             array_shape=self.array_shape, chunk_shape=self.chunk_shape
         )
@@ -113,3 +124,33 @@ class ChunkData3D:
             return np.all(points_mask, axis=1)
         else:
             raise ValueError(f"{mode} is not a valid. Should be any or all")
+
+
+class MultiScaleChunkedArray3D:
+    """A data model for a multiscale chunked array."""
+
+    def __init__(self, scales: list[ChunkedArray3D]):
+        self._scales = scales
+
+    @property
+    def scales(self) -> list[ChunkedArray3D]:
+        """List of ChunkedArray3D."""
+        return self._scales
+
+    def scale_from_frustum(
+        self,
+        frustum_corners: np.ndarray,
+        texture_shape: np.ndarray,
+        width_factor: float,
+    ) -> ChunkedArray3D:
+        """Determine the appropriate scale from the frustum corners."""
+        # get the characteristic width of the frustum
+        frustum_width = np.max(near_far_plane_edge_lengths(corners=frustum_corners))
+
+        for chunked_array in self.scales:
+            texture_width = np.min(chunked_array.scale * texture_shape)
+
+            if texture_width >= (frustum_width * width_factor):
+                return chunked_array
+        # if none meet the criteria, return the lowest resolution
+        return self.scales[-1]

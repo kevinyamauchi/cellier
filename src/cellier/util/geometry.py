@@ -35,6 +35,28 @@ frustum_plane_point_indices = [
     ((1, 1), (1, 0), (0, 0)),  # bottom
 ]
 
+# corner indices for the edges of the near and far plane of the frustum.
+# edges are:
+# - near-bottom
+# - near-right
+# - near-top
+# - near-left
+# - far-bottom
+# - far-right
+# - far-top
+# - far-left
+# corners must be ordered the same as above.
+near_far_plane_edge_indices = [
+    ((0, 0), (0, 1)),
+    ((0, 1), (0, 2)),
+    ((0, 2), (0, 3)),
+    ((0, 3), (0, 0)),
+    ((1, 0), (1, 1)),
+    ((1, 1), (1, 2)),
+    ((1, 2), (1, 3)),
+    ((1, 3), (1, 0)),
+]
+
 
 def frustum_edges_from_corners(corners: np.ndarray) -> np.ndarray:
     """Get an array of the frustum edges from the corners.
@@ -67,6 +89,21 @@ def frustum_edges_from_corners(corners: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float32,
     )
+
+
+def near_far_plane_edge_lengths(corners: np.ndarray) -> np.ndarray:
+    """Calculate the length of each edges of the near and far plane of the frustum."""
+    edge_lengths = np.zeros((2, 4))
+    for near_far_index in range(2):
+        for edge_index in range(4):
+            edge_indices = frustum_edge_indices[(near_far_index * 4) + edge_index]
+            edge_vector = (
+                corners[edge_indices[0][0], edge_indices[0][1], :]
+                - corners[edge_indices[1][0], edge_indices[1][1], :]
+            )
+            edge_lengths[near_far_index, edge_index] = np.linalg.norm(edge_vector)
+
+    return edge_lengths
 
 
 def compute_plane_parameters(point_0, point_1, point_2):
