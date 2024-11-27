@@ -1,13 +1,13 @@
-"""Example displaying and slicing points in a Qt widget.
+"""Example displaying and slicing a 4D volume in a Qt widget.
 
-These are 4D points in a single array source rendered to two canvases:
-a 3D view and a 2D view. The slider controls the position of the 2D slice.
+There is a 4D volume in a single array source.
 """
 
 from qtpy import QtWidgets
 from superqt import QLabeledSlider
 
 from cellier.models.viewer import ViewerModel
+from cellier.slicer.slicer import SlicerType
 from cellier.viewer_controller import ViewerController
 
 
@@ -22,16 +22,19 @@ class Main(QtWidgets.QWidget):
         viewer_model = ViewerModel.from_json_file(viewer_config_path)
 
         # make the viewer
-        self.viewer = ViewerController(model=viewer_model, widget_parent=self)
+        self.viewer = ViewerController(
+            model=viewer_model, slicer_type=SlicerType.ASYNCHRONOUS, widget_parent=self
+        )
 
         for cam in self.viewer._render_manager.cameras.values():
             cam.show_pos((20, 15, 15), up=(0, 1, 0))
             print(cam.get_state())
 
         # make the slider for the z axis in the 2D canvas
-        self.z_slider_widget = QLabeledSlider(parent=self)
-        self.z_slider_widget.valueChanged.connect(self._on_z_slider_changed)
-        self.z_slider_widget.setValue(25)
+        self.t_slider_widget = QLabeledSlider(parent=self)
+        self.t_slider_widget.valueChanged.connect(self._on_z_slider_changed)
+        self.t_slider_widget.setMaximum(2)
+        self.t_slider_widget.setValue(0)
 
         layout = QtWidgets.QHBoxLayout()
         for canvas in self.viewer._canvas_widgets.values():
@@ -44,13 +47,13 @@ class Main(QtWidgets.QWidget):
         for scene in self.viewer._model.scenes.scenes.values():
             dims_manager = scene.dims
             coordinate_system = dims_manager.coordinate_system
-            if coordinate_system.name == "scene_2d":
+            if coordinate_system.name == "scene_3d":
                 dims_point = list(dims_manager.point)
-                dims_point[1] = slider_value
+                dims_point[0] = slider_value
                 dims_manager.point = dims_point
 
 
-CONFIG_PATH = "points_example_config.json"
+CONFIG_PATH = "latent_volume_example_config.json"
 
 app = QtWidgets.QApplication([])
 m = Main(CONFIG_PATH)

@@ -30,7 +30,7 @@ def construct_qt_canvases_from_model(
     """
     canvas_widgets = {}
     for scene_model in viewer_model.scenes.scenes.values():
-        for canvas_model in scene_model.canvases:
+        for canvas_model in scene_model.canvases.values():
             canvas_widgets[canvas_model.id] = WgpuCanvas(parent=parent)
 
     return canvas_widgets
