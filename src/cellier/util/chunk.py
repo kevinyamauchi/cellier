@@ -2,7 +2,11 @@
 
 import numpy as np
 
-from cellier.util.geometry import near_far_plane_edge_lengths, points_in_frustum
+from cellier.util.geometry import (
+    frustum_planes_from_corners,
+    near_far_plane_edge_lengths,
+    points_in_frustum,
+)
 
 
 def compute_chunk_corners_3d(
@@ -132,18 +136,63 @@ class MultiScaleChunkedArray3D:
     def __init__(self, scales: list[ChunkedArray3D]):
         self._scales = scales
 
+        self._min_voxel_size_local = np.array(
+            [np.min(scale_level.scale) for scale_level in self.scales]
+        )
+
+        self._n_scales = len(self.scales)
+
     @property
     def scales(self) -> list[ChunkedArray3D]:
         """List of ChunkedArray3D."""
         return self._scales
 
-    def scale_from_frustum(
+    @property
+    def n_scales(self) -> int:
+        """The number of scale levels."""
+        return self._n_scales
+
+    @property
+    def min_voxel_size_local(self) -> np.ndarray:
+        """The minimum edge length for a voxel at each scale.
+
+        Size is in the local coordinate system.
+        """
+        return self._min_voxel_size_local
+
+    def _select_scale_by_logical_voxel_size(
+        self,
+        frustum_width_local: float,
+        frustum_height_local: float,
+        width_logical: int,
+        height_logical: int,
+    ) -> ChunkedArray3D:
+        """Select the scale based on the size of the logical voxel.
+
+        This method tries to select a scale where the size of the voxel
+        is closest to the one logical pixel.
+        """
+        # get the smallest size of the logical pixels
+        logical_pixel_width_local = frustum_width_local / width_logical
+        logical_pixel_height_local = frustum_height_local / height_logical
+        logical_pixel_local = min(logical_pixel_width_local, logical_pixel_height_local)
+
+        pixel_size_difference = self.min_voxel_size_local - logical_pixel_local
+
+        for level_index in reversed(range(self.n_scales)):
+            if pixel_size_difference[level_index] <= 0:
+                selected_level_index = min(self.n_scales - 1, level_index + 1)
+                return self.scales[selected_level_index]
+
+        # if none work, return the highest resolution
+        return self.scales[0]
+
+    def _select_scale_by_frustum_width(
         self,
         frustum_corners: np.ndarray,
         texture_shape: np.ndarray,
         width_factor: float,
     ) -> ChunkedArray3D:
-        """Determine the appropriate scale from the frustum corners."""
         # get the characteristic width of the frustum
         frustum_width = np.max(near_far_plane_edge_lengths(corners=frustum_corners))
 
@@ -154,3 +203,74 @@ class MultiScaleChunkedArray3D:
                 return chunked_array
         # if none meet the criteria, return the lowest resolution
         return self.scales[-1]
+
+    def _select_scale_by_texture_bounding_box(
+        self,
+        frustum_corners: np.ndarray,
+        texture_shape: np.ndarray,
+        width_factor: float,
+    ) -> ChunkedArray3D:
+        for level_index in reversed(range(self.n_scales)):
+            chunked_array = self.scales[level_index]
+            flat_corners = frustum_corners.reshape(8, 3)
+            transformed_flat_corners = (
+                flat_corners / chunked_array.scale
+            ) - chunked_array.translation
+            transformed_corners = transformed_flat_corners.reshape(2, 4, 3)
+
+            frustum_planes = frustum_planes_from_corners(transformed_corners)
+            chunk_mask = chunked_array.chunks_in_frustum(
+                planes=frustum_planes, mode="any"
+            )
+            chunks_to_update = chunked_array.chunk_corners[chunk_mask]
+            n_chunks_to_update = chunks_to_update.shape[0]
+            chunks_to_update_flat = chunks_to_update.reshape(
+                (n_chunks_to_update * 8, 3)
+            )
+            min_corner_all = np.min(chunks_to_update_flat, axis=0)
+            max_corner_all = np.max(chunks_to_update_flat, axis=0)
+
+            required_shape = max_corner_all - min_corner_all
+            if np.any(required_shape > texture_shape):
+                # if this resolution would require too many chunks,
+                # take one resolution lower (scales go from highest to lowest res)
+                selected_level = min(self.n_scales, level_index + 1)
+                return self.scales[selected_level]
+        # if all scales fit, use the highest res one
+        # (scales go from highest to lowest res)
+        return self.scales[0]
+
+    def scale_from_frustum(
+        self,
+        frustum_corners: np.ndarray,
+        width_logical: int,
+        height_logical: int,
+        texture_shape: np.ndarray,
+        width_factor: float,
+        method: str = "width",
+    ) -> ChunkedArray3D:
+        """Determine the appropriate scale from the frustum corners."""
+        if method == "width":
+            return self._select_scale_by_frustum_width(
+                frustum_corners=frustum_corners,
+                texture_shape=texture_shape,
+                width_factor=width_factor,
+            )
+        elif method == "full_texture_size":
+            return self._select_scale_by_texture_bounding_box(
+                frustum_corners=frustum_corners,
+                texture_shape=texture_shape,
+                width_factor=width_factor,
+            )
+        elif method == "logical_pixel_size":
+            near_plane = frustum_corners[0]
+            width_local = np.linalg.norm(near_plane[1, :] - near_plane[0, :])
+            height_local = np.linalg.norm(near_plane[3, :] - near_plane[0, :])
+            return self._select_scale_by_logical_voxel_size(
+                frustum_width_local=width_local,
+                frustum_height_local=height_local,
+                width_logical=width_logical,
+                height_logical=height_logical,
+            )
+        else:
+            raise ValueError(f"Unknown method {method}.")
