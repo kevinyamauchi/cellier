@@ -4,10 +4,16 @@ from typing import Tuple
 
 import numpy as np
 import pygfx as gfx
-from pygfx.materials import VolumeMinipMaterial as GFXMIPMaterial
+from pygfx.materials import VolumeIsoMaterial as GFXIsoMaterial
+from pygfx.materials import VolumeMipMaterial as GFXMIPMaterial
 from pygfx.materials import VolumeRayMaterial as GFXVolumeRayMaterial
 
-from cellier.models.nodes.image_node import ImageMIPMaterial, ImageNode
+from cellier.models.nodes.image_node import (
+    ImageIsoMaterial,
+    ImageMIPMaterial,
+    ImageNode,
+    MultiscaleImageNode,
+)
 from cellier.slicer.data_slice import RenderedImageDataSlice
 
 
@@ -18,7 +24,7 @@ def construct_pygfx_image_from_model(
     """Make a PyGFX image object.
 
     This function dispatches to other constructor functions
-    based on the material, etc. and returns a PyGFX mesh object.
+    based on the material, etc. and returns a PyGFX image object.
     """
     # make the geometry
     # todo make initial slicing happen here or initialize with something more sensible
@@ -33,11 +39,67 @@ def construct_pygfx_image_from_model(
     material_model = model.material
     if isinstance(material_model, ImageMIPMaterial):
         material = GFXMIPMaterial(clim=material_model.clim, map=gfx.cm.magma)
+    elif isinstance(material_model, ImageIsoMaterial):
+        material = GFXIsoMaterial(
+            clim=material_model.clim,
+            map=gfx.cm.magma,
+            threshold=material_model.iso_threshold,
+        )
     else:
         raise TypeError(
             f"Unknown mesh material model type: {type(material_model)} in {model}"
         )
     return gfx.Volume(geometry=geometry, material=empty_material), material
+
+
+def construct_pygfx_multiscale_image_from_model(
+    model: MultiscaleImageNode,
+    empty_material: GFXVolumeRayMaterial,
+) -> Tuple[gfx.WorldObject, gfx.VolumeRayMaterial]:
+    """Make a multiscale PyGFX image object.
+
+    This function dispatches to other constructor functions
+    based on the material, etc. and returns a PyGFX Group object.
+    """
+    # make the geometry
+    # todo make initial slicing happen here or initialize with something more sensible
+
+    # we make the
+    node = gfx.Group(name=model.id)
+
+    multiscale_group = gfx.Group(name="multiscales")
+
+    for scale_level_index in range(model.n_scales):
+        # initialize with a dummy image
+        # since we can't initialize an empty node.
+        geometry = gfx.Geometry(
+            grid=np.ones((5, 5, 5), dtype=np.float32),
+        )
+        scale_image = gfx.Volume(
+            geometry=geometry,
+            material=empty_material,
+            name=f"scale_{scale_level_index}",
+        )
+        multiscale_group.add(scale_image)
+
+    # add the images to the base node
+    node.add(multiscale_group)
+
+    # make the material model
+    material_model = model.material
+    if isinstance(material_model, ImageMIPMaterial):
+        material = GFXMIPMaterial(clim=material_model.clim, map=gfx.cm.magma)
+    elif isinstance(material_model, ImageIsoMaterial):
+        material = GFXIsoMaterial(
+            clim=material_model.clim,
+            map=gfx.cm.magma,
+            threshold=material_model.iso_threshold,
+        )
+    else:
+        raise TypeError(
+            f"Unknown mesh material model type: {type(material_model)} in {model}"
+        )
+    return node, material
 
 
 class GFXImageNode:
@@ -58,7 +120,7 @@ class GFXImageNode:
             model=model, empty_material=self._empty_material
         )
 
-        # Flag that is set to True when there are no points to display.
+        # Flag that is set to True when there are no data to display.
         self._empty = True
 
     @property
@@ -98,3 +160,30 @@ class GFXImageNode:
         elif not was_empty and self._empty:
             # if the layer has become empty, set the material
             self.node.material = self._empty_material
+
+
+class GFXMultiScaleImageNode:
+    """PyGFX multiscale image node implementation.
+
+    Note that PyGFX doesn't support empty WorldObjects, so we set
+    transparent data when the slice is empty.
+    """
+
+    def __init__(self, model: MultiscaleImageNode):
+        # This is the material given when the visual is "empty"
+        # since pygfx doesn't support empty World Objects, we
+        # initialize with a single point
+        self._empty_material = GFXVolumeRayMaterial()
+
+        # make the pygfx materials
+        self.node, self._material = construct_pygfx_image_from_model(
+            model=model, empty_material=self._empty_material
+        )
+
+        # Flag that is set to True when there are no data to display.
+        self._empty = True
+
+    @property
+    def material(self) -> GFXVolumeRayMaterial:
+        """The material object points."""
+        return self._material

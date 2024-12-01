@@ -2,10 +2,10 @@
 
 from cellier.models.data_manager import DataManager
 from cellier.models.nodes.base_node import BaseNode
-from cellier.models.nodes.image_node import ImageNode
+from cellier.models.nodes.image_node import ImageNode, MultiscaleImageNode
 from cellier.models.nodes.mesh_node import MeshNode
 from cellier.models.nodes.points_node import PointsNode
-from cellier.render.image import GFXImageNode
+from cellier.render.image import GFXImageNode, GFXMultiScaleImageNode
 from cellier.render.mesh import GFXMeshNode
 from cellier.render.points import GFXPointsNode
 
@@ -21,6 +21,8 @@ def construct_pygfx_object(node_model: BaseNode, data_manager: DataManager):
         return GFXPointsNode(model=node_model)
     elif isinstance(node_model, ImageNode):
         return GFXImageNode(model=node_model)
+    elif isinstance(node_model, MultiscaleImageNode):
+        return GFXMultiScaleImageNode(model=node_model)
 
     else:
         raise TypeError(f"Unsupported visual model: {type(node_model)}")
