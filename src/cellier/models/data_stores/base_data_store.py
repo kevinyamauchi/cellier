@@ -24,6 +24,7 @@ class BaseDataStore(EventedModel):
 
     # store a UUID to identify this specific scene.
     id: str = Field(default_factory=lambda: uuid4().hex)
+    name: str = "data store"
 
 
 @dataclass(frozen=True)

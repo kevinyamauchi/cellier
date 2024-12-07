@@ -1,4 +1,4 @@
-"""Base classes for visuals and materials."""
+"""Base classes for nodes and materials."""
 
 from uuid import uuid4
 
@@ -6,8 +6,8 @@ from psygnal import EventedModel
 from pydantic import Field
 
 
-class BaseVisual(EventedModel):
-    """Base model for all visuals."""
+class BaseNode(EventedModel):
+    """Base model for all nodes."""
 
     name: str
 

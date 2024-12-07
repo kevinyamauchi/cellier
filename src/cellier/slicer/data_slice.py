@@ -109,7 +109,7 @@ class RenderedMeshDataSlice(RenderedSliceData):
 
 @dataclass(frozen=True)
 class RenderedPointsDataSlice(RenderedSliceData):
-    """Data class for rendered mesh slice data.
+    """Data class for rendered points slice data.
 
     Attributes
     ----------
@@ -125,3 +125,26 @@ class RenderedPointsDataSlice(RenderedSliceData):
     """
 
     coordinates: np.ndarray
+
+
+@dataclass(frozen=True)
+class RenderedImageDataSlice(RenderedSliceData):
+    """Data class for rendered image slice data.
+
+    Attributes
+    ----------
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
+    visual_id : str
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    data : np.ndarray
+        The point coordinates of the new slice.
+    texture_start_index : tuple[int, int, int]
+        The index of the minimum index to insert the chunk into.
+    """
+
+    data: np.ndarray
+    texture_start_index: tuple[int, int, int]

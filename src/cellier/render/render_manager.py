@@ -1,4 +1,4 @@
-"""RenderManager class contains all the rendering and visuals code."""
+"""RenderManager class contains all the rendering and nodes code."""
 
 from dataclasses import dataclass
 from functools import partial
@@ -10,13 +10,13 @@ import pygfx as gfx
 from psygnal import Signal
 from pygfx.controllers import TrackballController
 from pygfx.renderers import WgpuRenderer
+from superqt import ensure_main_thread
 from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.viewer import ViewerModel
+from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
 from cellier.slicer.data_slice import (
-    RenderedMeshDataSlice,
-    RenderedPointsDataSlice,
     RenderedSliceData,
 )
 
@@ -42,10 +42,32 @@ class CanvasRedrawRequest:
     scene_id: str
 
 
+@dataclass(frozen=True)
+class CameraState:
+    """The current state of a camera.
+
+    This should be the uniform across renderer implementations. Thus, should
+    probably be moved outside the pygfx implementation.
+    """
+
+    scene_id: str
+    canvas_id: str
+    camera_id: str
+    position: np.ndarray
+    rotation: np.ndarray
+    fov: float
+    width: float
+    height: float
+    zoom: float
+    up_direction: np.ndarray
+    frustum: np.ndarray
+
+
 class RenderManagerEvents:
     """Events for the RenderManager class."""
 
     redraw_canvas: Signal = Signal(CanvasRedrawRequest)
+    camera_updated: Signal = Signal(CameraState)
 
 
 class RenderManager:
@@ -75,9 +97,9 @@ class RenderManager:
             # populate the scene
             for visual_model in scene_model.visuals:
                 world_object = construct_pygfx_object(
-                    visual_model=visual_model, data_manager=viewer_model.data
+                    node_model=visual_model, data_manager=viewer_model.data
                 )
-                scene.add(world_object)
+                scene.add(world_object.node)
                 visuals.update({visual_model.id: world_object})
 
                 # add a bounding box
@@ -90,18 +112,17 @@ class RenderManager:
             scene_id = scene_model.id
             scenes.update({scene_id: scene})
 
-            for canvas_model in scene_model.canvases:
+            for canvas_id, canvas_model in scene_model.canvases.items():
                 # make a renderer for each canvas
-                canvas_id = canvas_model.id
                 canvas = canvases[canvas_id]
                 renderer = WgpuRenderer(canvas)
                 renderers.update({canvas_id: renderer})
 
                 # make a camera for each canvas
-                # camera = construct_pygfx_camera_from_model(
-                #         camera_model=canvas_model.camera
-                # )
-                camera = gfx.OrthographicCamera(110, 110)
+                camera = construct_pygfx_camera_from_model(
+                    camera_model=canvas_model.camera
+                )
+                # camera = gfx.PerspectiveCamera(width=110, height=110)
                 # camera.show_object(scene)
                 cameras.update({canvas_id: camera})
 
@@ -124,6 +145,8 @@ class RenderManager:
         self._renderers = renderers
         self._cameras = cameras
         self._controllers = controllers
+
+        self.render_calls = 0
 
     @property
     def renderers(self) -> Dict[str, WgpuRenderer]:
@@ -151,39 +174,46 @@ class RenderManager:
         """
         return self._scenes
 
+    @property
+    def visuals(self) -> Dict[str, gfx.WorldObject]:
+        """The visuals in the RenderManager."""
+        return self._visuals
+
     def animate(self, scene_id: str, canvas_id: str) -> None:
         """Callback to render a given canvas."""
         renderer = self.renderers[canvas_id]
         renderer.render(self.scenes[scene_id], self.cameras[canvas_id])
 
+        # Send event to update the cameras
+        camera = self.cameras[canvas_id]
+        camera_state = camera.get_state()
+
+        self.events.camera_updated.emit(
+            CameraState(
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                camera_id=camera.id,
+                position=camera_state["position"],
+                rotation=camera_state["rotation"],
+                fov=camera_state["fov"],
+                width=camera_state["width"],
+                height=camera_state["height"],
+                zoom=camera_state["zoom"],
+                up_direction=camera_state["reference_up"],
+                frustum=camera.frustum,
+            )
+        )
+
+        self.render_calls += 1
+        print(f"render: {self.render_calls}")
+
+    @ensure_main_thread
     def _on_new_slice(
         self, slice_data: RenderedSliceData, redraw_canvas: bool = True
     ) -> None:
         """Callback to update objects when a new slice is received."""
         visual_object = self._visuals[slice_data.visual_id]
-
-        if isinstance(slice_data, RenderedMeshDataSlice):
-            new_geometry = gfx.Geometry(
-                positions=slice_data.vertices, indices=slice_data.faces
-            )
-            visual_object.geometry = new_geometry
-
-        elif isinstance(slice_data, RenderedPointsDataSlice):
-            coordinates = slice_data.coordinates
-            if coordinates.shape[1] == 2:
-                # pygfx expects 3D points
-                n_points = coordinates.shape[0]
-                zeros_column = np.zeros((n_points, 1), dtype=np.float32)
-                coordinates = np.column_stack((coordinates, zeros_column))
-
-            if coordinates.shape[0] == 0:
-                # coordinates must not be empty
-                # todo do something smarter?
-                coordinates = np.array([[0, 0, 0]], dtype=np.float32)
-            new_geometry = gfx.Geometry(positions=coordinates)
-            visual_object.geometry = new_geometry
-        else:
-            raise ValueError(f"Unrecognized slice data type: {slice_data}")
+        visual_object.set_slice(slice_data=slice_data)
 
         if redraw_canvas:
             self.events.redraw_canvas.emit(

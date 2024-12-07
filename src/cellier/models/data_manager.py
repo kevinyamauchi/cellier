@@ -6,17 +6,38 @@ from psygnal import EventedModel
 from pydantic import Field
 from typing_extensions import Annotated
 
+from cellier.models.data_stores.image import (
+    ImageMemoryStore,
+    MockLatentImageStore,
+    MultiScaleImageZarrStore,
+)
 from cellier.models.data_stores.mesh import MeshMemoryStore
 from cellier.models.data_stores.points import PointsMemoryStore
+from cellier.models.data_streams.image import (
+    ImageSynchronousDataStream,
+    MultiscaleImageDataStream,
+)
 from cellier.models.data_streams.mesh import MeshSynchronousDataStream
 from cellier.models.data_streams.points import PointsSynchronousDataStream
 
 # types for discrimitive unions
 DataStoreType = Annotated[
-    Union[MeshMemoryStore, PointsMemoryStore], Field(discriminator="store_type")
+    Union[
+        ImageMemoryStore,
+        MultiScaleImageZarrStore,
+        MockLatentImageStore,
+        MeshMemoryStore,
+        PointsMemoryStore,
+    ],
+    Field(discriminator="store_type"),
 ]
 DataStreamType = Annotated[
-    Union[MeshSynchronousDataStream, PointsSynchronousDataStream],
+    Union[
+        ImageSynchronousDataStream,
+        MultiscaleImageDataStream,
+        MeshSynchronousDataStream,
+        PointsSynchronousDataStream,
+    ],
     Field(discriminator="stream_type"),
 ]
 
