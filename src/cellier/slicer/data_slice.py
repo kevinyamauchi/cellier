@@ -109,7 +109,7 @@ class RenderedMeshDataSlice(RenderedSliceData):
 
 @dataclass(frozen=True)
 class RenderedPointsDataSlice(RenderedSliceData):
-    """Data class for rendered mesh slice data.
+    """Data class for rendered points slice data.
 
     Attributes
     ----------
@@ -129,7 +129,7 @@ class RenderedPointsDataSlice(RenderedSliceData):
 
 @dataclass(frozen=True)
 class RenderedImageDataSlice(RenderedSliceData):
-    """Data class for rendered mesh slice data.
+    """Data class for rendered image slice data.
 
     Attributes
     ----------
@@ -142,6 +142,9 @@ class RenderedImageDataSlice(RenderedSliceData):
         and larger numbers are lower resolution.
     data : np.ndarray
         The point coordinates of the new slice.
+    texture_start_index : tuple[int, int, int]
+        The index of the minimum index to insert the chunk into.
     """
 
     data: np.ndarray
+    texture_start_index: tuple[int, int, int]

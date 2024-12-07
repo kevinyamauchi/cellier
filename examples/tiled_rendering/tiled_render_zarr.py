@@ -12,7 +12,12 @@ from qtpy import QtWidgets
 from superqt import ensure_main_thread
 from wgpu.gui.qt import WgpuCanvas
 
-from cellier.util.chunk import ChunkedArray3D, MultiScaleChunkedArray3D
+from cellier.models.data_stores.image import MultiScaleImageZarrStore
+from cellier.util.chunk import (
+    ChunkedArray3D,
+    ImageDataStoreChunk,
+    MultiScaleChunkedArray3D,
+)
 from cellier.util.geometry import (
     frustum_planes_from_corners,
 )
@@ -36,6 +41,15 @@ for level, image in enumerate(multiscale_image_arrays):
         )
     )
 multiscale_array_data_model = MultiScaleChunkedArray3D(scales=data_models)
+
+multiscale_store = MultiScaleImageZarrStore(
+    root_path="multiscale_blobs.zarr",
+    scale_paths=[f"level_{scale_index}" for scale_index in range(5)],
+    scales=[
+        (2**scale_index, 2**scale_index, 2**scale_index) for scale_index in range(5)
+    ],
+    translations=[(0, 0, 0) for scale_index in range(5)],
+)
 
 
 @dataclass
@@ -137,6 +151,8 @@ class Main(QtWidgets.QWidget):
         self.frustum_lines = None
 
         self._camera.show_object(self._points, view_dir=(0, 1, 0), up=(0, 0, 1))
+
+        print(self._camera.get_state())
 
         # Hook up the animate callback
         self._canvas.request_draw(self.animate)
@@ -364,15 +380,16 @@ class Main(QtWidgets.QWidget):
                             print(f"skipping: {min_corner_array}")
                             continue
 
-                        chunk_request = ChunkRequest(
-                            scale_index=scale_index,
-                            chunk_start=min_corner_array[[2, 1, 0]],
-                            chunk_end=max_corner_array[[2, 1, 0]],
-                            texture_start=min_corner_texture,
-                            texture_end=max_corner_texture,
+                        chunk_request = ImageDataStoreChunk(
+                            resolution_level=scale_index,
+                            array_coordinate_start=min_corner_array[[2, 1, 0]],
+                            array_coordinate_end=max_corner_array[[2, 1, 0]],
+                            texture_coordinate_start=min_corner_texture,
+                            scene_id="test",
+                            visual_id="test",
                         )
                         chunk_future = self._thread_pool.submit(
-                            multiscale_image.get_chunk, chunk_request
+                            multiscale_store.get_slice, chunk_request
                         )
                         chunk_future.add_done_callback(self._on_slice_response)
 
@@ -380,7 +397,7 @@ class Main(QtWidgets.QWidget):
 
                     print(f"{len(self._pending_futures)} submitted")
 
-    @ensure_main_thread()
+    @ensure_main_thread
     def _on_slice_response(self, future: Future[ChunkResponse]):
         if future.cancelled():
             # if the future was cancelled, return early
@@ -392,17 +409,17 @@ class Main(QtWidgets.QWidget):
 
         response = future.result()
 
-        min_corner_texture = response.texture_start
-        max_corner_texture = response.texture_end
+        min_corner_texture = np.asarray(response.texture_start_index)
+        max_corner_texture = min_corner_texture + np.asarray(response.data.shape)
 
-        volume_visual = self.visuals_list[response.scale_index]
+        volume_visual = self.visuals_list[response.resolution_level]
         texture = volume_visual.geometry.grid
 
         texture.data[
             min_corner_texture[2] : max_corner_texture[2],
             min_corner_texture[1] : max_corner_texture[1],
             min_corner_texture[0] : max_corner_texture[0],
-        ] = response.array
+        ] = response.data
         texture.update_range(
             tuple(min_corner_texture), tuple(max_corner_texture - min_corner_texture)
         )

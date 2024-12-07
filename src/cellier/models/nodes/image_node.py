@@ -86,4 +86,4 @@ class MultiscaleImageNode(BaseNode):
     material: Union[ImageMIPMaterial, ImageIsoMaterial]
 
     # this is used for a discriminated union
-    visual_type: Literal["image"] = "multiscale_image"
+    visual_type: Literal["multiscale_image"] = "multiscale_image"

@@ -10,6 +10,7 @@ import pygfx as gfx
 from psygnal import Signal
 from pygfx.controllers import TrackballController
 from pygfx.renderers import WgpuRenderer
+from superqt import ensure_main_thread
 from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.viewer import ViewerModel
@@ -173,6 +174,11 @@ class RenderManager:
         """
         return self._scenes
 
+    @property
+    def visuals(self) -> Dict[str, gfx.WorldObject]:
+        """The visuals in the RenderManager."""
+        return self._visuals
+
     def animate(self, scene_id: str, canvas_id: str) -> None:
         """Callback to render a given canvas."""
         renderer = self.renderers[canvas_id]
@@ -201,6 +207,7 @@ class RenderManager:
         self.render_calls += 1
         print(f"render: {self.render_calls}")
 
+    @ensure_main_thread
     def _on_new_slice(
         self, slice_data: RenderedSliceData, redraw_canvas: bool = True
     ) -> None:

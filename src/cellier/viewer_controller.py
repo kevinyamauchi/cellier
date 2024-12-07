@@ -1,5 +1,7 @@
 """Implementation of a viewer."""
 
+import numpy as np
+
 from cellier.gui.constants import GuiFramework
 from cellier.models.viewer import ViewerModel
 from cellier.render.render_manager import (
@@ -12,6 +14,7 @@ from cellier.slicer.slicer import (
     SlicerType,
     SynchronousDataSlicer,
 )
+from cellier.util.chunk import generate_chunk_requests_from_frustum
 
 
 class ViewerController:
@@ -41,7 +44,7 @@ class ViewerController:
         if slicer_type == SlicerType.SYNCHRONOUS:
             self._slicer = SynchronousDataSlicer(viewer_model=self._model)
         elif slicer_type == SlicerType.ASYNCHRONOUS:
-            self._slicer = AsynchronousDataSlicer(viewer_model=self._model)
+            self._slicer = AsynchronousDataSlicer()
         else:
             raise ValueError(f"Unknown slicer type: {slicer_type}")
 
@@ -52,7 +55,106 @@ class ViewerController:
         self._connect_model_renderer_events()
 
         # update all of the slices
-        self._slicer.reslice_all()
+        self.reslice_all()
+
+    def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str) -> None:
+        """Resclice a specified visual."""
+        # get the current dims
+        scene = self._model.scenes.scenes[scene_id]
+
+        # get the region to select in world coordinates
+        # from the dims state
+        # todo deal with larger than 3D data.
+        # world_slice = world_slice_from_dims_manager(dims_manager=dims_manager)
+
+        # get the current camera and the frustum
+        camera = scene.canvases[canvas_id].camera
+        frustum_corners_world = camera.frustum
+
+        # get the visual and data objects
+        # todo add convenience to get visual by ID
+        visual = scene.get_visual_by_id(visual_id)
+        data_stream = self._model.data.streams[visual.data_stream_id]
+        data_store = self._model.data.stores[data_stream.data_store_id]
+
+        # get the frustum corners in the data local coordinates
+        # todo: implement transforms
+        frustum_corners_local = frustum_corners_world
+
+        # get the current scale information
+        renderer = self._render_manager.renderers[canvas_id]
+        width_logical, height_logical = renderer.logical_size
+        scale_index = data_store.determine_scale_from_frustum(
+            frustum_corners=frustum_corners_local,
+            width_logical=width_logical,
+            height_logical=height_logical,
+            method="logical_pixel_size",
+        )
+
+        # Convert the frustum corners to the scale coordinate system
+        frustum_corners_scale = (
+            frustum_corners_local / data_store.scales[scale_index]
+        ) - data_store.translations[scale_index]
+
+        print(f"index: {scale_index} scale: {data_store.scales[scale_index]}")
+
+        # todo construct chunk corners using slicing
+        # find the dims being displayed and then make the chunks
+        chunk_corners = data_store.chunk_corners[scale_index]
+
+        # construct the chunk request
+        chunk_requests, texture_shape, translation_scale = (
+            generate_chunk_requests_from_frustum(
+                frustum_corners=frustum_corners_scale,
+                chunk_corners=chunk_corners,
+                scale_index=scale_index,
+                scene_id=scene_id,
+                visual_id=visual_id,
+                mode="any",
+            )
+        )
+
+        if len(chunk_requests) == 0:
+            # no chunks to render
+            return
+
+        translation = (
+            np.asarray(translation_scale) * data_store.scales[scale_index]
+        ) + data_store.translations[scale_index]
+
+        # pre allocate the data
+        print(f"shape: {texture_shape}, translation: {translation}")
+        visual = self._render_manager.visuals[visual_id]
+        visual.preallocate_data(
+            scale_index=scale_index,
+            shape=texture_shape,
+            chunk_shape=data_store.chunk_shapes[scale_index],
+            translation=translation,
+        )
+        visual.set_scale_visible(scale_index)
+
+        # submit the chunk requests to the slicer
+        self._slicer.submit(request_list=chunk_requests, data_store=data_store)
+
+    def reslice_scene(self, scene_id: str):
+        """Update all objects in a given scene."""
+        # get the Scene object
+        scene = self._model.scenes.scenes[scene_id]
+
+        # take the first canvas
+        canvas_id = next(iter(scene.canvases))
+
+        for visual in scene.visuals:
+            self.reslice_visual(
+                visual_id=visual.id, scene_id=scene.id, canvas_id=canvas_id
+            )
+
+    def reslice_all(
+        self,
+    ) -> None:
+        """Reslice all visuals."""
+        for scene_id in self._model.scenes.scenes.keys():
+            self.reslice_scene(scene_id=scene_id)
 
     def _construct_canvas_widgets(self, viewer_model: ViewerModel, parent=None):
         """Make the canvas widgets based on the requested gui framework.

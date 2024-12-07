@@ -1,7 +1,11 @@
 """Utilities for dealing with array chunks."""
 
+from dataclasses import dataclass
+from typing import Tuple, Union
+
 import numpy as np
 
+from cellier.models.data_stores.base_data_store import DataStoreSlice
 from cellier.util.geometry import (
     frustum_planes_from_corners,
     near_far_plane_edge_lengths,
@@ -13,6 +17,8 @@ def compute_chunk_corners_3d(
     array_shape: np.ndarray, chunk_shape: np.ndarray
 ) -> np.ndarray:
     """Compute the corners for each chunk of a 3D array.
+
+    todo: jit?
 
     Parameters
     ----------
@@ -61,6 +67,105 @@ def compute_chunk_corners_3d(
                 all_corners.append(corners)
 
     return np.array(all_corners, dtype=int)
+
+
+def generate_chunk_requests_from_frustum(
+    frustum_corners: np.ndarray,
+    chunk_corners: np.ndarray,
+    scale_index: int,
+    scene_id: str,
+    visual_id: str,
+    mode: str = "any",
+) -> tuple[list["ImageDataStoreChunk"], tuple[int, int, int], tuple[int, int, int]]:
+    """Generate a request for each chunk that is inside of a view frustum.
+
+    Parameters
+    ----------
+    frustum_corners : np.ndarray
+        The corners of the view frustum in the coordinates of the scale.
+        That is they should be scaled and translated to match the coordinates
+        of the array being passed in.
+        The corner coordinates should be in an array shaped (2, 4, 3).
+        The first axis corresponds to the frustum plane (near, far).
+        The second corresponds to the corner within the plane
+        ((left, bottom), (right, bottom), (right, top), (left, top))
+        The third corresponds to the coordinates of that corner.
+    chunk_corners : np.ndarray
+        (n, 8, 3) array containing the corners of each chunk.
+    scale_index : int
+        The index for the scale level these chunks come from.
+    scene_id : str
+        The unique identifier for the Scene.
+    visual_id : str
+        The unique identifier for the visual the chunks belong to.
+    mode : str
+        The mode for determining which chunks are in the frustum.
+        "any" takes chunks where any of the corners are inside of the frustum.
+        "all" takes chunks where all of the corners are inside the frustum.
+        Default value is "any".
+
+
+    """
+    # get the planes of the frustum
+    planes = frustum_planes_from_corners(frustum_corners)
+
+    # determine which chunks are in the frustum
+    n_chunks = chunk_corners.shape[0]
+    chunk_corners_flat = chunk_corners.reshape((n_chunks * 8, -1))
+    points_mask = points_in_frustum(points=chunk_corners_flat, planes=planes).reshape(
+        n_chunks, 8
+    )
+
+    if mode == "any":
+        chunk_mask = np.any(points_mask, axis=1)
+    elif mode == "all":
+        chunk_mask = np.all(points_mask, axis=1)
+    else:
+        raise ValueError(f"{mode} is not a valid. Should be any or all")
+
+    chunks_to_request = chunk_corners[chunk_mask]
+
+    if len(chunks_to_request) == 0:
+        return [], (), ()
+
+    # get the lower-left bounds of the array
+    n_chunks_to_request = chunks_to_request.shape[0]
+    chunks_to_request_flat = chunks_to_request.reshape((n_chunks_to_request * 8, -1))
+    min_corner_all_local = np.min(chunks_to_request_flat, axis=0)
+    max_corner_all_local = np.max(chunks_to_request_flat, axis=0)
+    new_texture_shape = max_corner_all_local - min_corner_all_local
+
+    # make a request for each chunk
+    chunk_requests = []
+    for chunk in chunks_to_request:
+        # get the corners of the chunk in the array index coordinates
+        min_corner_array = chunk[0]
+        max_corner_array = chunk[7]
+
+        # get the corners of the chunk in the texture index coordinates
+        min_corner_texture = min_corner_array - min_corner_all_local
+        max_corner_texture = max_corner_array - min_corner_all_local
+
+        if np.any(max_corner_texture > new_texture_shape) or np.any(
+            min_corner_texture > new_texture_shape
+        ):
+            print(f"skipping: {min_corner_array}")
+            continue
+
+        chunk_requests.append(
+            ImageDataStoreChunk(
+                resolution_level=scale_index,
+                array_coordinate_start=min_corner_array[[2, 1, 0]],
+                array_coordinate_end=max_corner_array[[2, 1, 0]],
+                # array_coordinate_start=min_corner_array,
+                # array_coordinate_end=max_corner_array,
+                texture_coordinate_start=min_corner_texture,
+                scene_id=scene_id,
+                visual_id=visual_id,
+            )
+        )
+
+    return chunk_requests, new_texture_shape, min_corner_all_local
 
 
 class ChunkedArray3D:
@@ -274,3 +379,29 @@ class MultiScaleChunkedArray3D:
             )
         else:
             raise ValueError(f"Unknown method {method}.")
+
+
+@dataclass(frozen=True)
+class ImageDataStoreChunk(DataStoreSlice):
+    """Class containing data to access a chunk in an image data store.
+
+    Parameters
+    ----------
+    scene_id : str
+        The UID of the scene the visual is rendered in.
+    visual_id : str
+        The UID of the corresponding visual.
+    resolution_level : int
+        The resolution level to render where 0 is the highest resolution
+        and high numbers correspond with more down sampling.
+    texture_coordinate_start : Union[Tuple[int, int], Tuple[int, int, int]]
+        The min coordinates of the chunk in the texture it will be rendered in.
+    array_coordinate_start : Tuple[int, ...]
+        The min coordinates of the chunk in the array coordinates.
+    array_coordinate_max : Tuple[int, ...]
+        The max coordinates of the chunk in the array coordinates.
+    """
+
+    texture_coordinate_start: Union[Tuple[int, int], Tuple[int, int, int]]
+    array_coordinate_start: Tuple[int, ...]
+    array_coordinate_end: Tuple[int, ...]
