@@ -1,7 +1,9 @@
 """Class for managing the data slicing."""
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 from uuid import uuid4
 
 from psygnal import Signal
@@ -11,6 +13,17 @@ from cellier.slicer.utils import world_slice_from_dims_manager
 
 if TYPE_CHECKING:
     from cellier.models.viewer import ViewerModel
+
+
+class SlicerType(Enum):
+    """Enum for supported slicer types.
+
+    SYNCHRONOUS will use SynchronousDataSlicer
+    ASYNCHRONOUS will use AsynchronousDataSlicer
+    """
+
+    SYNCHRONOUS = "synchronous"
+    ASYNCHRONOUS = "asynchronous"
 
 
 class DataSlicerEvents:
@@ -105,3 +118,71 @@ class SynchronousDataSlicer:
         """Reslice all scenes in the viewer."""
         for scene_id in self._viewer_model.scenes.scenes.keys():
             self.reslice_scene(scene_id=scene_id)
+
+
+class AsynchronousDataSlicer:
+    """Asynchronous data slicer class."""
+
+    def __init__(self, max_workers: int = 2):
+        # add the events
+        self.events = DataSlicerEvents()
+
+        # Storage for pending futures.
+        # The key is the visual id the slice request originated from.
+        self._pending_futures: Dict[str, list[Future[RenderedSliceData]]] = {}
+        self._futures_to_ignore: List[Future[RenderedSliceData]] = []
+
+        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+
+    def submit(self, request_list, data_store):
+        """Submit a request for a slice."""
+        if len(request_list) == 0:
+            print("no chunks")
+            return
+
+        visual_id = request_list[0].visual_id
+        if visual_id in self._pending_futures:
+            # try to cancel the future
+            futures_to_cancel_list = self._pending_futures.pop(visual_id)
+
+            for future_to_cancel in futures_to_cancel_list:
+                # cancel each future in the list
+                cancelled = future_to_cancel.cancel()
+
+                if not cancelled:
+                    # sometimes futures can't be canceled
+                    # we store a reference to this future so we can ignore it
+                    # when the result comes in.
+                    self._futures_to_ignore.append(future_to_cancel)
+
+        slice_futures_list = []
+        for request in request_list:
+            slice_future = self._thread_pool.submit(data_store.get_slice, request)
+
+            # add the callback to send the data when the slice is received
+            slice_future.add_done_callback(self._on_slice_response)
+            slice_futures_list.append(slice_future)
+
+        # store the future
+        self._pending_futures[visual_id] = slice_futures_list
+
+    def _on_slice_response(self, future: Future[RenderedSliceData]):
+        if future.cancelled():
+            # if the future was cancelled, return early
+            return
+
+        if future in self._futures_to_ignore:
+            print("ignoring")
+            self._futures_to_ignore.remove(future)
+            return
+
+        # get the data
+        slice_response = future.result()
+
+        # remove the future from the pending dict
+        visual_id = slice_response.visual_id
+        if visual_id in self._pending_futures:
+            del self._pending_futures[visual_id]
+
+        # emit the slice
+        self.events.new_slice.emit(slice_response)

@@ -5,7 +5,7 @@ from typing import Literal, Tuple, Union
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.visuals.base_visual import BaseMaterial, BaseVisual
+from cellier.models.nodes.base_node import BaseMaterial, BaseNode
 
 
 class BaseMeshMaterial(BaseMaterial):
@@ -73,7 +73,7 @@ MeshMaterialType = Annotated[
 ]
 
 
-class MeshVisual(BaseVisual):
+class MeshNode(BaseNode):
     """Model for a mesh visual.
 
     This is a psygnal EventedModel.

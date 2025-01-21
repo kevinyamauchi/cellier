@@ -19,7 +19,7 @@ name = "cellier"
 dynamic = ["version"]
 description = "A workshop for rendering cellular models."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Kevin Yamauchi", email = "kevin.yamauchi@gmail.com" }]
 # https://pypi.org/classifiers/
@@ -36,10 +36,12 @@ classifiers = [
 ]
 # add your package dependencies here
 dependencies = [
+    "numpy",
     "psygnal",
     "pydantic",
     "pygfx",
-    "PyQt5"
+    "PyQt5",
+    "zarr"
 ]
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies

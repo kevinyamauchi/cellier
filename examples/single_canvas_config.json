@@ -1,8 +1,8 @@
 {
   "data": {
     "stores": {
-      "73378cbfef474a1fb022bec2ed96d8e7": {
-        "id": "73378cbfef474a1fb022bec2ed96d8e7",
+      "eb5b5d906d1343409e06f73d8d6ef1f5": {
+        "id": "eb5b5d906d1343409e06f73d8d6ef1f5",
         "vertices": [
           [
             10.0,
@@ -31,9 +31,9 @@
       }
     },
     "streams": {
-      "eef961ca7dd0426192ec68e84125ab5a": {
-        "id": "eef961ca7dd0426192ec68e84125ab5a",
-        "data_store_id": "73378cbfef474a1fb022bec2ed96d8e7",
+      "86cc7c1f8c3b49e8bb74a10623228429": {
+        "id": "86cc7c1f8c3b49e8bb74a10623228429",
+        "data_store_id": "eb5b5d906d1343409e06f73d8d6ef1f5",
         "selectors": [],
         "stream_type": "mesh_synchronous"
       }
@@ -41,7 +41,7 @@
   },
   "scenes": {
     "scenes": {
-      "53b8dca833f14f51856848329129fdeb": {
+      "9e5fc75c522e4a268ae4e53dd29c5bae": {
         "dims": {
           "coordinate_system": {
             "name": "scene_0",
@@ -64,8 +64,8 @@
         "visuals": [
           {
             "name": "mesh_visual",
-            "id": "f244d11a243f4471bf3ecbf871022838",
-            "data_stream_id": "eef961ca7dd0426192ec68e84125ab5a",
+            "id": "0452e4952c604683a436bb266047fea1",
+            "data_stream_id": "86cc7c1f8c3b49e8bb74a10623228429",
             "material": {
               "shininess": 30,
               "emissive": [
@@ -94,10 +94,10 @@
               "far_clipping_plane": 500,
               "camera_type": "perspective"
             },
-            "id": "aca60bb05c444711abff728a199705b3"
+            "id": "4ff0d90038a84e4d8d32bb7e8ce4a2f8"
           }
         ],
-        "id": "53b8dca833f14f51856848329129fdeb"
+        "id": "9e5fc75c522e4a268ae4e53dd29c5bae"
       }
     }
   }

@@ -1,8 +1,8 @@
-"""Models for Points visuals."""
+"""Models for Points nodes."""
 
 from typing import Literal, Tuple
 
-from cellier.models.visuals.base_visual import BaseMaterial, BaseVisual
+from cellier.models.nodes.base_node import BaseMaterial, BaseNode
 
 
 class PointsUniformMaterial(BaseMaterial):
@@ -26,7 +26,7 @@ class PointsUniformMaterial(BaseMaterial):
     size_coordinate_space: Literal["screen", "world", "data"] = "data"
 
 
-class PointsVisual(BaseVisual):
+class PointsNode(BaseNode):
     """Model for a point cloud visual.
 
     This is a psygnal EventedModel.
