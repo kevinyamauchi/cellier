@@ -7,14 +7,12 @@ from psygnal import EventedModel
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.nodes.image_node import ImageNode, MultiscaleImageNode
-from cellier.models.nodes.mesh_node import MeshNode
 from cellier.models.nodes.points_node import PointsNode
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
 
 VisualType = Annotated[
-    Union[ImageNode, MultiscaleImageNode, MeshNode, PointsNode],
+    Union[PointsNode],
     Field(discriminator="visual_type"),
 ]
 

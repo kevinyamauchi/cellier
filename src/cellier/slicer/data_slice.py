@@ -37,8 +37,8 @@ class DataSliceRequest:
     resolution_level : int
         The resolution level to render where 0 is the highest resolution
         and high numbers correspond with more down sampling.
-    data_stream_id : str
-        The ID of the datastream from which to get the data slice.
+    data_store_id : str
+        The ID of the datastore from which to get the data slice.
     visual_id : str
         The unique identifier for which visual this data slice
         will be sent to.
@@ -52,7 +52,7 @@ class DataSliceRequest:
 
     world_slice: BaseWorldSlice
     resolution_level: int
-    data_stream_id: str
+    data_store_id: str
     scene_id: str
     visual_id: str
     request_id: str

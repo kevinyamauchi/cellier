@@ -1,8 +1,13 @@
 """Implementation of a viewer."""
 
+import logging
+from uuid import uuid4
+
 import numpy as np
 
 from cellier.gui.constants import GuiFramework
+from cellier.models.data_stores.base_data_store import BaseDataStore
+from cellier.models.nodes.base_node import BaseNode
 from cellier.models.viewer import ViewerModel
 from cellier.render.render_manager import (
     CameraState,
@@ -11,10 +16,13 @@ from cellier.render.render_manager import (
 )
 from cellier.slicer.slicer import (
     AsynchronousDataSlicer,
+    DataSliceRequest,
     SlicerType,
-    SynchronousDataSlicer,
 )
+from cellier.slicer.utils import world_slice_from_dims_manager
 from cellier.util.chunk import generate_chunk_requests_from_frustum
+
+logger = logging.getLogger(__name__)
 
 
 class ViewerController:
@@ -42,7 +50,7 @@ class ViewerController:
 
         # make the slicer
         if slicer_type == SlicerType.SYNCHRONOUS:
-            self._slicer = SynchronousDataSlicer(viewer_model=self._model)
+            raise NotImplementedError("Synchronous slicer not implemented")
         elif slicer_type == SlicerType.ASYNCHRONOUS:
             self._slicer = AsynchronousDataSlicer()
         else:
@@ -57,8 +65,48 @@ class ViewerController:
         # update all of the slices
         self.reslice_all()
 
-    def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str) -> None:
-        """Resclice a specified visual."""
+    def add_data_store(self, data_store: BaseDataStore):
+        """Add a data store to the viewer."""
+        self._model.data.add_data_store(data_store)
+
+    def add_visual(self, visual_model: BaseNode, scene_id: str):
+        """Add a visual to a scene."""
+        # get the model
+        scene = self._model.scenes.scenes[scene_id]
+        scene.visuals.append(visual_model)
+
+        # add the visual to the renderer
+        self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
+
+    def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
+        """Reslice a specified visual."""
+        # get the current dims
+        scene = self._model.scenes.scenes[scene_id]
+        visual = self._model.scenes.scenes[scene_id].get_visual_by_id(visual_id)
+
+        # todo have the world slice passed in
+        world_slice = world_slice_from_dims_manager(dims_manager=scene.dims)
+
+        slice_request = DataSliceRequest(
+            world_slice=world_slice,
+            resolution_level=0,
+            data_store_id=visual.data_store_id,
+            visual_id=visual_id,
+            scene_id=scene.id,
+            request_id=uuid4().hex,
+            data_to_world_transform=None,
+        )
+
+        # submit the request
+        self._slicer.submit(
+            request_list=[slice_request],
+            data_store=self._model.data.stores[visual.data_store_id],
+        )
+
+    def reslice_visual_tiled(
+        self, scene_id: str, visual_id: str, canvas_id: str
+    ) -> None:
+        """Reslice a specified using tiled rendering and frustum culling visual."""
         # get the current dims
         scene = self._model.scenes.scenes[scene_id]
 
@@ -96,7 +144,7 @@ class ViewerController:
             frustum_corners_local / data_store.scales[scale_index]
         ) - data_store.translations[scale_index]
 
-        print(f"index: {scale_index} scale: {data_store.scales[scale_index]}")
+        logger.debug(f"index: {scale_index} scale: {data_store.scales[scale_index]}")
 
         # todo construct chunk corners using slicing
         # find the dims being displayed and then make the chunks
@@ -123,7 +171,7 @@ class ViewerController:
         ) + data_store.translations[scale_index]
 
         # pre allocate the data
-        print(f"shape: {texture_shape}, translation: {translation}")
+        logger.debug(f"shape: {texture_shape}, translation: {translation}")
         visual = self._render_manager.visuals[visual_id]
         visual.preallocate_data(
             scale_index=scale_index,

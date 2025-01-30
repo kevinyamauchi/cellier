@@ -8,7 +8,7 @@ from pydantic import ConfigDict, field_serializer, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
 from cellier.models.data_stores.base_data_store import BaseDataStore, DataStoreSlice
-from cellier.slicer.data_slice import RenderedPointsDataSlice
+from cellier.slicer.data_slice import DataSliceRequest, RenderedPointsDataSlice
 
 
 @dataclass(frozen=True)
@@ -71,12 +71,12 @@ class PointsMemoryStore(BasePointsDataStore):
         """Coerce numpy arrays into lists for serialization."""
         return array.tolist()
 
-    def get_slice(self, slice_data: PointDataStoreSlice) -> RenderedPointsDataSlice:
+    def get_slice(self, slice_data: DataSliceRequest) -> RenderedPointsDataSlice:
         """Get the data required to render a slice of the mesh.
 
         todo: generalize to oblique slicing
         """
-        displayed_dimensions = list(slice_data.displayed_dimensions)
+        displayed_dimensions = list(slice_data.world_slice.displayed_dimensions)
         points_ndim = self.coordinates.shape[1]
 
         # get a mask for the not displayed dimensions
@@ -84,9 +84,9 @@ class PointsMemoryStore(BasePointsDataStore):
         not_displayed_mask[displayed_dimensions] = False
 
         # get the range to include
-        point = np.asarray(slice_data.point)
-        margin_negative = np.asarray(slice_data.margin_negative)
-        margin_positive = np.asarray(slice_data.margin_positive)
+        point = np.asarray(slice_data.world_slice.point)
+        margin_negative = np.asarray(slice_data.world_slice.margin_negative)
+        margin_positive = np.asarray(slice_data.world_slice.margin_positive)
         low = point - margin_negative
         high = point + margin_positive
 

@@ -41,7 +41,7 @@ dependencies = [
     "pydantic",
     "pygfx",
     "PyQt5",
-    "zarr"
+    "zarr",
 ]
 
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
