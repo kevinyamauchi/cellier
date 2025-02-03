@@ -14,9 +14,9 @@ from cellier.render.render_manager import (
     CanvasRedrawRequest,
     RenderManager,
 )
+from cellier.slicer.data_slice import DataSliceRequest
 from cellier.slicer.slicer import (
     AsynchronousDataSlicer,
-    DataSliceRequest,
     SlicerType,
 )
 from cellier.slicer.utils import world_slice_from_dims_manager

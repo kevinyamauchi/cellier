@@ -1,19 +1,19 @@
-"""Models for Points nodes."""
+"""Models for Lines nodes."""
 
 from typing import Literal
 
 from cellier.models.nodes.base_node import BaseMaterial, BaseNode
 
 
-class PointsUniformMaterial(BaseMaterial):
-    """Give all points the same appearance.
+class LinesUniformMaterial(BaseMaterial):
+    """Give all lines the same appearance.
 
     Parameters
     ----------
     size : float
         The size of the points in the units
         specified by size_coordinate_space.
-    color : Tuple[float, float, float, float]
+    color : tuple[float, float, float, float]
         RGBA color for all of the points.
     size_coordinate_space : str
         The coordinate space the size is defined in.
@@ -26,13 +26,14 @@ class PointsUniformMaterial(BaseMaterial):
     size_coordinate_space: Literal["screen", "world", "data"] = "data"
 
 
-class PointsNode(BaseNode):
-    """Model for a point cloud visual.
+class LinesNode(BaseNode):
+    """Model for a lines visual.
 
     This is a psygnal EventedModel.
     https://psygnal.readthedocs.io/en/latest/API/model/
 
-    todo: add more point materials
+    todo: add more lines materials
+    todo: decide if different line data types supported.
 
     Parameters
     ----------
@@ -40,15 +41,15 @@ class PointsNode(BaseNode):
         The name of the visual
     data_store_id : str
         The id of the data stream to be visualized.
-    material : PointsUniformMaterial
-        The model for the appearance of the rendered points.
+    material : LinesUniformMaterial
+        The model for the appearance of the rendered lines.
     id : str
         The unique id of the visual.
         The default value is a uuid4-generated hex string.
     """
 
     data_store_id: str
-    material: PointsUniformMaterial
+    material: LinesUniformMaterial
 
     # this is used for a discriminated union
-    visual_type: Literal["points"] = "points"
+    visual_type: Literal["lines"] = "lines"

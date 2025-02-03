@@ -1,85 +1,71 @@
-"""Functions for constructing PyGFX objects from cellier models."""
-
-from typing import Tuple
+"""PyGFX implementations of line visuals."""
 
 import numpy as np
 import pygfx as gfx
-from pygfx import PointsMaterial as GFXPointsMaterial
 
-from cellier.models.nodes.points_node import PointsNode, PointsUniformMaterial
+from cellier.models.nodes.lines_node import LinesNode, LinesUniformMaterial
 from cellier.render.constants import cellier_to_gfx_coordinate_space
-from cellier.slicer.data_slice import RenderedPointsDataSlice
+from cellier.slicer.data_slice import RenderedLinesDataSlice
 
 
-def construct_pygfx_points_from_model(
-    model: PointsNode,
-    empty_material: GFXPointsMaterial,
-) -> Tuple[gfx.WorldObject, gfx.PointsMaterial]:
-    """Make a PyGFX points object.
+def construct_pygfx_lines_from_model(
+    model: LinesNode, empty_material: gfx.LineMaterial
+):
+    """Make a PyGFX line object.
 
     This function dispatches to other constructor functions
     based on the material, etc. and returns a PyGFX mesh object.
     """
-    # make the geometry
-    # todo make initial slicing happen here or initialize with something more sensible
-
-    # initialize with an dummy point coordinates
+    # initialize with an dummy coordinates
     # since we can't initialize an empty node.
     geometry = gfx.Geometry(
-        positions=np.array([[0, 0, 0]], dtype=np.float32),
+        positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
     )
-
-    # make the material model
     material_model = model.material
-    if isinstance(material_model, PointsUniformMaterial):
-        size_space = cellier_to_gfx_coordinate_space[
+    if isinstance(material_model, LinesUniformMaterial):
+        size_space = cellier_to_gfx_coordinate_space(
             material_model.size_coordinate_space
-        ]
-        material = GFXPointsMaterial(
-            size=material_model.size,
-            size_space=size_space,
-            color=material_model.color,
-            size_mode="uniform",
         )
+        material = gfx.LineSegmentMaterial(thickness_space=size_space)
     else:
         raise TypeError(
             f"Unknown mesh material model type: {type(material_model)} in {model}"
         )
-    return gfx.Points(geometry=geometry, material=empty_material), material
+    return gfx.Line(geometry=geometry, material=empty_material), material
 
 
-class GFXPointsNode:
-    """PyGFX points node implementation.
+class GFXLinesNode:
+    """PyGFX lines node implementation.
 
     Note that PyGFX doesn't support empty WorldObjects, so we set
     transparent data when the slice is empty.
     """
 
-    def __init__(self, model: PointsNode):
+    def __init__(self, model: LinesNode):
         # This is the material given when the visual is "empty"
         # since pygfx doesn't support empty World Objects, we
-        # initialize with a single point
-        self._empty_material = GFXPointsMaterial(color=(0, 0, 0, 0))
+        # initialize with a single line
+        self._empty_material = gfx.LineMaterial(color=(0, 0, 0, 0))
 
-        # make the pygfx materials
-        self.node, self._material = construct_pygfx_points_from_model(
-            model=model, empty_material=self._empty_material
+        self._node, self._material = construct_pygfx_lines_from_model(
+            model, self._empty_material
         )
 
         # Flag that is set to True when there are no points to display.
         self._empty = True
 
     @property
-    def material(self) -> GFXPointsMaterial:
+    def material(self) -> gfx.LineMaterial:
         """The material object points."""
         return self._material
 
-    def set_slice(self, slice_data: RenderedPointsDataSlice):
-        """Set all the point coordinates."""
+    def set_slice(self, slice_data: RenderedLinesDataSlice):
+        """Set the slice data for the lines."""
         coordinates = slice_data.coordinates
 
         # check if the layer was empty
         was_empty = self._empty
+
         if coordinates.shape[1] == 2:
             # pygfx expects 3D points
             n_points = coordinates.shape[0]
@@ -89,7 +75,7 @@ class GFXPointsNode:
         if coordinates.shape[0] == 0:
             # coordinates must not be empty
             # todo do something smarter?
-            coordinates = np.array([[0, 0, 0]], dtype=np.float32)
+            coordinates = np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32)
 
             # set the empty flag
             self._empty = True
