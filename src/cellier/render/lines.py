@@ -23,10 +23,14 @@ def construct_pygfx_lines_from_model(
     )
     material_model = model.material
     if isinstance(material_model, LinesUniformMaterial):
-        size_space = cellier_to_gfx_coordinate_space(
+        size_space = cellier_to_gfx_coordinate_space[
             material_model.size_coordinate_space
+        ]
+        material = gfx.LineSegmentMaterial(
+            thickness_space=size_space,
+            thickness=material_model.size,
+            color=material_model.color,
         )
-        material = gfx.LineSegmentMaterial(thickness_space=size_space)
     else:
         raise TypeError(
             f"Unknown mesh material model type: {type(material_model)} in {model}"
@@ -47,7 +51,7 @@ class GFXLinesNode:
         # initialize with a single line
         self._empty_material = gfx.LineMaterial(color=(0, 0, 0, 0))
 
-        self._node, self._material = construct_pygfx_lines_from_model(
+        self.node, self._material = construct_pygfx_lines_from_model(
             model, self._empty_material
         )
 

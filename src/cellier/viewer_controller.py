@@ -78,6 +78,37 @@ class ViewerController:
         # add the visual to the renderer
         self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
 
+    def look_at_visual(
+        self,
+        visual_id: str,
+        view_direction: tuple[float, float, float],
+        up: tuple[float, float, float],
+    ):
+        """Look at given visual.
+
+        Parameters
+        ----------
+        visual_id : str
+            The ID of the visual to look at.
+        view_direction : tuple[float, float, float]
+            The direction to set the camera view direction to.
+        up : tuple[float, float, float]
+            The direction to set the camera up direction to.
+        """
+        for scene in self._model.scenes.scenes.values():
+            visual_model = scene.get_visual_by_id(visual_id)
+            if visual_model is not None:
+                for canvas_model in scene.canvases.values():
+                    self._render_manager.look_at_visual(
+                        visual_id=visual_id,
+                        canvas_id=canvas_model.id,
+                        scene_id=scene.id,
+                        view_direction=view_direction,
+                        up=up,
+                    )
+                    self._canvas_widgets[canvas_model.id].update()
+                return
+
     def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
         """Reslice a specified visual."""
         # get the current dims
