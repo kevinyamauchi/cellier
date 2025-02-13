@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict
+from typing import Callable, Dict
 
 import numpy as np
 import pygfx
@@ -23,20 +23,6 @@ from cellier.slicer.data_slice import (
 )
 
 logger = logging.getLogger(__name__)
-
-# class VisualKey(NamedTuple):
-#     """The key to a visual stored in the RenderManager.
-#
-#     Attributes
-#     ----------
-#     scene_id : str
-#         The uid of the scene model this visual belongs to.
-#     visual_id : str
-#         The uid of the visual model this pygfx belongs to.
-#     """
-#
-#     scene_id: str
-#     visual_id: str
 
 
 @dataclass(frozen=True)
@@ -90,6 +76,12 @@ class RenderManager:
         for scene_model in viewer_model.scenes.scenes.values():
             # make a scene
             scene = gfx.Scene()
+
+            # add the background
+            dark_gray = np.array((255, 255, 255, 255)) / 255
+            light_gray = np.array((243, 243, 243, 255)) / 255
+            background = gfx.Background.from_color(light_gray, dark_gray)
+            scene.add(background)
 
             # todo add lighting config
             scene.add(gfx.AmbientLight())
@@ -201,6 +193,13 @@ class RenderManager:
         scene.add(world_object.node)
 
         self._visuals.update({visual_model.id: world_object})
+
+    def add_visual_callback(
+        self, visual_id: int, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Add a callback to a visual."""
+        visual = self.visuals[visual_id]
+        visual.node.add_event_handler(callback, *callback_type)
 
     def look_at_visual(
         self,

@@ -1,6 +1,7 @@
 """Implementation of a viewer."""
 
 import logging
+from typing import Callable
 from uuid import uuid4
 
 import numpy as np
@@ -77,6 +78,14 @@ class ViewerController:
 
         # add the visual to the renderer
         self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
+
+    def add_visual_callback(
+        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Add a callback to a visual."""
+        self._render_manager.add_visual_callback(
+            visual_id=visual_id, callback=callback, callback_type=callback_type
+        )
 
     def look_at_visual(
         self,

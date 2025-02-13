@@ -30,6 +30,7 @@ def construct_pygfx_lines_from_model(
             thickness_space=size_space,
             thickness=material_model.size,
             color=material_model.color,
+            pick_write=True,
         )
     else:
         raise TypeError(
