@@ -201,6 +201,13 @@ class RenderManager:
         visual = self.visuals[visual_id]
         visual.node.add_event_handler(callback, *callback_type)
 
+    def remove_visual_callback(
+        self, visual_id: int, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Remove a callback from a visual."""
+        visual = self.visuals[visual_id]
+        visual.node.remove_event_handler(callback, *callback_type)
+
     def look_at_visual(
         self,
         visual_id: str,

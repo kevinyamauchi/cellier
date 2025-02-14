@@ -87,6 +87,14 @@ class ViewerController:
             visual_id=visual_id, callback=callback, callback_type=callback_type
         )
 
+    def remove_visual_callback(
+        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Remove a callback from a visual."""
+        self._render_manager.remove_visual_callback(
+            visual_id=visual_id, callback=callback, callback_type=callback_type
+        )
+
     def look_at_visual(
         self,
         visual_id: str,
