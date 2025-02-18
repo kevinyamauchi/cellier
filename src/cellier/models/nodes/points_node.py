@@ -42,6 +42,9 @@ class PointsNode(BaseNode):
         The id of the data stream to be visualized.
     material : PointsUniformMaterial
         The model for the appearance of the rendered points.
+    pick_write : bool
+        If True, the visual can be picked.
+        Default value is True.
     id : str
         The unique id of the visual.
         The default value is a uuid4-generated hex string.
@@ -49,6 +52,7 @@ class PointsNode(BaseNode):
 
     data_store_id: str
     material: PointsUniformMaterial
+    pick_write: bool = True
 
     # this is used for a discriminated union
     visual_type: Literal["points"] = "points"

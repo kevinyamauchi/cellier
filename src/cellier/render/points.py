@@ -40,6 +40,7 @@ def construct_pygfx_points_from_model(
             size_space=size_space,
             color=material_model.color,
             size_mode="uniform",
+            pick_write=model.pick_write,
         )
     else:
         raise TypeError(

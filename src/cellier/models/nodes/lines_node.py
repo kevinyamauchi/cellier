@@ -15,6 +15,9 @@ class LinesUniformMaterial(BaseMaterial):
         specified by size_coordinate_space.
     color : tuple[float, float, float, float]
         RGBA color for all of the points.
+    opacity : float
+        The opacity of the lines from 0 to 1 where 1 is opaque.
+        Default value is 1.0
     size_coordinate_space : str
         The coordinate space the size is defined in.
         Options are "screen", "world", "data".
@@ -23,6 +26,7 @@ class LinesUniformMaterial(BaseMaterial):
 
     size: float
     color: tuple[float, float, float, float]
+    opacity: float = 1.0
     size_coordinate_space: Literal["screen", "world", "data"] = "data"
 
 
@@ -43,6 +47,9 @@ class LinesNode(BaseNode):
         The id of the data stream to be visualized.
     material : LinesUniformMaterial
         The model for the appearance of the rendered lines.
+    pick_write : bool
+        If True, the visual can be picked.
+        Default value is True.
     id : str
         The unique id of the visual.
         The default value is a uuid4-generated hex string.
@@ -50,6 +57,7 @@ class LinesNode(BaseNode):
 
     data_store_id: str
     material: LinesUniformMaterial
+    pick_write: bool = True
 
     # this is used for a discriminated union
     visual_type: Literal["lines"] = "lines"
