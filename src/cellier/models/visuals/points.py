@@ -1,23 +1,20 @@
-"""Models for Lines nodes."""
+"""Models for Points nodes."""
 
 from typing import Literal
 
-from cellier.models.nodes.base_node import BaseMaterial, BaseNode
+from cellier.models.visuals.base import BaseMaterial, BaseVisual
 
 
-class LinesUniformMaterial(BaseMaterial):
-    """Give all lines the same appearance.
+class PointsUniformMaterial(BaseMaterial):
+    """Give all points the same appearance.
 
     Parameters
     ----------
     size : float
         The size of the points in the units
         specified by size_coordinate_space.
-    color : tuple[float, float, float, float]
+    color : Tuple[float, float, float, float]
         RGBA color for all of the points.
-    opacity : float
-        The opacity of the lines from 0 to 1 where 1 is opaque.
-        Default value is 1.0
     size_coordinate_space : str
         The coordinate space the size is defined in.
         Options are "screen", "world", "data".
@@ -26,18 +23,16 @@ class LinesUniformMaterial(BaseMaterial):
 
     size: float
     color: tuple[float, float, float, float]
-    opacity: float = 1.0
     size_coordinate_space: Literal["screen", "world", "data"] = "data"
 
 
-class LinesNode(BaseNode):
-    """Model for a lines visual.
+class PointsVisual(BaseVisual):
+    """Model for a point cloud visual.
 
     This is a psygnal EventedModel.
     https://psygnal.readthedocs.io/en/latest/API/model/
 
-    todo: add more lines materials
-    todo: decide if different line data types supported.
+    todo: add more point materials
 
     Parameters
     ----------
@@ -45,8 +40,8 @@ class LinesNode(BaseNode):
         The name of the visual
     data_store_id : str
         The id of the data stream to be visualized.
-    material : LinesUniformMaterial
-        The model for the appearance of the rendered lines.
+    material : PointsUniformMaterial
+        The model for the appearance of the rendered points.
     pick_write : bool
         If True, the visual can be picked.
         Default value is True.
@@ -56,8 +51,7 @@ class LinesNode(BaseNode):
     """
 
     data_store_id: str
-    material: LinesUniformMaterial
-    pick_write: bool = True
+    material: PointsUniformMaterial
 
     # this is used for a discriminated union
-    visual_type: Literal["lines"] = "lines"
+    visual_type: Literal["points"] = "points"

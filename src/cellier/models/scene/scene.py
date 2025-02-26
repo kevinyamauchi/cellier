@@ -1,20 +1,14 @@
 """Model to express a scene."""
 
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from psygnal import EventedModel
 from pydantic import Field
-from typing_extensions import Annotated
 
-from cellier.models.nodes.points_node import PointsNode
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
-
-VisualType = Annotated[
-    Union[PointsNode],
-    Field(discriminator="visual_type"),
-]
+from cellier.models.visuals import VisualType
 
 
 class Scene(EventedModel):
