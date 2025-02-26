@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Callable
 
-from psygnal import Signal, SignalInstance
+from psygnal import EmissionInfo, Signal, SignalInstance
 
 from cellier.models.visuals import VisualType
 
@@ -118,10 +118,11 @@ class EventBus:
         # connect the visual control signal
         visual_control_signal.connect(callback)
 
-    def _on_visual_model_update(self, event: Any | None = None):
+    def _on_visual_model_update(self, event: EmissionInfo):
         """Handle a visual model update event.
 
-        This emits a dictionary containing the visual model's state.
+        This emits a dictionary containing the visual id and
+        the updated property values.
         """
         # get the sender
         emitter_object = Signal.sender()
@@ -134,7 +135,11 @@ class EventBus:
                 "but the model is not registered"
             )
 
-        signal.emit(emitter_object.model_dump())
+        # dictionary with the updated state
+        property_name = event.signal.name
+        property_value = event.args[0]
+        new_state = {"id": emitter_object.id, property_name: property_value}
+        signal.emit(new_state)
 
     def _on_visual_control_update(self, event: Any | None = None):
         """Handle a visual control update event.
