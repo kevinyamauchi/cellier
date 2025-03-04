@@ -8,7 +8,7 @@ from superqt import QLabeledSlider
 
 from cellier.models.viewer import ViewerModel
 from cellier.slicer.slicer import SlicerType
-from cellier.viewer_controller import ViewerController
+from cellier.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):
@@ -22,7 +22,7 @@ class Main(QtWidgets.QWidget):
         viewer_model = ViewerModel.from_json_file(viewer_config_path)
 
         # make the viewer
-        self.viewer = ViewerController(
+        self.viewer = CellierController(
             model=viewer_model, slicer_type=SlicerType.ASYNCHRONOUS, widget_parent=self
         )
 

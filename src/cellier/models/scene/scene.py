@@ -8,7 +8,7 @@ from pydantic import Field
 
 from cellier.models.scene.canvas import Canvas
 from cellier.models.scene.dims_manager import DimsManager
-from cellier.models.visuals import VisualType
+from cellier.types import VisualType
 
 
 class Scene(EventedModel):

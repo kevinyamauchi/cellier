@@ -14,8 +14,8 @@ from pygfx.renderers import WgpuRenderer
 from superqt import ensure_main_thread
 from wgpu.gui import WgpuCanvasBase
 
-from cellier.models.nodes.base_node import BaseNode
 from cellier.models.viewer import ViewerModel
+from cellier.models.visuals.base import BaseVisual
 from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
 from cellier.slicer.data_slice import (
@@ -173,12 +173,12 @@ class RenderManager:
         """The visuals in the RenderManager."""
         return self._visuals
 
-    def add_visual(self, visual_model: BaseNode, scene_id: str):
+    def add_visual(self, visual_model: BaseVisual, scene_id: str):
         """Add a visual to a scene.
 
         Parameters
         ----------
-        visual_model : BaseNode
+        visual_model : BaseVisual
             The visual model to add.
         scene_id : str
             The id of the scene to add the visual to.

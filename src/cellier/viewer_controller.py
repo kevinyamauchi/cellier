@@ -6,11 +6,12 @@ from uuid import uuid4
 
 import numpy as np
 
+from cellier.events import EventBus
 from cellier.gui.constants import GuiFramework
 from cellier.models.data_stores.base_data_store import BaseDataStore
-from cellier.models.nodes.base_node import BaseNode
 from cellier.models.viewer import ViewerModel
-from cellier.render.render_manager import (
+from cellier.models.visuals.base import BaseVisual
+from cellier.render._render_manager import (
     CameraState,
     CanvasRedrawRequest,
     RenderManager,
@@ -26,8 +27,13 @@ from cellier.util.chunk import generate_chunk_requests_from_frustum
 logger = logging.getLogger(__name__)
 
 
-class ViewerController:
-    """The main viewer class."""
+class CellierController:
+    """Class to coordinate between the model and the renderer.
+
+    This class does not handle the other aspects of the GUI.
+    Applications should have a CellierController and synchronize their GUI with it
+    via the events.
+    """
 
     def __init__(
         self,
@@ -38,6 +44,9 @@ class ViewerController:
     ):
         self._model = model
         self._gui_framework = gui_framework
+
+        # Make the event bus
+        self._event_bus = EventBus()
 
         # Make the widget
         self._canvas_widgets = self._construct_canvas_widgets(
@@ -63,21 +72,49 @@ class ViewerController:
         # connect events for synchronizing the model and renderer
         self._connect_model_renderer_events()
 
-        # update all of the slices
+        # update all scenes
         self.reslice_all()
+
+    @property
+    def gui_framework(self) -> GuiFramework:
+        """The GUI framework used for this viewer."""
+        return self._gui_framework
+
+    @property
+    def events(self) -> EventBus:
+        """The event bus for this viewer.
+
+        All external components should only connect to the events
+        in this EventBus object.
+        """
+        return self._event_bus
 
     def add_data_store(self, data_store: BaseDataStore):
         """Add a data store to the viewer."""
         self._model.data.add_data_store(data_store)
 
-    def add_visual(self, visual_model: BaseNode, scene_id: str):
-        """Add a visual to a scene."""
-        # get the model
+    def add_visual(self, visual_model: BaseVisual, scene_id: str):
+        """Add a visual to a scene.
+
+        In addition to adding the visual to the scene, this
+        method also adds the visual model to the event bus.
+
+        Parameters
+        ----------
+        visual_model : BaseVisual
+            The visual model to add.
+        scene_id : str
+            The ID of the scene to add the visual to.
+        """
+        # add the model to the scene
         scene = self._model.scenes.scenes[scene_id]
         scene.visuals.append(visual_model)
 
         # add the visual to the renderer
         self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
+
+        # register the visual model with the eventbus
+        self.events.visual.register_visual(visual=visual_model)
 
     def add_visual_callback(
         self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
@@ -309,8 +346,3 @@ class ViewerController:
         for canvas_model in scene_model.canvases.values():
             # refresh the canvas
             self._canvas_widgets[canvas_model.id].update()
-
-    @property
-    def gui_framework(self) -> GuiFramework:
-        """The GUI framework used for this viewer."""
-        return self._gui_framework

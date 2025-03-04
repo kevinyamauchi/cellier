@@ -41,6 +41,7 @@ dependencies = [
     "pydantic",
     "pygfx",
     "PyQt5",
+    "superqt",
     "zarr",
 ]
 

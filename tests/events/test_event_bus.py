@@ -65,20 +65,20 @@ def test_model_to_gui():
     event_bus = EventBus()
 
     # register the visual
-    event_bus.register_visual(points_model)
+    event_bus.visual.register_visual(points_model)
 
     # subscribe to the visual
-    event_bus.subscribe_to_visual(
+    event_bus.visual.subscribe_to_visual(
         visual_id=points_model.id, callback=visual_gui._on_model_update
     )
 
     # register the visual gui
-    event_bus.register_visual_controls(
+    event_bus.visual.register_controls(
         visual_id=points_model.id, signal=visual_gui.update
     )
 
     # subscribe the model to the gui
-    event_bus.subscribe_to_visual_controls(
+    event_bus.visual.subscribe_to_controls(
         visual_id=points_model.id, callback=points_model.update_state
     )
 
@@ -113,20 +113,20 @@ def test_gui_to_model():
     event_bus = EventBus()
 
     # register the visual
-    event_bus.register_visual(points_model)
+    event_bus.visual.register_visual(points_model)
 
     # subscribe to the visual
-    event_bus.subscribe_to_visual(
+    event_bus.visual.subscribe_to_visual(
         visual_id=points_model.id, callback=visual_gui._on_model_update
     )
 
     # register the visual gui
-    event_bus.register_visual_controls(
+    event_bus.visual.register_controls(
         visual_id=points_model.id, signal=visual_gui.update
     )
 
     # subscribe the model to the gui
-    event_bus.subscribe_to_visual_controls(
+    event_bus.visual.subscribe_to_controls(
         visual_id=points_model.id, callback=points_model.update_state
     )
 

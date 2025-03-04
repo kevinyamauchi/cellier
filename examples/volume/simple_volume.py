@@ -7,7 +7,7 @@ from qtpy import QtWidgets
 from superqt import QLabeledSlider
 
 from cellier.models.viewer import ViewerModel
-from cellier.viewer_controller import ViewerController
+from cellier.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):
@@ -21,7 +21,7 @@ class Main(QtWidgets.QWidget):
         viewer_model = ViewerModel.from_json_file(viewer_config_path)
 
         # make the viewer
-        self.viewer = ViewerController(model=viewer_model, widget_parent=self)
+        self.viewer = CellierController(model=viewer_model, widget_parent=self)
 
         for cam in self.viewer._render_manager.cameras.values():
             cam.show_pos((20, 15, 15), up=(0, 1, 0))
