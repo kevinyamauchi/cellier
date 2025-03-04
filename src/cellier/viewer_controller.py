@@ -1,24 +1,39 @@
 """Implementation of a viewer."""
 
+import logging
+from typing import Callable
+from uuid import uuid4
+
 import numpy as np
 
+from cellier.events import EventBus
 from cellier.gui.constants import GuiFramework
+from cellier.models.data_stores.base_data_store import BaseDataStore
 from cellier.models.viewer import ViewerModel
-from cellier.render.render_manager import (
+from cellier.models.visuals.base import BaseVisual
+from cellier.render._render_manager import (
     CameraState,
     CanvasRedrawRequest,
     RenderManager,
 )
+from cellier.slicer.data_slice import DataSliceRequest
 from cellier.slicer.slicer import (
     AsynchronousDataSlicer,
     SlicerType,
-    SynchronousDataSlicer,
 )
+from cellier.slicer.utils import world_slice_from_dims_manager
 from cellier.util.chunk import generate_chunk_requests_from_frustum
 
+logger = logging.getLogger(__name__)
 
-class ViewerController:
-    """The main viewer class."""
+
+class CellierController:
+    """Class to coordinate between the model and the renderer.
+
+    This class does not handle the other aspects of the GUI.
+    Applications should have a CellierController and synchronize their GUI with it
+    via the events.
+    """
 
     def __init__(
         self,
@@ -29,6 +44,9 @@ class ViewerController:
     ):
         self._model = model
         self._gui_framework = gui_framework
+
+        # Make the event bus
+        self._event_bus = EventBus()
 
         # Make the widget
         self._canvas_widgets = self._construct_canvas_widgets(
@@ -42,7 +60,7 @@ class ViewerController:
 
         # make the slicer
         if slicer_type == SlicerType.SYNCHRONOUS:
-            self._slicer = SynchronousDataSlicer(viewer_model=self._model)
+            raise NotImplementedError("Synchronous slicer not implemented")
         elif slicer_type == SlicerType.ASYNCHRONOUS:
             self._slicer = AsynchronousDataSlicer()
         else:
@@ -54,11 +72,126 @@ class ViewerController:
         # connect events for synchronizing the model and renderer
         self._connect_model_renderer_events()
 
-        # update all of the slices
+        # update all scenes
         self.reslice_all()
 
-    def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str) -> None:
-        """Resclice a specified visual."""
+    @property
+    def gui_framework(self) -> GuiFramework:
+        """The GUI framework used for this viewer."""
+        return self._gui_framework
+
+    @property
+    def events(self) -> EventBus:
+        """The event bus for this viewer.
+
+        All external components should only connect to the events
+        in this EventBus object.
+        """
+        return self._event_bus
+
+    def add_data_store(self, data_store: BaseDataStore):
+        """Add a data store to the viewer."""
+        self._model.data.add_data_store(data_store)
+
+    def add_visual(self, visual_model: BaseVisual, scene_id: str):
+        """Add a visual to a scene.
+
+        In addition to adding the visual to the scene, this
+        method also adds the visual model to the event bus.
+
+        Parameters
+        ----------
+        visual_model : BaseVisual
+            The visual model to add.
+        scene_id : str
+            The ID of the scene to add the visual to.
+        """
+        # add the model to the scene
+        scene = self._model.scenes.scenes[scene_id]
+        scene.visuals.append(visual_model)
+
+        # add the visual to the renderer
+        self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
+
+        # register the visual model with the eventbus
+        self.events.visual.register_visual(visual=visual_model)
+
+    def add_visual_callback(
+        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Add a callback to a visual."""
+        self._render_manager.add_visual_callback(
+            visual_id=visual_id, callback=callback, callback_type=callback_type
+        )
+
+    def remove_visual_callback(
+        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
+    ):
+        """Remove a callback from a visual."""
+        self._render_manager.remove_visual_callback(
+            visual_id=visual_id, callback=callback, callback_type=callback_type
+        )
+
+    def look_at_visual(
+        self,
+        visual_id: str,
+        view_direction: tuple[float, float, float],
+        up: tuple[float, float, float],
+    ):
+        """Look at given visual.
+
+        Parameters
+        ----------
+        visual_id : str
+            The ID of the visual to look at.
+        view_direction : tuple[float, float, float]
+            The direction to set the camera view direction to.
+        up : tuple[float, float, float]
+            The direction to set the camera up direction to.
+        """
+        for scene in self._model.scenes.scenes.values():
+            visual_model = scene.get_visual_by_id(visual_id)
+            if visual_model is not None:
+                for canvas_model in scene.canvases.values():
+                    self._render_manager.look_at_visual(
+                        visual_id=visual_id,
+                        canvas_id=canvas_model.id,
+                        scene_id=scene.id,
+                        view_direction=view_direction,
+                        up=up,
+                    )
+                    self._canvas_widgets[canvas_model.id].update()
+                return
+
+    def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
+        """Reslice a specified visual."""
+        # get the current dims
+        scene = self._model.scenes.scenes[scene_id]
+        visual = self._model.scenes.scenes[scene_id].get_visual_by_id(visual_id)
+
+        # todo have the world slice passed in
+        world_slice = world_slice_from_dims_manager(dims_manager=scene.dims)
+
+        slice_request = DataSliceRequest(
+            world_slice=world_slice,
+            resolution_level=0,
+            data_store_id=visual.data_store_id,
+            visual_id=visual_id,
+            scene_id=scene.id,
+            request_id=uuid4().hex,
+            data_to_world_transform=None,
+        )
+
+        # submit the request
+        self._slicer.submit(
+            request_list=[slice_request],
+            data_store=self._model.data.stores[visual.data_store_id],
+        )
+
+    def reslice_visual_tiled(
+        self, scene_id: str, visual_id: str, canvas_id: str
+    ) -> None:
+        """Reslice a specified using tiled rendering and frustum culling visual."""
         # get the current dims
         scene = self._model.scenes.scenes[scene_id]
 
@@ -96,7 +229,7 @@ class ViewerController:
             frustum_corners_local / data_store.scales[scale_index]
         ) - data_store.translations[scale_index]
 
-        print(f"index: {scale_index} scale: {data_store.scales[scale_index]}")
+        logger.debug(f"index: {scale_index} scale: {data_store.scales[scale_index]}")
 
         # todo construct chunk corners using slicing
         # find the dims being displayed and then make the chunks
@@ -123,7 +256,7 @@ class ViewerController:
         ) + data_store.translations[scale_index]
 
         # pre allocate the data
-        print(f"shape: {texture_shape}, translation: {translation}")
+        logger.debug(f"shape: {texture_shape}, translation: {translation}")
         visual = self._render_manager.visuals[visual_id]
         visual.preallocate_data(
             scale_index=scale_index,
@@ -213,8 +346,3 @@ class ViewerController:
         for canvas_model in scene_model.canvases.values():
             # refresh the canvas
             self._canvas_widgets[canvas_model.id].update()
-
-    @property
-    def gui_framework(self) -> GuiFramework:
-        """The GUI framework used for this viewer."""
-        return self._gui_framework

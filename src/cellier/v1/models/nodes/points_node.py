@@ -38,7 +38,7 @@ class PointsNode(BaseNode):
     ----------
     name : str
         The name of the visual
-    data_stream_id : str
+    data_store_id : str
         The id of the data stream to be visualized.
     material : PointsUniformMaterial
         The model for the appearance of the rendered points.
@@ -47,7 +47,7 @@ class PointsNode(BaseNode):
         The default value is a uuid4-generated hex string.
     """
 
-    data_stream_id: str
+    data_store_id: str
     material: PointsUniformMaterial
 
     # this is used for a discriminated union

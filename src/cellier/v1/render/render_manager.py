@@ -97,7 +97,7 @@ class RenderManager:
             # populate the scene
             for visual_model in scene_model.visuals:
                 world_object = construct_pygfx_object(
-                    node_model=visual_model, data_manager=viewer_model.data
+                    node_model=visual_model
                 )
                 scene.add(world_object.node)
                 visuals.update({visual_model.id: world_object})
@@ -178,6 +178,22 @@ class RenderManager:
     def visuals(self) -> Dict[str, gfx.WorldObject]:
         """The visuals in the RenderManager."""
         return self._visuals
+
+    def add_visual(self, visual_model, scene_id: str):
+        """Add a visual to a scene."""
+
+        # get the scene node
+        scene = self._scenes[scene_id]
+
+        # get the visual object
+        world_object = construct_pygfx_object(
+            node_model=visual_model
+        )
+
+        # add the visual to the scene
+        scene.add(world_object.node)
+
+        self._visuals.update({visual_model.id: world_object})
 
     def animate(self, scene_id: str, canvas_id: str) -> None:
         """Callback to render a given canvas."""

@@ -5,9 +5,7 @@ import json
 import numpy as np
 from pydantic_core import from_json
 
-from cellier.models.data_stores.mesh import MeshMemoryStore
-from cellier.models.data_streams.mesh import MeshSynchronousDataStream
-from cellier.models.nodes.mesh_node import MeshNode, MeshPhongMaterial
+from cellier.models.data_stores import PointsMemoryStore
 from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
@@ -15,6 +13,7 @@ from cellier.models.scene import (
     PerspectiveCamera,
     Scene,
 )
+from cellier.models.visuals import PointsUniformMaterial, PointsVisual
 
 
 def test_scene_model(tmp_path):
@@ -25,25 +24,25 @@ def test_scene_model(tmp_path):
         coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
     )
 
-    vertices = np.array(
+    coordinates = np.array(
         [[10, 10, 10], [10, 10, 20], [10, 20, 20], [10, 20, 10]], dtype=np.float32
     )
-    faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.float32)
 
-    # make the mesh visual
-    mesh = MeshMemoryStore(vertices=vertices, faces=faces)
-    mesh_stream = MeshSynchronousDataStream(data_store_id=mesh.id, selectors=[])
-    mesh_material = MeshPhongMaterial()
+    # make the points visual
+    points_data = PointsMemoryStore(coordinates=coordinates)
+    points_material = PointsUniformMaterial(
+        size=1, color=(1, 0, 0, 1), size_coordinate_space="data"
+    )
 
-    mesh_visual = MeshNode(
-        name="test", data_stream_id=mesh_stream.id, material=mesh_material
+    points_visual = PointsVisual(
+        name="test", data_store_id=points_data.id, material=points_material
     )
 
     # make the canvas
     canvas = Canvas(camera=PerspectiveCamera())
 
     # make the scene
-    scene = Scene(dims=dims, visuals=[mesh_visual], canvases={canvas.id: canvas})
+    scene = Scene(dims=dims, visuals=[points_visual], canvases={canvas.id: canvas})
 
     output_path = tmp_path / "test.json"
     with open(output_path, "w") as f:

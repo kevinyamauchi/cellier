@@ -16,7 +16,7 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.slicer.slicer import SlicerType
-from cellier.viewer_controller import ViewerController
+from cellier.viewer_controller import CellierController
 
 n_scales = 5
 
@@ -80,7 +80,7 @@ class Main(QtWidgets.QWidget):
         self.resize(640, 480)
 
         # make the viewer
-        self.viewer = ViewerController(
+        self.viewer = CellierController(
             model=viewer_model, slicer_type=SlicerType.ASYNCHRONOUS, widget_parent=self
         )
 

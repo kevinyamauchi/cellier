@@ -11,9 +11,16 @@ from cellier.models.scene.scene import Scene
 
 
 class SceneManager(EventedModel):
-    """Class to model all scenes in the viewer."""
+    """Class to model all scenes in the viewer.
+
+    The keys are the scene ids.
+    """
 
     scenes: Dict[str, Scene]
+
+    def add_scene(self, scene: Scene) -> None:
+        """Add a scene to the scene manager."""
+        self.scenes[scene.id] = scene
 
 
 class ViewerModel(EventedModel):

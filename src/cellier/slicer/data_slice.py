@@ -37,8 +37,8 @@ class DataSliceRequest:
     resolution_level : int
         The resolution level to render where 0 is the highest resolution
         and high numbers correspond with more down sampling.
-    data_stream_id : str
-        The ID of the datastream from which to get the data slice.
+    data_store_id : str
+        The ID of the datastore from which to get the data slice.
     visual_id : str
         The unique identifier for which visual this data slice
         will be sent to.
@@ -52,7 +52,7 @@ class DataSliceRequest:
 
     world_slice: BaseWorldSlice
     resolution_level: int
-    data_stream_id: str
+    data_store_id: str
     scene_id: str
     visual_id: str
     request_id: str
@@ -122,6 +122,26 @@ class RenderedPointsDataSlice(RenderedSliceData):
         and larger numbers are lower resolution.
     coordinates : np.ndarray
         The point coordinates of the new slice.
+    """
+
+    coordinates: np.ndarray
+
+
+@dataclass(frozen=True)
+class RenderedLinesDataSlice(RenderedSliceData):
+    """Data class for rendered points slice data.
+
+    Attributes
+    ----------
+    scene_id : str
+        The unique identifier for which scene this visual belongs to.
+    visual_id : str
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    coordinates : np.ndarray
+        The point coordinates of the new lines slice.
     """
 
     coordinates: np.ndarray
