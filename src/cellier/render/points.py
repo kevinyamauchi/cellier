@@ -6,13 +6,13 @@ import numpy as np
 import pygfx as gfx
 from pygfx import PointsMaterial as GFXPointsMaterial
 
-from cellier.models.nodes.points_node import PointsNode, PointsUniformMaterial
+from cellier.models.visuals import PointsUniformMaterial, PointsVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.slicer.data_slice import RenderedPointsDataSlice
 
 
 def construct_pygfx_points_from_model(
-    model: PointsNode,
+    model: PointsVisual,
     empty_material: GFXPointsMaterial,
 ) -> Tuple[gfx.WorldObject, gfx.PointsMaterial]:
     """Make a PyGFX points object.
@@ -49,14 +49,14 @@ def construct_pygfx_points_from_model(
     return gfx.Points(geometry=geometry, material=empty_material), material
 
 
-class GFXPointsNode:
+class GFXPointsVisual:
     """PyGFX points node implementation.
 
     Note that PyGFX doesn't support empty WorldObjects, so we set
     transparent data when the slice is empty.
     """
 
-    def __init__(self, model: PointsNode):
+    def __init__(self, model: PointsVisual):
         # This is the material given when the visual is "empty"
         # since pygfx doesn't support empty World Objects, we
         # initialize with a single point

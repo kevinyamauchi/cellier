@@ -38,7 +38,7 @@ dependencies = [
     "psygnal",
     "pydantic",
     "pygfx",
-    "PyQt5",
+    "qtpy",
     "superqt",
     "zarr",
 ]
@@ -47,6 +47,7 @@ dependencies = [
 # "extras" (e.g. for `pip install .[test]`)
 [project.optional-dependencies]
 # add dependencies used for testing here
+pyside = ["PySide6"]
 test = [
     "pytest",
     "pytest-cov"

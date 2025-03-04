@@ -3,13 +3,13 @@
 import numpy as np
 import pygfx as gfx
 
-from cellier.models.nodes.lines_node import LinesNode, LinesUniformMaterial
+from cellier.models.visuals import LinesUniformMaterial, LinesVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.slicer.data_slice import RenderedLinesDataSlice
 
 
 def construct_pygfx_lines_from_model(
-    model: LinesNode, empty_material: gfx.LineMaterial
+    model: LinesVisual, empty_material: gfx.LineMaterial
 ):
     """Make a PyGFX line object.
 
@@ -40,14 +40,14 @@ def construct_pygfx_lines_from_model(
     return gfx.Line(geometry=geometry, material=empty_material), material
 
 
-class GFXLinesNode:
+class GFXLinesVisual:
     """PyGFX lines node implementation.
 
     Note that PyGFX doesn't support empty WorldObjects, so we set
     transparent data when the slice is empty.
     """
 
-    def __init__(self, model: LinesNode):
+    def __init__(self, model: LinesVisual):
         # This is the material given when the visual is "empty"
         # since pygfx doesn't support empty World Objects, we
         # initialize with a single line

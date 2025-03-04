@@ -6,7 +6,7 @@ from cellier.models.nodes.mesh_node import MeshNode
 from cellier.models.nodes.points_node import PointsNode
 from cellier.render.image import GFXImageNode, GFXMultiScaleImageNode
 from cellier.render.mesh import GFXMeshNode
-from cellier.render.points import GFXPointsNode
+from cellier.render.points import GFXPointsVisual
 
 
 def construct_pygfx_object(node_model: BaseNode):
@@ -17,7 +17,7 @@ def construct_pygfx_object(node_model: BaseNode):
 
     elif isinstance(node_model, PointsNode):
         # points
-        return GFXPointsNode(model=node_model)
+        return GFXPointsVisual(model=node_model)
     elif isinstance(node_model, ImageNode):
         return GFXImageNode(model=node_model)
     elif isinstance(node_model, MultiscaleImageNode):
