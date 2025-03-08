@@ -1,5 +1,6 @@
 """Models for nodes."""
 
+from cellier.models.visuals.labels import LabelsMaterial, MultiscaleLabelsVisual
 from cellier.models.visuals.lines import LinesUniformMaterial, LinesVisual
 from cellier.models.visuals.points import PointsUniformMaterial, PointsVisual
 
@@ -8,4 +9,6 @@ __all__ = [
     "LinesVisual",
     "PointsUniformMaterial",
     "PointsVisual",
+    "LabelsMaterial",
+    "MultiscaleLabelsVisual",
 ]

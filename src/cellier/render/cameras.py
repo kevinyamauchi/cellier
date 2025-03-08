@@ -1,8 +1,9 @@
 """Functions to construct PyGFX cameras."""
 
+from pygfx import OrthographicCamera as GFXOrthographicCamera
 from pygfx import PerspectiveCamera as GFXPerspectiveCamera
 
-from cellier.models.scene.cameras import PerspectiveCamera
+from cellier.models.scene.cameras import OrthographicCamera, PerspectiveCamera
 
 
 def construct_pygfx_camera_from_model(
@@ -18,9 +19,18 @@ def construct_pygfx_camera_from_model(
         The cellier PerspectiveCamera model to construct
         the PyGFX camera from.
     """
-    return GFXPerspectiveCamera(
-        fov=camera_model.fov,
-        width=camera_model.width,
-        height=camera_model.height,
-        zoom=camera_model.zoom,
-    )
+    if isinstance(camera_model, PerspectiveCamera):
+        return GFXPerspectiveCamera(
+            fov=camera_model.fov,
+            width=camera_model.width,
+            height=camera_model.height,
+            zoom=camera_model.zoom,
+        )
+    elif isinstance(camera_model, OrthographicCamera):
+        return GFXOrthographicCamera(
+            width=camera_model.width,
+            height=camera_model.height,
+            zoom=camera_model.zoom,
+        )
+    else:
+        raise ValueError(f"Unsupported camera model type: {camera_model}")
