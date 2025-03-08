@@ -44,7 +44,7 @@ class LinesVisual(BaseVisual):
     name : str
         The name of the visual
     data_store_id : str
-        The id of the data stream to be visualized.
+        The id of the data store to be visualized.
     material : LinesUniformMaterial
         The model for the appearance of the rendered lines.
     pick_write : bool
@@ -57,7 +57,6 @@ class LinesVisual(BaseVisual):
 
     data_store_id: str
     material: LinesUniformMaterial
-    pick_write: bool = True
 
     # this is used for a discriminated union
     visual_type: Literal["lines"] = "lines"

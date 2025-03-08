@@ -6,11 +6,15 @@ from psygnal import EventedModel
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.data_stores.points import PointsMemoryStore
+from cellier.models.data_stores import (
+    ImageMemoryStore,
+    LinesMemoryStore,
+    PointsMemoryStore,
+)
 
 # types for discrimitive unions
 DataStoreType = Annotated[
-    Union[PointsMemoryStore,],
+    Union[PointsMemoryStore, LinesMemoryStore, ImageMemoryStore],
     Field(discriminator="store_type"),
 ]
 

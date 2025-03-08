@@ -13,14 +13,25 @@ class LabelImageMaterial(gfx.ImageBasicMaterial):
 
     Parameters
     ----------
-    map : gfx.TextureMap
+    color_map : gfx.TextureMap
         The texture map to use for the coloring the labels.
-    clim : tuple[float, float]
-        The color limits for the image.
+        This must be a 1D texture and should use nearest neighbor
+        interpolation.
     """
 
-    def __init__(self, map: gfx.TextureMap, clim: tuple[float, float]):
-        super().__init__(clim=clim, map=map, interpolation="nearest", pick_write=True)
+    def __init__(self, color_map: gfx.TextureMap):
+        # the texture must be 1D
+        if color_map.texture.dim != 1:
+            raise ValueError("The color map must be a 1D texture.")
+
+        # get the number of colors in the colormap
+        n_colors = color_map.texture.size[0]
+
+        # set the clim based on the number of colors
+        clim = (0, n_colors - 1)
+        super().__init__(
+            clim=clim, map=color_map, interpolation="nearest", pick_write=True
+        )
 
 
 class LabelIsoMaterial(gfx.VolumeIsoMaterial):
@@ -30,7 +41,7 @@ class LabelIsoMaterial(gfx.VolumeIsoMaterial):
     ----------
     color_map : gfx.TextureMap
         The texture map to use for the coloring the labels.
-        This should be a 1D texture and should use nearest neighbor
+        This must be a 1D texture and should use nearest neighbor
         interpolation.
     """
 

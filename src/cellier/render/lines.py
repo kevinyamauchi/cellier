@@ -16,7 +16,7 @@ def construct_pygfx_lines_from_model(
     This function dispatches to other constructor functions
     based on the material, etc. and returns a PyGFX mesh object.
     """
-    # initialize with an dummy coordinates
+    # initialize with dummy coordinates
     # since we can't initialize an empty node.
     geometry = gfx.Geometry(
         positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),

@@ -39,7 +39,7 @@ class CellierController:
         self,
         model: ViewerModel,
         gui_framework: GuiFramework = GuiFramework.QT,
-        slicer_type: SlicerType = SlicerType.SYNCHRONOUS,
+        slicer_type: SlicerType = SlicerType.ASYNCHRONOUS,
         widget_parent=None,
     ):
         self._model = model

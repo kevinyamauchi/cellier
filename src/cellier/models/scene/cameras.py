@@ -25,6 +25,7 @@ class PerspectiveCamera(BaseCamera):
     ----------
     fov : float
         The field of view (in degrees), between 0-179.
+        To use orthographic projection, set the fov to 0.
     width : float
         The (minimum) width of the view-cube.
     height : float
@@ -78,7 +79,6 @@ class OrthographicCamera(BaseCamera):
 
     Parameters
     ----------
-    ----------.
     width : float
         The (minimum) width of the view-cube.
     height : float

@@ -96,9 +96,7 @@ class RenderManager:
 
             # populate the scene
             for visual_model in scene_model.visuals:
-                world_object = construct_pygfx_object(
-                    node_model=visual_model
-                )
+                world_object = construct_pygfx_object(visual_model=visual_model)
                 scene.add(world_object.node)
                 visuals.update({visual_model.id: world_object})
 
@@ -181,14 +179,11 @@ class RenderManager:
 
     def add_visual(self, visual_model, scene_id: str):
         """Add a visual to a scene."""
-
         # get the scene node
         scene = self._scenes[scene_id]
 
         # get the visual object
-        world_object = construct_pygfx_object(
-            node_model=visual_model
-        )
+        world_object = construct_pygfx_object(visual_model=visual_model)
 
         # add the visual to the scene
         scene.add(world_object.node)
