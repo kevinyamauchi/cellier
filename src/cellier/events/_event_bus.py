@@ -2,6 +2,7 @@
 
 import logging
 
+from cellier.events._scene import SceneEventBus
 from cellier.events._visual import VisualEventBus
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,14 @@ class EventBus:
         # the signals for each visual model
         self._visual_bus = VisualEventBus()
 
+        self._scene_bus = SceneEventBus()
+
     @property
     def visual(self) -> VisualEventBus:
         """Return the visual events."""
         return self._visual_bus
+
+    @property
+    def scene(self) -> SceneEventBus:
+        """Return the scene events."""
+        return self._scene_bus
