@@ -3,8 +3,8 @@
 from qtpy import QtWidgets
 from skimage.data import binary_blobs
 from skimage.measure import label
-from superqt import QLabeledSlider
 
+from cellier.app.qt import QtCanvasWidget
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.scene import (
@@ -12,6 +12,7 @@ from cellier.models.scene import (
     CoordinateSystem,
     DimsManager,
     PerspectiveCamera,
+    RangeTuple,
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
@@ -30,29 +31,57 @@ class Main(QtWidgets.QWidget):
         self.viewer = CellierController(model=viewer_model, widget_parent=self)
 
         # make the slider for the z axis in the 2D canvas
-        self.z_slider_widget = QLabeledSlider(parent=self)
-        self.z_slider_widget.valueChanged.connect(self._on_z_slider_changed)
-        self.z_slider_widget.setValue(125)
-        self.z_slider_widget.setRange(0, 249)
+        # self.z_slider_widget = QLabeledSlider(parent=self)
+        # self.z_slider_widget.valueChanged.connect(self._on_z_slider_changed)
+        # self.z_slider_widget.setValue(125)
+        # self.z_slider_widget.setRange(0, 249)
 
         layout = QtWidgets.QHBoxLayout()
         # layout.addWidget(self.z_slider_widget)
-        for canvas in self.viewer._canvas_widgets.values():
+        for canvas_id, canvas in self.viewer._canvas_widgets.items():
             # add the canvas widgets
             canvas.update()
-            print(canvas)
-            layout.addWidget(canvas)
+
+            scenes = self.viewer._model.scenes.scenes
+
+            for scene in scenes.values():
+                # get the dims model the canvas
+                if canvas_id in scene.canvases:
+                    dims_model = scene.dims
+
+            canvas_widget = QtCanvasWidget(
+                dims_id=dims_model.id, canvas_widget=canvas, parent=self
+            )
+
+            # create the sliders
+            dims_ranges = dims_model.range
+            sliders_data = {
+                axis_label: range(int(start), int(stop), int(step))
+                for axis_label, (start, stop, step) in zip(
+                    dims_model.coordinate_system.axis_labels,
+                    dims_ranges,
+                )
+            }
+            canvas_widget._dims_sliders.create_sliders(sliders_data)
+
+            self.viewer.events.scene.add_dims_with_controls(
+                dims_model=dims_model,
+                dims_controls=canvas_widget._dims_sliders,
+            )
+
+            # redraw the scene when the dims model updates
+            dims_model.events.point.connect(self._on_dims_update)
+
+            dims_model.point = (10, 0, 0)
+
+            layout.addWidget(canvas_widget)
         self.setLayout(layout)
 
-    def _on_z_slider_changed(self, slider_value: int):
+    def _on_dims_update(self, event):
         for scene in self.viewer._model.scenes.scenes.values():
             dims_manager = scene.dims
             coordinate_system = dims_manager.coordinate_system
             if coordinate_system.name == "scene_2d":
-                dims_point = list(dims_manager.point)
-                dims_point[0] = slider_value
-                dims_manager.point = dims_point
-
                 self.viewer.reslice_scene(scene_id=scene.id)
 
 
@@ -67,12 +96,20 @@ data_store = ImageMemoryStore(data=label_image, name="label_image")
 # make the data_stores manager
 data = DataManager(stores={data_store.id: data_store})
 
+# the range of the data in the scene
+data_range = (
+    RangeTuple(start=0, stop=250, step=1),
+    RangeTuple(start=0, stop=250, step=1),
+    RangeTuple(start=0, stop=250, step=1),
+)
+
 # make the 2D scene coordinate system
 coordinate_system_2d = CoordinateSystem(name="scene_2d", axis_labels=("z", "y", "x"))
 dims_2d = DimsManager(
     point=(125, 0, 0),
     margin_negative=(0, 0, 0),
     margin_positive=(0, 0, 0),
+    range=data_range,
     coordinate_system=coordinate_system_2d,
     displayed_dimensions=(1, 2),
 )
@@ -93,6 +130,7 @@ dims_3d = DimsManager(
     point=(0, 0, 0),
     margin_negative=(0, 0, 0),
     margin_positive=(0, 0, 0),
+    range=data_range,
     coordinate_system=coordinate_system_3d,
     displayed_dimensions=(0, 1, 2),
 )

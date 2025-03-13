@@ -156,14 +156,16 @@ class VisualEventBus:
             control_signal = self.control_signals[visual_id]
         except KeyError:
             logger.debug(
-                f"EventBus received event from visual model {visual_id},"
-                "but the model is not registered"
+                "EventBus received event from control"
+                f" for visual model {visual_id},"
+                " but the model is not registered"
             )
+            return
 
         callback_to_block = event.pop("controls_update_callback")
 
         # update the visual model
-        if visual_id in self._visual_control_signals:
+        if visual_id in self.model_signals:
             # block the gui update callback so the signal doesn't bounce back
             visual_signal = self.model_signals[visual_id]
 
