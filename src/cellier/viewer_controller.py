@@ -116,13 +116,21 @@ class CellierController:
         # register the visual model with the eventbus
         self.events.visual.register_visual(visual=visual_model)
 
-    def add_visual_callback(
-        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
-    ):
+    def add_visual_callback(self, visual_id: str, callback: Callable):
         """Add a callback to a visual."""
-        self._render_manager.add_visual_callback(
-            visual_id=visual_id, callback=callback, callback_type=callback_type
-        )
+        # self._render_manager.add_visual_callback(
+        #     visual_id=visual_id, callback=callback, callback_type=callback_type
+        # )
+
+        if visual_id not in self.events.mouse.visual_signals:
+            # register the visual with the event bus
+
+            callback_handler = self._render_manager.visuals[visual_id].callback_handlers
+            self.events.mouse.register_visual(
+                visual_id=visual_id, callback_handlers=callback_handler
+            )
+
+        self.events.mouse.subscribe_to_visual(visual_id=visual_id, callback=callback)
 
     def remove_visual_callback(
         self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]

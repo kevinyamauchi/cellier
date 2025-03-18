@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from psygnal import SignalInstance
 
@@ -59,7 +59,10 @@ class MouseCallbackData:
 
 
 class MouseEventBus:
-    """A class to manage events for mouse interactions on the canvas."""
+    """A class to manage events for mouse interactions on the canvas.
+
+    This is currently only implemented for the pygfx backend.
+    """
 
     def __init__(self):
         self._visual_signals: dict[VisualId, SignalInstance] = {}
@@ -73,8 +76,14 @@ class MouseEventBus:
         """
         return self._visual_signals
 
-    def register_visual(self, visual_id: VisualId, callback_handler):
-        """Register a visual as a source for mouse events."""
+    def register_visual(
+        self, visual_id: VisualId, callback_handlers: list[Callable]
+    ) -> None:
+        """Register a visual as a source for mouse events.
+
+        This assumes a pygfx backend. In the future, we could consider
+        allowing for other backends
+        """
         if visual_id not in self.visual_signals:
             self.visual_signals[visual_id] = SignalInstance(
                 name=visual_id,
@@ -82,9 +91,32 @@ class MouseEventBus:
                 check_types_on_connect=False,
             )
 
-        callback_handler.add_event_handler(
-            partial(self._on_mouse_event, visual_id=visual_id),
-        )
+        # connect all events to the visual model update handler
+        for handler in callback_handlers:
+            handler(
+                partial(self._on_mouse_event, visual_id=visual_id),
+                *("pointer_down", "pointer_up", "pointer_move"),
+            )
+
+    def subscribe_to_visual(self, visual_id: VisualId, callback: Callable):
+        """Subscribe to mouse events for a visual.
+
+        This will call the callback when a mouse event occurs on the
+        visual.
+
+        Parameters
+        ----------
+        visual_id : VisualId
+            The ID of the visual to subscribe to.
+        callback : Callable
+            The callback to call when a mouse event occurs.
+            This must accept a MouseCallbackData object as the only argument.
+        """
+        if visual_id not in self.visual_signals:
+            raise ValueError(f"Visual {visual_id} is not registered.") from None
+
+        # connect the callback to the signal
+        self.visual_signals[visual_id].connect(callback)
 
     def _on_mouse_event(self, event: "PygfxPointerEvent", visual_id: VisualId):
         """Receive and re-emit the mouse event.
