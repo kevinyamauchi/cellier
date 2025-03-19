@@ -6,6 +6,6 @@
 [![CI](https://github.com/kevinyamauchi/cellier/actions/workflows/ci.yml/badge.svg)](https://github.com/kevinyamauchi/cellier/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/kevinyamauchi/cellier/branch/main/graph/badge.svg)](https://codecov.io/gh/kevinyamauchi/cellier)
 
-🚧 Note: this repo is experimental and not meant to be used (i.e., nothing is working) - please come back later! 🚧
+🚧 Note: this repo is experimental and not meant to be used (i.e., nothing is working) - please come back later!
 
 A workshop for rendering cellular models.
