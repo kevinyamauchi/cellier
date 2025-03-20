@@ -1,5 +1,6 @@
 """Types used in the Cellier package."""
 
+from enum import Enum
 from typing import TypeAlias, Union
 
 from pydantic import Field
@@ -18,3 +19,27 @@ DimsId: TypeAlias = str
 
 # The unique identifier for a Visual model
 VisualId: TypeAlias = str
+
+# The unique identifier for a Scene model
+SceneId: TypeAlias = str
+
+# The unique identifier for a Canvas model
+CanvasId: TypeAlias = str
+
+
+class MouseButton(Enum):
+    """Mouse buttons for mouse click events."""
+
+    NONE = "none"
+    LEFT = "left"
+    MIDDLE = "middle"
+    RIGHT = "right"
+
+
+class MouseModifiers(Enum):
+    """Keyboard modifiers for mouse click events."""
+
+    SHIFT = "shift"
+    CTRL = "ctrl"
+    ALT = "alt"
+    META = "meta"

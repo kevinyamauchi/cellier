@@ -1,13 +1,11 @@
 """Infrastructure for the events system."""
 
 from cellier.events._event_bus import EventBus
-from cellier.events._mouse import MouseButton, MouseCallbackData, MouseModifiers
+from cellier.events._mouse import MouseCallbackData
 from cellier.events._scene import DimsControlsUpdateEvent
 
 __all__ = [
     "DimsControlsUpdateEvent",
     "EventBus",
-    "MouseButton",
-    "MouseModifiers",
     "MouseCallbackData",
 ]

@@ -5,6 +5,7 @@ import logging
 from cellier.events._mouse import MouseEventBus
 from cellier.events._scene import SceneEventBus
 from cellier.events._visual import VisualEventBus
+from cellier.models.viewer import ViewerModel
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,10 @@ class EventBus:
         - visual_controls: communicate changes to the visual gui state.
     """
 
-    def __init__(self):
+    def __init__(self, viewer_model: ViewerModel | None = None):
+        # store the viewer model, if provided
+        self._viewer_model = viewer_model
+
         # the signals for each visual model
         self._visual_bus = VisualEventBus()
 
@@ -25,7 +29,7 @@ class EventBus:
         self._scene_bus = SceneEventBus()
 
         # the signals for mouse events
-        self._mouse_bus = MouseEventBus()
+        self._mouse_bus = MouseEventBus(viewer_model=viewer_model)
 
     @property
     def visual(self) -> VisualEventBus:

@@ -9,18 +9,24 @@ import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
-from pygfx.controllers import TrackballController
+from pygfx.controllers import PanZoomController, TrackballController
 from pygfx.renderers import WgpuRenderer
+from pylinalg import vec_transform, vec_unproject
 from superqt import ensure_main_thread
 from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.viewer import ViewerModel
 from cellier.models.visuals.base import BaseVisual
+from cellier.render._data_classes import (
+    RendererCanvasMouseEvent,
+    RendererVisualMouseEvent,
+)
 from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
 from cellier.slicer.data_slice import (
     RenderedSliceData,
 )
+from cellier.types import CanvasId, MouseButton, MouseModifiers, SceneId, VisualId
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +59,31 @@ class CameraState:
     frustum: np.ndarray
 
 
+# convert the pygfx mouse buttons to the Cellier mouse buttons
+# https://jupyter-rfb.readthedocs.io/en/stable/events.html
+pygfx_buttons_to_cellier_buttons = {
+    0: MouseButton.NONE,
+    1: MouseButton.LEFT,
+    2: MouseButton.RIGHT,
+    3: MouseButton.MIDDLE,
+}
+
+# convert the pygfx modifiers to the Cellier modifiers
+# https://jupyter-rfb.readthedocs.io/en/stable/events.html
+pygfx_modifiers_to_cellier_modifiers = {
+    "Shift": MouseModifiers.SHIFT,
+    "Control": MouseModifiers.CTRL,
+    "Alt": MouseModifiers.ALT,
+    "Meta": MouseModifiers.META,
+}
+
+
 class RenderManagerEvents:
     """Events for the RenderManager class."""
 
     redraw_canvas: Signal = Signal(CanvasRedrawRequest)
     camera_updated: Signal = Signal(CameraState)
+    mouse_event: Signal = Signal(RendererVisualMouseEvent | RendererCanvasMouseEvent)
 
 
 class RenderManager:
@@ -70,8 +96,8 @@ class RenderManager:
         # make each scene
         renderers = {}
         cameras = {}
-        scenes = {}
-        visuals = {}
+        self._scenes = {}
+        self._visuals = {}
         controllers = {}
         for scene_model in viewer_model.scenes.scenes.values():
             # make a scene
@@ -90,26 +116,35 @@ class RenderManager:
             axes = gfx.AxesHelper(size=5, thickness=8)
             scene.add(axes)
 
+            # store the scene
+            scene_id = scene_model.id
+            self._scenes.update({scene_id: scene})
+
             # populate the scene
             for visual_model in scene_model.visuals:
-                world_object = construct_pygfx_object(visual_model=visual_model)
-                scene.add(world_object.node)
-                visuals.update({visual_model.id: world_object})
-
+                # world_object = construct_pygfx_object(visual_model=visual_model)
+                # scene.add(world_object.node)
+                # visuals.update({visual_model.id: world_object})
+                canvas_ids = list(scene_model.canvases.keys())
+                self.add_visual(
+                    visual_model=visual_model,
+                    scene_id=scene_model.id,
+                    canvas_id=canvas_ids,
+                )
                 # add a bounding box
                 # todo make configurable
                 # box_world = gfx.BoxHelper(color="red")
                 # box_world.set_transform_by_object(world_object)
                 # scene.add(box_world)
 
-            # store the scene
-            scene_id = scene_model.id
-            scenes.update({scene_id: scene})
-
             for canvas_id, canvas_model in scene_model.canvases.items():
                 # make a renderer for each canvas
                 canvas = canvases[canvas_id]
                 renderer = WgpuRenderer(canvas)
+                renderer.add_event_handler(
+                    partial(self._on_canvas_mouse_event, canvas_id=canvas_id),
+                    *("pointer_down", "pointer_move", "pointer_up"),
+                )
                 renderers.update({canvas_id: renderer})
 
                 # make a camera for each canvas
@@ -121,9 +156,15 @@ class RenderManager:
                 cameras.update({canvas_id: camera})
 
                 # make the camera controller
-                controller = TrackballController(
-                    camera=camera, register_events=renderer
-                )
+                # todo controller config
+                if camera.fov == 0:
+                    controller = PanZoomController(
+                        camera=camera, register_events=renderer
+                    )
+                else:
+                    controller = TrackballController(
+                        camera=camera, register_events=renderer
+                    )
                 controllers.update({canvas_id: controller})
 
                 # connect a callback for the renderer
@@ -134,8 +175,6 @@ class RenderManager:
                 canvas.request_draw(render_func)
 
         # store the values
-        self._scenes = scenes
-        self._visuals = visuals
         self._renderers = renderers
         self._cameras = cameras
         self._controllers = controllers
@@ -143,7 +182,7 @@ class RenderManager:
         self.render_calls = 0
 
     @property
-    def renderers(self) -> Dict[str, WgpuRenderer]:
+    def renderers(self) -> Dict[CanvasId, WgpuRenderer]:
         """Dictionary of pygfx renderers.
 
         The key is the id property of the Canvas model the renderer
@@ -152,7 +191,7 @@ class RenderManager:
         return self._renderers
 
     @property
-    def cameras(self) -> Dict[str, pygfx.Camera]:
+    def cameras(self) -> Dict[CanvasId, pygfx.Camera]:
         """Dictionary of pygfx Cameras.
 
         The key is the id property of the Canvas model the Camera
@@ -161,7 +200,7 @@ class RenderManager:
         return self._cameras
 
     @property
-    def scenes(self) -> Dict[str, gfx.Scene]:
+    def scenes(self) -> Dict[SceneId, gfx.Scene]:
         """Dictionary of pygfx Scenes.
 
         The key is the id of the Scene model the pygfx Scene belongs to.
@@ -169,25 +208,49 @@ class RenderManager:
         return self._scenes
 
     @property
-    def visuals(self) -> Dict[str, gfx.WorldObject]:
-        """The visuals in the RenderManager."""
+    def visuals(self) -> Dict[VisualId, gfx.WorldObject]:
+        """The visuals in the RenderManager.
+
+        The key is the id of the visual model.
+        """
         return self._visuals
 
-    def add_visual(self, visual_model: BaseVisual, scene_id: str):
+    def add_visual(
+        self,
+        visual_model: BaseVisual,
+        scene_id: SceneId,
+        canvas_id: list[CanvasId] | CanvasId,
+    ):
         """Add a visual to a scene.
 
         Parameters
         ----------
         visual_model : BaseVisual
             The visual model to add.
-        scene_id : str
+        scene_id : SceneId
             The id of the scene to add the visual to.
+        canvas_id : list[CanvasId] | CanvasId
+            The id of the canvas to add the visual to.
         """
         # get the scene node
         scene = self._scenes[scene_id]
 
         # get the visual object
         world_object = construct_pygfx_object(visual_model=visual_model)
+
+        # connect the mouse callback
+        if isinstance(canvas_id, str):
+            canvas_id = [canvas_id]
+        for handler in world_object.callback_handlers:
+            for c_id in canvas_id:
+                handler(
+                    partial(
+                        self._on_visual_mouse_event,
+                        visual_id=visual_model.id,
+                        canvas_id=c_id,
+                    ),
+                    *("pointer_down", "pointer_move", "pointer_up"),
+                )
 
         # add the visual to the scene
         scene.add(world_object.node)
@@ -282,3 +345,63 @@ class RenderManager:
             self.events.redraw_canvas.emit(
                 CanvasRedrawRequest(scene_id=slice_data.scene_id)
             )
+
+    def _on_canvas_mouse_event(
+        self, event: gfx.PointerEvent, canvas_id: CanvasId
+    ) -> None:
+        """Process mouse callbacks from the canvas and rebroadcast."""
+        # get the position of the click in screen coordinates
+        position_screen = (event.x, event.y)
+        renderer = self.renderers[canvas_id]
+        renderer_size = renderer.logical_size
+
+        # get the position of the click in NDC
+        x = position_screen[0] / renderer_size[0] * 2 - 1
+        y = -(position_screen[1] / renderer_size[1] * 2 - 1)
+        pos_ndc = (x, y, 0)
+        camera = self.cameras[canvas_id]
+        pos_ndc += vec_transform(camera.world.position, camera.camera_matrix)
+
+        # get the position of the click in world space
+        coordinate = vec_unproject(pos_ndc[:2], camera.camera_matrix)
+
+        mouse_event = RendererCanvasMouseEvent(
+            source_id=canvas_id,
+            coordinate=coordinate,
+            button=pygfx_buttons_to_cellier_buttons[event.button],
+            modifiers=[
+                pygfx_modifiers_to_cellier_modifiers[key] for key in event.modifiers
+            ],
+            pick_info=event.pick_info,
+        )
+        self.events.mouse_event(mouse_event)
+
+    def _on_visual_mouse_event(
+        self, event: gfx.PointerEvent, canvas_id: CanvasId, visual_id: VisualId
+    ) -> None:
+        """Process mouse callbacks from a visual and rebroadcast."""
+        # get the position of the click in screen coordinates
+        position_screen = (event.x, event.y)
+        renderer = self.renderers[canvas_id]
+        renderer_size = renderer.logical_size
+
+        # get the position of the click in NDC
+        x = position_screen[0] / renderer_size[0] * 2 - 1
+        y = -(position_screen[1] / renderer_size[1] * 2 - 1)
+        pos_ndc = (x, y, 0)
+        camera = self.cameras[canvas_id]
+        pos_ndc += vec_transform(camera.world.position, camera.camera_matrix)
+
+        # get the position of the click in world space
+        coordinate = vec_unproject(pos_ndc[:2], camera.camera_matrix)
+
+        mouse_event = RendererVisualMouseEvent(
+            source_id=visual_id,
+            coordinate=coordinate,
+            button=pygfx_buttons_to_cellier_buttons[event.button],
+            modifiers=[
+                pygfx_modifiers_to_cellier_modifiers[key] for key in event.modifiers
+            ],
+            pick_info=event.pick_info,
+        )
+        self.events.mouse_event(mouse_event)
