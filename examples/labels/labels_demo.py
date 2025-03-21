@@ -4,6 +4,7 @@ from qtpy import QtWidgets
 from skimage.data import binary_blobs
 from skimage.measure import label
 
+from cellier.app.interactivity import LabelsPaintingManager
 from cellier.app.qt import QtCanvasWidget
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import ImageMemoryStore
@@ -17,19 +18,29 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
-from cellier.types import MouseButton
 from cellier.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):
     """Example widget with viewer."""
 
-    def __init__(self, viewer_model, labels_visual_id: str | None = None):
+    def __init__(
+        self,
+        viewer_model,
+        labels_visual_model,
+        labels_data_store,
+    ):
         super().__init__(None)
         self.resize(640, 480)
 
         # make the viewer
         self.viewer = CellierController(model=viewer_model, widget_parent=self)
+
+        # make the painting manager
+        self._labels_painting_manager = LabelsPaintingManager(
+            model=labels_visual_model,
+            data_store=labels_data_store,
+        )
 
         layout = QtWidgets.QHBoxLayout()
         # layout.addWidget(self.z_slider_widget)
@@ -70,13 +81,12 @@ class Main(QtWidgets.QWidget):
             dims_model.point = (10, 0, 0)
 
             layout.addWidget(canvas_widget)
-        self.setLayout(layout)
+            self.setLayout(layout)
 
-        if labels_visual_id:
-            self._labels_visual_id = labels_visual_id
-            self.viewer.add_visual_callback(
-                visual_id=labels_visual_id, callback=self._on_mouse_click
-            )
+            self._labels_visual_id = labels_visual_model.id
+            # self.viewer.add_visual_callback(
+            #     visual_id=self._labels_visual_id, callback=self._on_mouse_click
+            # )
 
             # register the canvas
             for scene in self.viewer._model.scenes.scenes.values():
@@ -85,6 +95,9 @@ class Main(QtWidgets.QWidget):
                         canvas_model = next(iter(scene.canvases.values()))
                         canvas_id = canvas_model.id
             self.viewer.events.mouse.register_canvas(canvas_id)
+            self.viewer.events.mouse.subscribe_to_canvas(
+                canvas_id, self._labels_painting_manager._on_mouse_press
+            )
             self.viewer.events.mouse.subscribe_to_canvas(
                 canvas_id, self._on_mouse_click
             )
@@ -98,18 +111,6 @@ class Main(QtWidgets.QWidget):
             coordinate_system = dims_manager.coordinate_system
             if coordinate_system.name == "scene_2d":
                 self.viewer.reslice_scene(scene_id=scene.id)
-
-    def _on_mouse_click(self, event):
-        if event.button != MouseButton.LEFT:
-            return
-        for scene in self.viewer._model.scenes.scenes.values():
-            for visual in scene.visuals:
-                if visual.id == self._labels_visual_id:
-                    scene_id = scene.id
-        coordinate = event.coordinate
-        data_store.data[int(coordinate[0]), int(coordinate[2]), int(coordinate[1])] = 10
-
-        self.viewer.reslice_scene(scene_id=scene_id)
 
 
 # make the data
@@ -198,7 +199,11 @@ model = ViewerModel(data=data, scenes=scene_manager)
 
 
 app = QtWidgets.QApplication([])
-m = Main(model, labels_visual_id=labels_visual_2d.id)
+m = Main(
+    model,
+    labels_visual_model=labels_visual_2d,
+    labels_data_store=data_store,
+)
 m.show()
 
 if __name__ == "__main__":

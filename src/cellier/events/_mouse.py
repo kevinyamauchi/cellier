@@ -10,7 +10,13 @@ from cellier.render._data_classes import (
     RendererCanvasMouseEvent,
     RendererVisualMouseEvent,
 )
-from cellier.types import CanvasId, MouseButton, MouseModifiers, VisualId
+from cellier.types import (
+    CanvasId,
+    MouseButton,
+    MouseEventType,
+    MouseModifiers,
+    VisualId,
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,7 @@ class MouseCallbackData:
     """
 
     visual_id: VisualId
+    type: MouseEventType
     button: MouseButton
     modifiers: list[MouseModifiers]
     coordinate: np.ndarray
@@ -175,6 +182,7 @@ class MouseEventBus:
         # make the data
         mouse_event_data = MouseCallbackData(
             visual_id=event.source_id,
+            type=event.type,
             button=event.button,
             modifiers=event.modifiers,
             coordinate=coordinate,

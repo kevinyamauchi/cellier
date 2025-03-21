@@ -43,3 +43,11 @@ class MouseModifiers(Enum):
     CTRL = "ctrl"
     ALT = "alt"
     META = "meta"
+
+
+class MouseEventType(Enum):
+    """Mouse event types."""
+
+    PRESS = "press"
+    RELEASE = "release"
+    MOVE = "move"

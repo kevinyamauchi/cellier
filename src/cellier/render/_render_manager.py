@@ -26,7 +26,14 @@ from cellier.render.utils import construct_pygfx_object
 from cellier.slicer.data_slice import (
     RenderedSliceData,
 )
-from cellier.types import CanvasId, MouseButton, MouseModifiers, SceneId, VisualId
+from cellier.types import (
+    CanvasId,
+    MouseButton,
+    MouseEventType,
+    MouseModifiers,
+    SceneId,
+    VisualId,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +149,32 @@ class RenderManager:
                 canvas = canvases[canvas_id]
                 renderer = WgpuRenderer(canvas)
                 renderer.add_event_handler(
-                    partial(self._on_canvas_mouse_event, canvas_id=canvas_id),
-                    *("pointer_down", "pointer_move", "pointer_up"),
+                    partial(
+                        self._on_canvas_mouse_event,
+                        canvas_id=canvas_id,
+                        event_type=MouseEventType.PRESS,
+                    ),
+                    "pointer_down",
+                )
+
+                # pointer up
+                renderer.add_event_handler(
+                    partial(
+                        self._on_canvas_mouse_event,
+                        canvas_id=canvas_id,
+                        event_type=MouseEventType.RELEASE,
+                    ),
+                    "pointer_up",
+                )
+
+                # pointer move
+                renderer.add_event_handler(
+                    partial(
+                        self._on_canvas_mouse_event,
+                        canvas_id=canvas_id,
+                        event_type=MouseEventType.MOVE,
+                    ),
+                    "pointer_move",
                 )
                 renderers.update({canvas_id: renderer})
 
@@ -159,7 +190,7 @@ class RenderManager:
                 # todo controller config
                 if camera.fov == 0:
                     controller = PanZoomController(
-                        camera=camera, register_events=renderer
+                        camera=camera, register_events=renderer, enabled=False
                     )
                 else:
                     controller = TrackballController(
@@ -243,13 +274,37 @@ class RenderManager:
             canvas_id = [canvas_id]
         for handler in world_object.callback_handlers:
             for c_id in canvas_id:
+                # pointer down
                 handler(
                     partial(
                         self._on_visual_mouse_event,
                         visual_id=visual_model.id,
                         canvas_id=c_id,
+                        event_type=MouseEventType.PRESS,
                     ),
-                    *("pointer_down", "pointer_move", "pointer_up"),
+                    "pointer_down",
+                )
+
+                # pointer up
+                handler(
+                    partial(
+                        self._on_visual_mouse_event,
+                        visual_id=visual_model.id,
+                        canvas_id=c_id,
+                        event_type=MouseEventType.RELEASE,
+                    ),
+                    "pointer_up",
+                )
+
+                # pointer move
+                handler(
+                    partial(
+                        self._on_visual_mouse_event,
+                        visual_id=visual_model.id,
+                        canvas_id=c_id,
+                        event_type=MouseEventType.MOVE,
+                    ),
+                    "pointer_move",
                 )
 
         # add the visual to the scene
@@ -347,7 +402,7 @@ class RenderManager:
             )
 
     def _on_canvas_mouse_event(
-        self, event: gfx.PointerEvent, canvas_id: CanvasId
+        self, event: gfx.PointerEvent, canvas_id: CanvasId, event_type: MouseEventType
     ) -> None:
         """Process mouse callbacks from the canvas and rebroadcast."""
         # get the position of the click in screen coordinates
@@ -367,6 +422,7 @@ class RenderManager:
 
         mouse_event = RendererCanvasMouseEvent(
             source_id=canvas_id,
+            type=event_type,
             coordinate=coordinate,
             button=pygfx_buttons_to_cellier_buttons[event.button],
             modifiers=[
@@ -377,7 +433,11 @@ class RenderManager:
         self.events.mouse_event(mouse_event)
 
     def _on_visual_mouse_event(
-        self, event: gfx.PointerEvent, canvas_id: CanvasId, visual_id: VisualId
+        self,
+        event: gfx.PointerEvent,
+        canvas_id: CanvasId,
+        visual_id: VisualId,
+        event_type: MouseEventType,
     ) -> None:
         """Process mouse callbacks from a visual and rebroadcast."""
         # get the position of the click in screen coordinates
@@ -397,6 +457,7 @@ class RenderManager:
 
         mouse_event = RendererVisualMouseEvent(
             source_id=visual_id,
+            type=event_type,
             coordinate=coordinate,
             button=pygfx_buttons_to_cellier_buttons[event.button],
             modifiers=[

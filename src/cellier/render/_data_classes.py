@@ -3,7 +3,13 @@ from typing import Any
 
 import numpy as np
 
-from cellier.types import CanvasId, MouseButton, MouseModifiers, VisualId
+from cellier.types import (
+    CanvasId,
+    MouseButton,
+    MouseEventType,
+    MouseModifiers,
+    VisualId,
+)
 
 
 @dataclass(frozen=True)
@@ -19,13 +25,20 @@ class RendererCanvasMouseEvent:
     ----------
     source_id CanvasId
         The id of the visual that was clicked on.
+    type : MouseEventType
+        The type of the event (press, release, move).
     coordinate : np.ndarray
         The coordinate of the click in the displayed world coordinate system.
+    button : MouseButton
+        The button that was clicked.
+    modifiers : list[MouseModifiers]
+        The keyboard modifiers that were pressed at the time of the click.
     pick_info : dict[str, Any]
-        The picking information from the
+        The picking information from the renderer.
     """
 
     source_id: CanvasId
+    type: MouseEventType
     coordinate: np.ndarray
     button: "MouseButton"
     modifiers: list["MouseModifiers"]
@@ -46,6 +59,8 @@ class RendererVisualMouseEvent:
         The id of the visual that was clicked on.
     coordinate : np.ndarray
         The coordinate of the click in the displayed world coordinate system.
+    type : MouseEventType
+        The type of the event (press, release, move).
     button : MouseButton
         The button that was clicked.
     modifiers : list[MouseModifiers]
@@ -56,6 +71,7 @@ class RendererVisualMouseEvent:
 
     source_id: VisualId
     coordinate: np.ndarray
+    type: MouseEventType
     button: "MouseButton"
     modifiers: list["MouseModifiers"]
     pick_info: dict[str, Any]
