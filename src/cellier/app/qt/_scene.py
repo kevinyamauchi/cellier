@@ -40,12 +40,12 @@ from abc import abstractmethod
 from collections.abc import Container, Hashable, Mapping, Sequence
 
 from qtpy.QtCore import Qt, Signal
-from qtpy.QtWidgets import QFormLayout, QVBoxLayout, QWidget
+from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
 from superqt.utils import signals_blocked
 
 from cellier.events import DimsControlsUpdateEvent
-from cellier.models.scene import DimsState
+from cellier.models.scene import DimsManager, DimsState
 from cellier.types import DimsId
 
 SLIDER_STYLE = """
@@ -243,11 +243,43 @@ class QtCanvasWidget(QWidget):
         super().__init__(parent)
 
         self._canvas_widget = canvas_widget
+        self._canvas_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._canvas_widget.setParent(self)
 
         self._dims_sliders = QtDimsSliders(dims_id=dims_id, parent=self)
+
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout()
         layout.addWidget(self._canvas_widget)
         layout.addWidget(self._dims_sliders)
         self.setLayout(layout)
+
+    @classmethod
+    def from_models(cls, render_canvas_widget: QWidget, dims_model: DimsManager):
+        # make the widget
+        render_canvas_widget.update()
+        widget = cls(
+            canvas_widget=render_canvas_widget,
+            dims_id=dims_model.id,
+        )
+
+        # set up the sliders
+        dims_ranges = dims_model.range
+        sliders_data = {
+            axis_label: range(int(start), int(stop), int(step))
+            for axis_label, (start, stop, step) in zip(
+                dims_model.coordinate_system.axis_labels,
+                dims_ranges,
+            )
+        }
+        widget._dims_sliders.create_sliders(sliders_data)
+
+        # set the point to match the current point
+        widget._dims_sliders._on_dims_state_changed(
+            dims_state=dims_model.to_dims_state()
+        )
+
+        return widget

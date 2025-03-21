@@ -1,6 +1,6 @@
 """Utilities for working with the viewer model."""
 
-from cellier.models.scene import DimsManager
+from cellier.models.scene import Canvas, DimsManager
 from cellier.models.viewer import ViewerModel
 from cellier.types import CanvasId, VisualId
 
@@ -57,3 +57,16 @@ def get_dims_with_canvas_id(
             if canvas_model.id == canvas_id:
                 return scene_model.dims
     raise ValueError(f"Canvas ID {canvas_id} not found in any scene.")
+
+
+def get_canvas_with_visual_id(
+    viewer_model: ViewerModel,
+    visual_id: VisualId,
+) -> Canvas:
+    """Get the canvas model from the visual id."""
+    for scene in viewer_model.scenes.scenes.values():
+        for visual in scene.visuals:
+            if visual.id == visual_id:
+                canvas_model = next(iter(scene.canvases.values()))
+                return canvas_model
+    raise ValueError(f"Visual id {visual_id} not found in any scene.")

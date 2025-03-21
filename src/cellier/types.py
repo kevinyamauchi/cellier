@@ -26,6 +26,9 @@ SceneId: TypeAlias = str
 # The unique identifier for a Canvas model
 CanvasId: TypeAlias = str
 
+# The unique identifier for a data store
+DataStoreId: TypeAlias = str
+
 
 class MouseButton(Enum):
     """Mouse buttons for mouse click events."""
