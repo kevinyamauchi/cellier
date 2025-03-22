@@ -1,6 +1,6 @@
 """Functions for constructing PyGFX objects from cellier models."""
 
-from typing import Tuple
+from typing import Callable, Tuple
 
 import numpy as np
 import pygfx as gfx
@@ -74,6 +74,11 @@ class GFXPointsVisual:
     def material(self) -> GFXPointsMaterial:
         """The material object points."""
         return self._material
+
+    @property
+    def callback_handlers(self) -> list[Callable]:
+        """Return the list of callback handlers for all nodes."""
+        return [self.node.add_event_handler]
 
     def set_slice(self, slice_data: RenderedPointsDataSlice):
         """Set all the point coordinates."""

@@ -46,7 +46,7 @@ class CellierController:
         self._gui_framework = gui_framework
 
         # Make the event bus
-        self._event_bus = EventBus()
+        self._event_bus = EventBus(viewer_model=model)
 
         # Make the widget
         self._canvas_widgets = self._construct_canvas_widgets(
@@ -71,6 +71,9 @@ class CellierController:
 
         # connect events for synchronizing the model and renderer
         self._connect_model_renderer_events()
+
+        # connect events for mouse callbacks
+        self._connect_mouse_events()
 
         # update all scenes
         self.reslice_all()
@@ -116,13 +119,17 @@ class CellierController:
         # register the visual model with the eventbus
         self.events.visual.register_visual(visual=visual_model)
 
-    def add_visual_callback(
-        self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
-    ):
+    def add_visual_callback(self, visual_id: str, callback: Callable):
         """Add a callback to a visual."""
-        self._render_manager.add_visual_callback(
-            visual_id=visual_id, callback=callback, callback_type=callback_type
-        )
+        # self._render_manager.add_visual_callback(
+        #     visual_id=visual_id, callback=callback, callback_type=callback_type
+        # )
+
+        if visual_id not in self.events.mouse.visual_signals:
+            # register the visual with the event bus
+            self.events.mouse.register_visual(visual_id=visual_id)
+
+        self.events.mouse.subscribe_to_visual(visual_id=visual_id, callback=callback)
 
     def remove_visual_callback(
         self, visual_id: str, callback: Callable, callback_type: tuple[str, ...]
@@ -322,6 +329,19 @@ class CellierController:
         """Connect callbacks to keep the model and the renderer in sync."""
         # callback to update the camera model on each draw
         self._render_manager.events.camera_updated.connect(self._update_camera_model)
+
+    def _connect_mouse_events(self):
+        """Register all visuals and renderers with the mouse events bus."""
+        # register all visuals
+        # for visual_id, visual in self._render_manager.visuals.items():
+        #     if visual_id not in self.events.mouse.visual_signals:
+        #         self.events.mouse.register_visual(
+        #             visual_id=visual_id,
+        #             callback_handlers=visual.callback_handlers
+        #         )
+        self._render_manager.events.mouse_event.connect(
+            self.events.mouse._on_mouse_event
+        )
 
     def _update_camera_model(self, camera_state: CameraState):
         scene_model = self._model.scenes.scenes[camera_state.scene_id]

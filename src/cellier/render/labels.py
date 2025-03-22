@@ -1,5 +1,7 @@
 """PyGFx node for rendering multiscale labels."""
 
+from typing import Callable
+
 import numpy as np
 import pygfx as gfx
 import wgpu
@@ -77,6 +79,18 @@ class GFXMultiScaleLabelsNode:
 
     def __init__(self, model: MultiscaleLabelsVisual):
         self.node, self._material = construct_pygfx_labels_from_model(model=model)
+
+    @property
+    def callback_handlers(self) -> list[Callable]:
+        """Return the list of callback handlers for all nodes."""
+        callback_handlers = []
+        for dim_node in self.node.children:
+            # iterate over the 2D and 3D nodes
+            for node in dim_node.children:
+                # iterate over the scales
+                callback_handlers.append(node.add_event_handler)
+
+        return callback_handlers
 
     def preallocate_data(
         self,
