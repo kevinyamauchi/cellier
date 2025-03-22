@@ -113,8 +113,13 @@ class CellierController:
         scene = self._model.scenes.scenes[scene_id]
         scene.visuals.append(visual_model)
 
+        # get the canvas ids
+        canvas_ids = [canvas.id for canvas in scene.canvases.values()]
+
         # add the visual to the renderer
-        self._render_manager.add_visual(visual_model=visual_model, scene_id=scene_id)
+        self._render_manager.add_visual(
+            visual_model=visual_model, scene_id=scene_id, canvas_id=canvas_ids
+        )
 
         # register the visual model with the eventbus
         self.events.visual.register_visual(visual=visual_model)

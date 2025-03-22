@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 from psygnal import SignalInstance
@@ -12,26 +11,9 @@ from cellier.render._data_classes import (
 )
 from cellier.types import (
     CanvasId,
-    MouseButton,
-    MouseEventType,
-    MouseModifiers,
+    MouseCallbackData,
     VisualId,
 )
-
-
-@dataclass(frozen=True)
-class MouseCallbackData:
-    """Data from a mouse click on the canvas.
-
-    This is the event received by mouse callback functions.
-    """
-
-    visual_id: VisualId
-    type: MouseEventType
-    button: MouseButton
-    modifiers: list[MouseModifiers]
-    coordinate: np.ndarray
-    pick_info: dict[str, Any]
 
 
 class MouseEventBus:
@@ -77,18 +59,6 @@ class MouseEventBus:
                 check_nargs_on_connect=False,
                 check_types_on_connect=False,
             )
-
-        # connect all events to the visual model update handler
-        # for handler in callback_handlers:
-        #     # handler(
-        #     #     partial(self._on_mouse_event, visual_id=visual_id),
-        #     #     *("pointer_down", "pointer_up", "pointer_move"),
-        #     # )
-        #
-        #     handler(
-        #         partial(self._on_mouse_event, visual_id=visual_id),
-        #         *("pointer_down",),
-        #     )
 
     def register_canvas(self, canvas_id: CanvasId):
         """Register a canvas as a source for mouse events."""

@@ -45,10 +45,9 @@ from typing import Iterator
 import numpy as np
 import numpy.typing as npt
 
-from cellier.events import MouseCallbackData
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.visuals import MultiscaleLabelsVisual
-from cellier.types import MouseButton, MouseEventType, MouseModifiers
+from cellier.types import MouseButton, MouseCallbackData, MouseEventType, MouseModifiers
 
 
 def _get_shape_and_dims_to_paint(
