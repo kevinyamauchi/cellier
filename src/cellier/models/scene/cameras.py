@@ -1,6 +1,7 @@
 """Models for all cameras."""
 
 from typing import Literal, Union
+from uuid import uuid4
 
 import numpy as np
 from psygnal import EventedModel
@@ -8,11 +9,27 @@ from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic_core.core_schema import ValidationInfo
 from typing_extensions import Annotated
 
+from cellier.models.scene._camera_controller import CameraControllerType
+
 
 class BaseCamera(EventedModel):
-    """Base class for all camera models."""
+    """Base class for all camera models.
 
-    pass
+    Parameters
+    ----------
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
+    """
+
+    controller: CameraControllerType
+
+    # store a UUID to identify this specific scene.
+    id: str = Field(default_factory=lambda: uuid4().hex)
 
 
 class PerspectiveCamera(BaseCamera):
@@ -36,6 +53,13 @@ class PerspectiveCamera(BaseCamera):
         The location of the near-clipping plane.
     far_clipping_plane : float
         The location of the far-clipping plane.
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
     """
 
     fov: float = 50
@@ -89,6 +113,13 @@ class OrthographicCamera(BaseCamera):
         The location of the near-clipping plane.
     far_clipping_plane : float
         The location of the far-clipping plane.
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
     """
 
     width: float = 10

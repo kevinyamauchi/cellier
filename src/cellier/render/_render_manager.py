@@ -9,7 +9,6 @@ import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
-from pygfx.controllers import PanZoomController, TrackballController
 from pygfx.renderers import WgpuRenderer
 from pylinalg import vec_transform, vec_unproject
 from superqt import ensure_main_thread
@@ -178,24 +177,15 @@ class RenderManager:
                 )
                 renderers.update({canvas_id: renderer})
 
-                # make a camera for each canvas
-                camera = construct_pygfx_camera_from_model(
-                    camera_model=canvas_model.camera
+                # make a camera and controller for each canvas
+                camera, controller = construct_pygfx_camera_from_model(
+                    camera_model=canvas_model.camera,
                 )
+                controller.register_events(renderer)
+
                 # camera = gfx.PerspectiveCamera(width=110, height=110)
                 # camera.show_object(scene)
                 cameras.update({canvas_id: camera})
-
-                # make the camera controller
-                # todo controller config
-                if camera.fov == 0:
-                    controller = PanZoomController(
-                        camera=camera, register_events=renderer, enabled=False
-                    )
-                else:
-                    controller = TrackballController(
-                        camera=camera, register_events=renderer
-                    )
                 controllers.update({canvas_id: controller})
 
                 # connect a callback for the renderer

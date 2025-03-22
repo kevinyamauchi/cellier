@@ -18,6 +18,7 @@ from cellier.models.scene import (
     CoordinateSystem,
     DimsManager,
     DimsState,
+    PanZoomCameraController,
     PerspectiveCamera,
     RangeTuple,
     Scene,
@@ -201,9 +202,14 @@ labels_zy, dims_zy = make_2d_view(
 )
 
 # make the cameras
-camera_xy = PerspectiveCamera(fov=0)
-camera_xz = PerspectiveCamera(fov=0)
-camera_zy = PerspectiveCamera(fov=0)
+controller_xy = PanZoomCameraController(enabled=False)
+camera_xy = PerspectiveCamera(fov=0, controller=controller_xy)
+
+controller_xz = PanZoomCameraController(enabled=True)
+camera_xz = PerspectiveCamera(fov=0, controller=controller_xz)
+
+controller_zy = PanZoomCameraController(enabled=False)
+camera_zy = PerspectiveCamera(fov=0, controller=controller_zy)
 
 # make the canvases
 canvas_xy = Canvas(camera=camera_xy)
