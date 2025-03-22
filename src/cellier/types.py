@@ -1,8 +1,10 @@
 """Types used in the Cellier package."""
 
+from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias, Union
+from typing import Any, TypeAlias, Union
 
+import numpy as np
 from pydantic import Field
 from typing_extensions import Annotated
 
@@ -54,3 +56,18 @@ class MouseEventType(Enum):
     PRESS = "press"
     RELEASE = "release"
     MOVE = "move"
+
+
+@dataclass(frozen=True)
+class MouseCallbackData:
+    """Data from a mouse click on the canvas.
+
+    This is the event received by mouse callback functions.
+    """
+
+    visual_id: VisualId
+    type: MouseEventType
+    button: MouseButton
+    modifiers: list[MouseModifiers]
+    coordinate: np.ndarray
+    pick_info: dict[str, Any]

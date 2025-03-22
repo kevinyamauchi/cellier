@@ -1,10 +1,9 @@
 import numpy as np
 
 from cellier.app.interactivity import LabelsPaintingManager, LabelsPaintingMode
-from cellier.events import MouseCallbackData
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
-from cellier.types import MouseButton, MouseEventType
+from cellier.types import MouseButton, MouseCallbackData, MouseEventType
 
 
 def test_labels_painting():
