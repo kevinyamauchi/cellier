@@ -36,12 +36,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up headless GUI
+        uses: pyvista/setup-headless-display-action@v3
+        with:
+          qt: true
+
       - name: 🐍 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache-dependency-path: "pyproject.toml"
           cache: "pip"
+
 
       - name: Install Dependencies
         run: |
