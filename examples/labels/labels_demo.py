@@ -6,13 +6,18 @@ from skimage.measure import label
 
 from cellier.app.interactivity import LabelsPaintingManager
 from cellier.app.qt import QtCanvasWidget, QtQuadview
-from cellier.convenience import get_canvas_with_visual_id, get_dims_with_canvas_id
+from cellier.convenience import (
+    get_canvas_with_visual_id,
+    get_dims_with_canvas_id,
+    get_scene_with_dims_id,
+)
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
+    DimsState,
     PerspectiveCamera,
     RangeTuple,
     Scene,
@@ -35,63 +40,27 @@ class Main(QtWidgets.QWidget):
         labels_data_store,
     ):
         super().__init__(None)
-        # self.resize(640, 480)
+        self.resize(800, 600)
 
         # make the viewer
         self.viewer = CellierController(model=viewer_model, widget_parent=self)
 
-        # make the painting managers
-        self._painting_manager_xy = LabelsPaintingManager(
-            model=labels_xy,
-            data_store=labels_data_store,
+        # set up the canvases
+        self._painting_manager_xy, canvas_widget_xy = self._setup_canvas(
+            labels_model=labels_xy,
+            labels_data_store=labels_data_store,
         )
-        self._painting_manager_xz = LabelsPaintingManager(
-            model=labels_xz,
-            data_store=labels_data_store,
+        self._painting_manager_xz, canvas_widget_xz = self._setup_canvas(
+            labels_model=labels_xz,
+            labels_data_store=labels_data_store,
         )
-        self._painting_manager_zy = LabelsPaintingManager(
-            model=labels_zy,
-            data_store=labels_data_store,
-        )
-
-        # make the xz canvas widget
-        canvas_xz = get_canvas_with_visual_id(
-            viewer_model=viewer_model,
-            visual_id=labels_xz.id,
-        )
-        dims_xz = get_dims_with_canvas_id(
-            viewer_model=viewer_model, canvas_id=canvas_xz.id
-        )
-        canvas_widget_xz = QtCanvasWidget.from_models(
-            dims_model=dims_xz,
-            render_canvas_widget=self.viewer._canvas_widgets[canvas_xz.id],
+        self._painting_manager_zy, canvas_widget_zy = self._setup_canvas(
+            labels_model=labels_zy,
+            labels_data_store=labels_data_store,
         )
 
-        # make the xy canvas widget
-        canvas_xy = get_canvas_with_visual_id(
-            viewer_model=viewer_model,
-            visual_id=labels_xy.id,
-        )
-        dims_xy = get_dims_with_canvas_id(
-            viewer_model=viewer_model, canvas_id=canvas_xy.id
-        )
-        canvas_widget_xy = QtCanvasWidget.from_models(
-            dims_model=dims_xy,
-            render_canvas_widget=self.viewer._canvas_widgets[canvas_xy.id],
-        )
-
-        # make the zy canvas widget
-        canvas_zy = get_canvas_with_visual_id(
-            viewer_model=viewer_model,
-            visual_id=labels_zy.id,
-        )
-        dims_zy = get_dims_with_canvas_id(
-            viewer_model=viewer_model, canvas_id=canvas_zy.id
-        )
-        canvas_widget_zy = QtCanvasWidget.from_models(
-            dims_model=dims_zy,
-            render_canvas_widget=self.viewer._canvas_widgets[canvas_zy.id],
-        )
+        # connect the data update event to the refresh callback
+        labels_data_store.events.data.connect(self._on_data_update)
 
         # make the main widget
         self._ortho_view_widget = QtQuadview(
@@ -103,66 +72,62 @@ class Main(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout()
         layout.addWidget(self._ortho_view_widget)
         self.setLayout(layout)
-        # layout.addWidget(self.z_slider_widget)
-        # for canvas_id, canvas in self.viewer._canvas_widgets.items():
-        #     # add the canvas widgets
-        #     canvas.update()
-        #
-        #     scenes = self.viewer._model.scenes.scenes
-        #
-        #     for scene in scenes.values():
-        #         # get the dims model the canvas
-        #         if canvas_id in scene.canvases:
-        #             dims_model = scene.dims
-        #
-        #     canvas_widget = QtCanvasWidget(
-        #         dims_id=dims_model.id, canvas_widget=canvas, parent=self
-        #     )
-        #
-        #     # create the sliders
-        #     dims_ranges = dims_model.range
-        #     sliders_data = {
-        #         axis_label: range(int(start), int(stop), int(step))
-        #         for axis_label, (start, stop, step) in zip(
-        #             dims_model.coordinate_system.axis_labels,
-        #             dims_ranges,
-        #         )
-        #     }
-        #     canvas_widget._dims_sliders.create_sliders(sliders_data)
-        #
-        #     self.viewer.events.scene.add_dims_with_controls(
-        #         dims_model=dims_model,
-        #         dims_controls=canvas_widget._dims_sliders,
-        #     )
-        #
-        #     # redraw the scene when the dims model updates
-        #     dims_model.events.point.connect(self._on_dims_update)
-        #
-        #     dims_model.point = (10, 0, 0)
-        #
-        #     layout.addWidget(canvas_widget)
-        #     self.setLayout(layout)
 
-        # register the canvas
-        # for scene in self.viewer._model.scenes.scenes.values():
-        #     for visual in scene.visuals:
-        #         if visual.id == self._labels_visual_id:
-        #             canvas_model = next(iter(scene.canvases.values()))
-        #             canvas_id = canvas_model.id
-        # self.viewer.events.mouse.register_canvas(canvas_id)
+    def _setup_canvas(
+        self, labels_model: MultiscaleLabelsVisual, labels_data_store: ImageMemoryStore
+    ) -> tuple[LabelsPaintingManager, QtCanvasWidget]:
+        """Set up the canvas for the labels visual."""
+        # make the painting manager
+        painting_manager = LabelsPaintingManager(
+            model=labels_model,
+            data_store=labels_data_store,
+        )
+
+        # make the canvas widget
+        canvas_model = get_canvas_with_visual_id(
+            viewer_model=self.viewer._model,
+            visual_id=labels_model.id,
+        )
+        canvas_id = canvas_model.id
+        dims_model = get_dims_with_canvas_id(
+            viewer_model=self.viewer._model, canvas_id=canvas_id
+        )
+        canvas_widget = QtCanvasWidget.from_models(
+            dims_model=dims_model,
+            render_canvas_widget=self.viewer._canvas_widgets[canvas_id],
+        )
+
+        # connect the dims model to the canvas widget
+        self.viewer.events.scene.add_dims_with_controls(
+            dims_model=dims_model,
+            dims_controls=canvas_widget._dims_sliders,
+        )
+
+        # connect the redraw to the dims model
+        self.viewer.events.scene.subscribe_to_dims(
+            dims_id=dims_model.id, callback=self._on_dims_update
+        )
+
+        # connect the painting event
+        self.viewer.events.mouse.register_canvas(canvas_id)
         # self.viewer.events.mouse.subscribe_to_canvas(
-        #     canvas_id, self._labels_painting_manager._on_mouse_press
+        #     canvas_id, throttled(painting_manager._on_mouse_press, timeout=10)
         # )
+        self.viewer.events.mouse.subscribe_to_canvas(
+            canvas_id, painting_manager._on_mouse_press
+        )
 
-        # renderer = list(self.viewer._render_manager.renderers.values())[0]
-        # renderer.add_event_handler(self._on_mouse_other, "pointer_down")
+        return painting_manager, canvas_widget
 
-    def _on_dims_update(self, event):
-        for scene in self.viewer._model.scenes.scenes.values():
-            dims_manager = scene.dims
-            coordinate_system = dims_manager.coordinate_system
-            if coordinate_system.name == "scene_2d":
-                self.viewer.reslice_scene(scene_id=scene.id)
+    def _on_dims_update(self, new_dims_state: DimsState):
+        scene_model = get_scene_with_dims_id(
+            viewer_model=self.viewer._model,
+            dims_id=new_dims_state.id,
+        )
+        self.viewer.reslice_scene(scene_id=scene_model.id)
+
+    def _on_data_update(self):
+        self.viewer.reslice_all()
 
 
 def make_2d_view(

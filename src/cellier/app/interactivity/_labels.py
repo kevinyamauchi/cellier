@@ -384,7 +384,6 @@ class LabelsPaintingManager:
         if (event.button == MouseButton.LEFT) and (
             MouseModifiers.SHIFT not in event.modifiers
         ):
-            print(event.type)
             if self._mode == LabelsPaintingMode.ERASE:
                 new_label = self.background_value
             else:
@@ -416,51 +415,29 @@ class LabelsPaintingManager:
 
             if event.type == MouseEventType.RELEASE:
                 # end of drag
-                print("hi")
                 self._dragging = False
                 self._last_coordinate = None
-            # yield
-            #
-            # last_cursor_coord = coordinates
-            # # on move
-            # while event.button == MouseButton.LEFT:
-            #     coordinates = event.coordinate
-            #     if coordinates is not None or last_cursor_coord is not None:
-            #         self._draw(new_label, last_cursor_coord, coordinates)
-            #     last_cursor_coord = coordinates
-            #     yield
-
-    def _on_mouse_press_old(self, event: MouseCallbackData):
-        """Handle mouse press events.
-
-        This currently only works for 2D and doesn't handle transforms
-        """
-        print("Mouse press event")
-        if (event.button != MouseButton.LEFT) or (
-            MouseModifiers.SHIFT in event.modifiers
-        ):
-            # only paint when LMB is pressed. also do not paint when shift is pressed.
-            return
-        coordinates = event.coordinate
-
-        if self._mode == LabelsPaintingMode.ERASE:
-            new_label = self.background_value
         else:
-            new_label = self.value_to_paint
+            if self._dragging:
+                # todo fix hack
+                coordinates = np.zeros((3,))
+                coordinates[0] = event.coordinate[0]
+                coordinates[1] = event.coordinate[2]
+                coordinates[2] = event.coordinate[1]
 
-        # on press
-        # with layer.block_history():
-        self._draw(new_label, coordinates, coordinates)
-        yield
+                if np.linalg.norm(coordinates - self._last_coordinate) < 1:
+                    # don't paint if the cursor hasn't moved
+                    return
 
-        last_cursor_coord = coordinates
-        # on move
-        while event.button == MouseButton.LEFT:
-            coordinates = event.coordinate
-            if coordinates is not None or last_cursor_coord is not None:
-                self._draw(new_label, last_cursor_coord, coordinates)
-            last_cursor_coord = coordinates
-            yield
+                if self._mode == LabelsPaintingMode.ERASE:
+                    new_label = self.background_value
+                else:
+                    new_label = self.value_to_paint
+                self._draw(
+                    label_value=new_label,
+                    last_cursor_coordinate=self._last_coordinate,
+                    current_cursor_coordinate=coordinates,
+                )
 
     def _draw(
         self, label_value: int, last_cursor_coordinate, current_cursor_coordinate

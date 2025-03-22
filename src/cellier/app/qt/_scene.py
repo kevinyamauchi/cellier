@@ -195,7 +195,7 @@ class QtDimsSliders(QtBaseDimsSliders):
                 if slider := self._sliders.get(axis):
                     if slider.value() != val:
                         changed = True
-                        slider.setValue(val)
+                        slider.setValue(int(val))
                 else:  # pragma: no cover
                     warnings.warn(f"Axis {axis} not found in sliders", stacklevel=2)
         if changed and emit_event:
