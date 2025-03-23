@@ -113,12 +113,19 @@ class CellierController:
         scene = self._model.scenes.scenes[scene_id]
         scene.visuals.append(visual_model)
 
-        # get the canvas ids
-        canvas_ids = [canvas.id for canvas in scene.canvases.values()]
+        # get the canvas and camera ids
+        canvas_ids = []
+        camera_ids = []
+        for canvas in scene.canvases.values():
+            canvas_ids.append(canvas.id)
+            camera_ids.append(canvas.camera.id)
 
         # add the visual to the renderer
         self._render_manager.add_visual(
-            visual_model=visual_model, scene_id=scene_id, canvas_id=canvas_ids
+            visual_model=visual_model,
+            scene_id=scene_id,
+            canvas_id=canvas_ids,
+            camera_id=camera_ids,
         )
 
         # register the visual model with the eventbus
@@ -334,6 +341,20 @@ class CellierController:
         """Connect callbacks to keep the model and the renderer in sync."""
         # callback to update the camera model on each draw
         self._render_manager.events.camera_updated.connect(self._update_camera_model)
+
+        # register the camera with the event bus
+        for scene in self._model.scenes.scenes.values():
+            for canvas in scene.canvases.values():
+                self.events.scene.register_camera(
+                    camera_model=canvas.camera,
+                )
+
+        # subscribe the renderer to each camera
+        for camera_id in self.events.scene.camera_signals:
+            self.events.scene.subscribe_to_camera(
+                camera_id=camera_id,
+                callback=self._render_manager._on_camera_model_update,
+            )
 
     def _connect_mouse_events(self):
         """Register all visuals and renderers with the mouse events bus."""

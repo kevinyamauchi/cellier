@@ -26,6 +26,7 @@ from cellier.slicer.data_slice import (
     RenderedSliceData,
 )
 from cellier.types import (
+    CameraId,
     CanvasId,
     MouseButton,
     MouseEventType,
@@ -126,16 +127,20 @@ class RenderManager:
             scene_id = scene_model.id
             self._scenes.update({scene_id: scene})
 
+            # get the camera and canvas IDs
+            canvas_ids = []
+            camera_ids = []
+            for canvas in scene_model.canvases.values():
+                canvas_ids.append(canvas.id)
+                camera_ids.append(canvas.camera.id)
+
             # populate the scene
             for visual_model in scene_model.visuals:
-                # world_object = construct_pygfx_object(visual_model=visual_model)
-                # scene.add(world_object.node)
-                # visuals.update({visual_model.id: world_object})
-                canvas_ids = list(scene_model.canvases.keys())
                 self.add_visual(
                     visual_model=visual_model,
                     scene_id=scene_model.id,
                     canvas_id=canvas_ids,
+                    camera_id=camera_ids,
                 )
                 # add a bounding box
                 # todo make configurable
@@ -151,6 +156,7 @@ class RenderManager:
                     partial(
                         self._on_canvas_mouse_event,
                         canvas_id=canvas_id,
+                        camera_id=canvas_model.camera.id,
                         event_type=MouseEventType.PRESS,
                     ),
                     "pointer_down",
@@ -161,6 +167,7 @@ class RenderManager:
                     partial(
                         self._on_canvas_mouse_event,
                         canvas_id=canvas_id,
+                        camera_id=canvas_model.camera.id,
                         event_type=MouseEventType.RELEASE,
                     ),
                     "pointer_up",
@@ -171,6 +178,7 @@ class RenderManager:
                     partial(
                         self._on_canvas_mouse_event,
                         canvas_id=canvas_id,
+                        camera_id=canvas_model.camera.id,
                         event_type=MouseEventType.MOVE,
                     ),
                     "pointer_move",
@@ -185,13 +193,16 @@ class RenderManager:
 
                 # camera = gfx.PerspectiveCamera(width=110, height=110)
                 # camera.show_object(scene)
-                cameras.update({canvas_id: camera})
-                controllers.update({canvas_id: controller})
+                cameras.update({canvas_model.camera.id: camera})
+                controllers.update({canvas_model.camera.id: controller})
 
                 # connect a callback for the renderer
                 # todo should this be outside the renderer?
                 render_func = partial(
-                    self.animate, scene_id=scene_id, canvas_id=canvas_id
+                    self.animate,
+                    scene_id=scene_id,
+                    canvas_id=canvas_id,
+                    camera_id=canvas_model.camera.id,
                 )
                 canvas.request_draw(render_func)
 
@@ -212,13 +223,22 @@ class RenderManager:
         return self._renderers
 
     @property
-    def cameras(self) -> Dict[CanvasId, pygfx.Camera]:
+    def cameras(self) -> Dict[CameraId, pygfx.Camera]:
         """Dictionary of pygfx Cameras.
 
         The key is the id property of the Canvas model the Camera
         belongs to.
         """
         return self._cameras
+
+    @property
+    def camera_controllers(self) -> Dict[CameraId, pygfx.Controller]:
+        """Dictionary of pygfx Camera controllers.
+
+        The key is the id property of the Canvas model the controller
+        belongs to.
+        """
+        return self._controllers
 
     @property
     def scenes(self) -> Dict[SceneId, gfx.Scene]:
@@ -241,6 +261,7 @@ class RenderManager:
         visual_model: BaseVisual,
         scene_id: SceneId,
         canvas_id: list[CanvasId] | CanvasId,
+        camera_id: list[CameraId] | CameraId,
     ):
         """Add a visual to a scene.
 
@@ -249,9 +270,12 @@ class RenderManager:
         visual_model : BaseVisual
             The visual model to add.
         scene_id : SceneId
-            The id of the scene to add the visual to.
+            The ID of the scene to add the visual to.
         canvas_id : list[CanvasId] | CanvasId
-            The id of the canvas to add the visual to.
+            The ID of the canvas to add the visual to.
+        camera_id : list[CameraId] | CameraId
+            The ID of the cameras of the scene. This must be the same
+            shape as canvas_id.
         """
         # get the scene node
         scene = self._scenes[scene_id]
@@ -262,14 +286,17 @@ class RenderManager:
         # connect the mouse callback
         if isinstance(canvas_id, str):
             canvas_id = [canvas_id]
+        if isinstance(camera_id, str):
+            camera_id = [camera_id]
         for handler in world_object.callback_handlers:
-            for c_id in canvas_id:
+            for canv_id, cam_id in zip(canvas_id, camera_id):
                 # pointer down
                 handler(
                     partial(
                         self._on_visual_mouse_event,
                         visual_id=visual_model.id,
-                        canvas_id=c_id,
+                        canvas_id=canv_id,
+                        camera_id=cam_id,
                         event_type=MouseEventType.PRESS,
                     ),
                     "pointer_down",
@@ -280,7 +307,8 @@ class RenderManager:
                     partial(
                         self._on_visual_mouse_event,
                         visual_id=visual_model.id,
-                        canvas_id=c_id,
+                        canvas_id=canv_id,
+                        camera_id=cam_id,
                         event_type=MouseEventType.RELEASE,
                     ),
                     "pointer_up",
@@ -291,7 +319,8 @@ class RenderManager:
                     partial(
                         self._on_visual_mouse_event,
                         visual_id=visual_model.id,
-                        canvas_id=c_id,
+                        canvas_id=canv_id,
+                        camera_id=cam_id,
                         event_type=MouseEventType.MOVE,
                     ),
                     "pointer_move",
@@ -350,13 +379,15 @@ class RenderManager:
 
         self.animate(scene_id=scene_id, canvas_id=canvas_id)
 
-    def animate(self, scene_id: str, canvas_id: str) -> None:
+    def animate(
+        self, scene_id: SceneId, canvas_id: CanvasId, camera_id: CameraId
+    ) -> None:
         """Callback to render a given canvas."""
         renderer = self.renderers[canvas_id]
-        renderer.render(self.scenes[scene_id], self.cameras[canvas_id])
+        renderer.render(self.scenes[scene_id], self.cameras[camera_id])
 
         # Send event to update the cameras
-        camera = self.cameras[canvas_id]
+        camera = self.cameras[camera_id]
         camera_state = camera.get_state()
 
         self.events.camera_updated.emit(
@@ -392,7 +423,11 @@ class RenderManager:
             )
 
     def _on_canvas_mouse_event(
-        self, event: gfx.PointerEvent, canvas_id: CanvasId, event_type: MouseEventType
+        self,
+        event: gfx.PointerEvent,
+        canvas_id: CanvasId,
+        camera_id: CameraId,
+        event_type: MouseEventType,
     ) -> None:
         """Process mouse callbacks from the canvas and rebroadcast."""
         # get the position of the click in screen coordinates
@@ -404,7 +439,7 @@ class RenderManager:
         x = position_screen[0] / renderer_size[0] * 2 - 1
         y = -(position_screen[1] / renderer_size[1] * 2 - 1)
         pos_ndc = (x, y, 0)
-        camera = self.cameras[canvas_id]
+        camera = self.cameras[camera_id]
         pos_ndc += vec_transform(camera.world.position, camera.camera_matrix)
 
         # get the position of the click in world space
@@ -426,6 +461,7 @@ class RenderManager:
         self,
         event: gfx.PointerEvent,
         canvas_id: CanvasId,
+        camera_id: CameraId,
         visual_id: VisualId,
         event_type: MouseEventType,
     ) -> None:
@@ -439,7 +475,7 @@ class RenderManager:
         x = position_screen[0] / renderer_size[0] * 2 - 1
         y = -(position_screen[1] / renderer_size[1] * 2 - 1)
         pos_ndc = (x, y, 0)
-        camera = self.cameras[canvas_id]
+        camera = self.cameras[camera_id]
         pos_ndc += vec_transform(camera.world.position, camera.camera_matrix)
 
         # get the position of the click in world space
@@ -456,3 +492,25 @@ class RenderManager:
             pick_info=event.pick_info,
         )
         self.events.mouse_event(mouse_event)
+
+    def _on_camera_model_update(self, camera_state):
+        """Update the camera based on a change to the model."""
+        # get the camera
+        camera = self.cameras[camera_state.canvas_id]
+
+        # set the camera state
+        # todo: consider checking if there any changes/update only changes
+        camera.set_state(
+            position=camera_state.position,
+            rotation=camera_state.rotation,
+            fov=camera_state.fov,
+            width=camera_state.width,
+            height=camera_state.height,
+            zoom=camera_state.zoom,
+            up_direction=camera_state.up_direction,
+            frustum=camera_state.frustum,
+        )
+
+        # set the controller state
+        controller = self._controllers[camera_state.canvas_id]
+        controller.enabled = camera_state.controller.enabled

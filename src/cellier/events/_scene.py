@@ -4,8 +4,13 @@ from typing import Any, Callable
 
 from psygnal import EmissionInfo, Signal, SignalInstance
 
-from cellier.models.scene import DimsManager, DimsState
-from cellier.types import DimsId
+from cellier.models.scene import (
+    DimsManager,
+    DimsState,
+    OrthographicCamera,
+    PerspectiveCamera,
+)
+from cellier.types import CameraId, DimsId
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,9 @@ class SceneEventBus:
         # the signals for each dim control that has been registered
         self._dims_control_signals: dict[DimsId, SignalInstance] = {}
 
+        # the signals for each camera model that has been registered
+        self._camera_signals: dict[CameraId, SignalInstance] = {}
+
     @property
     def dims_signals(self) -> dict[DimsId, SignalInstance]:
         """Return the signals for each registered dims model.
@@ -66,6 +74,14 @@ class SceneEventBus:
         The dictionary key is the dims model ID and the value is the SignalInstance.
         """
         return self._dims_control_signals
+
+    @property
+    def camera_signals(self) -> dict[CameraId, SignalInstance]:
+        """Return the signals for each registered camera model.
+
+        The dictionary key is the canvas model ID and the value is the SignalInstance.
+        """
+        return self._camera_signals
 
     def add_dims_with_controls(self, dims_model: DimsManager, dims_controls):
         """Add a dims model with a control UI to the event bus.
@@ -189,6 +205,49 @@ class SceneEventBus:
         # connect the callback to the signal
         self.dims_control_signals[dims_id].connect(callback)
 
+    def register_camera(self, camera_model: PerspectiveCamera | OrthographicCamera):
+        """Register a camera model with the event bus.
+
+        This will create a signal on the event bus that will be emitted
+        when the camera model updates. Other components (e.g., GUI) can
+        register to this signal to be notified of changes via the
+        subscribe_to_camera() method.
+
+        Parameters
+        ----------
+        camera_model : PerspectiveCamera | OrthographicCamera
+            The camera model to register.
+        """
+        if camera_model.id in self.camera_signals:
+            logging.info(f"Camera {camera_model.id} is already registered.")
+            return
+
+        # connect the update event
+        camera_model.events.all.connect(self._on_camera_update)
+
+        # initialize the camera model callbacks
+        self.camera_signals[camera_model.id] = SignalInstance(
+            name=camera_model.id,
+            check_nargs_on_connect=False,
+            check_types_on_connect=False,
+        )
+
+    def subscribe_to_camera(self, camera_id: CameraId, callback: Callable):
+        """Subscribe to the camera model update signal.
+
+        Parameters
+        ----------
+        camera_id : CameraId
+            The ID of the camera model to subscribe to.
+        callback : Callable
+            The callback function to call when the camera model updates.
+        """
+        if camera_id not in self.camera_signals:
+            raise ValueError(f"Camera {camera_id} is not registered.") from None
+
+        # connect the callback to the signal
+        self.camera_signals[camera_id].connect(callback)
+
     def _on_dims_model_update(self, event: EmissionInfo):
         """Handle the update event for the dims model.
 
@@ -237,3 +296,6 @@ class SceneEventBus:
         else:
             # if the dims model is not registered, just emit the event
             control_signal.emit(event.state)
+
+    def _on_camera_update(self, event: EmissionInfo):
+        pass

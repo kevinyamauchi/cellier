@@ -28,6 +28,10 @@ SceneId: TypeAlias = str
 # The unique identifier for a Canvas model
 CanvasId: TypeAlias = str
 
+# The unique identifier for a Camera model
+CameraId: TypeAlias = str
+
+
 # The unique identifier for a data store
 DataStoreId: TypeAlias = str
 
