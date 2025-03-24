@@ -16,7 +16,7 @@ def test_labels_painting():
     )
 
     painting_manager = LabelsPaintingManager(
-        model=labels_visual_model,
+        labels_model=labels_visual_model,
         data_store=data_store,
     )
 

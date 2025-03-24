@@ -26,6 +26,7 @@ from cellier.slicer.data_slice import (
     RenderedSliceData,
 )
 from cellier.types import (
+    CameraControlsUpdateEvent,
     CameraId,
     CanvasId,
     MouseButton,
@@ -390,21 +391,37 @@ class RenderManager:
         camera = self.cameras[camera_id]
         camera_state = camera.get_state()
 
-        self.events.camera_updated.emit(
-            CameraState(
-                scene_id=scene_id,
-                canvas_id=canvas_id,
-                camera_id=camera.id,
-                position=camera_state["position"],
-                rotation=camera_state["rotation"],
-                fov=camera_state["fov"],
-                width=camera_state["width"],
-                height=camera_state["height"],
-                zoom=camera_state["zoom"],
-                up_direction=camera_state["reference_up"],
-                frustum=camera.frustum,
-            )
+        update_event = CameraControlsUpdateEvent(
+            id=camera_id,
+            state={
+                "position": camera_state["position"],
+                "rotation": camera_state["rotation"],
+                "fov": camera_state["fov"],
+                "up_direction": camera_state["reference_up"],
+                "width": camera_state["width"],
+                "height": camera_state["height"],
+                "zoom": camera_state["zoom"],
+                "frustum": camera.frustum,
+                "controller": {"enabled": self._controllers[camera_id].enabled},
+            },
+            controls_update_callback=self._on_camera_model_update,
         )
+
+        self.events.camera_updated.emit(update_event)
+        #     CameraState(
+        #         scene_id=scene_id,
+        #         canvas_id=canvas_id,
+        #         camera_id=camera.id,
+        #         position=camera_state["position"],
+        #         rotation=camera_state["rotation"],
+        #         fov=camera_state["fov"],
+        #         width=camera_state["width"],
+        #         height=camera_state["height"],
+        #         zoom=camera_state["zoom"],
+        #         up_direction=camera_state["reference_up"],
+        #         frustum=camera.frustum,
+        #     )
+        # )
 
         self.render_calls += 1
         logger.debug(f"render: {self.render_calls}")
@@ -493,24 +510,30 @@ class RenderManager:
         )
         self.events.mouse_event(mouse_event)
 
-    def _on_camera_model_update(self, camera_state):
+    def _on_camera_model_update(self, camera_state: CameraState):
         """Update the camera based on a change to the model."""
+        depth_range = (
+            camera_state.near_clipping_plane,
+            camera_state.far_clipping_plane,
+        )
+        state_dict = {
+            "position": camera_state.position,
+            "rotation": camera_state.rotation,
+            "reference_up": camera_state.up_direction,
+            "fov": camera_state.fov,
+            "width": camera_state.width,
+            "height": camera_state.height,
+            "zoom": camera_state.zoom,
+            "depth_range": depth_range,
+        }
+
         # get the camera
-        camera = self.cameras[camera_state.canvas_id]
+        camera = self.cameras[camera_state.id]
 
         # set the camera state
         # todo: consider checking if there any changes/update only changes
-        camera.set_state(
-            position=camera_state.position,
-            rotation=camera_state.rotation,
-            fov=camera_state.fov,
-            width=camera_state.width,
-            height=camera_state.height,
-            zoom=camera_state.zoom,
-            up_direction=camera_state.up_direction,
-            frustum=camera_state.frustum,
-        )
+        camera.set_state(state_dict)
 
         # set the controller state
-        controller = self._controllers[camera_state.canvas_id]
+        controller = self._controllers[camera_state.id]
         controller.enabled = camera_state.controller.enabled

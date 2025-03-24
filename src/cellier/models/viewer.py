@@ -43,7 +43,7 @@ class SceneManager(EventedModel):
     def _on_dims_updated(self, event: EmissionInfo):
         """Handle the dims update event."""
         dims_manager: DimsManager = Signal.sender()
-        dims_state: DimsState = dims_manager.to_dims_state()
+        dims_state: DimsState = dims_manager.to_state()
         self.events.scenes.emit(dims_state)
 
 

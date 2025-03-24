@@ -1,9 +1,23 @@
+from dataclasses import dataclass
 from typing import Literal, Union
 from uuid import uuid4
 
 from psygnal import EventedModel
 from pydantic import Field
 from typing_extensions import Annotated
+
+
+@dataclass(frozen=True)
+class CameraControllerState:
+    """The state of the camera controller (frozen).
+
+    Parameters
+    ----------
+    enabled : bool
+        Set to True when the camera controller is enabled.
+    """
+
+    enabled: bool
 
 
 class BaseCameraController(EventedModel):
@@ -25,6 +39,16 @@ class BaseCameraController(EventedModel):
 
     # store a UUID to identify this specific controller.
     id: str = Field(default_factory=lambda: uuid4().hex)
+
+    def to_state(self) -> CameraControllerState:
+        """Get the current state of the camera controller as an immutable object.
+
+        Returns
+        -------
+        CameraControllerState
+            The current state of the camera controller (frozen).
+        """
+        return CameraControllerState(enabled=self.enabled)
 
 
 class PanZoomCameraController(BaseCameraController):

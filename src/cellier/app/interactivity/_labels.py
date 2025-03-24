@@ -46,6 +46,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cellier.models.data_stores import ImageMemoryStore
+from cellier.models.scene import OrthographicCamera, PerspectiveCamera
 from cellier.models.visuals import MultiscaleLabelsVisual
 from cellier.types import MouseButton, MouseCallbackData, MouseEventType, MouseModifiers
 
@@ -261,7 +262,7 @@ class LabelsPaintingManager:
 
     Parameters
     ----------
-    model : MultiscaleLabelsVisual
+    labels_model : MultiscaleLabelsVisual
         The model for the labels visual to be painted.
         Currently, only labels with a single scale are supported.
     data_store : ImageMemoryStore
@@ -270,16 +271,26 @@ class LabelsPaintingManager:
 
     def __init__(
         self,
-        model: MultiscaleLabelsVisual,
+        labels_model: MultiscaleLabelsVisual,
+        camera_model: PerspectiveCamera | OrthographicCamera,
         data_store: ImageMemoryStore,
         mode: LabelsPaintingMode = LabelsPaintingMode.PAINT,
     ):
-        if len(model.downscale_factors) != 1:
+        if len(labels_model.downscale_factors) != 1:
             raise NotImplementedError("Only single scale labels are supported.")
 
-        self._model = model
+        self._labels_model = labels_model
+        self._camera_model = camera_model
         self._data = data_store
-        self._mode = mode
+
+        # we set the mode to None to initialize.
+        # it will get set by the actual value at the end of the init.
+        self._mode = LabelsPaintingMode.NONE
+
+        # store the state of the camera before it gets changed by the mode.
+        self._pre_paint_camera_controller_enabled = (
+            self._camera_model.controller.enabled
+        )
 
         # hack - these properties should come from the mouse event
         # todo fix
@@ -302,9 +313,12 @@ class LabelsPaintingManager:
         # the size of the brush to paint with
         self._brush_size = 2
 
-        # todo figure out how to use generator
+        # state variables for painting
         self._last_coordinate = None
         self._dragging = False
+
+        # set the mode
+        self.mode = mode
 
     @property
     def mode(self) -> LabelsPaintingMode:
@@ -316,6 +330,24 @@ class LabelsPaintingManager:
         """Sets the current mode of painting."""
         if not isinstance(mode, LabelsPaintingMode):
             mode = LabelsPaintingMode(mode)
+
+        if mode == self._mode:
+            # if the values hasn't changed, don't do anything
+            return
+
+        if mode != LabelsPaintingMode.NONE:
+            # turn off the camera controller so it doesn't move while painting
+            self._pre_paint_camera_controller_enabled = (
+                self._camera_model.controller.enabled
+            )
+            self._camera_model.controller.enabled = False
+
+        else:
+            # turn the camera controller back on
+            self._camera_model.controller.enabled = (
+                self._pre_paint_camera_controller_enabled
+            )
+
         self._mode = mode
 
     @property
@@ -380,8 +412,11 @@ class LabelsPaintingManager:
         )
 
     def _on_mouse_press(self, event: MouseCallbackData):
-        if (event.button == MouseButton.LEFT) and (
-            MouseModifiers.SHIFT not in event.modifiers
+        """Paint using the mouse press events."""
+        if (
+            (event.button == MouseButton.LEFT)
+            and (MouseModifiers.SHIFT not in event.modifiers)
+            and (self.mode != LabelsPaintingMode.NONE)
         ):
             if self._mode == LabelsPaintingMode.ERASE:
                 new_label = self.background_value

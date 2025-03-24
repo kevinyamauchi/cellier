@@ -12,7 +12,6 @@ from cellier.models.data_stores.base_data_store import BaseDataStore
 from cellier.models.viewer import ViewerModel
 from cellier.models.visuals.base import BaseVisual
 from cellier.render._render_manager import (
-    CameraState,
     CanvasRedrawRequest,
     RenderManager,
 )
@@ -339,22 +338,32 @@ class CellierController:
 
     def _connect_model_renderer_events(self):
         """Connect callbacks to keep the model and the renderer in sync."""
-        # callback to update the camera model on each draw
-        self._render_manager.events.camera_updated.connect(self._update_camera_model)
-
-        # register the camera with the event bus
+        # register the camera and controls with the event bus
         for scene in self._model.scenes.scenes.values():
             for canvas in scene.canvases.values():
+                # register the camera model with the event bus
+                camera_model = canvas.camera
                 self.events.scene.register_camera(
-                    camera_model=canvas.camera,
+                    camera_model=camera_model,
                 )
 
-        # subscribe the renderer to each camera
-        for camera_id in self.events.scene.camera_signals:
-            self.events.scene.subscribe_to_camera(
-                camera_id=camera_id,
-                callback=self._render_manager._on_camera_model_update,
-            )
+                camera_model_id = canvas.camera.id
+                # subscribe the renderer to the camera model
+                self.events.scene.subscribe_to_camera(
+                    camera_id=camera_model_id,
+                    callback=self._render_manager._on_camera_model_update,
+                )
+
+                # register the renderer camera to the event bus
+                self.events.scene.register_camera_controls(
+                    camera_id=camera_model_id,
+                    signal=self._render_manager.events.camera_updated,
+                )
+
+                # register the camera model to the renderer event
+                self.events.scene.subscribe_to_camera_controls(
+                    camera_id=camera_model_id, callback=camera_model.update_state
+                )
 
     def _connect_mouse_events(self):
         """Register all visuals and renderers with the mouse events bus."""
@@ -367,23 +376,6 @@ class CellierController:
         #         )
         self._render_manager.events.mouse_event.connect(
             self.events.mouse._on_mouse_event
-        )
-
-    def _update_camera_model(self, camera_state: CameraState):
-        scene_model = self._model.scenes.scenes[camera_state.scene_id]
-        canvas_model = scene_model.canvases[camera_state.canvas_id]
-        camera_model = canvas_model.camera
-        camera_model.update(
-            {
-                "position": camera_state.position,
-                "rotation": camera_state.rotation,
-                "fov": camera_state.fov,
-                "width": camera_state.width,
-                "height": camera_state.height,
-                "zoom": camera_state.zoom,
-                "up_direction": camera_state.up_direction,
-                "frustum": camera_state.frustum,
-            }
         )
 
     def _on_canvas_redraw_event(self, event: CanvasRedrawRequest) -> None:

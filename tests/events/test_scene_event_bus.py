@@ -1,7 +1,8 @@
 from psygnal import Signal
 
-from cellier.events import DimsControlsUpdateEvent, EventBus
+from cellier.events import EventBus
 from cellier.models.scene import CoordinateSystem, DimsManager, DimsState, RangeTuple
+from cellier.types import DimsControlsUpdateEvent
 
 
 class MockDimsGui:
