@@ -105,12 +105,19 @@ def test_plane_intersects_aabb_3d():
         bounding_box_max=np.array([15, 15, 15]),
     )
 
-    # includes plane on the edge
+    # includes plane on the edge of the box
     assert plane_intersects_aabb(
         plane_point=np.array([10, 10, 10]),
         plane_normal=np.array([1, 0, 0]),
         bounding_box_min=np.array([10, 10, 10]),
         bounding_box_max=np.array([15, 15, 15]),
+    )
+
+    assert plane_intersects_aabb(
+        plane_point=np.array([10, 10, 10]),
+        plane_normal=np.array([1, 0, 0]),
+        bounding_box_min=np.array([10, 12, 12]),
+        bounding_box_max=np.array([10, 15, 15]),
     )
 
     # plane outside of the box
