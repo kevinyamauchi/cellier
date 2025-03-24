@@ -1,36 +1,22 @@
 import logging
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from psygnal import EmissionInfo, Signal, SignalInstance
 
-from cellier.models.scene import DimsManager, DimsState
-from cellier.types import DimsId
+from cellier.models.scene import (
+    DimsManager,
+    DimsState,
+    OrthographicCamera,
+    PerspectiveCamera,
+)
+from cellier.types import (
+    CameraControlsUpdateEvent,
+    CameraId,
+    DimsControlsUpdateEvent,
+    DimsId,
+)
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class DimsControlsUpdateEvent:
-    """Event data that is emitted when the state of a dims controls is updated.
-
-    Parameters
-    ----------
-    id : DimsId
-        The ID of the dims model that the controls are for.
-    state : dict[str, Any]
-        The state of the dims model to update.
-        The key is the string name of the parameters and
-        the value is the value to set.
-    controls_update_callback : Callable | None
-        The callback function to block when the dims model is updated.
-        This is the callback function that is called when the dims model is updated.
-        This is used to prevent the update from bouncing back to the GUI.
-    """
-
-    id: DimsId
-    state: dict[str, Any]
-    controls_update_callback: Callable | None = None
 
 
 class SceneEventBus:
@@ -51,6 +37,12 @@ class SceneEventBus:
         # the signals for each dim control that has been registered
         self._dims_control_signals: dict[DimsId, SignalInstance] = {}
 
+        # the signals for each camera model that has been registered
+        self._camera_signals: dict[CameraId, SignalInstance] = {}
+
+        # the signals for each camera control that has been registered
+        self._camera_controls: dict[CameraId, SignalInstance] = {}
+
     @property
     def dims_signals(self) -> dict[DimsId, SignalInstance]:
         """Return the signals for each registered dims model.
@@ -66,6 +58,22 @@ class SceneEventBus:
         The dictionary key is the dims model ID and the value is the SignalInstance.
         """
         return self._dims_control_signals
+
+    @property
+    def camera_signals(self) -> dict[CameraId, SignalInstance]:
+        """Return the signals for each registered camera model.
+
+        The dictionary key is the camera model ID and the value is the SignalInstance.
+        """
+        return self._camera_signals
+
+    @property
+    def camera_controls(self) -> dict[CameraId, SignalInstance]:
+        """Return the signals for each registered camera control.
+
+        The dictionary key is the camera model ID and the value is the SignalInstance.
+        """
+        return self._camera_controls
 
     def add_dims_with_controls(self, dims_model: DimsManager, dims_controls):
         """Add a dims model with a control UI to the event bus.
@@ -189,6 +197,93 @@ class SceneEventBus:
         # connect the callback to the signal
         self.dims_control_signals[dims_id].connect(callback)
 
+    def register_camera(self, camera_model: PerspectiveCamera | OrthographicCamera):
+        """Register a camera model with the event bus.
+
+        This will create a signal on the event bus that will be emitted
+        when the camera model updates. Other components (e.g., GUI) can
+        register to this signal to be notified of changes via the
+        subscribe_to_camera() method.
+
+        Parameters
+        ----------
+        camera_model : PerspectiveCamera | OrthographicCamera
+            The camera model to register.
+        """
+        if camera_model.id in self.camera_signals:
+            logging.info(f"Camera {camera_model.id} is already registered.")
+            return
+
+        # connect the update event
+        camera_model.events.all.connect(self._on_camera_model_update)
+
+        # initialize the camera model callbacks
+        self.camera_signals[camera_model.id] = SignalInstance(
+            name=camera_model.id,
+            check_nargs_on_connect=False,
+            check_types_on_connect=False,
+        )
+
+    def subscribe_to_camera(self, camera_id: CameraId, callback: Callable):
+        """Subscribe to the camera model update signal.
+
+        Parameters
+        ----------
+        camera_id : CameraId
+            The ID of the camera model to subscribe to.
+        callback : Callable
+            The callback function to call when the camera model updates.
+        """
+        if camera_id not in self.camera_signals:
+            raise ValueError(f"Camera {camera_id} is not registered.") from None
+
+        # connect the callback to the signal
+        self.camera_signals[camera_id].connect(callback)
+
+    def register_camera_controls(self, camera_id: CameraId, signal: SignalInstance):
+        """Register a controller that can update the camera model.
+
+        This will create a signal on the event bus that will be emitted
+        when the camera control updates. The camera model can subscribe to this
+        signal to be notified of changes.
+
+        Parameters
+        ----------
+        camera_id : CameraId
+            The ID of the camera model to register.
+        signal : SignalInstance
+            The signal instance on the camera control that emits when
+            the controls are updated.
+        """
+        if camera_id not in self.camera_controls:
+            # create the signal that camera models can subscribe to
+            self.camera_controls[camera_id] = SignalInstance(
+                name=camera_id,
+                check_nargs_on_connect=False,
+                check_types_on_connect=False,
+            )
+
+        # connect the callback to the signal
+        signal.connect(self._on_camera_control_update)
+
+    def subscribe_to_camera_controls(self, camera_id: CameraId, callback: Callable):
+        """Subscribe a camera model to the event for when the controls are updated.
+
+        Parameters
+        ----------
+        camera_id : CameraId
+            The ID of the camera model to subscribe to.
+        callback : Callable
+            The callback function to call when the camera control updates.
+        """
+        try:
+            camera_control_signal = self.camera_controls[camera_id]
+        except KeyError:
+            raise ValueError(f"Camera {camera_id} is not registered.") from None
+
+        # connect the callback to the signal
+        camera_control_signal.connect(callback)
+
     def _on_dims_model_update(self, event: EmissionInfo):
         """Handle the update event for the dims model.
 
@@ -197,7 +292,7 @@ class SceneEventBus:
         # get the sender of the event
         dims: DimsManager = Signal.sender()
 
-        dims_state: DimsState = dims.to_dims_state()
+        dims_state: DimsState = dims.to_state()
 
         # emit the signal for the dims model
         self.dims_signals[dims.id].emit(dims_state)
@@ -237,3 +332,52 @@ class SceneEventBus:
         else:
             # if the dims model is not registered, just emit the event
             control_signal.emit(event.state)
+
+    def _on_camera_model_update(self, event: EmissionInfo):
+        # get the sender
+        camera_model = Signal.sender()
+
+        try:
+            signal = self.camera_signals[camera_model.id]
+        except KeyError:
+            logger.debug(
+                f"EventBus received event from camera model {camera_model.id},"
+                "but the model is not registered"
+            )
+
+        # dictionary with the updated state
+        new_state = camera_model.to_state()
+        signal.emit(new_state)
+
+    def _on_camera_control_update(self, event: CameraControlsUpdateEvent):
+        """Handle the update event for the camera control.
+
+        This will emit the signal for the camera model.
+        """
+        # get the sender
+        camera_id = event.id
+
+        try:
+            signal = self.camera_controls[camera_id]
+        except KeyError:
+            logger.debug(
+                f"EventBus received event from camera control {camera_id},"
+                "but the model is not registered"
+            )
+            return
+
+        callback_to_block = event.controls_update_callback
+
+        # update the camera model
+        if camera_id in self.camera_signals:
+            # block the callback to prevent the update from bouncing back
+            # to the GUI
+            camera_signal = self.camera_signals[camera_id]
+
+            # temporarily disconnect the callback and emit the event
+            camera_signal.disconnect(callback_to_block, missing_ok=True)
+            signal.emit(event.state)
+            camera_signal.connect(callback_to_block)
+        else:
+            # if the camera model is not registered, just emit the event
+            signal.emit(event.state)

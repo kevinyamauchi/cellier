@@ -4,12 +4,12 @@ import json
 
 from pydantic_core import from_json
 
-from cellier.models.scene import PerspectiveCamera
+from cellier.models.scene import PanZoomCameraController, PerspectiveCamera
 
 
 def test_perspective_camera(tmp_path):
     """Test the perspective camera serialization/deserialization."""
-    camera = PerspectiveCamera()
+    camera = PerspectiveCamera(controller=PanZoomCameraController(enabled=True))
 
     output_path = tmp_path / "test.json"
     with open(output_path, "w") as f:

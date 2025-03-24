@@ -1,18 +1,80 @@
 """Models for all cameras."""
 
-from typing import Literal, Union
+from dataclasses import dataclass
+from typing import Any, Literal, Union
+from uuid import uuid4
 
 import numpy as np
-from psygnal import EventedModel
+from psygnal import EmissionInfo, EventedModel
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 from pydantic_core.core_schema import ValidationInfo
 from typing_extensions import Annotated
 
+from cellier.models.scene._camera_controller import (
+    CameraControllerState,
+    CameraControllerType,
+)
+from cellier.types import CameraId
+
+
+@dataclass(frozen=True)
+class CameraState:
+    """The (frozen) state of the camera."""
+
+    id: CameraId
+    controller: CameraControllerState
+    fov: float
+    width: float
+    height: float
+    zoom: float
+    near_clipping_plane: float
+    far_clipping_plane: float
+    position: np.ndarray
+    rotation: np.ndarray
+    up_direction: np.ndarray
+    frustum: np.ndarray
+
 
 class BaseCamera(EventedModel):
-    """Base class for all camera models."""
+    """Base class for all camera models.
 
-    pass
+    Parameters
+    ----------
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
+    """
+
+    controller: CameraControllerType
+
+    # store a UUID to identify this specific scene.
+    id: str = Field(default_factory=lambda: uuid4().hex)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Set make the controller event fire when the controller model is updated."""
+        self.controller.events.all.connect(self._on_controller_updated)
+
+    def update_state(self, new_state):
+        """Update the state of the visual.
+
+        This is often used as a callback for when
+        the visual controls update.
+        """
+        # remove the id field from the new state if present
+        new_state.pop("id", None)
+
+        # update the visual with the new state
+        self.update(new_state)
+
+    def _on_controller_updated(self, event: EmissionInfo):
+        """Emit the controller() signal when the controller is updated."""
+        property_name = event.signal.name
+        property_value = event.args[0]
+        self.events.controller.emit({"controller": {property_name: property_value}})
 
 
 class PerspectiveCamera(BaseCamera):
@@ -36,6 +98,13 @@ class PerspectiveCamera(BaseCamera):
         The location of the near-clipping plane.
     far_clipping_plane : float
         The location of the far-clipping plane.
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
     """
 
     fov: float = 50
@@ -67,6 +136,29 @@ class PerspectiveCamera(BaseCamera):
         """Coerce numpy arrays into lists for serialization."""
         return array.tolist()
 
+    def to_state(self) -> CameraState:
+        """Convert the camera model to a frozen CameraState object.
+
+        Returns
+        -------
+        CameraState
+            The state of the camera.
+        """
+        return CameraState(
+            id=self.id,
+            controller=self.controller.to_state(),
+            fov=self.fov,
+            width=self.width,
+            height=self.height,
+            zoom=self.zoom,
+            near_clipping_plane=self.near_clipping_plane,
+            far_clipping_plane=self.far_clipping_plane,
+            position=self.position,
+            rotation=self.rotation,
+            up_direction=self.up_direction,
+            frustum=self.frustum,
+        )
+
 
 class OrthographicCamera(BaseCamera):
     """Orthographic Camera model.
@@ -89,6 +181,13 @@ class OrthographicCamera(BaseCamera):
         The location of the near-clipping plane.
     far_clipping_plane : float
         The location of the far-clipping plane.
+    id : str
+        The unique identifier for this camera.
+        This is populated automatically by the model using uuid4.
+    controller : CameraControllerType
+        The camera controller for this camera.
+        The camera controller is responsible for updating the camera
+        in response to mouse events.
     """
 
     width: float = 10

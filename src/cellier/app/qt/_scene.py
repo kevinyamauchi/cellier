@@ -44,9 +44,8 @@ from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
 from superqt.utils import signals_blocked
 
-from cellier.events import DimsControlsUpdateEvent
 from cellier.models.scene import DimsManager, DimsState
-from cellier.types import DimsId
+from cellier.types import DimsControlsUpdateEvent, DimsId
 
 SLIDER_STYLE = """
 QSlider::groove:horizontal {
@@ -278,8 +277,6 @@ class QtCanvasWidget(QWidget):
         widget._dims_sliders.create_sliders(sliders_data)
 
         # set the point to match the current point
-        widget._dims_sliders._on_dims_state_changed(
-            dims_state=dims_model.to_dims_state()
-        )
+        widget._dims_sliders._on_dims_state_changed(dims_state=dims_model.to_state())
 
         return widget

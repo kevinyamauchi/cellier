@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, TypeAlias, Union
+from typing import Any, Callable, TypeAlias, Union
 
 import numpy as np
 from pydantic import Field
@@ -27,6 +27,10 @@ SceneId: TypeAlias = str
 
 # The unique identifier for a Canvas model
 CanvasId: TypeAlias = str
+
+# The unique identifier for a Camera model
+CameraId: TypeAlias = str
+
 
 # The unique identifier for a data store
 DataStoreId: TypeAlias = str
@@ -71,3 +75,49 @@ class MouseCallbackData:
     modifiers: list[MouseModifiers]
     coordinate: np.ndarray
     pick_info: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CameraControlsUpdateEvent:
+    """Event data that is emitted when the state of a camera controls is updated.
+
+    Parameters
+    ----------
+    id : CameraId
+        The ID of the camera model that the controls are for.
+    state : dict[str, Any]
+        The state of the camera model to update.
+        The key is the string name of the parameters and
+        the value is the value to set.
+    controls_update_callback : Callable | None
+        The callback function to block when the camera model is updated.
+        This is the callback function that is called when the camera model is updated.
+        This is used to prevent the update from bouncing back to the GUI.
+    """
+
+    id: CameraId
+    state: dict[str, Any]
+    controls_update_callback: Callable | None = None
+
+
+@dataclass(frozen=True)
+class DimsControlsUpdateEvent:
+    """Event data that is emitted when the state of a dims controls is updated.
+
+    Parameters
+    ----------
+    id : DimsId
+        The ID of the dims model that the controls are for.
+    state : dict[str, Any]
+        The state of the dims model to update.
+        The key is the string name of the parameters and
+        the value is the value to set.
+    controls_update_callback : Callable | None
+        The callback function to block when the dims model is updated.
+        This is the callback function that is called when the dims model is updated.
+        This is used to prevent the update from bouncing back to the GUI.
+    """
+
+    id: DimsId
+    state: dict[str, Any]
+    controls_update_callback: Callable | None = None

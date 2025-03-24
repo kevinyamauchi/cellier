@@ -4,10 +4,14 @@ import numpy as np
 
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import PointsMemoryStore
-from cellier.models.scene.cameras import PerspectiveCamera
-from cellier.models.scene.canvas import Canvas
-from cellier.models.scene.dims_manager import CoordinateSystem, DimsManager
-from cellier.models.scene.scene import Scene
+from cellier.models.scene import (
+    Canvas,
+    CoordinateSystem,
+    DimsManager,
+    OrbitCameraController,
+    PerspectiveCamera,
+    Scene,
+)
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
 
@@ -37,7 +41,9 @@ def test_viewer(tmp_path):
     )
 
     # make the canvas
-    camera = PerspectiveCamera(width=110, height=110)
+    camera = PerspectiveCamera(
+        width=110, height=110, controller=OrbitCameraController(enabled=True)
+    )
     canvas = Canvas(camera=camera)
 
     # make the scene

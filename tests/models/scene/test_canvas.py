@@ -5,14 +5,19 @@ import json
 import pytest
 from pydantic_core import from_json
 
-from cellier.models.scene import Canvas, OrthographicCamera, PerspectiveCamera
+from cellier.models.scene import (
+    Canvas,
+    OrbitCameraController,
+    OrthographicCamera,
+    PerspectiveCamera,
+)
 
 
 @pytest.mark.parametrize("camera_class", [OrthographicCamera, PerspectiveCamera])
 def test_canvas(tmp_path, camera_class):
     """Test serialization/deserialiation of the Canvas model."""
 
-    camera = camera_class()
+    camera = camera_class(controller=OrbitCameraController(enabled=True))
     canvas = Canvas(camera=camera)
 
     output_path = tmp_path / "test.json"

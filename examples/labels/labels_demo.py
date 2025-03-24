@@ -1,10 +1,10 @@
 """Example app showing 2D and 3D labels rendering."""
 
-from qtpy import QtWidgets
+from qtpy.QtWidgets import QApplication, QHBoxLayout, QPushButton, QWidget
 from skimage.data import binary_blobs
 from skimage.measure import label
 
-from cellier.app.interactivity import LabelsPaintingManager
+from cellier.app.interactivity import LabelsPaintingManager, LabelsPaintingMode
 from cellier.app.qt import QtCanvasWidget, QtQuadview
 from cellier.convenience import (
     get_canvas_with_visual_id,
@@ -18,6 +18,7 @@ from cellier.models.scene import (
     CoordinateSystem,
     DimsManager,
     DimsState,
+    PanZoomCameraController,
     PerspectiveCamera,
     RangeTuple,
     Scene,
@@ -28,7 +29,7 @@ from cellier.types import DataStoreId
 from cellier.viewer_controller import CellierController
 
 
-class Main(QtWidgets.QWidget):
+class Main(QWidget):
     """Example widget with viewer."""
 
     def __init__(
@@ -59,6 +60,12 @@ class Main(QtWidgets.QWidget):
             labels_data_store=labels_data_store,
         )
 
+        # make a button
+        self._painting_button = QPushButton("Paint", parent=self)
+        self._painting_button.setCheckable(True)
+        self._painting_button.setChecked(False)
+        self._painting_button.clicked.connect(self._on_painting_button)
+
         # connect the data update event to the refresh callback
         labels_data_store.events.data.connect(self._on_data_update)
 
@@ -69,20 +76,15 @@ class Main(QtWidgets.QWidget):
             widget_2=canvas_widget_zy,
         )
 
-        layout = QtWidgets.QHBoxLayout()
+        layout = QHBoxLayout()
         layout.addWidget(self._ortho_view_widget)
+        layout.addWidget(self._painting_button)
         self.setLayout(layout)
 
     def _setup_canvas(
         self, labels_model: MultiscaleLabelsVisual, labels_data_store: ImageMemoryStore
     ) -> tuple[LabelsPaintingManager, QtCanvasWidget]:
         """Set up the canvas for the labels visual."""
-        # make the painting manager
-        painting_manager = LabelsPaintingManager(
-            model=labels_model,
-            data_store=labels_data_store,
-        )
-
         # make the canvas widget
         canvas_model = get_canvas_with_visual_id(
             viewer_model=self.viewer._model,
@@ -108,11 +110,16 @@ class Main(QtWidgets.QWidget):
             dims_id=dims_model.id, callback=self._on_dims_update
         )
 
+        # make the painting manager
+        painting_manager = LabelsPaintingManager(
+            labels_model=labels_model,
+            camera_model=canvas_model.camera,
+            data_store=labels_data_store,
+            mode=LabelsPaintingMode.NONE,
+        )
+
         # connect the painting event
         self.viewer.events.mouse.register_canvas(canvas_id)
-        # self.viewer.events.mouse.subscribe_to_canvas(
-        #     canvas_id, throttled(painting_manager._on_mouse_press, timeout=10)
-        # )
         self.viewer.events.mouse.subscribe_to_canvas(
             canvas_id, painting_manager._on_mouse_press
         )
@@ -128,6 +135,18 @@ class Main(QtWidgets.QWidget):
 
     def _on_data_update(self):
         self.viewer.reslice_all()
+
+    def _on_painting_button(self):
+        if self._painting_button.isChecked():
+            # set the painting mode
+            self._painting_manager_xy.mode = LabelsPaintingMode.PAINT
+            self._painting_manager_xz.mode = LabelsPaintingMode.PAINT
+            self._painting_manager_zy.mode = LabelsPaintingMode.PAINT
+        else:
+            # set the painting mode
+            self._painting_manager_xy.mode = LabelsPaintingMode.NONE
+            self._painting_manager_xz.mode = LabelsPaintingMode.NONE
+            self._painting_manager_zy.mode = LabelsPaintingMode.NONE
 
 
 def make_2d_view(
@@ -201,9 +220,14 @@ labels_zy, dims_zy = make_2d_view(
 )
 
 # make the cameras
-camera_xy = PerspectiveCamera(fov=0)
-camera_xz = PerspectiveCamera(fov=0)
-camera_zy = PerspectiveCamera(fov=0)
+controller_xy = PanZoomCameraController(enabled=False)
+camera_xy = PerspectiveCamera(fov=0, controller=controller_xy)
+
+controller_xz = PanZoomCameraController(enabled=True)
+camera_xz = PerspectiveCamera(fov=0, controller=controller_xz)
+
+controller_zy = PanZoomCameraController(enabled=False)
+camera_zy = PerspectiveCamera(fov=0, controller=controller_zy)
 
 # make the canvases
 canvas_xy = Canvas(camera=camera_xy)
@@ -227,7 +251,7 @@ scene_manager = SceneManager(
 model = ViewerModel(data=data, scenes=scene_manager)
 
 
-app = QtWidgets.QApplication([])
+app = QApplication([])
 m = Main(
     model,
     labels_xy=labels_xy,

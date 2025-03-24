@@ -67,9 +67,7 @@ class FrozenCoordinateSystem:
 
 @dataclass(frozen=True)
 class DimsState:
-    """The current dims state.
-
-    The DimsManager is assigned to a single scene.
+    """The current dims state (frozen).
 
     Parameters
     ----------
@@ -167,7 +165,7 @@ class DimsManager(EventedModel):
         """The number of displayed dimensions."""
         return len(self.displayed_dimensions)
 
-    def to_dims_state(self) -> DimsState:
+    def to_state(self) -> DimsState:
         """Return the current state of the dims as a DimsState object."""
         return DimsState(
             id=self.id,
