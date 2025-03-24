@@ -10,6 +10,7 @@ from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
+    OrbitCameraController,
     PerspectiveCamera,
     Scene,
 )
@@ -39,7 +40,9 @@ def test_scene_model(tmp_path):
     )
 
     # make the canvas
-    canvas = Canvas(camera=PerspectiveCamera())
+    canvas = Canvas(
+        camera=PerspectiveCamera(controller=OrbitCameraController(enabled=True))
+    )
 
     # make the scene
     scene = Scene(dims=dims, visuals=[points_visual], canvases={canvas.id: canvas})

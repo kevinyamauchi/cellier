@@ -9,6 +9,7 @@ from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
+    PanZoomCameraController,
     PerspectiveCamera,
     Scene,
 )
@@ -48,7 +49,9 @@ def viewer_model_2d_points() -> dict[str, ViewerModel | PointsVisual | Canvas]:
     )
 
     # make the 2D canvas
-    camera_2d = PerspectiveCamera(fov=0)
+    camera_2d = PerspectiveCamera(
+        fov=0, controller=PanZoomCameraController(enabled=True)
+    )
     canvas_2d = Canvas(camera=camera_2d)
 
     # make the scene
