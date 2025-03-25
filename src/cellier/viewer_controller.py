@@ -174,6 +174,7 @@ class CellierController:
                     self._render_manager.look_at_visual(
                         visual_id=visual_id,
                         canvas_id=canvas_model.id,
+                        camera_id=canvas_model.camera.id,
                         scene_id=scene.id,
                         view_direction=view_direction,
                         up=up,
