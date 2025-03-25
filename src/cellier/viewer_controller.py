@@ -183,6 +183,18 @@ class CellierController:
 
     def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
         """Reslice a specified visual."""
+        scene = self._model.scenes.scenes[scene_id]
+        _ = scene.get_visual_by_id(visual_id)
+
+        # get the region of the displayed dims being displayed
+
+        # get the list of chunk requests from the data store
+        # these have the chunk corners and the chunk offset
+
+        # submit the chunk requests
+
+    def reslice_visual_old(self, scene_id: str, visual_id: str, canvas_id: str):
+        """Reslice a specified visual."""
         # get the current dims
         scene = self._model.scenes.scenes[scene_id]
         visual = self._model.scenes.scenes[scene_id].get_visual_by_id(visual_id)
