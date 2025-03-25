@@ -350,6 +350,7 @@ class RenderManager:
         self,
         visual_id: str,
         canvas_id: str,
+        camera_id: str,
         scene_id: str,
         view_direction: tuple[float, float, float],
         up: tuple[float, float, float],
@@ -362,6 +363,8 @@ class RenderManager:
             The id of the visual to look at.
         canvas_id : str
             The id of the canvas to set.
+        camera_id : str
+            The id of the camera to set.
         scene_id : str
             The id of the scene the visual belongs to.
         view_direction : tuple[float, float, float]
@@ -373,12 +376,12 @@ class RenderManager:
         visual = self._visuals[visual_id]
 
         # get the camera
-        camera = self._cameras[canvas_id]
+        camera = self._cameras[camera_id]
 
         # set the camera to look at the visual
         camera.show_object(target=visual.node, view_dir=view_direction, up=up)
 
-        self.animate(scene_id=scene_id, canvas_id=canvas_id)
+        self.animate(scene_id=scene_id, canvas_id=canvas_id, camera_id=camera_id)
 
     def animate(
         self, scene_id: SceneId, canvas_id: CanvasId, camera_id: CameraId
