@@ -3,11 +3,14 @@
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from psygnal import Signal
 
 from cellier.slicer.data_slice import RenderedSliceData
+
+if TYPE_CHECKING:
+    from cellier.types import VisualId
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +49,7 @@ class AsynchronousDataSlicer:
 
         # Storage for pending futures.
         # The key is the visual id the slice request originated from.
-        self._pending_futures: Dict[str, list[Future[RenderedSliceData]]] = {}
+        self._pending_futures: Dict["VisualId", list[Future[RenderedSliceData]]] = {}
         self._futures_to_ignore: List[Future[RenderedSliceData]] = []
 
         self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
