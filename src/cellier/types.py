@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, TypeAlias, Union
+from typing import Any, Callable, Literal, TypeAlias, Union
+from uuid import uuid4
 
 import numpy as np
 from pydantic import Field
@@ -121,3 +122,140 @@ class DimsControlsUpdateEvent:
     id: DimsId
     state: dict[str, Any]
     controls_update_callback: Callable | None = None
+
+
+class CoordinateSpace(Enum):
+    """Enum for the data space.
+
+    WORLD: The world coordinate space.
+    DATA: The data coordinate space.
+    """
+
+    WORLD = "world"
+    DATA = "data"
+
+
+class TilingMethod(Enum):
+    """The method for computing how to chunk the request.
+
+    NONE: No tiling, the entire request is sent as a single request.
+    LOGICAL_PIXEL: The request tries to match the resolution
+                   to the logical pixel size.
+    """
+
+    NONE = "none"
+    LOGICAL_PIXEL = "logical_pixel"
+
+
+@dataclass(frozen=True)
+class AxisAlignedSample:
+    """Data for an axis-aligned selected region.
+
+    Parameters
+    ----------
+    space_type : CoordinateSpace
+        The coordinate space of the data.
+        This is either in the data coordinates or the world coordinates.
+    ordered_dims : tuple[int, ...]
+        The dimension indices in their displayed order.
+    n_displayed_dims : int
+        The number of displayed dimensions.
+    index_selection : tuple[Union[int, slice], ...]
+        The selections for each dimension.
+    tiling_method : TilingMethod
+        The method for computing how to chunk the request.
+    """
+
+    space_type: CoordinateSpace
+    ordered_dims: tuple[int, ...]
+    n_displayed_dims: Literal[2, 3]
+    index_selection: tuple[Union[int, slice], ...]
+    tiling_method: TilingMethod
+
+
+@dataclass(frozen=True)
+class AxisAlignedDataRequest:
+    """Data for an axis-aligned data request.
+
+    Parameters
+    ----------
+    scene_id : SceneId
+        The unique identifier for which scene this visual belongs to.
+    visual_id : VisualId
+        The UID of the visual to be updated.
+    min_corner_rendered : tuple[int, int] | tuple[int, int, int]
+        The coordinates of the minimum corner of the data request
+        in the rendered texture units.
+    ordered_dims : tuple[int, ...]
+        The dimension indices in their displayed order.
+    n_displayed : int
+        The number of displayed dimensions.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    index_selection : tuple[slice, ...]
+        The selections for each dimension.
+    id : str
+        The unique identifier for this request.
+    """
+
+    scene_id: SceneId
+    visual_id: VisualId
+    min_corner_rendered: tuple[int, int] | tuple[int, int, int]
+    ordered_dims: tuple[int, ...]
+    n_displayed_dims: int
+    resolution_level: int
+    index_selection: tuple[slice, ...]
+    id: str = uuid4().hex
+
+
+DataRequest = Union[AxisAlignedDataRequest]
+
+
+@dataclass(frozen=True)
+class DataResponse:
+    """The data to be sent to the renderer.
+
+    Parameters
+    ----------
+    id : str
+        The unique identifier of the request.
+    scene_id : SceneId
+        The unique identifier for which scene this visual belongs to.
+    visual_id : VisualId
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    """
+
+    id: str
+    scene_id: SceneId
+    visual_id: VisualId
+    resolution_level: int
+
+
+@dataclass(frozen=True)
+class ImageDataResponse(DataResponse):
+    """Image data to be sent to the renderer.
+
+    Parameters
+    ----------
+    id : str
+        The unique identifier of the request.
+    scene_id : SceneId
+        The unique identifier for which scene this visual belongs to.
+    visual_id : VisualId
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    min_corner_rendered : tuple[int, ...]
+        The coordinates of the minimum corner of the data request
+        in the rendered objects units.
+    data : np.ndarray
+        The image data to be rendered.
+    """
+
+    min_corner_rendered: tuple[int, int] | tuple[int, int, int]
+    data: np.ndarray
