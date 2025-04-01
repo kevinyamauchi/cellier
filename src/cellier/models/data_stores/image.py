@@ -11,6 +11,15 @@ from pydantic_core.core_schema import ValidationInfo
 
 from cellier.models.data_stores.base_data_store import BaseDataStore
 from cellier.slicer import DataSliceRequest, RenderedImageDataSlice
+from cellier.types import (
+    AxisAlignedDataRequest,
+    AxisAlignedSample,
+    DataRequest,
+    ImageDataResponse,
+    SceneId,
+    TilingMethod,
+    VisualId,
+)
 
 
 class BaseImageDataStore(BaseDataStore):
@@ -49,6 +58,70 @@ class ImageMemoryStore(BaseImageDataStore):
     def serialize_ndarray(self, array: np.ndarray, _info) -> list:
         """Coerce numpy arrays into lists for serialization."""
         return array.tolist()
+
+    def get_data_request(
+        self,
+        selected_region: AxisAlignedSample,
+        visual_id: VisualId,
+        scene_id: SceneId,
+    ) -> list[DataRequest]:
+        """Get the data requests for a given selected region."""
+        if selected_region.tiling_method != TilingMethod.NONE:
+            raise NotImplementedError(
+                "Tiling is not implemented for the ImageMemoryStore."
+            )
+        if isinstance(selected_region, AxisAlignedSample):
+            displayed_dim_indices = selected_region.ordered_dims[
+                -selected_region.n_displayed_dims :
+            ]
+
+            # determine the start of the chunk in the rendered coordinates
+            min_corner_rendered = ()
+            for axis_index in displayed_dim_indices:
+                selection = selected_region.index_selection[axis_index]
+                if isinstance(selection, int):
+                    min_corner_rendered += (selection,)
+                else:
+                    if selection.start is None:
+                        min_corner_rendered += (0,)
+                    else:
+                        min_corner_rendered += (selection.start,)
+            return [
+                AxisAlignedDataRequest(
+                    visual_id=visual_id,
+                    scene_id=scene_id,
+                    min_corner_rendered=min_corner_rendered,
+                    ordered_dims=selected_region.ordered_dims,
+                    n_displayed_dims=selected_region.n_displayed_dims,
+                    resolution_level=0,
+                    index_selection=selected_region.index_selection,
+                )
+            ]
+
+        else:
+            raise TypeError(f"Unexpected selected region type: {type(selected_region)}")
+
+    def get_data(self, request: DataRequest) -> ImageDataResponse:
+        """Get the data for a given request.
+
+        Parameters
+        ----------
+        request : DataRequest
+            The request for the data.
+
+        Returns
+        -------
+        ImageDataResponse
+            The response containing the data.
+        """
+        return ImageDataResponse(
+            id=request.id,
+            scene_id=request.scene_id,
+            visual_id=request.visual_id,
+            resolution_level=request.resolution_level,
+            data=self.data[request.index_selection],
+            min_corner_rendered=request.min_corner_rendered,
+        )
 
     def get_slice(self, slice_data: DataSliceRequest) -> RenderedImageDataSlice:
         """Get the data required to render a slice of the mesh.
