@@ -193,7 +193,7 @@ class ImageMemoryStore(BaseImageDataStore):
             # get the data
             sampled_volume = map_coordinates(
                 self.data,
-                transformed_grid_and.reshape(-1, 3).T,
+                transformed_grid_and.reshape(-1, n_dims).T,
                 order=0,
                 cval=0,
             )
