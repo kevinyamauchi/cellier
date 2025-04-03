@@ -35,12 +35,13 @@ classifiers = [
 # add your package dependencies here
 dependencies = [
     "cmap>=0.5.0",
+    "einops>=0.8.1",
     "numpy",
     "psygnal",
     "pydantic",
     "pygfx>=0.9.0",
     "qtpy",
-    "scipy",
+    "scipy>=1.15.2",
     "superqt>=0.7.2",
     "zarr",
 ]
@@ -66,6 +67,9 @@ dev = [
 
 # dependencies for the example scripts
 examples = ["scikit-image"]
+
+# get all dependencies for development
+dev-all = ["cellier[dev,test,pyqt,examples]"]
 
 [project.urls]
 homepage = "https://github.com/kevinyamauchi/cellier"
