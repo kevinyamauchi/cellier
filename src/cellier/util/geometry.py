@@ -1,5 +1,6 @@
 """Functions for computing on geometries."""
 
+import einops
 import numpy as np
 
 # indices to construct the lines of a frustum from an array
@@ -251,3 +252,64 @@ def plane_intersects_aabb(
     # If the signed distances have opposite signs or one of them is zero,
     # then the plane intersects the AABB
     return dist_positive * dist_negative <= 0
+
+
+def generate_3d_grid(
+    grid_shape: tuple[int, int, int] = (10, 10, 10),
+    grid_spacing: tuple[float, float, float] = (1, 1, 1),
+) -> np.ndarray:
+    """
+    Generate a 3D sampling grid with specified shape and spacing.
+
+    The grid generated is centered on the origin, has shape (w, h, d, 3) for
+    grid_shape (w, h, d), and spacing grid_spacing between neighboring points.
+
+    Parameters
+    ----------
+    grid_shape : Tuple[int, int, int]
+        The number of grid points along each axis.
+    grid_spacing : Tuple[float, float, float]
+        Spacing between points in the sampling grid.
+
+    Returns
+    -------
+    np.ndarray
+        Coordinate of points forming the 3D grid.
+    """
+    # generate a grid of points at each integer from 0 to grid_shape for each dimension
+    grid = np.indices(grid_shape).astype(float)
+    grid = einops.rearrange(grid, "xyz w h d -> w h d xyz")
+    # shift the grid to be centered on the origin
+    # grid_offset = (np.array(grid_shape)) // 2
+    # grid -= grid_offset
+    # scale the grid to get correct spacing
+    grid *= grid_spacing
+    return grid
+
+
+def generate_2d_grid(
+    grid_shape: tuple[int, int] = (10, 10), grid_spacing: tuple[float, float] = (1, 1)
+) -> np.ndarray:
+    """
+    Generate a 2D sampling grid with specified shape and spacing.
+
+    The grid generated is centered on the origin, lying on the plane with normal
+    vector [1, 0, 0], has shape (w, h, 3) for grid_shape (w, h), and spacing
+    grid_spacing between neighboring points.
+
+    Parameters
+    ----------
+    grid_shape : Tuple[int, int]
+        The number of grid points along each axis.
+    grid_spacing : Tuple[float, float]
+        Spacing between points in the sampling grid.
+
+    Returns
+    -------
+    np.ndarray
+        Coordinate of points forming the 2D grid.
+    """
+    grid = generate_3d_grid(
+        grid_shape=(1, *grid_shape), grid_spacing=(1, *grid_spacing)
+    )
+    return einops.rearrange(grid, "1 w h xyz -> w h xyz")

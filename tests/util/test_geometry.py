@@ -2,6 +2,8 @@ import numpy as np
 
 from cellier.util.geometry import (
     frustum_planes_from_corners,
+    generate_2d_grid,
+    generate_3d_grid,
     near_far_plane_edge_lengths,
     plane_intersects_aabb,
     points_in_frustum,
@@ -181,3 +183,32 @@ def test_plane_intersects_aabb_5d():
         bounding_box_min=np.array([10, 11, 11, 10, 11]),
         bounding_box_max=np.array([10, 15, 15, 10, 15]),
     )
+
+
+def test_generate_2D_grid():
+    """Test a 2D grid with anisotropic spacing.
+
+    Note the coordinates are ordered zyx.
+    """
+    shape = (3, 4)
+    spacing = (2, 3)
+    grid = generate_2d_grid(grid_shape=shape, grid_spacing=spacing)
+    assert grid.shape == (*shape, 3)
+    # x and y
+    for spacing_index, axis in enumerate([1, 2]):
+        vals = np.swapaxes(grid[..., axis], axis - 1, 0)
+        # vals = grid[..., axis]
+        np.testing.assert_allclose(vals[1:] - vals[:-1], spacing[spacing_index])
+    # z axis
+    z = grid[..., 0]
+    assert np.all(z == 0)
+
+
+def test_generate_3D_grid():
+    shape = (2, 5, 3)
+    spacing = (2, 1, 3)
+    grid = generate_3d_grid(grid_shape=shape, grid_spacing=spacing)
+    assert grid.shape == (*shape, 3)
+    for axis in range(3):
+        vals = np.swapaxes(grid[..., axis], axis, 0)
+        np.testing.assert_allclose(vals[1:] - vals[:-1], spacing[axis])

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from cellier.models.data_stores import ImageMemoryStore
-from cellier.types import AxisAlignedSample, CoordinateSpace, TilingMethod
+from cellier.types import AxisAlignedSample, CoordinateSpace, PlaneSample, TilingMethod
 
 
 def test_axis_aligned_sample_memory_store_2d():
@@ -18,11 +18,11 @@ def test_axis_aligned_sample_memory_store_2d():
         ordered_dims=(0, 1, 2),
         n_displayed_dims=2,
         index_selection=(5, slice(None), slice(None)),
-        tiling_method=TilingMethod.NONE,
     )
 
     data_requests = data_store.get_data_request(
         sample_request,
+        tiling_method=TilingMethod.NONE,
         scene_id=uuid4().hex,
         visual_id=uuid4().hex,
     )
@@ -50,10 +50,10 @@ def test_axis_aligned_sample_memory_store_3d():
         ordered_dims=(0, 1, 2),
         n_displayed_dims=3,
         index_selection=(slice(5, 8), slice(6, 9), slice(7, 10)),
-        tiling_method=TilingMethod.NONE,
     )
     data_requests = data_store.get_data_request(
         sample_request,
+        tiling_method=TilingMethod.NONE,
         scene_id=uuid4().hex,
         visual_id=uuid4().hex,
     )
@@ -69,6 +69,51 @@ def test_axis_aligned_sample_memory_store_3d():
     assert data_response.min_corner_rendered == (5, 6, 7)
 
 
+def test_plane_sample_memory_store_3d():
+    """Test a 2D plane sample from a 3D image memory store."""
+    image = np.zeros((10, 10, 10))
+
+    plane_2d = np.zeros((10, 10))
+    plane_2d[0:5, :] = 1
+    plane_2d[5:, :] = 2
+    image[:, 5, :] = plane_2d
+
+    data_store = ImageMemoryStore(data=image)
+
+    plane_transform = np.array(
+        [
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 0, 1],
+        ]
+    )
+    sample_request = PlaneSample(
+        space_type=CoordinateSpace.DATA,
+        ordered_dims=(0, 1, 2),
+        n_displayed_dims=3,
+        index_selection=(slice(None), slice(None), slice(None)),
+        point=np.array([0, 5, 0]),
+        plane_transform=plane_transform,
+        extents=(10, 10),
+    )
+
+    data_requests = data_store.get_data_request(
+        sample_request,
+        tiling_method=TilingMethod.NONE,
+        scene_id=uuid4().hex,
+        visual_id=uuid4().hex,
+    )
+
+    assert len(data_requests) == 1
+
+    data_response = data_store.get_data(data_requests[0])
+
+    np.testing.assert_allclose(
+        data_response.data,
+        plane_2d,
+    )
+
+
 def test_tiling_memory_store():
     """Tiling is not implemented for the ImageMemoryStore."""
     image = np.random.random((10, 10, 10))
@@ -80,12 +125,12 @@ def test_tiling_memory_store():
         ordered_dims=(0, 1, 2),
         n_displayed_dims=2,
         index_selection=(slice(5, 6), slice(None), slice(None)),
-        tiling_method=TilingMethod.LOGICAL_PIXEL,
     )
 
     with pytest.raises(NotImplementedError):
         _ = data_store.get_data_request(
             sample_request,
+            tiling_method=TilingMethod.LOGICAL_PIXEL,
             visual_id=uuid4().hex,
             scene_id=uuid4().hex,
         )
