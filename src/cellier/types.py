@@ -206,6 +206,9 @@ class AxisAlignedSample:
     index_selection: tuple[Union[int, slice], ...]
 
 
+SelectedRegion = Union[AxisAlignedSample, PlaneSample]
+
+
 @dataclass(frozen=True)
 class AxisAlignedDataRequest:
     """Data for an axis-aligned data request.
@@ -326,7 +329,7 @@ class ImageDataResponse(DataResponse):
     Parameters
     ----------
     id : str
-        The unique identifier of the request.
+        The unique identifier of the request that generated this response.
     scene_id : SceneId
         The unique identifier for which scene this visual belongs to.
     visual_id : VisualId
@@ -342,4 +345,26 @@ class ImageDataResponse(DataResponse):
     """
 
     min_corner_rendered: tuple[int, int] | tuple[int, int, int]
+    data: np.ndarray
+
+
+@dataclass(frozen=True)
+class PointsDataResponse(DataResponse):
+    """Points data to be sent to the renderer.
+
+    Parameters
+    ----------
+    id : str
+        The unique identifier of the request that generated this response.
+    scene_id : SceneId
+        The unique identifier for which scene this visual belongs to.
+    visual_id : VisualId
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    data : np.ndarray
+        The image data to be rendered.
+    """
+
     data: np.ndarray

@@ -21,6 +21,7 @@ from cellier.types import (
     PlaneDataRequest,
     PlaneSample,
     SceneId,
+    SelectedRegion,
     TilingMethod,
     VisualId,
 )
@@ -66,7 +67,7 @@ class ImageMemoryStore(BaseImageDataStore):
 
     def get_data_request(
         self,
-        selected_region: AxisAlignedSample | PlaneSample,
+        selected_region: SelectedRegion,
         tiling_method: TilingMethod,
         visual_id: VisualId,
         scene_id: SceneId,
@@ -75,7 +76,7 @@ class ImageMemoryStore(BaseImageDataStore):
 
         Parameters
         ----------
-        selected_region : AxisAlignedSample | PlaneSample
+        selected_region : SelectedRegion
             The selected region to get data for.
         tiling_method : TilingMethod
             The method for computing how to chunk the request.
