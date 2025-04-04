@@ -179,3 +179,26 @@ def test_tiling_memory_store():
             visual_id=uuid4().hex,
             scene_id=uuid4().hex,
         )
+
+
+def test_image_memory_data_bad_selected_region():
+    """An invalid selected region should raise a TypeError."""
+    image = np.zeros((10, 10, 10))
+    data_store = ImageMemoryStore(data=image)
+
+    with pytest.raises(TypeError):
+        _ = data_store.get_data_request(
+            "data please",
+            tiling_method=TilingMethod.NONE,
+            scene_id=uuid4().hex,
+            visual_id=uuid4().hex,
+        )
+
+
+def test_image_memory_data_bad_data_request():
+    """An invalid selected region should raise a TypeError."""
+    image = np.zeros((10, 10, 10))
+    data_store = ImageMemoryStore(data=image)
+
+    with pytest.raises(TypeError):
+        _ = data_store.get_data_request("data please")
