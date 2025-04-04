@@ -368,3 +368,25 @@ class PointsDataResponse(DataResponse):
     """
 
     data: np.ndarray
+
+
+@dataclass(frozen=True)
+class LinesDataResponse(DataResponse):
+    """Lines data to be sent to the renderer.
+
+    Parameters
+    ----------
+    id : str
+        The unique identifier of the request that generated this response.
+    scene_id : SceneId
+        The unique identifier for which scene this visual belongs to.
+    visual_id : VisualId
+        The UID of the visual to be updated.
+    resolution_level : int
+        The resolution level to be rendered. 0 is the highest resolution
+        and larger numbers are lower resolution.
+    data : np.ndarray
+        The image data to be rendered.
+    """
+
+    data: np.ndarray
