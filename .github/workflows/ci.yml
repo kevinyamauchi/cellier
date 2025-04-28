@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up headless GUI
-        uses: pyvista/setup-headless-display-action@v3
+        uses: pyvista/setup-headless-display-action@v4
         with:
           qt: true
 
