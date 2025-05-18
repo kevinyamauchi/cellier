@@ -148,7 +148,7 @@ class TilingMethod(Enum):
 
 
 @dataclass(frozen=True)
-class PlaneSample:
+class PlaneSelectedRegion:
     """Data for a plane selected region.
 
     Parameters
@@ -183,7 +183,7 @@ class PlaneSample:
 
 
 @dataclass(frozen=True)
-class AxisAlignedSample:
+class AxisAlignedSelectedRegion:
     """Data for an axis-aligned selected region.
 
     Parameters
@@ -206,7 +206,7 @@ class AxisAlignedSample:
     index_selection: tuple[Union[int, slice], ...]
 
 
-SelectedRegion = Union[AxisAlignedSample, PlaneSample]
+SelectedRegion = Union[AxisAlignedSelectedRegion, PlaneSelectedRegion]
 
 
 @dataclass(frozen=True)

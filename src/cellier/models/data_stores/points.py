@@ -10,10 +10,10 @@ from cellier.models.data_stores.base_data_store import BaseDataStore
 from cellier.slicer.data_slice import DataSliceRequest, RenderedPointsDataSlice
 from cellier.types import (
     AxisAlignedDataRequest,
-    AxisAlignedSample,
+    AxisAlignedSelectedRegion,
     DataRequest,
     PlaneDataRequest,
-    PlaneSample,
+    PlaneSelectedRegion,
     PointsDataResponse,
     SceneId,
     SelectedRegion,
@@ -77,7 +77,7 @@ class PointsMemoryStore(BasePointsDataStore):
                 "Tiling is not implemented for the ImageMemoryStore."
             )
 
-        if isinstance(selected_region, AxisAlignedSample):
+        if isinstance(selected_region, AxisAlignedSelectedRegion):
             # determine the start of the chunk in the rendered coordinates
             displayed_dim_indices = selected_region.ordered_dims[
                 -selected_region.n_displayed_dims :
@@ -104,7 +104,7 @@ class PointsMemoryStore(BasePointsDataStore):
                 )
             ]
 
-        elif isinstance(selected_region, PlaneSample):
+        elif isinstance(selected_region, PlaneSelectedRegion):
             # this is a 2D slice of the data
             return [
                 PlaneDataRequest(

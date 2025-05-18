@@ -1,8 +1,14 @@
 from psygnal import Signal
 
 from cellier.events import EventBus
-from cellier.models.scene import CoordinateSystem, DimsManager, DimsState, RangeTuple
-from cellier.types import DimsControlsUpdateEvent
+from cellier.models.scene import (
+    AxisAlignedRegionSelector,
+    CoordinateSystem,
+    DimsManager,
+    DimsState,
+    RangeTuple,
+)
+from cellier.types import CoordinateSpace, DimsControlsUpdateEvent
 
 
 class MockDimsGui:
@@ -13,20 +19,20 @@ class MockDimsGui:
     def __init__(self, dims_id: str):
         self.dims_id = dims_id
         self.n_update_calls = 0
-        self.point = (0, 0, 0)
+        self.n_displayed_dims = 3
 
-    def update_point(self, point: tuple[int, int, int]):
+    def update_n_dims_displayed(self, n_dims_displayed: int):
         """Update the point in the dims GUI."""
-        self.point = point
+        self.n_dims_displayed = n_dims_displayed
         update_event = DimsControlsUpdateEvent(
             id=self.dims_id,
-            state={"point": point},
+            state={"selection": {"n_displayed_dims": n_dims_displayed}},
             controls_update_callback=self._on_dims_state_changed,
         )
         self.currentIndexChanged(update_event)
 
     def _on_dims_state_changed(self, new_state: DimsState):
-        self.point = new_state.point
+        self.n_displayed_dims = new_state.selection.n_displayed_dims
         self.n_update_calls += 1
 
 
@@ -41,13 +47,16 @@ def setup_dims_model_and_controls() -> tuple[DimsManager, MockDimsGui]:
     coordinate_system_3d = CoordinateSystem(
         name="scene_3d", axis_labels=("z", "y", "x")
     )
+    selection = AxisAlignedRegionSelector(
+        space_type=CoordinateSpace.WORLD,
+        ordered_dims=(0, 1, 2),
+        n_displayed_dims=3,
+        index_selection=(0, slice(0, 10, 1), slice(None, None, None)),
+    )
     dims_3d = DimsManager(
-        point=(0, 0, 0),
-        margin_negative=(0, 0, 0),
-        margin_positive=(0, 0, 0),
         range=data_range,
         coordinate_system=coordinate_system_3d,
-        displayed_dimensions=(1, 2),
+        selection=selection,
     )
 
     # make the dims controls
@@ -71,10 +80,10 @@ def test_dims_model_to_gui():
         dims_controls=dims_controls,
     )
 
-    new_dims_point = (10, 0, 0)
-    dims_3d.point = new_dims_point
+    new_n_dims_displayed = 2
+    dims_3d.selection.n_displayed_dims = new_n_dims_displayed
 
-    assert dims_controls.point == new_dims_point
+    assert dims_controls.n_displayed_dims == new_n_dims_displayed
     assert dims_controls.n_update_calls == 1
 
 
@@ -92,8 +101,14 @@ def test_gui_to_dims_model():
         dims_controls=dims_controls,
     )
 
-    new_dims_point = (10, 0, 0)
-    dims_controls.update_point(new_dims_point)
+    # verify the n displayed dims is 3
+    assert dims_3d.selection.n_displayed_dims == 3
 
-    assert dims_3d.point == new_dims_point
+    new_n_dims_displayed = 2
+    dims_controls.update_n_dims_displayed(new_n_dims_displayed)
+
+    assert dims_3d.selection.n_displayed_dims == new_n_dims_displayed
+
+    # verify the update didn't trigger a callback on the GUI
+    # (i.e., no signal "bounce back")
     assert dims_controls.n_update_calls == 0

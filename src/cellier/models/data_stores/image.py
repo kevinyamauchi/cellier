@@ -15,11 +15,11 @@ from cellier.models.data_stores.base_data_store import BaseDataStore
 from cellier.slicer import DataSliceRequest, RenderedImageDataSlice
 from cellier.types import (
     AxisAlignedDataRequest,
-    AxisAlignedSample,
+    AxisAlignedSelectedRegion,
     DataRequest,
     ImageDataResponse,
     PlaneDataRequest,
-    PlaneSample,
+    PlaneSelectedRegion,
     SceneId,
     SelectedRegion,
     TilingMethod,
@@ -89,7 +89,7 @@ class ImageMemoryStore(BaseImageDataStore):
             raise NotImplementedError(
                 "Tiling is not implemented for the ImageMemoryStore."
             )
-        if isinstance(selected_region, AxisAlignedSample):
+        if isinstance(selected_region, AxisAlignedSelectedRegion):
             displayed_dim_indices = selected_region.ordered_dims[
                 -selected_region.n_displayed_dims :
             ]
@@ -117,7 +117,7 @@ class ImageMemoryStore(BaseImageDataStore):
                 )
             ]
 
-        elif isinstance(selected_region, PlaneSample):
+        elif isinstance(selected_region, PlaneSelectedRegion):
             # this is a 2D slice of the data
             return [
                 PlaneDataRequest(

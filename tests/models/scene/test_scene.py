@@ -1,28 +1,44 @@
 """Test the scene model."""
 
-import json
-
 import numpy as np
 from pydantic_core import from_json
 
 from cellier.models.data_stores import PointsMemoryStore
 from cellier.models.scene import (
+    AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
     DimsManager,
     OrbitCameraController,
     PerspectiveCamera,
+    RangeTuple,
     Scene,
 )
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.types import CoordinateSpace
 
 
 def test_scene_model(tmp_path):
     """Test the serialization/deserialization of the Scene model."""
 
-    coordinate_system = CoordinateSystem(name="default", axis_label=("x", "y", "z"))
+    data_range = (
+        RangeTuple(start=0, stop=250, step=1),
+        RangeTuple(start=0, stop=250, step=1),
+        RangeTuple(start=0, stop=250, step=1),
+    )
+    coordinate_system_3d = CoordinateSystem(
+        name="scene_3d", axis_labels=("z", "y", "x")
+    )
+    selection = AxisAlignedRegionSelector(
+        space_type=CoordinateSpace.WORLD,
+        ordered_dims=(0, 1, 2),
+        n_displayed_dims=3,
+        index_selection=(0, slice(0, 10, 1), slice(None, None, None)),
+    )
     dims = DimsManager(
-        coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
+        range=data_range,
+        coordinate_system=coordinate_system_3d,
+        selection=selection,
     )
 
     coordinates = np.array(
@@ -50,7 +66,7 @@ def test_scene_model(tmp_path):
     output_path = tmp_path / "test.json"
     with open(output_path, "w") as f:
         # serialize the model
-        json.dump(scene.model_dump(), f)
+        f.write(scene.model_dump_json())
 
     # deserialize
     with open(output_path, "rb") as f:

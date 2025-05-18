@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 from cellier.models.data_stores import LinesMemoryStore
-from cellier.types import AxisAlignedSample, CoordinateSpace, PlaneSample, TilingMethod
+from cellier.types import (
+    AxisAlignedSelectedRegion,
+    CoordinateSpace,
+    PlaneSelectedRegion,
+    TilingMethod,
+)
 
 
 def test_lines_memory_data_store_3d():
@@ -21,7 +26,7 @@ def test_lines_memory_data_store_3d():
     )
     data_store = LinesMemoryStore(coordinates=coordinates)
 
-    sample_request = AxisAlignedSample(
+    sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
         ordered_dims=(0, 1, 2, 3),
         n_displayed_dims=3,
@@ -63,7 +68,7 @@ def test_lines_memory_data_store_2d():
     )
     data_store = LinesMemoryStore(coordinates=coordinates)
 
-    sample_request = AxisAlignedSample(
+    sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
         ordered_dims=(0, 1, 2, 3),
         n_displayed_dims=2,
@@ -110,7 +115,7 @@ def test_lines_memory_data_plane_sample():
             [0, 0, 1],
         ]
     )
-    sample_request = PlaneSample(
+    sample_request = PlaneSelectedRegion(
         space_type=CoordinateSpace.DATA,
         ordered_dims=(0, 1, 2, 3),
         n_displayed_dims=3,
@@ -146,7 +151,7 @@ def test_lines_memory_data_tiling():
     )
     data_store = LinesMemoryStore(coordinates=coordinates)
 
-    sample_request = AxisAlignedSample(
+    sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
         ordered_dims=(0, 1, 2, 3),
         n_displayed_dims=2,

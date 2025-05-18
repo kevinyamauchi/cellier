@@ -5,15 +5,18 @@ import numpy as np
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import PointsMemoryStore
 from cellier.models.scene import (
+    AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
     DimsManager,
     OrbitCameraController,
     PerspectiveCamera,
+    RangeTuple,
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.types import CoordinateSpace
 
 
 def test_viewer(tmp_path):
@@ -26,9 +29,24 @@ def test_viewer(tmp_path):
     data = DataManager(stores={points_store.id: points_store})
 
     # make the scene coordinate system
-    coordinate_system = CoordinateSystem(name="scene_0", axis_labels=["z", "y", "x"])
+    data_range = (
+        RangeTuple(start=0, stop=250, step=1),
+        RangeTuple(start=0, stop=250, step=1),
+        RangeTuple(start=0, stop=250, step=1),
+    )
+    coordinate_system_3d = CoordinateSystem(
+        name="scene_3d", axis_labels=("z", "y", "x")
+    )
+    selection = AxisAlignedRegionSelector(
+        space_type=CoordinateSpace.WORLD,
+        ordered_dims=(0, 1, 2),
+        n_displayed_dims=3,
+        index_selection=(0, slice(0, 10, 1), slice(None, None, None)),
+    )
     dims = DimsManager(
-        coordinate_system=coordinate_system, displayed_dimensions=(0, 1, 2)
+        range=data_range,
+        coordinate_system=coordinate_system_3d,
+        selection=selection,
     )
 
     # make the mesh visual
