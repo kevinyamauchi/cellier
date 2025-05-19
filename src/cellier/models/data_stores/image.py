@@ -12,7 +12,6 @@ from pylinalg import vec_transform
 from scipy.ndimage import map_coordinates
 
 from cellier.models.data_stores.base_data_store import BaseDataStore
-from cellier.slicer import DataSliceRequest, RenderedImageDataSlice
 from cellier.types import (
     AxisAlignedDataRequest,
     AxisAlignedSelectedRegion,
@@ -210,25 +209,3 @@ class ImageMemoryStore(BaseImageDataStore):
 
         else:
             raise TypeError(f"Unexpected request type: {type(request)}")
-
-    def get_slice(self, slice_data: DataSliceRequest) -> RenderedImageDataSlice:
-        """Get the data required to render a slice of the mesh.
-
-        todo: generalize to oblique slicing
-        """
-        displayed_dimensions = list(slice_data.world_slice.displayed_dimensions)
-
-        slice_objects = [
-            int(point_value)
-            if (dimension_index not in displayed_dimensions)
-            else slice(None)
-            for dimension_index, point_value in enumerate(slice_data.world_slice.point)
-        ]
-
-        return RenderedImageDataSlice(
-            scene_id=slice_data.scene_id,
-            visual_id=slice_data.visual_id,
-            resolution_level=slice_data.resolution_level,
-            data=self.data[tuple(slice_objects)],
-            texture_start_index=(0, 0, 0),
-        )
