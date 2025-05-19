@@ -23,10 +23,7 @@ def construct_pygfx_labels_from_model(
     # make the material
     material_model = model.material
     if isinstance(material_model, LabelsMaterial):
-        pygfx_texture = Colormap("glasbey:glasbey").to_pygfx(N=200)
-        pygfx_cm = gfx.TextureMap(
-            texture=pygfx_texture, filter="nearest", wrap="repeat"
-        )
+        pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(
             color_map=pygfx_cm,
