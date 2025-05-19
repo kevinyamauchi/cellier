@@ -21,8 +21,8 @@ class LabelImageMaterial(gfx.ImageBasicMaterial):
 
     def __init__(self, color_map: gfx.TextureMap):
         # the texture must be 1D
-        if color_map.texture.dim != 1:
-            raise ValueError("The color map must be a 1D texture.")
+        # if color_map.texture.dim != 1:
+        #     raise ValueError("The color map must be a 1D texture.")
 
         # get the number of colors in the colormap
         n_colors = color_map.texture.size[0]
@@ -49,8 +49,8 @@ class LabelIsoMaterial(gfx.VolumeIsoMaterial):
 
     def __init__(self, color_map: gfx.TextureMap):
         # the texture must be 1D
-        if color_map.texture.dim != 1:
-            raise ValueError("The color map must be a 1D texture.")
+        # if color_map.texture.dim != 1:
+        #     raise ValueError("The color map must be a 1D texture.")
 
         # get the number of colors in the colormap
         n_colors = color_map.texture.size[0]
