@@ -82,7 +82,7 @@ class GFXPointsVisual:
 
     def set_slice(self, slice_data: RenderedPointsDataSlice):
         """Set all the point coordinates."""
-        coordinates = slice_data.coordinates
+        coordinates = slice_data.data
 
         # check if the layer was empty
         was_empty = self._empty

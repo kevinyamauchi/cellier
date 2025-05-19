@@ -1,8 +1,5 @@
-import time
-
 import numpy as np
 
-from cellier.convenience import get_scene_with_dims_id
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import PointsMemoryStore
 from cellier.models.scene import (
@@ -10,7 +7,6 @@ from cellier.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
-    DimsState,
     OrbitCameraController,
     PerspectiveCamera,
     RangeTuple,
@@ -18,68 +14,13 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
-from cellier.types import CoordinateSpace, DataResponse
+from cellier.testing import SlicingValidator
+from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
 
 
-class SlicingValidator:
-    def __init__(self, dims_model: DimsManager, controller: CellierController):
-        self._controller = controller
-
-        # list to store the slices received
-        self.slices_received = []
-
-        # counter to check how many times dims update is called
-        self.n_dims_changed_events = 0
-
-        # counter to check how many slices received
-        self.n_slices_received = 0
-
-        # register the dims events
-        self._controller.events.scene.register_dims(dims_model)
-
-        # connect the redraw to the dims model
-        self._controller.events.scene.subscribe_to_dims(
-            dims_id=dims_model.id, callback=self._on_dims_update
-        )
-
-        # connect callback to the slicer's new slice event
-        self._controller._slicer.events.new_slice.connect(self._on_new_slice)
-
-    def wait_for_slices(self, timeout: float = 5, error_on_timeout: bool = True):
-        """Wait for a slice to be received."""
-        self.n_slices_received = 0
-        self.slices_received = []
-        start_time = time.time()
-        while self.n_slices_received == 0 and (time.time() - start_time) < timeout:
-            time.sleep(0.1)
-
-        if self.n_slices_received == 0 and error_on_timeout:
-            raise TimeoutError("Slice not received within the timeout period.")
-
-        return
-
-    def _on_dims_update(self, new_dims_state: DimsState):
-        # perform the slicing when the dims are updated
-        scene_model = get_scene_with_dims_id(
-            viewer_model=self._controller._model,
-            dims_id=new_dims_state.id,
-        )
-        self._controller.reslice_scene(scene_id=scene_model.id)
-
-        # increment the counter
-        self.n_dims_changed_events += 1
-
-    def _on_new_slice(self, slice_response: DataResponse):
-        """This is called when a new slice is received."""
-        # store the slice
-        self.slices_received.append(slice_response.data)
-
-        # increment the counter
-        self.n_slices_received += 1
-
-
 def test_points_slicing(qtbot):
+    """Test the slicing of points data."""
     # set up the coordinate system and dims manager
     coordinate_system = CoordinateSystem(name="default", axis_label=("x", "y", "z"))
     dims_manager = DimsManager(

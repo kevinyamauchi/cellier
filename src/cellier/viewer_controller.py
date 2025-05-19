@@ -20,7 +20,11 @@ from cellier.slicer.slicer import (
     AsynchronousDataSlicer,
     SlicerType,
 )
-from cellier.slicer.utils import world_slice_from_dims_manager
+from cellier.slicer.utils import (
+    world_selected_region_from_dims,
+    world_slice_from_dims_manager,
+)
+from cellier.types import TilingMethod
 from cellier.util.chunk import generate_chunk_requests_from_frustum
 
 logger = logging.getLogger(__name__)
@@ -183,14 +187,28 @@ class CellierController:
     def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
         """Reslice a specified visual."""
         scene = self._model.scenes.scenes[scene_id]
-        _ = scene.get_visual_by_id(visual_id)
+        visual_model = scene.get_visual_by_id(visual_id)
 
         # get the region of the displayed dims being displayed
+        selected_region = world_selected_region_from_dims(
+            dims_manager=scene.dims,
+            visual=visual_model,
+        )
 
-        # get the list of chunk requests from the data store
-        # these have the chunk corners and the chunk offset
+        # get the data requests
+        data_store = self._model.data.stores[visual_model.data_store_id]
+        requests = data_store.get_data_request(
+            selected_region=selected_region,
+            tiling_method=TilingMethod.NONE,
+            scene_id=scene.id,
+            visual_id=visual_model.id,
+        )
 
         # submit the chunk requests
+        self._slicer.submit(
+            request_list=requests,
+            data_store=data_store,
+        )
 
     def reslice_visual_old(self, scene_id: str, visual_id: str, canvas_id: str):
         """Reslice a specified visual."""

@@ -77,7 +77,7 @@ class AsynchronousDataSlicer:
 
         slice_futures_list = []
         for request in request_list:
-            slice_future = self._thread_pool.submit(data_store.get_slice, request)
+            slice_future = self._thread_pool.submit(data_store.get_data, request)
 
             # add the callback to send the data when the slice is received
             slice_future.add_done_callback(self._on_slice_response)

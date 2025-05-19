@@ -49,13 +49,13 @@ def test_viewer(tmp_path):
         selection=selection,
     )
 
-    # make the mesh visual
+    # make the points visual
     points_material = PointsUniformMaterial(
         color=(1, 0, 0, 1),
         size=1,
     )
     points_visual = PointsVisual(
-        name="mesh_visual", data_store_id=points_store.id, material=points_material
+        name="points_visual", data_store_id=points_store.id, material=points_material
     )
 
     # make the canvas
