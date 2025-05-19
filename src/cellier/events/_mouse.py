@@ -139,13 +139,16 @@ class MouseEventBus:
         else:
             raise TypeError(f"Unknown event type: {type(event)}")
 
-        n_displayed_dims = len(dims_manager.displayed_dimensions)
+        n_displayed_dims = dims_manager.selection.n_displayed_dims
         displayed_world_coordinate = event.coordinate[:n_displayed_dims]
 
         # determine the coordinate of the click
-        coordinate = np.asarray(dims_manager.point)
+        coordinate = np.asarray(dims_manager.selection.index_selection)
+        displayed_dimensions = list(dims_manager.selection.ordered_dims)[
+            -n_displayed_dims:
+        ]
         for pick_coordinate, dims_index in zip(
-            displayed_world_coordinate, dims_manager.displayed_dimensions
+            displayed_world_coordinate, displayed_dimensions
         ):
             coordinate[dims_index] = pick_coordinate
 

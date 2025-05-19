@@ -14,6 +14,7 @@ from cellier.convenience import (
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.scene import (
+    AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
     DimsManager,
@@ -25,7 +26,7 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
-from cellier.types import DataStoreId
+from cellier.types import CoordinateSpace, DataStoreId
 from cellier.viewer_controller import CellierController
 
 
@@ -153,7 +154,7 @@ def make_2d_view(
     coordinate_system_name: str,
     data_store_id: DataStoreId,
     data_range,
-    displayed_dimensions: tuple[int, ...],
+    ordered_dims: tuple[int, int, int],
 ):
     """Make a 2D view of a label image."""
     # make the 2D scene coordinate system
@@ -161,12 +162,14 @@ def make_2d_view(
         name=coordinate_system_name, axis_labels=("z", "y", "x")
     )
     dims = DimsManager(
-        point=(125, 0, 0),
-        margin_negative=(0, 0, 0),
-        margin_positive=(0, 0, 0),
         range=data_range,
         coordinate_system=coordinate_system,
-        displayed_dimensions=displayed_dimensions,
+        selection=AxisAlignedRegionSelector(
+            space_type=CoordinateSpace.WORLD,
+            ordered_dims=ordered_dims,
+            n_displayed_dims=2,
+            index_selection=(125, slice(None, None, None), slice(None, None, None)),
+        ),
     )
 
     # make the 2D labels visual
@@ -202,21 +205,21 @@ labels_xy, dims_xy = make_2d_view(
     coordinate_system_name="xy",
     data_store_id=data_store.id,
     data_range=data_range,
-    displayed_dimensions=(1, 2),
+    ordered_dims=(0, 1, 2),
 )
 
 labels_xz, dims_xz = make_2d_view(
     coordinate_system_name="xz",
     data_store_id=data_store.id,
     data_range=data_range,
-    displayed_dimensions=(1, 2),
+    ordered_dims=(0, 1, 2),
 )
 
 labels_zy, dims_zy = make_2d_view(
     coordinate_system_name="zy",
     data_store_id=data_store.id,
     data_range=data_range,
-    displayed_dimensions=(1, 2),
+    ordered_dims=(0, 1, 2),
 )
 
 # make the cameras
