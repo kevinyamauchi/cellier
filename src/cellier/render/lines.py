@@ -74,7 +74,7 @@ class GFXLinesVisual:
 
     def set_slice(self, slice_data: RenderedLinesDataSlice):
         """Set the slice data for the lines."""
-        coordinates = slice_data.coordinates
+        coordinates = slice_data.data
 
         # check if the layer was empty
         was_empty = self._empty
