@@ -22,13 +22,11 @@ from cellier.render._data_classes import (
 )
 from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
-from cellier.slicer.data_slice import (
-    RenderedSliceData,
-)
 from cellier.types import (
     CameraControlsUpdateEvent,
     CameraId,
     CanvasId,
+    DataResponse,
     MouseButton,
     MouseEventType,
     MouseModifiers,
@@ -431,7 +429,7 @@ class RenderManager:
 
     @ensure_main_thread
     def _on_new_slice(
-        self, slice_data: RenderedSliceData, redraw_canvas: bool = True
+        self, slice_data: DataResponse, redraw_canvas: bool = True
     ) -> None:
         """Callback to update objects when a new slice is received."""
         visual_object = self._visuals[slice_data.visual_id]

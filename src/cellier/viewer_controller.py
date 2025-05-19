@@ -2,7 +2,6 @@
 
 import logging
 from typing import Callable
-from uuid import uuid4
 
 import numpy as np
 
@@ -15,14 +14,12 @@ from cellier.render._render_manager import (
     CanvasRedrawRequest,
     RenderManager,
 )
-from cellier.slicer.data_slice import DataSliceRequest
 from cellier.slicer.slicer import (
     AsynchronousDataSlicer,
     SlicerType,
 )
 from cellier.slicer.utils import (
     world_selected_region_from_dims,
-    world_slice_from_dims_manager,
 )
 from cellier.types import TilingMethod
 from cellier.util.chunk import generate_chunk_requests_from_frustum
@@ -208,31 +205,6 @@ class CellierController:
         self._slicer.submit(
             request_list=requests,
             data_store=data_store,
-        )
-
-    def reslice_visual_old(self, scene_id: str, visual_id: str, canvas_id: str):
-        """Reslice a specified visual."""
-        # get the current dims
-        scene = self._model.scenes.scenes[scene_id]
-        visual = self._model.scenes.scenes[scene_id].get_visual_by_id(visual_id)
-
-        # todo have the world slice passed in
-        world_slice = world_slice_from_dims_manager(dims_manager=scene.dims)
-
-        slice_request = DataSliceRequest(
-            world_slice=world_slice,
-            resolution_level=0,
-            data_store_id=visual.data_store_id,
-            visual_id=visual_id,
-            scene_id=scene.id,
-            request_id=uuid4().hex,
-            data_to_world_transform=None,
-        )
-
-        # submit the request
-        self._slicer.submit(
-            request_list=[slice_request],
-            data_store=self._model.data.stores[visual.data_store_id],
         )
 
     def reslice_visual_tiled(

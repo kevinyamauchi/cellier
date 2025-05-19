@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, List
 
 from psygnal import Signal
 
-from cellier.slicer.data_slice import RenderedSliceData
+from cellier.types import DataResponse
 
 if TYPE_CHECKING:
     from cellier.types import VisualId
@@ -37,7 +37,7 @@ class DataSlicerEvents:
         in the "data" field.
     """
 
-    new_slice: Signal = Signal(RenderedSliceData)
+    new_slice: Signal = Signal(DataResponse)
 
 
 class AsynchronousDataSlicer:
@@ -49,8 +49,8 @@ class AsynchronousDataSlicer:
 
         # Storage for pending futures.
         # The key is the visual id the slice request originated from.
-        self._pending_futures: Dict["VisualId", list[Future[RenderedSliceData]]] = {}
-        self._futures_to_ignore: List[Future[RenderedSliceData]] = []
+        self._pending_futures: Dict["VisualId", list[Future[DataResponse]]] = {}
+        self._futures_to_ignore: List[Future[DataResponse]] = []
 
         self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -86,7 +86,7 @@ class AsynchronousDataSlicer:
         # store the future
         self._pending_futures[visual_id] = slice_futures_list
 
-    def _on_slice_response(self, future: Future[RenderedSliceData]):
+    def _on_slice_response(self, future: Future[DataResponse]):
         if future.cancelled():
             # if the future was cancelled, return early
             return
