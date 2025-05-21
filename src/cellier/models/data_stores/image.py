@@ -149,13 +149,18 @@ class ImageMemoryStore(BaseImageDataStore):
         ImageDataResponse
             The response containing the data.
         """
+        transposed_data = np.transpose(self.data, request.ordered_dims)
+        transposed_selection = tuple(
+            [request.index_selection[axis_index] for axis_index in request.ordered_dims]
+        )
+
         if isinstance(request, AxisAlignedDataRequest):
             return ImageDataResponse(
                 id=request.id,
                 scene_id=request.scene_id,
                 visual_id=request.visual_id,
                 resolution_level=request.resolution_level,
-                data=self.data[request.index_selection],
+                data=transposed_data[transposed_selection],
                 min_corner_rendered=request.min_corner_rendered,
             )
         elif isinstance(request, PlaneDataRequest):

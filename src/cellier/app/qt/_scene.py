@@ -236,8 +236,6 @@ class QtDimsSliders(QtBaseDimsSliders):
 
     def _on_index_changed(self, event: int | None = None) -> None:
         """Handle the index changed event."""
-        current_index = self.current_index()
-
         new_index_selection = []
         for slider in self._sliders.values():
             if slider.isVisible():
@@ -245,12 +243,9 @@ class QtDimsSliders(QtBaseDimsSliders):
             else:
                 new_index_selection.append(slice(None, None, None))
 
-        print(current_index)
-
         new_state = {
             "selection": {"index_selection": tuple(new_index_selection)},
         }
-        print(new_state)
         event = DimsControlsUpdateEvent(
             id=self.dims_id,
             state=new_state,

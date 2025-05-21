@@ -74,6 +74,61 @@ def test_axis_aligned_sample_memory_store_3d():
     assert data_response.min_corner_rendered == (5, 6, 7)
 
 
+def test_axis_aligned_sample_memory_store_rolled_axes():
+    """Test sampling with rolled axes."""
+    image = np.array(
+        [
+            [
+                [0, 1, 2],
+                [3, 4, 5],
+                [6, 7, 8],
+            ],
+            [
+                [9, 10, 11],
+                [12, 13, 14],
+                [15, 16, 17],
+            ],
+            [
+                [18, 19, 20],
+                [21, 22, 23],
+                [24, 25, 26],
+            ],
+        ]
+    )
+
+    data_store = ImageMemoryStore(data=image)
+    ordered_dims = (1, 2, 0)
+    expected_result = np.array(
+        [
+            [0, 9, 18],
+            [1, 10, 19],
+            [2, 11, 20],
+        ]
+    )
+
+    sample_request = AxisAlignedSelectedRegion(
+        space_type=CoordinateSpace.DATA,
+        ordered_dims=ordered_dims,
+        n_displayed_dims=2,
+        index_selection=(slice(None, None), 0, slice(None, None)),
+    )
+    data_requests = data_store.get_data_request(
+        sample_request,
+        tiling_method=TilingMethod.NONE,
+        scene_id=uuid4().hex,
+        visual_id=uuid4().hex,
+    )
+    assert len(data_requests) == 1
+
+    data_response = data_store.get_data(data_requests[0])
+
+    # check the result
+    np.testing.assert_allclose(
+        data_response.data,
+        expected_result,
+    )
+
+
 def test_plane_sample_memory_store_3d():
     """Test a 2D plane sample from a 3D image memory store."""
     image = np.zeros((10, 10, 10))
