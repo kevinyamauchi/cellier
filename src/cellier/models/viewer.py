@@ -1,6 +1,5 @@
 """Model for the viewer."""
 
-import json
 from typing import Dict
 
 from psygnal import EmissionInfo, EventedModel, Signal
@@ -57,7 +56,7 @@ class ViewerModel(EventedModel):
         """Save the viewer state as a JSON file."""
         with open(file_path, "w") as f:
             # serialize the model
-            json.dump(self.model_dump(), f, indent=indent)
+            f.write(self.model_dump_json(indent=indent))
 
     @classmethod
     def from_json_file(cls, file_path: str):

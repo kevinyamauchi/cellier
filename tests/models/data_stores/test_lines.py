@@ -3,7 +3,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.models.data_stores import PointsMemoryStore
+from cellier.models.data_stores import LinesMemoryStore
 from cellier.types import (
     AxisAlignedSelectedRegion,
     CoordinateSpace,
@@ -12,10 +12,19 @@ from cellier.types import (
 )
 
 
-def test_point_memory_data_store_2d():
-    """Test point data store accessing a 2D slice with margins."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+def test_lines_memory_data_store_2d():
+    """Test lines data store accessing a thick 2D axis-aligned slice."""
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
@@ -34,14 +43,28 @@ def test_point_memory_data_store_2d():
 
     data_response = data_store.get_data(data_requests[0])
 
-    expected_points = np.array([[10, 10]])
+    expected_points = np.array(
+        [
+            [10, 10],
+            [20, 20],
+        ]
+    )
     np.testing.assert_allclose(expected_points, data_response.data)
 
 
-def test_point_memory_data_store_3d():
-    """Test point data store accessing a 3D slice."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+def test_lines_memory_data_store_3d():
+    """Test lines data store accessing a 3D slice."""
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
@@ -60,20 +83,36 @@ def test_point_memory_data_store_3d():
 
     data_response = data_store.get_data(data_requests[0])
 
-    expected_points = np.array([[0, 0, 0], [10, 10, 10]])
+    expected_points = np.array(
+        [
+            [0, 0, 0],
+            [0, 10, 10],
+            [10, 10, 10],
+            [10, 20, 20],
+        ]
+    )
     np.testing.assert_allclose(expected_points, data_response.data)
 
 
-def test_point_memory_data_store_rolled_axes_3d():
-    """Test point data store accessing a 3D slice with rolled axes."""
-    coordinates = np.array([[1, 2, 3, 0], [4, 5, 6, 1], [7, 8, 9, 0]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+def test_lines_memory_data_store_rolled_axes_3d():
+    """Test lines data store accessing a 3D slice."""
+    coordinates = np.array(
+        [
+            [1, 2, 3, 0],
+            [4, 5, 6, 0],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
         ordered_dims=(3, 0, 1, 2),
         n_displayed_dims=3,
-        index_selection=(slice(None, None), slice(None, None), slice(None), 0),
+        index_selection=(slice(None, None), slice(None), slice(None), 0),
     )
 
     data_requests = data_store.get_data_request(
@@ -86,14 +125,28 @@ def test_point_memory_data_store_rolled_axes_3d():
 
     data_response = data_store.get_data(data_requests[0])
 
-    expected_points = np.array([[1, 2, 3], [7, 8, 9]])
+    expected_points = np.array(
+        [
+            [1, 2, 3],
+            [4, 5, 6],
+        ]
+    )
     np.testing.assert_allclose(expected_points, data_response.data)
 
 
-def test_point_memory_data_plane_sample():
-    """Currently, plane sampling is not implemented for points."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+def test_lines_memory_data_plane_sample():
+    """Currently, plane sampling is not implemented for lines."""
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     plane_transform = np.array(
         [
@@ -124,10 +177,19 @@ def test_point_memory_data_plane_sample():
         _ = data_store.get_data(data_requests[0])
 
 
-def test_point_memory_data_tiling():
-    """Currently, tiling is not implemented for points."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+def test_lines_memory_data_tiling():
+    """Currently, tiling is not implemented for lines."""
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     sample_request = AxisAlignedSelectedRegion(
         space_type=CoordinateSpace.DATA,
@@ -147,8 +209,17 @@ def test_point_memory_data_tiling():
 
 def test_point_memory_data_bad_selected_region():
     """An invalid selected region should raise a TypeError."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     with pytest.raises(TypeError):
         _ = data_store.get_data_request(
@@ -161,8 +232,17 @@ def test_point_memory_data_bad_selected_region():
 
 def test_point_memory_data_bad_data_request():
     """An invalid selected region should raise a TypeError."""
-    coordinates = np.array([[0, 0, 0, 0], [1, 1, 1, 1], [0, 10, 10, 10]])
-    data_store = PointsMemoryStore(coordinates=coordinates)
+    coordinates = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 10, 10],
+            [1, 1, 1, 1],
+            [1, 1, 11, 11],
+            [0, 10, 10, 10],
+            [0, 10, 20, 20],
+        ]
+    )
+    data_store = LinesMemoryStore(coordinates=coordinates)
 
     with pytest.raises(TypeError):
         _ = data_store.get_data_request("data please")

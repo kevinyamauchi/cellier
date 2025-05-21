@@ -1,5 +1,6 @@
 """Functions for computing on geometries."""
 
+import einops
 import numpy as np
 
 # indices to construct the lines of a frustum from an array
@@ -200,3 +201,115 @@ def points_in_frustum(points: np.ndarray, planes: np.ndarray) -> np.ndarray:
     inside_mask = np.all(distances >= 0, axis=1)
 
     return inside_mask
+
+
+def plane_intersects_aabb(
+    plane_normal: np.ndarray,
+    plane_point: np.ndarray,
+    bounding_box_min: np.ndarray,
+    bounding_box_max: np.ndarray,
+):
+    """Determine if a hyperplane intersects an axis-aligned bounding box.
+
+    Parameters
+    ----------
+    plane_normal : numpy.ndarray
+        N-dimensional normal vector of the hyperplane, will be normalized.
+    plane_point : numpy.ndarray
+        Any point on the hyperplane (N-dimensional).
+    bounding_box_min : numpy.ndarray
+        The minimum corner of the AABB (N-dimensional).
+    bounding_box_max : numpy.ndarray
+        The maximum corner of the AABB (N-dimensional).
+
+    Returns
+    -------
+    bool
+        True if the hyperplane intersects the AABB, False otherwise.
+    """
+    # Ensure inputs are numpy arrays
+    plane_normal = np.asarray(plane_normal)
+    plane_point = np.asarray(plane_point)
+    bounding_box_min = np.asarray(bounding_box_min)
+    bounding_box_max = np.asarray(bounding_box_max)
+
+    # Make the plane normal a unit vector
+    plane_normal = plane_normal / np.linalg.norm(plane_normal)
+
+    # Calculate the plane equation constant term (d in a₁x₁ + a₂x₂ + ... + aₙxₙ + d = 0)
+    plane_d = -np.dot(plane_normal, plane_point)
+
+    # Find the AABB vertex furthest in the direction of the plane normal
+    p_positive = np.where(plane_normal > 0, bounding_box_max, bounding_box_min)
+
+    # Find the AABB vertex furthest in the opposite direction of the plane normal
+    p_negative = np.where(plane_normal > 0, bounding_box_min, bounding_box_max)
+
+    # Calculate the signed distances from the plane to these vertices
+    dist_positive = np.dot(plane_normal, p_positive) + plane_d
+    dist_negative = np.dot(plane_normal, p_negative) + plane_d
+
+    # If the signed distances have opposite signs or one of them is zero,
+    # then the plane intersects the AABB
+    return dist_positive * dist_negative <= 0
+
+
+def generate_3d_grid(
+    grid_shape: tuple[int, int, int] = (10, 10, 10),
+    grid_spacing: tuple[float, float, float] = (1, 1, 1),
+) -> np.ndarray:
+    """
+    Generate a 3D sampling grid with specified shape and spacing.
+
+    The grid generated is centered on the origin, has shape (w, h, d, 3) for
+    grid_shape (w, h, d), and spacing grid_spacing between neighboring points.
+
+    Parameters
+    ----------
+    grid_shape : Tuple[int, int, int]
+        The number of grid points along each axis.
+    grid_spacing : Tuple[float, float, float]
+        Spacing between points in the sampling grid.
+
+    Returns
+    -------
+    np.ndarray
+        Coordinate of points forming the 3D grid.
+    """
+    # generate a grid of points at each integer from 0 to grid_shape for each dimension
+    grid = np.indices(grid_shape).astype(float)
+    grid = einops.rearrange(grid, "xyz w h d -> w h d xyz")
+    # shift the grid to be centered on the origin
+    # grid_offset = (np.array(grid_shape)) // 2
+    # grid -= grid_offset
+    # scale the grid to get correct spacing
+    grid *= grid_spacing
+    return grid
+
+
+def generate_2d_grid(
+    grid_shape: tuple[int, int] = (10, 10), grid_spacing: tuple[float, float] = (1, 1)
+) -> np.ndarray:
+    """
+    Generate a 2D sampling grid with specified shape and spacing.
+
+    The grid generated is centered on the origin, lying on the plane with normal
+    vector [1, 0, 0], has shape (w, h, 3) for grid_shape (w, h), and spacing
+    grid_spacing between neighboring points.
+
+    Parameters
+    ----------
+    grid_shape : Tuple[int, int]
+        The number of grid points along each axis.
+    grid_spacing : Tuple[float, float]
+        Spacing between points in the sampling grid.
+
+    Returns
+    -------
+    np.ndarray
+        Coordinate of points forming the 2D grid.
+    """
+    grid = generate_3d_grid(
+        grid_shape=(1, *grid_shape), grid_spacing=(1, *grid_spacing)
+    )
+    return einops.rearrange(grid, "1 w h xyz -> w h xyz")

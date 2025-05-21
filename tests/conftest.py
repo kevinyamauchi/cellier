@@ -6,15 +6,18 @@ import pytest
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import PointsMemoryStore
 from cellier.models.scene import (
+    AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
     DimsManager,
     PanZoomCameraController,
     PerspectiveCamera,
+    RangeTuple,
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.types import CoordinateSpace
 
 
 @pytest.fixture
@@ -38,14 +41,20 @@ def viewer_model_2d_points() -> dict[str, ViewerModel | PointsVisual | Canvas]:
         material=material,
     )
 
-    # make the 3D scene coordinate system
-    coordinate_system_2d = CoordinateSystem(name="scene_2d", axis_labels=("y", "x"))
+    # make the 2D scene coordinate system
+    coordinate_system = CoordinateSystem(name="default", axis_label=("x", "y"))
     dims_2d = DimsManager(
-        point=(0, 0),
-        margin_negative=(0, 0),
-        margin_positive=(0, 0),
-        coordinate_system=coordinate_system_2d,
-        displayed_dimensions=(0, 1),
+        coordinate_system=coordinate_system,
+        range=(
+            RangeTuple(0, 10, 1),
+            RangeTuple(0, 10, 1),
+        ),
+        selection=AxisAlignedRegionSelector(
+            space_type=CoordinateSpace.WORLD,
+            ordered_dims=(0, 1),
+            n_displayed_dims=2,
+            index_selection=(0, slice(0, 10, 1)),
+        ),
     )
 
     # make the 2D canvas

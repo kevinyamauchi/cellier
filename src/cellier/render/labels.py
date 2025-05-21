@@ -9,7 +9,7 @@ from cmap import Colormap
 
 from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
 from cellier.render.shaders import LabelImageMaterial, LabelIsoMaterial
-from cellier.slicer import RenderedImageDataSlice
+from cellier.types import ImageDataResponse
 
 
 def construct_pygfx_labels_from_model(
@@ -23,10 +23,7 @@ def construct_pygfx_labels_from_model(
     # make the material
     material_model = model.material
     if isinstance(material_model, LabelsMaterial):
-        pygfx_texture = Colormap("glasbey:glasbey").to_pygfx(N=200)
-        pygfx_cm = gfx.TextureMap(
-            texture=pygfx_texture, filter="nearest", wrap="repeat"
-        )
+        pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(
             color_map=pygfx_cm,
@@ -163,7 +160,7 @@ class GFXMultiScaleLabelsNode:
                 # this is a different node.
                 child.visible = False
 
-    def set_slice(self, slice_data: RenderedImageDataSlice):
+    def set_slice(self, slice_data: ImageDataResponse):
         """Set all the point coordinates."""
         data = slice_data.data
 

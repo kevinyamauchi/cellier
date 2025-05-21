@@ -7,7 +7,7 @@ import pygfx as gfx
 
 from cellier.models.visuals import LinesUniformMaterial, LinesVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
-from cellier.slicer.data_slice import RenderedLinesDataSlice
+from cellier.types import LinesDataResponse
 
 
 def construct_pygfx_lines_from_model(
@@ -72,9 +72,9 @@ class GFXLinesVisual:
         """Return the list of callback handlers for all nodes."""
         return [self.node.add_event_handler]
 
-    def set_slice(self, slice_data: RenderedLinesDataSlice):
+    def set_slice(self, slice_data: LinesDataResponse):
         """Set the slice data for the lines."""
-        coordinates = slice_data.coordinates
+        coordinates = slice_data.data
 
         # check if the layer was empty
         was_empty = self._empty

@@ -205,26 +205,46 @@ class QtDimsSliders(QtBaseDimsSliders):
 
         This method is subscribed to the SceneEventBus' dims signal.
         """
+        dims_point = []
+        for axis_index, selection_value in enumerate(
+            dims_state.selection.index_selection
+        ):
+            if isinstance(selection_value, slice):
+                low = selection_value.start or dims_state.range[axis_index].start
+                high = selection_value.stop or dims_state.range[axis_index].stop
+                dims_point.append((low + high) // 2)
+            elif isinstance(selection_value, int):
+                dims_point.append(selection_value)
+
         new_index = dict(
             zip(
                 dims_state.coordinate_system.axis_labels,
-                dims_state.point,
+                dims_point,
             )
         )
         self.set_current_index(new_index, emit_event=False)
 
         # hide the dims that aren't being displayed
+        n_displayed_dims = dims_state.selection.n_displayed_dims
+        displayed_dimensions = list(dims_state.selection.ordered_dims)[
+            -n_displayed_dims:
+        ]
         axes_to_hide = [
-            dims_state.coordinate_system.axis_labels[i]
-            for i in dims_state.displayed_dimensions
+            dims_state.coordinate_system.axis_labels[i] for i in displayed_dimensions
         ]
         self.hide_dimensions(axes_to_hide)
 
     def _on_index_changed(self, event: int | None = None) -> None:
         """Handle the index changed event."""
-        current_index = self.current_index()
+        new_index_selection = []
+        for slider in self._sliders.values():
+            if slider.isVisible():
+                new_index_selection.append(slider.value())
+            else:
+                new_index_selection.append(slice(None, None, None))
+
         new_state = {
-            "point": tuple(current_index.values()),
+            "selection": {"index_selection": tuple(new_index_selection)},
         }
         event = DimsControlsUpdateEvent(
             id=self.dims_id,

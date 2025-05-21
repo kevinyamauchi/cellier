@@ -8,7 +8,7 @@ from pygfx import PointsMaterial as GFXPointsMaterial
 
 from cellier.models.visuals import PointsUniformMaterial, PointsVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
-from cellier.slicer.data_slice import RenderedPointsDataSlice
+from cellier.types import PointsDataResponse
 
 
 def construct_pygfx_points_from_model(
@@ -80,9 +80,9 @@ class GFXPointsVisual:
         """Return the list of callback handlers for all nodes."""
         return [self.node.add_event_handler]
 
-    def set_slice(self, slice_data: RenderedPointsDataSlice):
+    def set_slice(self, slice_data: PointsDataResponse):
         """Set all the point coordinates."""
-        coordinates = slice_data.coordinates
+        coordinates = slice_data.data
 
         # check if the layer was empty
         was_empty = self._empty
