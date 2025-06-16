@@ -25,7 +25,7 @@ from cellier.models.scene import (
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
+from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.types import CoordinateSpace, DataStoreId
 from cellier.viewer_controller import CellierController
 
@@ -173,11 +173,11 @@ def make_2d_view(
     )
 
     # make the 2D labels visual
-    labels_material = LabelsMaterial(color_map="glasbey:glasbey")
+    labels_material = LabelsAppearance(color_map="glasbey:glasbey")
     labels_visual_model = MultiscaleLabelsVisual(
         name="labels_node_2d",
         data_store_id=data_store_id,
-        material=labels_material,
+        appearance=labels_material,
         downscale_factors=[1],
     )
 

@@ -14,7 +14,7 @@ class BaseVisual(EventedModel):
     name : str
         The name of the node.
     pick_write : bool
-        If True, the node can be picked.
+        If True, the visual can be picked.
         Default value is True.
     """
 
@@ -37,7 +37,14 @@ class BaseVisual(EventedModel):
         self.update(new_state)
 
 
-class BaseMaterial(EventedModel):
-    """Base model for all materials."""
+class BaseAppearance(EventedModel):
+    """Base model for all materials.
 
-    pass
+    Parameters
+    ----------
+    visible : bool
+        If True, the visual is visible.
+        Default value is True.
+    """
+
+    visible: bool = True

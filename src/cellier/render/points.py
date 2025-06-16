@@ -6,7 +6,7 @@ import numpy as np
 import pygfx as gfx
 from pygfx import PointsMaterial as GFXPointsMaterial
 
-from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.types import PointsDataResponse
 
@@ -30,8 +30,8 @@ def construct_pygfx_points_from_model(
     )
 
     # make the material model
-    material_model = model.material
-    if isinstance(material_model, PointsUniformMaterial):
+    material_model = model.appearance
+    if isinstance(material_model, PointsUniformAppearance):
         size_space = cellier_to_gfx_coordinate_space[
             material_model.size_coordinate_space
         ]

@@ -13,7 +13,7 @@ from cellier.models.scene import (
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
+from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.testing import SlicingValidator
 from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
@@ -53,11 +53,11 @@ def test_labels_slicing(qtbot):
     data = DataManager(stores={data_store.id: data_store})
 
     # set up the lines visual
-    labels_material = LabelsMaterial(color_map="glasbey")
+    labels_material = LabelsAppearance(color_map="glasbey")
     labels_visual = MultiscaleLabelsVisual(
         name="labels_visual",
         data_store_id=data_store.id,
-        material=labels_material,
+        appearance=labels_material,
         downscale_factors=[1],
     )
 

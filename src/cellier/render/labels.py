@@ -7,7 +7,7 @@ import pygfx as gfx
 import wgpu
 from cmap import Colormap
 
-from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
+from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.render.shaders import LabelImageMaterial, LabelIsoMaterial
 from cellier.types import ImageDataResponse
 
@@ -21,8 +21,8 @@ def construct_pygfx_labels_from_model(
     based on the material, etc. and returns a PyGFX image object.
     """
     # make the material
-    material_model = model.material
-    if isinstance(material_model, LabelsMaterial):
+    material_model = model.appearance
+    if isinstance(material_model, LabelsAppearance):
         pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(

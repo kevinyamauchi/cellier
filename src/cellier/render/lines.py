@@ -5,7 +5,7 @@ from typing import Callable
 import numpy as np
 import pygfx as gfx
 
-from cellier.models.visuals import LinesUniformMaterial, LinesVisual
+from cellier.models.visuals import LinesUniformAppearance, LinesVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.types import LinesDataResponse
 
@@ -23,8 +23,8 @@ def construct_pygfx_lines_from_model(
     geometry = gfx.Geometry(
         positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
     )
-    material_model = model.material
-    if isinstance(material_model, LinesUniformMaterial):
+    material_model = model.appearance
+    if isinstance(material_model, LinesUniformAppearance):
         size_space = cellier_to_gfx_coordinate_space[
             material_model.size_coordinate_space
         ]

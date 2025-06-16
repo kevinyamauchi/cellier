@@ -3,7 +3,7 @@
 from psygnal import Signal
 
 from cellier.events import EventBus
-from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 
 
 class MockVisualGui:
@@ -50,7 +50,7 @@ def test_model_to_gui():
     points_model = PointsVisual(
         name="points",
         data_store_id="dummy_id",
-        material=PointsUniformMaterial(
+        appearance=PointsUniformAppearance(
             size=1.0,
             color=(1.0, 1.0, 1.0, 1.0),
         ),
@@ -98,7 +98,7 @@ def test_gui_to_model():
     points_model = PointsVisual(
         name="points",
         data_store_id="dummy_id",
-        material=PointsUniformMaterial(
+        appearance=PointsUniformAppearance(
             size=1.0,
             color=(1.0, 1.0, 1.0, 1.0),
         ),

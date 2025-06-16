@@ -36,8 +36,8 @@ def test_mesh_visual(tmp_path):
             from_json(f.read(), allow_partial=False)
         )
 
-    assert deserialized_visual.material == mesh_visual.material
+    assert deserialized_visual.appearance == mesh_visual.appearance
 
     # test the mesh data is correct
     assert mesh_store.id == deserialized_visual.data_store_id
-    assert mesh_material == deserialized_visual.material
+    assert mesh_material == deserialized_visual.appearance

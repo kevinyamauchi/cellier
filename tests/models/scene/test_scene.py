@@ -14,7 +14,7 @@ from cellier.models.scene import (
     RangeTuple,
     Scene,
 )
-from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 from cellier.types import CoordinateSpace
 
 
@@ -47,12 +47,12 @@ def test_scene_model(tmp_path):
 
     # make the points visual
     points_data = PointsMemoryStore(coordinates=coordinates)
-    points_material = PointsUniformMaterial(
+    points_material = PointsUniformAppearance(
         size=1, color=(1, 0, 0, 1), size_coordinate_space="data"
     )
 
     points_visual = PointsVisual(
-        name="test", data_store_id=points_data.id, material=points_material
+        name="test", data_store_id=points_data.id, appearance=points_material
     )
 
     # make the canvas

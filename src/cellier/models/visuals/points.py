@@ -2,10 +2,10 @@
 
 from typing import Literal
 
-from cellier.models.visuals.base import BaseMaterial, BaseVisual
+from cellier.models.visuals.base import BaseAppearance, BaseVisual
 
 
-class PointsUniformMaterial(BaseMaterial):
+class PointsUniformAppearance(BaseAppearance):
     """Give all points the same appearance.
 
     Parameters
@@ -18,7 +18,10 @@ class PointsUniformMaterial(BaseMaterial):
     size_coordinate_space : str
         The coordinate space the size is defined in.
         Options are "screen", "world", "data".
-        Default value is "data"
+        Default value is "data".
+    visible : bool
+        If True, the visual is visible.
+        Default value is True.
     """
 
     size: float
@@ -40,7 +43,7 @@ class PointsVisual(BaseVisual):
         The name of the visual
     data_store_id : str
         The id of the data stream to be visualized.
-    material : PointsUniformMaterial
+    appearance : PointsUniformAppearance
         The model for the appearance of the rendered points.
     pick_write : bool
         If True, the visual can be picked.
@@ -48,10 +51,11 @@ class PointsVisual(BaseVisual):
     id : str
         The unique id of the visual.
         The default value is a uuid4-generated hex string.
+        Do not populate this field manually.
     """
 
     data_store_id: str
-    material: PointsUniformMaterial
+    appearance: PointsUniformAppearance
 
     # this is used for a discriminated union
     visual_type: Literal["points"] = "points"

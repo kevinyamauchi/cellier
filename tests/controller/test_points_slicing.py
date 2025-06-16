@@ -13,7 +13,7 @@ from cellier.models.scene import (
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 from cellier.testing import SlicingValidator
 from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
@@ -40,12 +40,12 @@ def test_points_slicing(qtbot):
     data = DataManager(stores={data_store.id: data_store})
 
     # set up the points visual
-    points_material = PointsUniformMaterial(
+    points_material = PointsUniformAppearance(
         color=(1, 0, 0, 1),
         size=1,
     )
     points_visual = PointsVisual(
-        name="points_visual", data_store_id=data_store.id, material=points_material
+        name="points_visual", data_store_id=data_store.id, appearance=points_material
     )
 
     # make the canvas

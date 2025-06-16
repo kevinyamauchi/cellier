@@ -3,7 +3,7 @@ import numpy as np
 from cellier.app.interactivity import LabelsPaintingManager, LabelsPaintingMode
 from cellier.models.data_stores import ImageMemoryStore
 from cellier.models.scene import PanZoomCameraController, PerspectiveCamera
-from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
+from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.types import MouseButton, MouseCallbackData, MouseEventType
 
 
@@ -12,7 +12,7 @@ def test_labels_painting():
     labels_visual_model = MultiscaleLabelsVisual(
         name="labels_visual",
         data_store_id=data_store.id,
-        material=LabelsMaterial(color_map="glasbey"),
+        appearance=LabelsAppearance(color_map="glasbey"),
         downscale_factors=[1],
     )
     camera = PerspectiveCamera(
