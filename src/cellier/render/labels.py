@@ -21,8 +21,8 @@ def construct_pygfx_labels_from_model(
     based on the material, etc. and returns a PyGFX image object.
     """
     # make the material
-    material_model = model.appearance
-    if isinstance(material_model, LabelsAppearance):
+    appearance_model = model.appearance
+    if isinstance(appearance_model, LabelsAppearance):
         pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(
@@ -30,11 +30,11 @@ def construct_pygfx_labels_from_model(
         )
     else:
         raise TypeError(
-            f"Unknown mesh material model type: {type(material_model)} in {model}"
+            f"Unknown mesh material model type: {type(appearance_model)} in {model}"
         )
 
     # make the parent node
-    node = gfx.Group(name=model.id)
+    node = gfx.Group(name=model.id, visible=model.appearance.visible)
 
     # add the 2D multiscales node
     multiscale_group_2d = gfx.Group(name="multiscale_2d")

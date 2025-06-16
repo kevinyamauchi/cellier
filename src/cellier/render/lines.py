@@ -23,23 +23,25 @@ def construct_pygfx_lines_from_model(
     geometry = gfx.Geometry(
         positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
     )
-    material_model = model.appearance
-    if isinstance(material_model, LinesUniformAppearance):
+    appearance_model = model.appearance
+    if isinstance(appearance_model, LinesUniformAppearance):
         size_space = cellier_to_gfx_coordinate_space[
-            material_model.size_coordinate_space
+            appearance_model.size_coordinate_space
         ]
         material = gfx.LineSegmentMaterial(
             thickness_space=size_space,
-            thickness=material_model.size,
-            color=material_model.color,
-            opacity=material_model.opacity,
+            thickness=appearance_model.size,
+            color=appearance_model.color,
+            opacity=appearance_model.opacity,
             pick_write=model.pick_write,
         )
     else:
         raise TypeError(
-            f"Unknown mesh material model type: {type(material_model)} in {model}"
+            f"Unknown mesh material model type: {type(appearance_model)} in {model}"
         )
-    return gfx.Line(geometry=geometry, material=empty_material), material
+    return gfx.Line(
+        geometry=geometry, material=empty_material, visible=model.appearance.visible
+    ), material
 
 
 class GFXLinesVisual:

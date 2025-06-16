@@ -30,23 +30,25 @@ def construct_pygfx_points_from_model(
     )
 
     # make the material model
-    material_model = model.appearance
-    if isinstance(material_model, PointsUniformAppearance):
+    appearance_model = model.appearance
+    if isinstance(appearance_model, PointsUniformAppearance):
         size_space = cellier_to_gfx_coordinate_space[
-            material_model.size_coordinate_space
+            appearance_model.size_coordinate_space
         ]
         material = GFXPointsMaterial(
-            size=material_model.size,
+            size=appearance_model.size,
             size_space=size_space,
-            color=material_model.color,
+            color=appearance_model.color,
             size_mode="uniform",
             pick_write=model.pick_write,
         )
     else:
         raise TypeError(
-            f"Unknown mesh material model type: {type(material_model)} in {model}"
+            f"Unknown mesh material model type: {type(appearance_model)} in {model}"
         )
-    return gfx.Points(geometry=geometry, material=empty_material), material
+    return gfx.Points(
+        geometry=geometry, material=empty_material, visible=model.appearance.visible
+    ), material
 
 
 class GFXPointsVisual:
