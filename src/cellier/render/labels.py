@@ -7,7 +7,7 @@ import pygfx as gfx
 import wgpu
 from cmap import Colormap
 
-from cellier.models.visuals import LabelsMaterial, MultiscaleLabelsVisual
+from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.render.shaders import LabelImageMaterial, LabelIsoMaterial
 from cellier.types import ImageDataResponse
 
@@ -21,8 +21,8 @@ def construct_pygfx_labels_from_model(
     based on the material, etc. and returns a PyGFX image object.
     """
     # make the material
-    material_model = model.material
-    if isinstance(material_model, LabelsMaterial):
+    appearance_model = model.appearance
+    if isinstance(appearance_model, LabelsAppearance):
         pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(
@@ -30,11 +30,11 @@ def construct_pygfx_labels_from_model(
         )
     else:
         raise TypeError(
-            f"Unknown mesh material model type: {type(material_model)} in {model}"
+            f"Unknown mesh material model type: {type(appearance_model)} in {model}"
         )
 
     # make the parent node
-    node = gfx.Group(name=model.id)
+    node = gfx.Group(name=model.id, visible=model.appearance.visible)
 
     # add the 2D multiscales node
     multiscale_group_2d = gfx.Group(name="multiscale_2d")
@@ -185,3 +185,13 @@ class GFXMultiScaleLabelsNode:
         #     texture = scale_node.geometry.grid
         #     texture.send_data(tuple(slice_data.texture_start_index), slice_data.data)
         self.set_scale_visible(scale_index=slice_data.resolution_level, ndim=data.ndim)
+
+    def update_appearance(self, new_state: dict):
+        """Update the appearance of the visual.
+
+        This is generally used as a callback for when
+        the visual model updates.
+        """
+        if "visible" in new_state:
+            # update the visibility
+            self.node.visible = new_state["visible"]

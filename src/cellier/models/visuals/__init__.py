@@ -1,14 +1,14 @@
 """Models for nodes."""
 
-from cellier.models.visuals.labels import LabelsMaterial, MultiscaleLabelsVisual
-from cellier.models.visuals.lines import LinesUniformMaterial, LinesVisual
-from cellier.models.visuals.points import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals.labels import LabelsAppearance, MultiscaleLabelsVisual
+from cellier.models.visuals.lines import LinesUniformAppearance, LinesVisual
+from cellier.models.visuals.points import PointsUniformAppearance, PointsVisual
 
 __all__ = [
-    "LinesUniformMaterial",
+    "LinesUniformAppearance",
     "LinesVisual",
-    "PointsUniformMaterial",
+    "PointsUniformAppearance",
     "PointsVisual",
-    "LabelsMaterial",
+    "LabelsAppearance",
     "MultiscaleLabelsVisual",
 ]

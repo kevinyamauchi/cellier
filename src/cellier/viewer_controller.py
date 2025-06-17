@@ -366,15 +366,19 @@ class CellierController:
                     camera_id=camera_model_id, callback=camera_model.update_state
                 )
 
+        for visual in scene.visuals:
+            # register the visual model with the event bus
+            self.events.visual.register_visual(visual=visual)
+
+            # subscribe the renderer to the visual model
+            self.events.visual.subscribe_to_visual(
+                visual_id=visual.id,
+                callback=self._render_manager._on_visual_model_update,
+            )
+
     def _connect_mouse_events(self):
         """Register all visuals and renderers with the mouse events bus."""
-        # register all visuals
-        # for visual_id, visual in self._render_manager.visuals.items():
-        #     if visual_id not in self.events.mouse.visual_signals:
-        #         self.events.mouse.register_visual(
-        #             visual_id=visual_id,
-        #             callback_handlers=visual.callback_handlers
-        #         )
+        # connect callback to mouse events emitted by the render
         self._render_manager.events.mouse_event.connect(
             self.events.mouse._on_mouse_event
         )

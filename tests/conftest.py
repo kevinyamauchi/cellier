@@ -16,7 +16,7 @@ from cellier.models.scene import (
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import PointsUniformMaterial, PointsVisual
+from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 from cellier.types import CoordinateSpace
 
 
@@ -34,11 +34,11 @@ def viewer_model_2d_points() -> dict[str, ViewerModel | PointsVisual | Canvas]:
     data = DataManager(stores={points_store.id: points_store})
 
     # make the points visual
-    material = PointsUniformMaterial(size=1, color=(1, 0, 0, 1))
+    material = PointsUniformAppearance(size=1, color=(1, 0, 0, 1))
     points_visual = PointsVisual(
         name="points_2d",
         data_store_id=points_store.id,
-        material=material,
+        appearance=material,
     )
 
     # make the 2D scene coordinate system

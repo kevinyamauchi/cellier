@@ -409,20 +409,6 @@ class RenderManager:
         )
 
         self.events.camera_updated.emit(update_event)
-        #     CameraState(
-        #         scene_id=scene_id,
-        #         canvas_id=canvas_id,
-        #         camera_id=camera.id,
-        #         position=camera_state["position"],
-        #         rotation=camera_state["rotation"],
-        #         fov=camera_state["fov"],
-        #         width=camera_state["width"],
-        #         height=camera_state["height"],
-        #         zoom=camera_state["zoom"],
-        #         up_direction=camera_state["reference_up"],
-        #         frustum=camera.frustum,
-        #     )
-        # )
 
         self.render_calls += 1
         logger.debug(f"render: {self.render_calls}")
@@ -538,3 +524,24 @@ class RenderManager:
         # set the controller state
         controller = self._controllers[camera_state.id]
         controller.enabled = camera_state.controller.enabled
+
+    def _on_visual_model_update(self, new_state: dict):
+        """Update the visual based on a change to the model."""
+        visual_id = new_state.pop("id", None)
+        if visual_id is None:
+            logger.warning("Visual model update does not contain an id.")
+            return
+
+        visual = self._visuals.get(visual_id)
+        if visual is None:
+            logger.warning(f"Visual with id {visual_id} not found.")
+            return
+
+        # update the visual with the new state
+        if "appearance" in new_state:
+            visual.update_appearance(new_state["appearance"])
+
+        # emit a redraw request for the canvas
+        scene_id = new_state.get("scene_id")
+        if scene_id:
+            self.events.redraw_canvas.emit(CanvasRedrawRequest(scene_id=scene_id))

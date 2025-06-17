@@ -14,13 +14,11 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
-from cellier.testing import SlicingValidator
 from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
 
 
-def test_labels_slicing(qtbot):
-    """Test the slicing of image data."""
+def test_labels_appearance_update(qtbot):
     # set up the coordinate system and dims manager
     coordinate_system = CoordinateSystem(
         name="default", axis_label=("t", "x", "y", "z")
@@ -78,30 +76,14 @@ def test_labels_slicing(qtbot):
     # make the controller
     viewer_controller = CellierController(model=viewer_model)
 
-    # make the validator to check the slicing
-    slicing_validator = SlicingValidator(
-        dims_model=dims_manager, controller=viewer_controller
-    )
+    # get the renderer visual
+    labels_renderer_implementation = viewer_controller._render_manager._visuals[
+        labels_visual.id
+    ]
 
-    # wait for any slicing from the construction to finish
-    slicing_validator.wait_for_slices(timeout=1, error_on_timeout=False)
+    # check that the labels visual is visible
+    assert labels_renderer_implementation.node.visible
 
-    # update the selection
-    dims_manager.selection.index_selection = (
-        1,
-        slice(None, None, None),
-        slice(None, None, None),
-        slice(None, None, None),
-    )
-
-    # wait for slicing to finish
-    slicing_validator.wait_for_slices(timeout=5)
-
-    # check that the slicing was called once
-    assert slicing_validator.n_dims_changed_events == 1
-
-    # check that the correct slice was received
-    assert slicing_validator.n_slices_received == 1
-    np.testing.assert_allclose(
-        slicing_validator.slices_received[0], np.ones((10, 10, 10))
-    )
+    # set the labels to not visible and verify
+    labels_visual.appearance.visible = False
+    assert not labels_renderer_implementation.node.visible

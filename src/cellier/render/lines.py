@@ -5,7 +5,7 @@ from typing import Callable
 import numpy as np
 import pygfx as gfx
 
-from cellier.models.visuals import LinesUniformMaterial, LinesVisual
+from cellier.models.visuals import LinesUniformAppearance, LinesVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.types import LinesDataResponse
 
@@ -23,23 +23,25 @@ def construct_pygfx_lines_from_model(
     geometry = gfx.Geometry(
         positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
     )
-    material_model = model.material
-    if isinstance(material_model, LinesUniformMaterial):
+    appearance_model = model.appearance
+    if isinstance(appearance_model, LinesUniformAppearance):
         size_space = cellier_to_gfx_coordinate_space[
-            material_model.size_coordinate_space
+            appearance_model.size_coordinate_space
         ]
         material = gfx.LineSegmentMaterial(
             thickness_space=size_space,
-            thickness=material_model.size,
-            color=material_model.color,
-            opacity=material_model.opacity,
+            thickness=appearance_model.size,
+            color=appearance_model.color,
+            opacity=appearance_model.opacity,
             pick_write=model.pick_write,
         )
     else:
         raise TypeError(
-            f"Unknown mesh material model type: {type(material_model)} in {model}"
+            f"Unknown mesh material model type: {type(appearance_model)} in {model}"
         )
-    return gfx.Line(geometry=geometry, material=empty_material), material
+    return gfx.Line(
+        geometry=geometry, material=empty_material, visible=model.appearance.visible
+    ), material
 
 
 class GFXLinesVisual:
@@ -106,3 +108,13 @@ class GFXLinesVisual:
         elif not was_empty and self._empty:
             # if the layer has become empty, set the material
             self.node.material = self._empty_material
+
+    def update_appearance(self, new_state: dict):
+        """Update the state of the visual.
+
+        This is generally used as a callback for when
+        the visual model updates.
+        """
+        if "visible" in new_state:
+            # update the visibility
+            self.node.visible = new_state["visible"]

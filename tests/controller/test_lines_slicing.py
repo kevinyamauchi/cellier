@@ -13,7 +13,7 @@ from cellier.models.scene import (
     Scene,
 )
 from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import LinesUniformMaterial, LinesVisual
+from cellier.models.visuals import LinesUniformAppearance, LinesVisual
 from cellier.testing import SlicingValidator
 from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
@@ -61,13 +61,13 @@ def test_lines_slicing(qtbot):
     data = DataManager(stores={data_store.id: data_store})
 
     # set up the lines visual
-    lines_materials = LinesUniformMaterial(
+    lines_materials = LinesUniformAppearance(
         size=1,
         color=(1, 0, 0, 1),
         opacity=1.0,
     )
     lines_visual = LinesVisual(
-        name="lines_visual", data_store_id=data_store.id, material=lines_materials
+        name="lines_visual", data_store_id=data_store.id, appearance=lines_materials
     )
 
     # make the canvas

@@ -14,7 +14,6 @@ from cellier.models.scene import (
 )
 from cellier.models.viewer import SceneManager, ViewerModel
 from cellier.models.visuals import PointsUniformAppearance, PointsVisual
-from cellier.testing import SlicingValidator
 from cellier.types import CoordinateSpace
 from cellier.viewer_controller import CellierController
 
@@ -65,28 +64,12 @@ def test_points_slicing(qtbot):
     # make the controller
     viewer_controller = CellierController(model=viewer_model)
 
-    # make the validator to check the slicing
-    slicing_validator = SlicingValidator(
-        dims_model=dims_manager, controller=viewer_controller
-    )
+    # verify the renderer visual implementation is visible
+    points_renderer_implementation = viewer_controller._render_manager._visuals[
+        points_visual.id
+    ]
+    assert points_renderer_implementation.node.visible
 
-    # wait for any slicing from the construction to finish
-    slicing_validator.wait_for_slices(timeout=1, error_on_timeout=False)
-
-    # update the selection
-    dims_manager.selection.index_selection = (
-        10,
-        slice(None, None, None),
-        slice(None, None, None),
-    )
-
-    slicing_validator.wait_for_slices(timeout=5)
-
-    # check that the slicing was called once
-    assert slicing_validator.n_dims_changed_events == 1
-
-    # check that the correct slice was received
-    assert slicing_validator.n_slices_received == 1
-    np.testing.assert_allclose(
-        slicing_validator.slices_received[0], np.array([[11, 12]])
-    )
+    # set visible to false and verify
+    points_visual.appearance.visible = False
+    assert not points_renderer_implementation.node.visible
