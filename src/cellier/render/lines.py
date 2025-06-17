@@ -108,3 +108,13 @@ class GFXLinesVisual:
         elif not was_empty and self._empty:
             # if the layer has become empty, set the material
             self.node.material = self._empty_material
+
+    def update_appearance(self, new_state: dict):
+        """Update the state of the visual.
+
+        This is generally used as a callback for when
+        the visual model updates.
+        """
+        if "visible" in new_state:
+            # update the visibility
+            self.node.visible = new_state["visible"]

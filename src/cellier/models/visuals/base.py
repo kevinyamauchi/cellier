@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from psygnal import EventedModel
+from psygnal import EmissionInfo, EventedModel
 from pydantic import Field
 
 
@@ -60,9 +60,11 @@ class BaseVisual(EventedModel):
         # update the visual with the new state
         self.update(new_state)
 
-    def _on_appearance_change(self, new_appearance_state):
+    def _on_appearance_change(self, event: EmissionInfo):
         """Callback to relay appearance changes.
 
         This emits the BaseVisual.events.appearance signal.
         """
-        self.events.appearance.emit(new_appearance_state)
+        property_name = event.signal.name
+        property_value = event.args[0]
+        self.events.appearance.emit(({property_name: property_value},))

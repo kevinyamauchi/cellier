@@ -185,3 +185,13 @@ class GFXMultiScaleLabelsNode:
         #     texture = scale_node.geometry.grid
         #     texture.send_data(tuple(slice_data.texture_start_index), slice_data.data)
         self.set_scale_visible(scale_index=slice_data.resolution_level, ndim=data.ndim)
+
+    def update_appearance(self, new_state: dict):
+        """Update the appearance of the visual.
+
+        This is generally used as a callback for when
+        the visual model updates.
+        """
+        if "visible" in new_state:
+            # update the visibility
+            self.node.visible = new_state["visible"]

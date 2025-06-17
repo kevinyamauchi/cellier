@@ -368,13 +368,7 @@ class CellierController:
 
     def _connect_mouse_events(self):
         """Register all visuals and renderers with the mouse events bus."""
-        # register all visuals
-        # for visual_id, visual in self._render_manager.visuals.items():
-        #     if visual_id not in self.events.mouse.visual_signals:
-        #         self.events.mouse.register_visual(
-        #             visual_id=visual_id,
-        #             callback_handlers=visual.callback_handlers
-        #         )
+        # connect callback to mouse events emitted by the render
         self._render_manager.events.mouse_event.connect(
             self.events.mouse._on_mouse_event
         )
