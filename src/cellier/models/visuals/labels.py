@@ -12,6 +12,9 @@ class LabelsAppearance(BaseAppearance):
     ----------
     color_map : str
         The color map to use for the labels.
+    visible : bool
+        If True, the visual is visible.
+        Default value is True.
     """
 
     color_map: str

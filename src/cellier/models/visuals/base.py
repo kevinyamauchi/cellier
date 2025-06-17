@@ -67,4 +67,4 @@ class BaseVisual(EventedModel):
         """
         property_name = event.signal.name
         property_value = event.args[0]
-        self.events.appearance.emit(({property_name: property_value},))
+        self.events.appearance.emit({property_name: property_value})
