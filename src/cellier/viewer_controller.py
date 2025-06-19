@@ -162,6 +162,12 @@ class CellierController:
         # register the visual model with the eventbus
         self.events.visual.register_visual(visual=visual_model)
 
+        # subscribe the renderer to the visual model
+        self.events.visual.subscribe_to_visual(
+            visual_id=visual_model.id,
+            callback=self._render_manager._on_visual_model_update,
+        )
+
     def add_visual_callback(self, visual_id: str, callback: Callable):
         """Add a callback to a visual."""
         if visual_id not in self.events.mouse.visual_signals:
