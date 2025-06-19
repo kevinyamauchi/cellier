@@ -14,6 +14,7 @@ from pylinalg import vec_transform, vec_unproject
 from superqt import ensure_main_thread
 from wgpu.gui import WgpuCanvasBase
 
+from cellier.models.scene import Scene as SceneModel
 from cellier.models.viewer import ViewerModel
 from cellier.models.visuals.base import BaseVisual
 from cellier.render._data_classes import (
@@ -95,120 +96,16 @@ class RenderManagerEvents:
 class RenderManager:
     """Class to manage the rendering."""
 
-    def __init__(self, viewer_model: ViewerModel, canvases: Dict[str, WgpuCanvasBase]):
+    def __init__(self):
         # add the events
         self.events = RenderManagerEvents()
 
         # make each scene
-        renderers = {}
-        cameras = {}
+        self._renderers = {}
+        self._cameras = {}
         self._scenes = {}
         self._visuals = {}
-        controllers = {}
-        for scene_model in viewer_model.scenes.scenes.values():
-            # make a scene
-            scene = gfx.Scene()
-
-            # add the background
-            dark_gray = np.array((255, 255, 255, 255)) / 255
-            light_gray = np.array((243, 243, 243, 255)) / 255
-            background = gfx.Background.from_color(light_gray, dark_gray)
-            scene.add(background)
-
-            # todo add lighting config
-            scene.add(gfx.AmbientLight())
-
-            # todo add scene decorations config
-            axes = gfx.AxesHelper(size=5, thickness=8)
-            scene.add(axes)
-
-            # store the scene
-            scene_id = scene_model.id
-            self._scenes.update({scene_id: scene})
-
-            # get the camera and canvas IDs
-            canvas_ids = []
-            camera_ids = []
-            for canvas in scene_model.canvases.values():
-                canvas_ids.append(canvas.id)
-                camera_ids.append(canvas.camera.id)
-
-            # populate the scene
-            for visual_model in scene_model.visuals:
-                self.add_visual(
-                    visual_model=visual_model,
-                    scene_id=scene_model.id,
-                    canvas_id=canvas_ids,
-                    camera_id=camera_ids,
-                )
-                # add a bounding box
-                # todo make configurable
-                # box_world = gfx.BoxHelper(color="red")
-                # box_world.set_transform_by_object(world_object)
-                # scene.add(box_world)
-
-            for canvas_id, canvas_model in scene_model.canvases.items():
-                # make a renderer for each canvas
-                canvas = canvases[canvas_id]
-                renderer = WgpuRenderer(canvas)
-                renderer.add_event_handler(
-                    partial(
-                        self._on_canvas_mouse_event,
-                        canvas_id=canvas_id,
-                        camera_id=canvas_model.camera.id,
-                        event_type=MouseEventType.PRESS,
-                    ),
-                    "pointer_down",
-                )
-
-                # pointer up
-                renderer.add_event_handler(
-                    partial(
-                        self._on_canvas_mouse_event,
-                        canvas_id=canvas_id,
-                        camera_id=canvas_model.camera.id,
-                        event_type=MouseEventType.RELEASE,
-                    ),
-                    "pointer_up",
-                )
-
-                # pointer move
-                renderer.add_event_handler(
-                    partial(
-                        self._on_canvas_mouse_event,
-                        canvas_id=canvas_id,
-                        camera_id=canvas_model.camera.id,
-                        event_type=MouseEventType.MOVE,
-                    ),
-                    "pointer_move",
-                )
-                renderers.update({canvas_id: renderer})
-
-                # make a camera and controller for each canvas
-                camera, controller = construct_pygfx_camera_from_model(
-                    camera_model=canvas_model.camera,
-                )
-                controller.register_events(renderer)
-
-                # camera = gfx.PerspectiveCamera(width=110, height=110)
-                # camera.show_object(scene)
-                cameras.update({canvas_model.camera.id: camera})
-                controllers.update({canvas_model.camera.id: controller})
-
-                # connect a callback for the renderer
-                # todo should this be outside the renderer?
-                render_func = partial(
-                    self.animate,
-                    scene_id=scene_id,
-                    canvas_id=canvas_id,
-                    camera_id=canvas_model.camera.id,
-                )
-                canvas.request_draw(render_func)
-
-        # store the values
-        self._renderers = renderers
-        self._cameras = cameras
-        self._controllers = controllers
+        self._controllers = {}
 
         self.render_calls = 0
 
@@ -254,6 +151,44 @@ class RenderManager:
         The key is the id of the visual model.
         """
         return self._visuals
+
+    def add_from_viewer_model(
+        self, viewer_model: ViewerModel, canvas_widgets: Dict[CanvasId, WgpuCanvasBase]
+    ):
+        """Populate the RenderManager from a ViewerModel."""
+        for scene_model in viewer_model.scenes.scenes.values():
+            # add the scene to the render manager
+            self.add_scene(scene_model)
+
+            # get the camera and canvas IDs
+            canvas_ids = []
+            camera_ids = []
+            for canvas in scene_model.canvases.values():
+                canvas_ids.append(canvas.id)
+                camera_ids.append(canvas.camera.id)
+
+            # populate the scene
+            for visual_model in scene_model.visuals:
+                self.add_visual(
+                    visual_model=visual_model,
+                    scene_id=scene_model.id,
+                    canvas_id=canvas_ids,
+                    camera_id=camera_ids,
+                )
+                # add a bounding box
+                # todo make configurable
+                # box_world = gfx.BoxHelper(color="red")
+                # box_world.set_transform_by_object(world_object)
+                # scene.add(box_world)
+
+            for canvas_id, canvas_model in scene_model.canvases.items():
+                # make a renderer for each canvas
+                canvas_widget = canvas_widgets[canvas_id]
+                self.add_canvas(
+                    canvas_model=canvas_model,
+                    scene_id=scene_model.id,
+                    canvas_widget=canvas_widget,
+                )
 
     def add_visual(
         self,
@@ -380,6 +315,112 @@ class RenderManager:
         camera.show_object(target=visual.node, view_dir=view_direction, up=up)
 
         self.animate(scene_id=scene_id, canvas_id=canvas_id, camera_id=camera_id)
+
+    def add_scene(self, model: SceneModel):
+        """Add a scene to the render manager.
+
+        Parameters
+        ----------
+        model : SceneModel
+            The model of the scene to add.
+
+        Returns
+        -------
+        scene_object : gfx.Scene
+            The renderer scene object that was created.
+        """
+        # make a scene
+        scene = gfx.Scene()
+
+        # add the background
+        dark_gray = np.array((255, 255, 255, 255)) / 255
+        light_gray = np.array((243, 243, 243, 255)) / 255
+        background = gfx.Background.from_color(light_gray, dark_gray)
+        scene.add(background)
+
+        # todo add lighting config
+        scene.add(gfx.AmbientLight())
+
+        # todo add scene decorations config
+        axes = gfx.AxesHelper(size=5, thickness=8)
+        scene.add(axes)
+
+        # store the scene
+        scene_id = model.id
+        self._scenes.update({scene_id: scene})
+
+    def add_canvas(self, canvas_model, scene_id, canvas_widget: WgpuCanvasBase):
+        """Add a canvas to the render manager.
+
+        This creates a renderer for the canvas and connects the mouse events.
+
+        Parameters
+        ----------
+        canvas_model : CanvasModel
+            The model of the canvas to add.
+        scene_id : SceneId
+            The ID of the scene the canvas belongs to.
+        canvas_widget : WgpuCanvasBase
+            The GUI widget used to render the canvas.
+        """
+        canvas_id = canvas_model.id
+        renderer = WgpuRenderer(canvas_widget)
+
+        # add the mouse events
+        # pointer down
+        renderer.add_event_handler(
+            partial(
+                self._on_canvas_mouse_event,
+                canvas_id=canvas_id,
+                camera_id=canvas_model.camera.id,
+                event_type=MouseEventType.PRESS,
+            ),
+            "pointer_down",
+        )
+
+        # pointer up
+        renderer.add_event_handler(
+            partial(
+                self._on_canvas_mouse_event,
+                canvas_id=canvas_id,
+                camera_id=canvas_model.camera.id,
+                event_type=MouseEventType.RELEASE,
+            ),
+            "pointer_up",
+        )
+
+        # pointer move
+        renderer.add_event_handler(
+            partial(
+                self._on_canvas_mouse_event,
+                canvas_id=canvas_id,
+                camera_id=canvas_model.camera.id,
+                event_type=MouseEventType.MOVE,
+            ),
+            "pointer_move",
+        )
+        self._renderers.update({canvas_id: renderer})
+
+        # make a camera and controller for each canvas
+        camera, controller = construct_pygfx_camera_from_model(
+            camera_model=canvas_model.camera,
+        )
+        controller.register_events(renderer)
+
+        # camera = gfx.PerspectiveCamera(width=110, height=110)
+        # camera.show_object(scene)
+        self._cameras.update({canvas_model.camera.id: camera})
+        self._controllers.update({canvas_model.camera.id: controller})
+
+        # connect a callback for the renderer
+        # todo should this be outside the renderer?
+        render_func = partial(
+            self.animate,
+            scene_id=scene_id,
+            canvas_id=canvas_id,
+            camera_id=canvas_model.camera.id,
+        )
+        canvas_widget.request_draw(render_func)
 
     def animate(
         self, scene_id: SceneId, canvas_id: CanvasId, camera_id: CameraId

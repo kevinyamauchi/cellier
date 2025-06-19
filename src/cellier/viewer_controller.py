@@ -4,6 +4,7 @@ import logging
 from typing import Callable
 
 import numpy as np
+from typing_extensions import Self
 
 from cellier.events import EventBus
 from cellier.gui.constants import GuiFramework
@@ -37,10 +38,11 @@ class CellierController:
 
     def __init__(
         self,
-        model: ViewerModel,
+        model: ViewerModel | None = None,
         gui_framework: GuiFramework = GuiFramework.QT,
         slicer_type: SlicerType = SlicerType.ASYNCHRONOUS,
         widget_parent=None,
+        populate_renderer: bool = True,
     ):
         self._model = model
         self._gui_framework = gui_framework
@@ -48,15 +50,8 @@ class CellierController:
         # Make the event bus
         self._event_bus = EventBus(viewer_model=model)
 
-        # Make the widget
-        self._canvas_widgets = self._construct_canvas_widgets(
-            viewer_model=self._model, parent=widget_parent
-        )
-
         # make the scene
-        self._render_manager = RenderManager(
-            viewer_model=model, canvases=self._canvas_widgets
-        )
+        self._render_manager = RenderManager()
 
         # make the slicer
         if slicer_type == SlicerType.SYNCHRONOUS:
@@ -66,17 +61,10 @@ class CellierController:
         else:
             raise ValueError(f"Unknown slicer type: {slicer_type}")
 
-        # connect events for rendering
-        self._connect_render_events()
-
-        # connect events for synchronizing the model and renderer
-        self._connect_model_renderer_events()
-
-        # connect events for mouse callbacks
-        self._connect_mouse_events()
-
-        # update all scenes
-        self.reslice_all()
+        if populate_renderer:
+            self.populate_from_viewer_model(
+                viewer_model=model, widget_parent=widget_parent, overwrite_model=True
+            )
 
     @property
     def gui_framework(self) -> GuiFramework:
@@ -91,6 +79,49 @@ class CellierController:
         in this EventBus object.
         """
         return self._event_bus
+
+    def populate_from_viewer_model(
+        self, viewer_model: ViewerModel, widget_parent, overwrite_model: bool = False
+    ):
+        """Populate the viewer from a ViewerModel.
+
+        Parameters
+        ----------
+        viewer_model : ViewerModel
+            The viewer model to populate the viewer from.
+        widget_parent : QWidget
+            The parent widget for the canvas widgets.
+        overwrite_model : bool
+            If True, overwrite the existing model.
+            If False, raise an error if the model is already set.
+            Default is False.
+        """
+        if self._model is not None and not overwrite_model:
+            raise ValueError(
+                "Viewer model already set. Use overwrite_model=True to replace it."
+            )
+
+        self._model = viewer_model
+
+        # Make the widget
+        self._canvas_widgets = self._construct_canvas_widgets(
+            viewer_model=self._model, parent=widget_parent
+        )
+
+        # populate the renderer with the canvases
+        self._render_manager.add_from_viewer_model(
+            viewer_model=self._model,
+            canvas_widgets=self._canvas_widgets,
+        )
+
+        # connect events for rendering
+        self._connect_render_events()
+
+        # connect events for synchronizing the model and renderer
+        self._connect_model_renderer_events()
+
+        # connect events for mouse callbacks
+        self._connect_mouse_events()
 
     def add_data_store(self, data_store: BaseDataStore):
         """Add a data store to the viewer."""
@@ -389,3 +420,36 @@ class CellierController:
         for canvas_model in scene_model.canvases.values():
             # refresh the canvas
             self._canvas_widgets[canvas_model.id].update()
+
+    @classmethod
+    def from_viewer_model(
+        cls, viewer_model, canvas_widget_parent=None, slice_all: bool = True
+    ) -> Self:
+        """Create a CellierController from a ViewerModel.
+
+        Parameters
+        ----------
+        viewer_model : ViewerModel
+            The ViewerModel to create the controller from.
+        canvas_widget_parent : Optional[QWidget]
+            The parent widget for the canvas widgets.
+        slice_all : bool
+            If set to True, all scenes will be sliced after initialization.
+
+        Returns
+        -------
+        CellierController
+            An instance of CellierController initialized with the provided ViewerModel.
+        """
+        controller = cls(
+            model=viewer_model,
+            gui_framework=GuiFramework.QT,
+            widget_parent=canvas_widget_parent,
+            populate_renderer=True,
+        )
+
+        # reslice all visuals if requested
+        if slice_all:
+            controller.reslice_all()
+
+        return controller

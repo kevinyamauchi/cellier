@@ -76,7 +76,9 @@ def test_labels_slicing(qtbot):
     viewer_model = ViewerModel(data=data, scenes=scene_manager)
 
     # make the controller
-    viewer_controller = CellierController(model=viewer_model)
+    viewer_controller = CellierController.from_viewer_model(
+        viewer_model=viewer_model, slice_all=True
+    )
 
     # make the validator to check the slicing
     slicing_validator = SlicingValidator(
