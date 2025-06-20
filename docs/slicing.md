@@ -1,4 +1,5 @@
 # Data Slicing in Cellier
+NOTE: this document is work in progress.
 
 This document explains how data slicing works in Cellier, covering the flow from requesting a slice to rendering the data. Slicing is the process of extracting and preparing data for visualization based on the current view state.
 
