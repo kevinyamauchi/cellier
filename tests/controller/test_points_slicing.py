@@ -90,5 +90,5 @@ def test_points_slicing(qtbot):
     # check that the correct slice was received
     assert slicing_validator.n_slices_received == 1
     np.testing.assert_allclose(
-        slicing_validator.slices_received[0], np.array([[11, 12]])
+        slicing_validator.slices_received[0].data, np.array([[11, 12]])
     )

@@ -387,6 +387,11 @@ class LinesDataResponse(DataResponse):
         and larger numbers are lower resolution.
     data : np.ndarray
         The image data to be rendered.
+    colors : np.ndarray | None
+        The vertex colors for the lines to be rendered.
+        Must be of shape (n_positions, 4) where n_positions is
+        the number of vertices in the lines and the 4 values are RGBA colors.
     """
 
     data: np.ndarray
+    colors: np.ndarray | None

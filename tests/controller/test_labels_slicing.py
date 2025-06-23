@@ -105,5 +105,5 @@ def test_labels_slicing(qtbot):
     # check that the correct slice was received
     assert slicing_validator.n_slices_received == 1
     np.testing.assert_allclose(
-        slicing_validator.slices_received[0], np.ones((10, 10, 10))
+        slicing_validator.slices_received[0].data, np.ones((10, 10, 10))
     )

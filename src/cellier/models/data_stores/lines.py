@@ -41,15 +41,46 @@ class BaseLinesDataStore(BaseDataStore):
 
 
 class LinesMemoryStore(BaseLinesDataStore):
-    """Point data_stores store for arrays stored in memory."""
+    """Lines data store for arrays stored in memory.
+
+    Parameters
+    ----------
+    name : str
+        The name of the data store.
+    coordinates : np.ndarray
+        (n_lines_segments * 2, n_dims) array of the coordinates
+        of the lines to be stored.
+        For line segment n, coordinates[n * 2, :] is the start point and
+        coordinates[n * 2 + 1, :] is the end point of the line segment.
+    colors : np.ndarray | None
+        The (n_lines_segments * 2, 4) RGBA colors for each of the points
+        in the line segments. Should be index matched to the coordinates.
+        If None, no colors are sliced. For example, use None for
+        the uniform appearance. Default value is None.
+    id : str
+        The unique identifier for the data store.
+        This is a UUID4 generated hex string and is
+        automatically generated. Do not set this manually.
+    """
+
+    colors: np.ndarray | None = None
 
     # this is used for a discriminated union
     store_type: Literal["lines_memory"] = "lines_memory"
 
-    @field_serializer("coordinates")
+    @field_serializer(
+        "coordinates",
+    )
     def serialize_ndarray(self, array: np.ndarray, _info) -> list:
         """Coerce numpy arrays into lists for serialization."""
         return array.tolist()
+
+    @field_serializer("colors")
+    def serialize_colors(self, colors: np.ndarray | None, _info) -> list | None:
+        """Coerce numpy arrays into lists for serialization."""
+        if colors is None:
+            return None
+        return colors.tolist()
 
     def get_data_request(
         self,
@@ -182,12 +213,18 @@ class LinesMemoryStore(BaseLinesDataStore):
                 self.coordinates[inside_slice_mask, :][:, displayed_dimensions]
             )
 
+            if self.colors is not None:
+                colors = self.colors[inside_slice_mask]
+            else:
+                colors = None
+
             return LinesDataResponse(
                 id=request.id,
                 scene_id=request.scene_id,
                 visual_id=request.visual_id,
                 resolution_level=request.resolution_level,
                 data=in_slice_coordinates,
+                colors=colors,
             )
 
         elif isinstance(request, PlaneDataRequest):

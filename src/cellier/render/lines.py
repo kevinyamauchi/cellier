@@ -5,7 +5,11 @@ from typing import Callable
 import numpy as np
 import pygfx as gfx
 
-from cellier.models.visuals import LinesUniformAppearance, LinesVisual
+from cellier.models.visuals import (
+    LinesUniformAppearance,
+    LinesVertexColorAppearance,
+    LinesVisual,
+)
 from cellier.render.constants import cellier_to_gfx_coordinate_space
 from cellier.types import LinesDataResponse
 
@@ -18,21 +22,43 @@ def construct_pygfx_lines_from_model(
     This function dispatches to other constructor functions
     based on the material, etc. and returns a PyGFX mesh object.
     """
-    # initialize with dummy coordinates
-    # since we can't initialize an empty node.
-    geometry = gfx.Geometry(
-        positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
-    )
     appearance_model = model.appearance
     if isinstance(appearance_model, LinesUniformAppearance):
+        # initialize with dummy coordinates
+        # since we can't initialize an empty node.
+        geometry = gfx.Geometry(
+            positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
+        )
+
+        # make the appearance
         size_space = cellier_to_gfx_coordinate_space[
             appearance_model.size_coordinate_space
         ]
-        material = gfx.LineSegmentMaterial(
+        appearance = gfx.LineSegmentMaterial(
             thickness_space=size_space,
             thickness=appearance_model.size,
             color=appearance_model.color,
             opacity=appearance_model.opacity,
+            color_mode="uniform",
+            pick_write=model.pick_write,
+        )
+    elif isinstance(appearance_model, LinesVertexColorAppearance):
+        # initialize with dummy coordinates
+        # since we can't initialize an empty node.
+        geometry = gfx.Geometry(
+            positions=np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32),
+            colors=np.array([[1, 1, 1, 1], [1, 1, 1, 1]], dtype=np.float32),
+        )
+
+        # make the appearance
+        size_space = cellier_to_gfx_coordinate_space[
+            appearance_model.size_coordinate_space
+        ]
+        appearance = gfx.LineSegmentMaterial(
+            thickness_space=size_space,
+            thickness=appearance_model.size,
+            opacity=appearance_model.opacity,
+            color_mode="vertex",
             pick_write=model.pick_write,
         )
     else:
@@ -41,7 +67,7 @@ def construct_pygfx_lines_from_model(
         )
     return gfx.Line(
         geometry=geometry, material=empty_material, visible=model.appearance.visible
-    ), material
+    ), appearance
 
 
 class GFXLinesVisual:
@@ -98,7 +124,18 @@ class GFXLinesVisual:
             # There is data to set, so the node is not empty
             self._empty = False
 
-        new_geometry = gfx.Geometry(positions=coordinates)
+        if slice_data.colors is None:
+            new_geometry = gfx.Geometry(positions=coordinates)
+        else:
+            if slice_data.colors.shape[0] == 0:
+                # if the colors are empty, we set them to transparent
+                colors = np.zeros_like(coordinates, dtype=np.float32)
+            else:
+                colors = slice_data.colors.astype(np.float32)
+            new_geometry = gfx.Geometry(
+                positions=coordinates,
+                colors=colors,
+            )
         self.node.geometry = new_geometry
 
         if was_empty and not self._empty:
