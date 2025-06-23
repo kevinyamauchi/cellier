@@ -15,7 +15,7 @@ class SlicingValidator:
         self._controller = controller
 
         # list to store the slices received
-        self.slices_received = []
+        self.slices_received: list[DataResponse] = []
 
         # counter to check how many times dims update is called
         self.n_dims_changed_events = 0
@@ -78,7 +78,7 @@ class SlicingValidator:
     def _on_new_slice(self, slice_response: DataResponse):
         """Callback that is called when a new slice is received."""
         # store the slice
-        self.slices_received.append(slice_response.data)
+        self.slices_received.append(slice_response)
 
         # increment the counter
         self.n_slices_received += 1
