@@ -127,9 +127,14 @@ class GFXLinesVisual:
         if slice_data.colors is None:
             new_geometry = gfx.Geometry(positions=coordinates)
         else:
+            if slice_data.colors.shape[0] == 0:
+                # if the colors are empty, we set them to transparent
+                colors = np.zeros_like(coordinates, dtype=np.float32)
+            else:
+                colors = slice_data.colors.astype(np.float32)
             new_geometry = gfx.Geometry(
                 positions=coordinates,
-                colors=slice_data.colors.astype(np.float32),
+                colors=colors,
             )
         self.node.geometry = new_geometry
 
