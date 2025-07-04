@@ -43,7 +43,7 @@ class Main(QWidget):
         image_xz,
         image_zy,
         image_3d,
-        labels_data_store,
+        image_data_store,
     ):
         super().__init__(None)
         self.resize(800, 600)
@@ -65,9 +65,6 @@ class Main(QWidget):
             image_model=image_3d,
         )
 
-        # connect the data update event to the refresh callback
-        labels_data_store.events.data.connect(self._on_data_update)
-
         # make the main widget
         self._ortho_view_widget = QtQuadview(
             widget_0=canvas_widget_xz,
@@ -84,6 +81,7 @@ class Main(QWidget):
         self.viewer.reslice_all()
 
     def _look_at_images(self):
+        """Update all cameras to look at the data."""
         self.viewer.look_at_visual(
             visual_id=image_xz.id,
             view_direction=None,
@@ -106,7 +104,7 @@ class Main(QWidget):
         )
 
     def _setup_canvas(self, image_model: MultiscaleImageVisual) -> QtCanvasWidget:
-        """Set up the canvas for the labels visual."""
+        """Set up the canvas for the image visual."""
         # make the canvas widget
         canvas_model = get_canvas_with_visual_id(
             viewer_model=self.viewer._model,
@@ -152,7 +150,7 @@ def make_2d_view(
     data_range: tuple[RangeTuple, RangeTuple, RangeTuple],
     ordered_dims: tuple[int, int, int],
 ):
-    """Make a 2D view of a label image."""
+    """Make a 2D view of an image."""
     # make the 2D scene coordinate system
     coordinate_system = CoordinateSystem(
         name=coordinate_system_name, axis_labels=("z", "y", "x")
@@ -307,7 +305,7 @@ m = Main(
     image_xz=image_xz,
     image_zy=image_zy,
     image_3d=image_3d,
-    labels_data_store=data_store,
+    image_data_store=data_store,
 )
 
 m.show()
