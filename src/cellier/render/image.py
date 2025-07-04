@@ -6,26 +6,25 @@ import numpy as np
 import pygfx as gfx
 import wgpu
 
-from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
-from cellier.render.shaders import LabelImageMaterial, LabelIsoMaterial
+from cellier.models.visuals import ImageAppearance, MultiscaleImageVisual
 from cellier.types import ImageDataResponse
 
 
-def construct_pygfx_labels_from_model(
-    model: MultiscaleLabelsVisual,
+def construct_pygfx_image_from_model(
+    model: MultiscaleImageVisual,
 ) -> tuple[gfx.WorldObject, gfx.Material]:
-    """Make a PyGFX multiscale labels object.
+    """Make a PyGFX multiscale image object.
 
     This function dispatches to other constructor functions
     based on the material, etc. and returns a PyGFX image object.
     """
     # make the material
     appearance_model = model.appearance
-    if isinstance(appearance_model, LabelsAppearance):
+    if isinstance(appearance_model, ImageAppearance):
         pygfx_cm = appearance_model.color_map.to_pygfx(N=256)
-        material_2d = LabelImageMaterial(color_map=pygfx_cm)
-        material_3d = LabelIsoMaterial(
-            color_map=pygfx_cm,
+        material_2d = gfx.ImageBasicMaterial(map=pygfx_cm)
+        material_3d = gfx.VolumeMipMaterial(
+            map=pygfx_cm,
         )
     else:
         raise TypeError(
@@ -70,11 +69,11 @@ def construct_pygfx_labels_from_model(
     return node, (material_2d, material_3d)
 
 
-class GFXMultiScaleLabelsNode:
+class GFXMultiScaleImageNode:
     """A PyGfx node that renders a set of multiscale labels."""
 
-    def __init__(self, model: MultiscaleLabelsVisual):
-        self.node, self._material = construct_pygfx_labels_from_model(model=model)
+    def __init__(self, model: MultiscaleImageVisual):
+        self.node, self._material = construct_pygfx_image_from_model(model=model)
 
     @property
     def callback_handlers(self) -> list[Callable]:

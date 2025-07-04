@@ -9,11 +9,16 @@ import numpy as np
 from pydantic import Field
 from typing_extensions import Annotated
 
-from cellier.models.visuals import LinesVisual, MultiscaleLabelsVisual, PointsVisual
+from cellier.models.visuals import (
+    LinesVisual,
+    MultiscaleImageVisual,
+    MultiscaleLabelsVisual,
+    PointsVisual,
+)
 
 # This is used for a discriminated union for typing the visual models
 VisualType = Annotated[
-    Union[LinesVisual, PointsVisual, MultiscaleLabelsVisual],
+    Union[LinesVisual, PointsVisual, MultiscaleLabelsVisual, MultiscaleImageVisual],
     Field(discriminator="visual_type"),
 ]
 

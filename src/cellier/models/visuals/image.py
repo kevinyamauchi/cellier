@@ -1,4 +1,4 @@
-"""Visual for display label images."""
+"""Visual for display images."""
 
 from typing import Literal
 
@@ -7,8 +7,8 @@ from cmap import Colormap
 from cellier.models.visuals.base import BaseAppearance, BaseVisual
 
 
-class LabelsAppearance(BaseAppearance):
-    """Material for a labels visual.
+class ImageAppearance(BaseAppearance):
+    """Material for a image visual.
 
     Parameters
     ----------
@@ -24,8 +24,8 @@ class LabelsAppearance(BaseAppearance):
     color_map: Colormap
 
 
-class MultiscaleLabelsVisual(BaseVisual):
-    """Model for a multiscale labels visual.
+class MultiscaleImageVisual(BaseVisual):
+    """Model for a multiscale image visual.
 
     Parameters
     ----------
@@ -35,7 +35,7 @@ class MultiscaleLabelsVisual(BaseVisual):
         The id of the data store to be visualized.
     downscale_factors : list[int]
         The downscale factors for each scale level of the labels.
-    appearance : LabelsAppearance
+    appearance : ImageAppearance
         The material to use for the labels visual.
     pick_write : bool
         If True, the visual can be picked.
@@ -48,7 +48,7 @@ class MultiscaleLabelsVisual(BaseVisual):
 
     data_store_id: str
     downscale_factors: list[int]
-    appearance: LabelsAppearance
+    appearance: ImageAppearance
 
     # this is used for a discriminated union
-    visual_type: Literal["labels"] = "labels"
+    visual_type: Literal["image"] = "image"
