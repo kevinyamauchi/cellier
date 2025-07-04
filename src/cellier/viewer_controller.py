@@ -189,8 +189,8 @@ class CellierController:
     def look_at_visual(
         self,
         visual_id: str,
-        view_direction: tuple[float, float, float],
-        up: tuple[float, float, float],
+        view_direction: tuple[float, float, float] | None,
+        up_direction: tuple[float, float, float] | None,
     ):
         """Look at given visual.
 
@@ -198,10 +198,12 @@ class CellierController:
         ----------
         visual_id : str
             The ID of the visual to look at.
-        view_direction : tuple[float, float, float]
+        view_direction : tuple[float, float, float] | None
             The direction to set the camera view direction to.
-        up : tuple[float, float, float]
+            If None, use the current camera view direction.
+        up_direction : tuple[float, float, float] | None
             The direction to set the camera up direction to.
+            If None, use the current camera up direction.
         """
         for scene in self._model.scenes.scenes.values():
             visual_model = scene.get_visual_by_id(visual_id)
@@ -213,7 +215,7 @@ class CellierController:
                         camera_id=canvas_model.camera.id,
                         scene_id=scene.id,
                         view_direction=view_direction,
-                        up=up,
+                        up=up_direction,
                     )
                     self._canvas_widgets[canvas_model.id].update()
                 return
