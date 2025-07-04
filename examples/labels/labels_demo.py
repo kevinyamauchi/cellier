@@ -1,4 +1,4 @@
-"""Example app showing 2D and 3D labels rendering."""
+"""Example app showing 2D labels rendering/painting in an orthoviewer."""
 
 from qtpy.QtWidgets import QApplication, QHBoxLayout, QPushButton, QWidget
 from skimage.data import binary_blobs
@@ -81,6 +81,9 @@ class Main(QWidget):
         layout.addWidget(self._ortho_view_widget)
         layout.addWidget(self._painting_button)
         self.setLayout(layout)
+
+        # slice all scenes
+        self.viewer.reslice_all()
 
     def _setup_canvas(
         self, labels_model: MultiscaleLabelsVisual, labels_data_store: ImageMemoryStore

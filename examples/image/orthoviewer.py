@@ -140,7 +140,7 @@ def make_2d_view(
     )
 
     # make the 2D labels visual
-    image_material = ImageAppearance(color_map="viridis")
+    image_material = ImageAppearance(color_map="bids:magma")
     image_visual_model = MultiscaleImageVisual(
         name="image_node_2d",
         data_store_id=data_store_id,

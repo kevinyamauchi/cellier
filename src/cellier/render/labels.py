@@ -5,7 +5,6 @@ from typing import Callable
 import numpy as np
 import pygfx as gfx
 import wgpu
-from cmap import Colormap
 
 from cellier.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
 from cellier.render.shaders import LabelImageMaterial, LabelIsoMaterial
@@ -23,7 +22,7 @@ def construct_pygfx_labels_from_model(
     # make the material
     appearance_model = model.appearance
     if isinstance(appearance_model, LabelsAppearance):
-        pygfx_cm = Colormap("glasbey:glasbey").to_pygfx(N=200)
+        pygfx_cm = appearance_model.color_map.to_pygfx(N=256)
         material_2d = LabelImageMaterial(color_map=pygfx_cm)
         material_3d = LabelIsoMaterial(
             color_map=pygfx_cm,

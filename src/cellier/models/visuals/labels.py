@@ -2,6 +2,8 @@
 
 from typing import Literal
 
+from cmap import Colormap
+
 from cellier.models.visuals.base import BaseAppearance, BaseVisual
 
 
@@ -10,14 +12,16 @@ class LabelsAppearance(BaseAppearance):
 
     Parameters
     ----------
-    color_map : str
-        The color map to use for the labels.
+    color_map : cmap.Colormap
+        The color map to use for the labels. This is a cmap Colormap object.
+        You can pass the object or the name of a cmap colormap as a string.
+        https://cmap-docs.readthedocs.io/en/stable/
     visible : bool
         If True, the visual is visible.
         Default value is True.
     """
 
-    color_map: str
+    color_map: Colormap
 
 
 class MultiscaleLabelsVisual(BaseVisual):

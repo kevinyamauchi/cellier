@@ -5,7 +5,6 @@ from typing import Callable
 import numpy as np
 import pygfx as gfx
 import wgpu
-from cmap import Colormap
 
 from cellier.models.visuals import ImageAppearance, MultiscaleImageVisual
 from cellier.types import ImageDataResponse
@@ -22,7 +21,7 @@ def construct_pygfx_image_from_model(
     # make the material
     appearance_model = model.appearance
     if isinstance(appearance_model, ImageAppearance):
-        pygfx_cm = Colormap("viridis").to_pygfx(N=200)
+        pygfx_cm = appearance_model.color_map.to_pygfx(N=256)
         material_2d = gfx.ImageBasicMaterial(map=pygfx_cm)
         material_3d = gfx.VolumeMipMaterial(
             map=pygfx_cm,
