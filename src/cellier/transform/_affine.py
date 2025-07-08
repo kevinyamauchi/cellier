@@ -8,72 +8,6 @@ from typing_extensions import Self
 from cellier.transform._base import BaseTransform
 
 
-# class BaseTransform(EventedModel, ABC):
-#     """Base class for transformations."""
-#
-#     @abstractmethod
-#     def map_coordinates(self, array):
-#         """Apply the transformation to coordinates.
-#
-#         Parameters
-#         ----------
-#         array : np.ndarray
-#             (n, 4) Array to be transformed.
-#         """
-#         raise NotImplementedError
-#
-#     @abstractmethod
-#     def imap_coordinates(self, array):
-#         """Apply the inverse transformation to coordinates.
-#
-#         Parameters
-#         ----------
-#         array : np.ndarray
-#             (n, 4) array to be transformed.
-#         """
-#         raise NotImplementedError
-#
-#     @abstractmethod
-#     def map_normal_vector(self, normal_vector: np.ndarray):
-#         """Apply the transform to a normal vector defining an orientation.
-#
-#         For example, this would be used to a plane normal.
-#
-#         https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/transforming-normals.html
-#
-#         Parameters
-#         ----------
-#         normal_vector : np.ndarray
-#             The normal vector(s) to be transformed.
-#
-#         Returns
-#         -------
-#         transformed_vector : np.ndarray
-#             The transformed normal vectors as a unit vector.
-#         """
-#         raise NotImplementedError
-#
-#     @abstractmethod
-#     def imap_normal_vector(self, normal_vector: np.ndarray):
-#         """Apply the inverse transform to a normal vector defining an orientation.
-#
-#         For example, this would be used to a plane normal.
-#
-#         https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/transforming-normals.html
-#
-#         Parameters
-#         ----------
-#         normal_vector : np.ndarray
-#             The normal vector(s) to be transformed.
-#
-#         Returns
-#         -------
-#         transformed_vector : np.ndarray
-#             The transformed normal vectors as a unit vector.
-#         """
-#         raise NotImplementedError
-#
-#
 def to_vec4(coordinates: np.ndarray) -> np.ndarray:
     """Convert coordinates to vec4 to make compatible with an affine matrix."""
     coordinates = np.atleast_2d(coordinates)
@@ -83,7 +17,7 @@ def to_vec4(coordinates: np.ndarray) -> np.ndarray:
         # add a 1 in the fourth dimension.
         return np.pad(coordinates, pad_width=((0, 0), (0, 1)), constant_values=1)
 
-    elif coordinates.shape == 4:
+    elif ndim == 4:
         return coordinates
 
     else:
@@ -110,11 +44,11 @@ class AffineTransform(BaseTransform):
 
     def map_coordinates(self, coordinates: np.ndarray):
         """Apply the transformation to coordinates."""
-        return np.dot(to_vec4(coordinates), self.matrix)[:, :3]
+        return np.dot(to_vec4(coordinates), self.matrix.T)[:, :3]
 
     def imap_coordinates(self, coordinates: np.ndarray):
         """Apply the inverse transformation to coordinates."""
-        return np.dot(to_vec4(coordinates), np.linalg.inv(self.matrix))[:, :3]
+        return np.dot(to_vec4(coordinates), np.linalg.inv(self.matrix).T)[:, :3]
 
     def map_normal_vector(self, normal_vector: np.ndarray):
         """Apply the transform to a normal vector defining an orientation.
@@ -133,10 +67,12 @@ class AffineTransform(BaseTransform):
         transformed_vector : np.ndarray
             The transformed normal vectors as a unit vector.
         """
-        normal_transform = np.linalg.inv(self.matrix).T
+        normal_transform = np.linalg.inv(self.matrix)
         transformed_vector = np.matmul(to_vec4(normal_vector), normal_transform)[:, :3]
 
-        return transformed_vector / np.linalg.norm(transformed_vector, axis=1)
+        return transformed_vector / np.expand_dims(
+            np.linalg.norm(transformed_vector, axis=1), axis=1
+        )
 
     def imap_normal_vector(self, normal_vector: np.ndarray):
         """Apply the inverse transform to a normal vector defining an orientation.
@@ -155,10 +91,12 @@ class AffineTransform(BaseTransform):
         transformed_vector : np.ndarray
             The transformed normal vectors as a unit vector.
         """
-        normal_transform = self.matrix.T
+        normal_transform = self.matrix
         transformed_vector = np.matmul(to_vec4(normal_vector), normal_transform)[:, :3]
 
-        return transformed_vector / np.linalg.norm(transformed_vector, axis=1)
+        return transformed_vector / np.expand_dims(
+            np.linalg.norm(transformed_vector, axis=1), axis=1
+        )
 
     @field_validator("matrix", mode="before")
     @classmethod
