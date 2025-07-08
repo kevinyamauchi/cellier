@@ -69,6 +69,58 @@ def compute_chunk_corners_3d(
     return np.array(all_corners, dtype=int)
 
 
+def chunks_in_frustum(
+    frustum_corners: np.ndarray,
+    chunk_corners: np.ndarray,
+    mode: str = "any",
+) -> np.ndarray:
+    """Find which chunks are inside of a view frustum.
+
+    Parameters
+    ----------
+    frustum_corners : np.ndarray
+        The corners of the view frustum in the coordinates of the scale.
+        That is they should be scaled and translated to match the coordinates
+        of the array being passed in.
+        The corner coordinates should be in an array shaped (2, 4, 3).
+        The first axis corresponds to the frustum plane (near, far).
+        The second corresponds to the corner within the plane
+        ((left, bottom), (right, bottom), (right, top), (left, top))
+        The third corresponds to the coordinates of that corner.
+    chunk_corners : np.ndarray
+        (n, 8, 3) array containing the corners of each chunk.
+    mode : str
+        The mode for determining which chunks are in the frustum.
+        "any" takes chunks where any of the corners are inside of the frustum.
+        "all" takes chunks where all of the corners are inside the frustum.
+        Default value is "any".
+
+    Returns
+    -------
+    np.ndarray
+        A boolean array of shape (n,) where n is the number of chunks.
+        True indicates that the chunk is inside the frustum.
+    """
+    # get the planes of the frustum
+    planes = frustum_planes_from_corners(frustum_corners)
+
+    # determine which chunks are in the frustum
+    n_chunks = chunk_corners.shape[0]
+    chunk_corners_flat = chunk_corners.reshape((n_chunks * 8, -1))
+    points_mask = points_in_frustum(points=chunk_corners_flat, planes=planes).reshape(
+        n_chunks, 8
+    )
+
+    if mode == "any":
+        chunk_mask = np.any(points_mask, axis=1)
+    elif mode == "all":
+        chunk_mask = np.all(points_mask, axis=1)
+    else:
+        raise ValueError(f"{mode} is not a valid. Should be any or all")
+
+    return chunk_mask
+
+
 def generate_chunk_requests_from_frustum(
     frustum_corners: np.ndarray,
     chunk_corners: np.ndarray,
@@ -106,22 +158,11 @@ def generate_chunk_requests_from_frustum(
 
 
     """
-    # get the planes of the frustum
-    planes = frustum_planes_from_corners(frustum_corners)
-
-    # determine which chunks are in the frustum
-    n_chunks = chunk_corners.shape[0]
-    chunk_corners_flat = chunk_corners.reshape((n_chunks * 8, -1))
-    points_mask = points_in_frustum(points=chunk_corners_flat, planes=planes).reshape(
-        n_chunks, 8
+    chunk_mask = chunks_in_frustum(
+        frustum_corners=frustum_corners,
+        chunk_corners=chunk_corners,
+        mode=mode,
     )
-
-    if mode == "any":
-        chunk_mask = np.any(points_mask, axis=1)
-    elif mode == "all":
-        chunk_mask = np.all(points_mask, axis=1)
-    else:
-        raise ValueError(f"{mode} is not a valid. Should be any or all")
 
     chunks_to_request = chunk_corners[chunk_mask]
 
