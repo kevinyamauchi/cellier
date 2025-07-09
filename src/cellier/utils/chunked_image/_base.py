@@ -8,11 +8,11 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from cellier.util.chunked_image._data_classes import (
+from cellier.utils.chunked_image._data_classes import (
     TextureConfiguration,
     ViewParameters,
 )
-from cellier.util.chunked_image._multiscale_image_model import ScaleLevel
+from cellier.utils.chunked_image._multiscale_image_model import ScaleLevel
 
 
 class TexturePositioningStrategy(ABC):

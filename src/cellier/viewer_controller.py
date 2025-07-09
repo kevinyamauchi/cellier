@@ -23,7 +23,7 @@ from cellier.slicer.utils import (
     world_selected_region_from_dims,
 )
 from cellier.types import TilingMethod
-from cellier.util.chunk import generate_chunk_requests_from_frustum
+from cellier.utils.chunk import generate_chunk_requests_from_frustum
 
 logger = logging.getLogger(__name__)
 
