@@ -7,16 +7,16 @@ in world space by snapping to chunk grid boundaries and aligning with world axes
 import numpy as np
 
 from cellier.transform import AffineTransform
-from cellier.util.chunked_image._base import (
+from cellier.utils.chunked_image._base import (
     ChunkFilteringStrategy,
     TexturePositioningStrategy,
 )
-from cellier.util.chunked_image._data_classes import (
+from cellier.utils.chunked_image._data_classes import (
     ChunkSelectionResult,
     TextureConfiguration,
     ViewParameters,
 )
-from cellier.util.chunked_image._multiscale_image_model import ScaleLevel
+from cellier.utils.chunked_image._multiscale_image_model import ScaleLevel
 
 
 class AxisSpecificBoundingBoxPositioning(TexturePositioningStrategy):

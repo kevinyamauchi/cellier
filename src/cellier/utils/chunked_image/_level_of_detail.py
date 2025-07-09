@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cellier.util.chunked_image._multiscale_image_model import (
+from cellier.utils.chunked_image._multiscale_image_model import (
     MultiscaleImageModel,
 )
 

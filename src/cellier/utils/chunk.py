@@ -6,7 +6,7 @@ from typing import Tuple, Union
 import numpy as np
 
 from cellier.models.data_stores.base_data_store import DataStoreSlice
-from cellier.util.geometry import (
+from cellier.utils.geometry import (
     frustum_planes_from_corners,
     near_far_plane_edge_lengths,
     points_in_frustum,
