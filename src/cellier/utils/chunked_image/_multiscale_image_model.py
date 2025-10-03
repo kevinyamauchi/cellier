@@ -9,7 +9,7 @@ from cellier.transform import AffineTransform
 
 
 @dataclass
-class ScaleLevel:
+class ScaleLevelModel:
     """Represents a single scale/resolution level in a multiscale image.
 
     Parameters
@@ -237,18 +237,18 @@ class MultiscaleImageModel:
 
     Parameters
     ----------
-    scales : list[ScaleLevel]
+    scales : list[ScaleLevelModel]
         List of scale levels ordered from finest to coarsest resolution.
 
     Attributes
     ----------
-    scales : list[ScaleLevel]
+    scales : list[ScaleLevelModel]
         List of scale levels ordered from finest to coarsest resolution.
     n_scales : int
         Number of scale levels.
     """
 
-    scales: list[ScaleLevel]
+    scales: list[ScaleLevelModel]
 
     @property
     def n_scales(self) -> int:
@@ -261,7 +261,7 @@ class MultiscaleImageModel:
         """
         return len(self.scales)
 
-    def get_scale(self, scale_index: int) -> ScaleLevel:
+    def get_scale(self, scale_index: int) -> ScaleLevelModel:
         """Get a specific scale level.
 
         Parameters
@@ -271,7 +271,7 @@ class MultiscaleImageModel:
 
         Returns
         -------
-        ScaleLevel
+        ScaleLevelModel
             The requested scale level.
 
         Raises
@@ -368,7 +368,7 @@ class MultiscaleImageModel:
             transform = compute_scale_transform(factor)
 
             # Create the scale level
-            scale_level = ScaleLevel(
+            scale_level = ScaleLevelModel(
                 shape=scale_shape, chunk_shape=chunk_shape, transform=transform
             )
 

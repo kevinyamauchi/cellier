@@ -16,10 +16,10 @@ from cellier.utils.chunked_image._data_classes import (
     TextureConfiguration,
     ViewParameters,
 )
-from cellier.utils.chunked_image._multiscale_image_model import ScaleLevel
+from cellier.utils.chunked_image._multiscale_image_model import ScaleLevelModel
 
 
-class AxisSpecificBoundingBoxPositioning(TexturePositioningStrategy):
+class AxisAlignedTexturePositioning(TexturePositioningStrategy):
     """Position texture based on bounding box of frustum chunks.
 
     This strategy calculates an axis-aligned bounding box of all chunks within
@@ -36,7 +36,7 @@ class AxisSpecificBoundingBoxPositioning(TexturePositioningStrategy):
     def position_texture(
         self,
         view_params: ViewParameters,
-        scale_level: ScaleLevel,
+        scale_level: ScaleLevelModel,
         texture_config: TextureConfiguration,
         frustum_chunk_corners: np.ndarray,
     ) -> tuple[AffineTransform, tuple[np.ndarray, np.ndarray], int]:
@@ -47,7 +47,7 @@ class AxisSpecificBoundingBoxPositioning(TexturePositioningStrategy):
         view_params : ViewParameters
             Camera view information including view direction vector used for
             axis-specific corner selection.
-        scale_level : ScaleLevel
+        scale_level : ScaleLevelModel
             Scale level metadata (unused in this implementation but required
             by the interface).
         texture_config : TextureConfiguration
@@ -634,7 +634,7 @@ class ChunkSelector:
 
     def select_chunks(
         self,
-        scale_level: ScaleLevel,
+        scale_level: ScaleLevelModel,
         view_params: ViewParameters,
         texture_config: TextureConfiguration,
         frustum_visible_chunks: np.ndarray | None = None,
@@ -648,7 +648,7 @@ class ChunkSelector:
 
         Parameters
         ----------
-        scale_level : ScaleLevel
+        scale_level : ScaleLevelModel
             Scale level containing chunk metadata, coordinate information, and
             transformation data. Provides chunk corners in both scale and world
             coordinates along with the transformation between them.
@@ -758,7 +758,7 @@ class ChunkSelector:
         )
 
     def _transform_view_params_to_scale(
-        self, view_params: "ViewParameters", scale_level: ScaleLevel
+        self, view_params: "ViewParameters", scale_level: ScaleLevelModel
     ) -> "ViewParameters":
         """Transform view parameters from world coordinates to scale coordinates.
 
@@ -771,7 +771,7 @@ class ChunkSelector:
         ----------
         view_params : ViewParameters
             View parameters in world coordinates to be transformed.
-        scale_level : ScaleLevel
+        scale_level : ScaleLevelModel
             Scale level containing the transformation from scale to world coordinates.
 
         Returns

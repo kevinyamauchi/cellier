@@ -12,7 +12,7 @@ from cellier.utils.chunked_image._data_classes import (
     TextureConfiguration,
     ViewParameters,
 )
-from cellier.utils.chunked_image._multiscale_image_model import ScaleLevel
+from cellier.utils.chunked_image._multiscale_image_model import ScaleLevelModel
 
 
 class TexturePositioningStrategy(ABC):
@@ -27,7 +27,7 @@ class TexturePositioningStrategy(ABC):
     def position_texture(
         self,
         view_params: ViewParameters,
-        scale_level: ScaleLevel,
+        scale_level: ScaleLevelModel,
         texture_config: TextureConfiguration,
         frustum_chunk_corners: np.ndarray,
     ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray], int]:
@@ -41,7 +41,7 @@ class TexturePositioningStrategy(ABC):
         view_params : ViewParameters
             Camera view information including frustum corners, camera position,
             view direction, and near plane center.
-        scale_level : ScaleLevel
+        scale_level : ScaleLevelModel
             Scale level metadata including chunk shape, transforms, and
             pre-computed chunk corner coordinates.
         texture_config : TextureConfiguration
