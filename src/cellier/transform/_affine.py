@@ -1,7 +1,7 @@
 """Classes and functions to express transformations."""
 
 import numpy as np
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_serializer, field_validator
 from pydantic_core.core_schema import ValidationInfo
 from typing_extensions import Self
 
@@ -105,6 +105,12 @@ class AffineTransform(BaseTransform):
         if not isinstance(v, np.ndarray):
             v = np.asarray(v, dtype=np.float32)
         return v.astype(np.float32)
+
+    @field_serializer("matrix")
+    @classmethod
+    def serialize_matrix(cls, v: np.ndarray) -> list:
+        """Serialize the matrix to a list."""
+        return v.tolist()
 
     @classmethod
     def from_scale_and_translation(
