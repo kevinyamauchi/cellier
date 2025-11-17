@@ -7,8 +7,8 @@ from skimage.data import binary_blobs
 from skimage.transform import resize
 from wgpu.gui.qt import WgpuCanvas
 
-from cellier.util.chunk import ChunkedArray3D, MultiScaleChunkedArray3D
-from cellier.util.geometry import (
+from cellier.utils.chunk import ChunkedArray3D, MultiScaleChunkedArray3D
+from cellier.utils.geometry import (
     frustum_planes_from_corners,
 )
 
