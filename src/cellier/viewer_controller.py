@@ -22,7 +22,7 @@ from cellier.slicer.slicer import (
 from cellier.slicer.utils import (
     world_selected_region_from_dims,
 )
-from cellier.types import TilingMethod
+from cellier.types import SceneId, TilingMethod, VisualId
 from cellier.utils.chunk import generate_chunk_requests_from_frustum
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ class CellierController:
             callback=self._render_manager._on_visual_model_update,
         )
 
-    def add_visual_callback(self, visual_id: str, callback: Callable):
+    def add_visual_callback(self, visual_id: VisualId, callback: Callable):
         """Add a callback to a visual."""
         if visual_id not in self.events.mouse.visual_signals:
             # register the visual with the event bus
@@ -178,7 +178,7 @@ class CellierController:
 
     def remove_visual_callback(
         self,
-        visual_id: str,
+        visual_id: VisualId,
         callback: Callable,
     ):
         """Remove a callback from a visual."""
@@ -188,7 +188,7 @@ class CellierController:
 
     def look_at_visual(
         self,
-        visual_id: str,
+        visual_id: VisualId,
         view_direction: tuple[float, float, float] | None,
         up_direction: tuple[float, float, float] | None,
     ):
@@ -196,7 +196,7 @@ class CellierController:
 
         Parameters
         ----------
-        visual_id : str
+        visual_id : VisualId
             The ID of the visual to look at.
         view_direction : tuple[float, float, float] | None
             The direction to set the camera view direction to.
@@ -224,6 +224,14 @@ class CellierController:
         """Reslice a specified visual."""
         scene = self._model.scenes.scenes[scene_id]
         visual_model = scene.get_visual_by_id(visual_id)
+
+        # set the visual transform in the renderer
+        self._render_manager._on_visual_transform_update(
+            scene_id=scene.id,
+            visual_id=visual_model.id,
+            transform=visual_model.transform,
+            redraw_canvas=False,
+        )
 
         # get the region of the displayed dims being displayed
         selected_region = world_selected_region_from_dims(
@@ -347,6 +355,35 @@ class CellierController:
         for scene_id in self._model.scenes.scenes.keys():
             self.reslice_scene(scene_id=scene_id)
 
+    def _update_visual_transform(self, visual_id: VisualId):
+        """Synchronously update the visual transform in the renderer.
+
+        This gets the transform from the visual model and applies it to the renderer.
+
+        Parameters
+        ----------
+        visual_id : VisualId
+            The UID of the visual to update.
+        """
+        # Get the visual model
+        scene, visual_model = self._model.get_visual_by_id(visual_id)
+
+        # Get the transform
+        transform = visual_model.transform
+
+        self._render_manager._on_visual_transform_update(
+            scene_id=scene.id,
+            visual_id=visual_id,
+            transform=transform,
+        )
+
+    def _redraw_scene(self, scene_id: SceneId):
+        """Redraw all canvases in a scene."""
+        scene_model = self._model.scenes.scenes[scene_id]
+        for canvas_model in scene_model.canvases.values():
+            # refresh the canvas
+            self._canvas_widgets[canvas_model.id].update()
+
     def _construct_canvas_widgets(self, viewer_model: ViewerModel, parent=None):
         """Make the canvas widgets based on the requested gui framework.
 
@@ -424,10 +461,7 @@ class CellierController:
 
     def _on_canvas_redraw_event(self, event: CanvasRedrawRequest) -> None:
         """Called by the RenderManager when the canvas needs to be redrawn."""
-        scene_model = self._model.scenes.scenes[event.scene_id]
-        for canvas_model in scene_model.canvases.values():
-            # refresh the canvas
-            self._canvas_widgets[canvas_model.id].update()
+        self._redraw_scene(scene_id=event.scene_id)
 
     @classmethod
     def from_viewer_model(

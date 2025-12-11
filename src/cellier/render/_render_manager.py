@@ -23,6 +23,7 @@ from cellier.render._data_classes import (
 )
 from cellier.render.cameras import construct_pygfx_camera_from_model
 from cellier.render.utils import construct_pygfx_object
+from cellier.transform import BaseTransform
 from cellier.types import (
     CameraControlsUpdateEvent,
     CameraId,
@@ -575,14 +576,42 @@ class RenderManager:
 
         visual = self._visuals.get(visual_id)
         if visual is None:
-            logger.warning(f"Visual with id {visual_id} not found.")
+            logger.warning(
+                f"RenderManager attempted to update visual with id {visual_id},"
+                " but it wasn't found."
+            )
             return
 
         # update the visual with the new state
         if "appearance" in new_state:
             visual.update_appearance(new_state["appearance"])
 
+        if "transform" in new_state:
+            transform = new_state["transform"]
+            visual.set_transform(transform)
+
         # emit a redraw request for the canvas
         scene_id = new_state.get("scene_id")
         if scene_id:
+            self.events.redraw_canvas.emit(CanvasRedrawRequest(scene_id=scene_id))
+
+    def _on_visual_transform_update(
+        self,
+        scene_id: SceneId,
+        visual_id: VisualId,
+        transform: BaseTransform,
+        redraw_canvas: bool = True,
+    ):
+        """Update the visual transform based on a change to the model."""
+        visual = self._visuals.get(visual_id)
+        if visual is None:
+            logger.warning(
+                f"RenderManager attempted to update visual with id {visual_id},"
+                "but it wasn't found."
+            )
+            return
+
+        visual.set_transform(transform)
+
+        if redraw_canvas:
             self.events.redraw_canvas.emit(CanvasRedrawRequest(scene_id=scene_id))
