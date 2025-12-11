@@ -8,6 +8,7 @@ from pygfx import PointsMaterial as GFXPointsMaterial
 
 from cellier.models.visuals import PointsUniformAppearance, PointsVisual
 from cellier.render.constants import cellier_to_gfx_coordinate_space
+from cellier.transform import BaseTransform
 from cellier.types import PointsDataResponse
 
 
@@ -125,3 +126,14 @@ class GFXPointsVisual:
         if "visible" in new_state:
             # update the visibility
             self.node.visible = new_state["visible"]
+
+    def set_transform(self, transform: BaseTransform):
+        """Set the local transform of the node.
+
+        Parameters
+        ----------
+        transform : np.ndarray
+            The 4x4 affine transform matrix to set.
+        """
+        # set the local transform
+        self.node.local.matrix = transform.matrix

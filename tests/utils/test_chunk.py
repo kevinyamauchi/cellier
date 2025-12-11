@@ -1,6 +1,6 @@
 import numpy as np
 
-from cellier.util.chunk import compute_chunk_corners_3d
+from cellier.utils.chunk import compute_chunk_corners_3d
 
 
 def test_compute_chunk_corners_3d():

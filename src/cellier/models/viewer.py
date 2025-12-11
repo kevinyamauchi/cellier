@@ -7,6 +7,8 @@ from pydantic_core import from_json
 
 from cellier.models.data_manager import DataManager
 from cellier.models.scene import DimsManager, DimsState, Scene
+from cellier.models.visuals.base import BaseVisual
+from cellier.types import VisualId
 
 
 class SceneManager(EventedModel):
@@ -51,6 +53,31 @@ class ViewerModel(EventedModel):
 
     data: DataManager
     scenes: SceneManager
+
+    def get_visual_by_id(self, visual_id: VisualId) -> tuple[Scene, BaseVisual]:
+        """Get a visual model by its id.
+
+        This iterates through all scenes. If you know the scene the visual
+        is in, it is likely more efficient to get the scene first and then
+        get the visual from the scene.
+
+        Parameters
+        ----------
+        visual_id : VisualId
+            The ID of the visual model to retrieve.
+
+        Returns
+        -------
+        Scene
+            The scene containing the visual model.
+        BaseVisual
+            The visual model with the specified ID.
+        """
+        for scene in self.scenes.scenes.values():
+            visual_model = scene.get_visual_by_id(visual_id)
+            if visual_model is not None:
+                return scene, visual_model
+        raise ValueError(f"Visual model with id {visual_id} not found.")
 
     def to_json_file(self, file_path: str, indent: int = 2) -> None:
         """Save the viewer state as a JSON file."""

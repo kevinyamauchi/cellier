@@ -3,8 +3,16 @@
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 from psygnal import EmissionInfo, EventedModel
 from pydantic import Field
+
+from cellier.transform import AffineTransform
+
+
+def default_transform() -> AffineTransform:
+    """Create a default identity transform."""
+    return AffineTransform(matrix=np.eye(4))
 
 
 class BaseAppearance(EventedModel):
@@ -31,6 +39,9 @@ class BaseVisual(EventedModel):
         The appearance of the visual.
         This should be overridden with the visual-specific
         implementation in the subclasses.
+    transform : AffineTransform
+        The transform of the visual from data space to world space.
+        Default is the identity.
     pick_write : bool
         If True, the visual can be picked.
         Default value is True.
@@ -38,6 +49,7 @@ class BaseVisual(EventedModel):
 
     name: str
     appearance: BaseAppearance
+    transform: AffineTransform = Field(default_factory=default_transform)
     pick_write: bool = True
 
     # store a UUID to identify this specific scene.

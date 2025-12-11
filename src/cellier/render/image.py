@@ -7,6 +7,7 @@ import pygfx as gfx
 import wgpu
 
 from cellier.models.visuals import ImageAppearance, MultiscaleImageVisual
+from cellier.transform import BaseTransform
 from cellier.types import ImageDataResponse
 
 
@@ -193,3 +194,14 @@ class GFXMultiScaleImageNode:
         if "visible" in new_state:
             # update the visibility
             self.node.visible = new_state["visible"]
+
+    def set_transform(self, transform: BaseTransform):
+        """Set the local transform of the node.
+
+        Parameters
+        ----------
+        transform : np.ndarray
+            The 4x4 affine transform matrix to set.
+        """
+        # set the local transform
+        self.node.local.matrix = transform.matrix

@@ -24,7 +24,7 @@ from cellier.types import (
     TilingMethod,
     VisualId,
 )
-from cellier.util.geometry import generate_2d_grid
+from cellier.utils.geometry import generate_2d_grid
 
 
 class BaseImageDataStore(BaseDataStore):

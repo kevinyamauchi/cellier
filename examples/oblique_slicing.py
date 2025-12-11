@@ -8,7 +8,7 @@ import pygfx as gfx
 from qtpy.QtWidgets import QApplication, QGridLayout, QLabel, QWidget
 from wgpu.gui.qt import WgpuCanvas
 
-from cellier.slicer.transforms import AffineTransform
+from cellier.transform import AffineTransform
 
 
 def make_plane_mesh(
