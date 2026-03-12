@@ -18,7 +18,7 @@ Controls
 
 Debug overlays (updated on every reslice)
 ------------------------------------------
-- Green  : camera frustum, far plane clipped to the data bounding box.
+- Green  : camera frustum.
 - Yellow : axis-aligned bounding box of the current texture atlas placement.
 """
 
@@ -62,10 +62,6 @@ CHUNK: tuple[int, int, int] = (32, 32, 32)
 # Texture atlas edge length in voxels.
 # 128 voxels → 4 chunks per axis → up to 64 chunks visible at once.
 TEXTURE_WIDTH = 128
-
-# Data bounding box used to clip the frustum far plane.
-DATA_BBOX_MIN = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-DATA_BBOX_MAX = np.array([SHAPE[0], SHAPE[1], SHAPE[2]], dtype=np.float32)
 
 # ---------------------------------------------------------------------------
 # Build the multiscale descriptor (single scale for this example)
@@ -181,54 +177,6 @@ viewer_model = ViewerModel(
 # ---------------------------------------------------------------------------
 
 
-def _clip_frustum_far_to_aabb(
-    corners: np.ndarray,
-    bbox_min: np.ndarray,
-    bbox_max: np.ndarray,
-) -> np.ndarray:
-    """Return a copy of *corners* with the far-plane vertices clipped to the AABB.
-
-    Each connecting edge (near[i] → far[i]) is shortened to where it exits
-    the axis-aligned bounding box, using the standard slab method.
-
-    Parameters
-    ----------
-    corners : np.ndarray
-        Frustum corners, shape ``(2, 4, 3)`` in ``(z, y, x)`` world space.
-    bbox_min, bbox_max : np.ndarray
-        Axis-aligned bounding box corners, each ``(3,)`` in ``(z, y, x)``.
-
-    Returns
-    -------
-    np.ndarray
-        Shape ``(2, 4, 3)`` — identical to *corners* except the four far
-        vertices have been moved to the AABB exit point of their edge.
-    """
-    clipped = corners.copy().astype(np.float32)
-    near = corners[0]  # (4, 3)
-
-    for i in range(4):
-        start = near[i]
-        d = corners[1, i] - start  # direction toward far corner
-
-        # Start with the full edge length (t ∈ [0, 1]).
-        t_exit = 1.0
-
-        for axis in range(3):
-            if abs(d[axis]) > 1e-10:
-                t1 = (bbox_min[axis] - start[axis]) / d[axis]
-                t2 = (bbox_max[axis] - start[axis]) / d[axis]
-                if t1 > t2:
-                    t1, t2 = t2, t1
-                # t2 is where the ray exits this slab; clip t_exit down.
-                t_exit = min(t_exit, t2)
-
-        t_exit = float(np.clip(t_exit, 0.0, 1.0))
-        clipped[1, i] = start + t_exit * d
-
-    return clipped
-
-
 def _aabb_to_line_pairs(
     bbox_min: np.ndarray,
     bbox_max: np.ndarray,
@@ -332,10 +280,9 @@ class ChunkedBlobViewer(QtWidgets.QWidget):
         self._update_texture_bbox()
 
     def _update_frustum_lines(self) -> None:
-        """Refresh the green frustum wireframe (far plane clipped to data AABB)."""
+        """Refresh the green frustum wireframe."""
         corners = camera.frustum  # (2, 4, 3) updated by the render manager
-        clipped = _clip_frustum_far_to_aabb(corners, DATA_BBOX_MIN, DATA_BBOX_MAX)
-        edges = frustum_edges_from_corners(clipped)  # (12, 2, 3)
+        edges = frustum_edges_from_corners(corners)  # (12, 2, 3)
         frustum_store.coordinates = edges.reshape(24, 3)
         self.viewer.reslice_visual(scene.id, frustum_visual.id, canvas.id)
 
