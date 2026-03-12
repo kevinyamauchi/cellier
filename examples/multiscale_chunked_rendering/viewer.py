@@ -15,14 +15,16 @@ Controls
 - Zoom   : scroll wheel
 - Reslice: click the "Reslice current view" button
 
-Debug overlays (updated on every reslice)
-------------------------------------------
-- Green  : camera frustum.
+Debug overlays
+--------------
+- White  : full data extent (scale 1 AABB in world space) — always visible.
+- Green  : camera frustum (updated on every reslice).
 - Red    : texture atlas bounding box for scale 0 (finest).
 - Cyan   : texture atlas bounding box for scale 1 (medium).
 - Yellow : texture atlas bounding box for scale 2 (coarsest).
 
-Only the bounding box for the currently active scale is shown.
+Only the texture bounding box for the currently active scale is shown.
+The active scale index is also printed to stdout on every reslice.
 """
 
 import pathlib
@@ -79,124 +81,9 @@ BBOX_COLORS = [
     (1.0, 1.0, 0.2, 1.0),  # scale 2 — yellow
 ]
 
-# ---------------------------------------------------------------------------
-# Build the multiscale descriptor
-# ---------------------------------------------------------------------------
-multiscale_model = MultiscaleImageModel.from_shape_and_scales(
-    shape=SHAPE,
-    chunk_shapes=[CHUNK, CHUNK, CHUNK],
-    downscale_factors=DOWNSCALE_FACTORS,
-)
 
 # ---------------------------------------------------------------------------
-# Data store — backed by three zarr arrays, one per scale level
-# ---------------------------------------------------------------------------
-store = ChunkedImageStore(
-    multiscale_model=multiscale_model,
-    store_paths=STORE_PATHS,
-    texture_config=TextureConfiguration(texture_width=TEXTURE_WIDTH),
-    name="multiscale_blobs",
-)
-
-# ---------------------------------------------------------------------------
-# Visual model
-# ---------------------------------------------------------------------------
-visual = ChunkedImageVisual(
-    name="multiscale blobs volume",
-    data_store_id=store.id,
-    appearance=ImageAppearance(color_map=cmap.Colormap("grays")),
-)
-
-# ---------------------------------------------------------------------------
-# Debug overlay — frustum wireframe (12 edges x 2 endpoints = 24 rows)
-# ---------------------------------------------------------------------------
-frustum_store = LinesMemoryStore(
-    coordinates=np.zeros((24, 3), dtype=np.float32),
-    name="frustum_debug",
-)
-frustum_visual = LinesVisual(
-    name="frustum_debug",
-    data_store_id=frustum_store.id,
-    appearance=LinesUniformAppearance(
-        size=2,
-        color=(0.0, 1.0, 0.0, 1.0),
-        size_coordinate_space="screen",
-    ),
-)
-
-# ---------------------------------------------------------------------------
-# Debug overlays — one bounding-box wireframe per scale level
-# ---------------------------------------------------------------------------
-bbox_stores: list[LinesMemoryStore] = []
-bbox_visuals: list[LinesVisual] = []
-
-for i, color in enumerate(BBOX_COLORS):
-    bs = LinesMemoryStore(
-        coordinates=np.zeros((24, 3), dtype=np.float32),
-        name=f"bbox_scale{i}_debug",
-    )
-    bv = LinesVisual(
-        name=f"bbox_scale{i}_debug",
-        data_store_id=bs.id,
-        appearance=LinesUniformAppearance(
-            size=2,
-            color=color,
-            size_coordinate_space="screen",
-        ),
-    )
-    bbox_stores.append(bs)
-    bbox_visuals.append(bv)
-
-# ---------------------------------------------------------------------------
-# Data manager
-# ---------------------------------------------------------------------------
-all_stores: dict = {
-    store.id: store,
-    frustum_store.id: frustum_store,
-}
-for bs in bbox_stores:
-    all_stores[bs.id] = bs
-
-data = DataManager(stores=all_stores)
-
-# ---------------------------------------------------------------------------
-# Scene coordinate system and dims
-# ---------------------------------------------------------------------------
-coord_sys = CoordinateSystem(name="scene_3d", axis_labels=("z", "y", "x"))
-
-data_range = (
-    RangeTuple(start=0, stop=SHAPE[0], step=1),
-    RangeTuple(start=0, stop=SHAPE[1], step=1),
-    RangeTuple(start=0, stop=SHAPE[2], step=1),
-)
-selection = AxisAlignedRegionSelector(
-    space_type=CoordinateSpace.WORLD,
-    ordered_dims=(0, 1, 2),
-    n_displayed_dims=3,
-    index_selection=(slice(None), slice(None), slice(None)),
-)
-dims = DimsManager(range=data_range, coordinate_system=coord_sys, selection=selection)
-
-# ---------------------------------------------------------------------------
-# Camera / canvas / scene / viewer model
-# ---------------------------------------------------------------------------
-controller_3d = OrbitCameraController(enabled=True)
-camera = PerspectiveCamera(controller=controller_3d)
-canvas = Canvas(camera=camera)
-scene = Scene(
-    dims=dims,
-    visuals=[visual, frustum_visual, *bbox_visuals],
-    canvases={canvas.id: canvas},
-)
-
-viewer_model = ViewerModel(
-    data=data,
-    scenes=SceneManager(scenes={scene.id: scene}),
-)
-
-
-# ---------------------------------------------------------------------------
-# Debug geometry helpers
+# Geometry helper (defined early so module-level code can use it)
 # ---------------------------------------------------------------------------
 
 
@@ -251,6 +138,149 @@ def _aabb_to_line_pairs(
         [[corners[a], corners[b]] for a, b in edge_indices], dtype=np.float32
     )
     return edges.reshape(24, 3)
+
+
+# ---------------------------------------------------------------------------
+# Build the multiscale descriptor
+# ---------------------------------------------------------------------------
+multiscale_model = MultiscaleImageModel.from_shape_and_scales(
+    shape=SHAPE,
+    chunk_shapes=[CHUNK, CHUNK, CHUNK],
+    downscale_factors=DOWNSCALE_FACTORS,
+)
+
+# ---------------------------------------------------------------------------
+# Pre-compute the full data AABB from scale 1 in world (scale_0) coordinates.
+# All scale levels cover the same world space; scale 1 is used as the
+# reference since it has a reasonable number of chunks to aggregate.
+# ---------------------------------------------------------------------------
+_s1_corners = multiscale_model.scales[1].chunk_corners_scale_0.reshape(-1, 3)
+DATA_BBOX_MIN: np.ndarray = _s1_corners.min(axis=0)
+DATA_BBOX_MAX: np.ndarray = _s1_corners.max(axis=0)
+
+# ---------------------------------------------------------------------------
+# Data store — backed by three zarr arrays, one per scale level
+# ---------------------------------------------------------------------------
+store = ChunkedImageStore(
+    multiscale_model=multiscale_model,
+    store_paths=STORE_PATHS,
+    texture_config=TextureConfiguration(texture_width=TEXTURE_WIDTH),
+    name="multiscale_blobs",
+)
+
+# ---------------------------------------------------------------------------
+# Visual model
+# ---------------------------------------------------------------------------
+visual = ChunkedImageVisual(
+    name="multiscale blobs volume",
+    data_store_id=store.id,
+    appearance=ImageAppearance(color_map=cmap.Colormap("grays")),
+)
+
+# ---------------------------------------------------------------------------
+# Debug overlay — frustum wireframe (12 edges x 2 endpoints = 24 rows)
+# ---------------------------------------------------------------------------
+frustum_store = LinesMemoryStore(
+    coordinates=np.zeros((24, 3), dtype=np.float32),
+    name="frustum_debug",
+)
+frustum_visual = LinesVisual(
+    name="frustum_debug",
+    data_store_id=frustum_store.id,
+    appearance=LinesUniformAppearance(
+        size=2,
+        color=(0.0, 1.0, 0.0, 1.0),
+        size_coordinate_space="screen",
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Debug overlay — full data extent (permanent white box, scale 1 AABB)
+# ---------------------------------------------------------------------------
+data_extent_store = LinesMemoryStore(
+    coordinates=_aabb_to_line_pairs(DATA_BBOX_MIN, DATA_BBOX_MAX),
+    name="data_extent_debug",
+)
+data_extent_visual = LinesVisual(
+    name="data_extent_debug",
+    data_store_id=data_extent_store.id,
+    appearance=LinesUniformAppearance(
+        size=2,
+        color=(1.0, 1.0, 1.0, 0.8),
+        size_coordinate_space="screen",
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Debug overlays — one bounding-box wireframe per scale level
+# ---------------------------------------------------------------------------
+bbox_stores: list[LinesMemoryStore] = []
+bbox_visuals: list[LinesVisual] = []
+
+for i, color in enumerate(BBOX_COLORS):
+    bs = LinesMemoryStore(
+        coordinates=np.zeros((24, 3), dtype=np.float32),
+        name=f"bbox_scale{i}_debug",
+    )
+    bv = LinesVisual(
+        name=f"bbox_scale{i}_debug",
+        data_store_id=bs.id,
+        appearance=LinesUniformAppearance(
+            size=2,
+            color=color,
+            size_coordinate_space="screen",
+        ),
+    )
+    bbox_stores.append(bs)
+    bbox_visuals.append(bv)
+
+# ---------------------------------------------------------------------------
+# Data manager
+# ---------------------------------------------------------------------------
+all_stores: dict = {
+    store.id: store,
+    frustum_store.id: frustum_store,
+    data_extent_store.id: data_extent_store,
+}
+for bs in bbox_stores:
+    all_stores[bs.id] = bs
+
+data = DataManager(stores=all_stores)
+
+# ---------------------------------------------------------------------------
+# Scene coordinate system and dims
+# ---------------------------------------------------------------------------
+coord_sys = CoordinateSystem(name="scene_3d", axis_labels=("z", "y", "x"))
+
+data_range = (
+    RangeTuple(start=0, stop=SHAPE[0], step=1),
+    RangeTuple(start=0, stop=SHAPE[1], step=1),
+    RangeTuple(start=0, stop=SHAPE[2], step=1),
+)
+selection = AxisAlignedRegionSelector(
+    space_type=CoordinateSpace.WORLD,
+    ordered_dims=(0, 1, 2),
+    n_displayed_dims=3,
+    index_selection=(slice(None), slice(None), slice(None)),
+)
+dims = DimsManager(range=data_range, coordinate_system=coord_sys, selection=selection)
+
+# ---------------------------------------------------------------------------
+# Camera / canvas / scene / viewer model
+# ---------------------------------------------------------------------------
+controller_3d = OrbitCameraController(enabled=True)
+camera = PerspectiveCamera(controller=controller_3d)
+canvas = Canvas(camera=camera)
+scene = Scene(
+    dims=dims,
+    visuals=[visual, frustum_visual, data_extent_visual, *bbox_visuals],
+    canvases={canvas.id: canvas},
+)
+
+viewer_model = ViewerModel(
+    data=data,
+    scenes=SceneManager(scenes={scene.id: scene}),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +345,8 @@ class MultiscaleBlobViewer(QtWidgets.QWidget):
             return
 
         active = gfx_node._active_scale
+        scale_labels = {0: "finest (s0)", 1: "medium (s1)", 2: "coarsest (s2)"}
+        print(f"Active scale: {active} — {scale_labels.get(active, str(active))}")
         tw = float(gfx_node._atlas.texture_width)
 
         for i, (bbox_store, bbox_visual) in enumerate(zip(bbox_stores, bbox_visuals)):
