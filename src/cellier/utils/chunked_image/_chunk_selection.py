@@ -73,14 +73,13 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             frustum_chunk_corners
         )
 
-        # Step 2: Anchor to the minimum corner of the frustum AABB.
-        # Using a camera-dependent vertex as the anchor causes the texture to
-        # jump as the camera orbits or zooms (different AABB corners win at
-        # different distances).  Anchoring to bbox_min keeps the texture stable:
-        # when the whole volume is in view bbox_min == (0,0,0), so the cube
-        # always has a corner at the data origin.
+        # Step 2: Anchor the texture to the camera-near side of the AABB.
+        # For each axis the near side is determined by the sign of the view
+        # direction component: positive → min side, negative → max side.
+        # This ensures the texture covers the chunks closest to the camera
+        # when the volume is larger than the texture.
         positioning_corner = self._select_positioning_corner(
-            bbox_min, bbox_max, texture_config
+            bbox_min, bbox_max, texture_config, view_params.view_direction
         )
 
         # Step 3: Calculate texture bounds with positioning corner as minimum
@@ -131,15 +130,17 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         bounding_box_min: np.ndarray,
         bounding_box_max: np.ndarray,
         texture_config: TextureConfiguration,
+        view_direction: np.ndarray,
     ) -> np.ndarray:
-        """Anchor the texture to the minimum corner of the frustum bounding box.
+        """Anchor the texture to the camera-near side of the frustum AABB.
 
-        Uses ``bounding_box_min`` as the fixed anchor so the texture always
-        starts from the nearest chunk corner to the data origin.  When the
-        whole volume is in view this equals ``(0, 0, 0)``.  Any AABB edge
-        that exceeds ``texture_width`` is shortened by moving the far end
-        toward the anchor (``bounding_box_min``), keeping the near corner
-        fixed.
+        For each axis the camera-near side is determined by the sign of the
+        view direction component: a positive component means the camera is on
+        the min side (looking toward +axis), so the anchor is ``bbox_min``; a
+        negative component means the camera is on the max side, so the anchor
+        is ``bbox_max``.  When an edge exceeds ``texture_width`` it is
+        shortened by moving the far end toward the camera-near anchor, keeping
+        the near corner fixed.
 
         Parameters
         ----------
@@ -149,6 +150,8 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             Maximum coordinates of the frustum chunks AABB, shape (3,).
         texture_config : TextureConfiguration
             Texture configuration whose ``texture_width`` caps each edge.
+        view_direction : np.ndarray
+            Normalised view direction vector, shape (3,).
 
         Returns
         -------
@@ -156,10 +159,15 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             Positioning corner (minimum corner of the texture in scale space),
             shape (3,).
         """
+        # Per-axis: positive view component → camera on min side → anchor min.
+        #           negative view component → camera on max side → anchor max.
+        camera_near_vertex = np.where(
+            view_direction >= 0, bounding_box_min, bounding_box_max
+        )
         modified_bbox_min, _ = self._shorten_oversized_edges(
             bounding_box_min,
             bounding_box_max,
-            bounding_box_min,  # fixed vertex = minimum corner
+            camera_near_vertex,
             texture_config.texture_width,
         )
         return modified_bbox_min
