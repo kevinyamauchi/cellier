@@ -103,10 +103,12 @@ class ChunkManager:
             background loading.
         """
         available: list[ChunkData] = []
-        heap: list[tuple[float, ChunkRequest]] = []
+        # Heap entries are (priority, tiebreak_counter, req) to avoid comparing
+        # ChunkRequest objects when priorities are equal.
+        heap: list[tuple[float, int, ChunkRequest]] = []
 
         with self._lock:
-            for req in requests:
+            for i, req in enumerate(requests):
                 key = (req.scale_index, req.chunk_index)
                 if key in self._cache:
                     # Cache hit — promote to most-recently-used position.
@@ -119,10 +121,10 @@ class ChunkManager:
                         )
                     )
                 else:
-                    heapq.heappush(heap, (req.priority, req))
+                    heapq.heappush(heap, (req.priority, i, req))
 
             # Register all cache-miss keys as in-flight for this visual.
-            in_flight_keys = {(r.scale_index, r.chunk_index) for _, r in heap}
+            in_flight_keys = {(r.scale_index, r.chunk_index) for _, _, r in heap}
             if in_flight_keys:
                 if visual_id not in self._pending:
                     self._pending[visual_id] = set()
@@ -131,7 +133,7 @@ class ChunkManager:
         # Dispatch to thread pool in ascending priority order.
         pending_count = 0
         while heap:
-            _, req = heapq.heappop(heap)
+            _, _i, req = heapq.heappop(heap)
             future: Future[np.ndarray] = self._thread_pool.submit(self._loader, req)
             future.add_done_callback(lambda f, r=req: self._on_chunk_loaded(f, r))
             pending_count += 1

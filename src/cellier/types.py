@@ -1,11 +1,12 @@
 """Types used in the Cellier package."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Literal, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, TypeAlias, Union
 from uuid import uuid4
 
-import numpy as np
 from pydantic import Field
 from typing_extensions import Annotated
 
@@ -15,6 +16,15 @@ from cellier.models.visuals import (
     MultiscaleLabelsVisual,
     PointsVisual,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+
+    from cellier.transform import AffineTransform
+    from cellier.utils.chunked_image._data_classes import (
+        TextureConfiguration,
+        ViewParameters,
+    )
 
 # This is used for a discriminated union for typing the visual models
 VisualType = Annotated[
@@ -165,7 +175,7 @@ class PlaneSelectedRegion:
         The dimension indices in their displayed order.
     n_displayed_dims : int
         The number of displayed dimensions.
-    index_selection : tuple[Union[int, slice], ...]
+    index_selection : tuple[int | slice, ...]
         The selections for each dimension.
         Has the same order as ordered dims.
     point : np.ndarray
@@ -181,7 +191,7 @@ class PlaneSelectedRegion:
     space_type: CoordinateSpace
     ordered_dims: tuple[int, ...]
     n_displayed_dims: Literal[2, 3]
-    index_selection: tuple[Union[int, slice], ...]
+    index_selection: tuple[int | slice, ...]
     point: np.ndarray
     plane_transform: np.ndarray
     extents: tuple[None | int, None | int]
@@ -200,7 +210,7 @@ class AxisAlignedSelectedRegion:
         The dimension indices in their displayed order.
     n_displayed_dims : int
         The number of displayed dimensions.
-    index_selection : tuple[Union[int, slice], ...]
+    index_selection : tuple[int | slice, ...]
         The selections for each dimension.
         Has the same order as ordered dims.
     """
@@ -208,10 +218,31 @@ class AxisAlignedSelectedRegion:
     space_type: CoordinateSpace
     ordered_dims: tuple[int, ...]
     n_displayed_dims: Literal[2, 3]
-    index_selection: tuple[Union[int, slice], ...]
+    index_selection: tuple[int | slice, ...]
 
 
-SelectedRegion = Union[AxisAlignedSelectedRegion, PlaneSelectedRegion]
+@dataclass(frozen=True)
+class ChunkedSelectedRegion:
+    """Selected region for a frustum-based chunked view.
+
+    Parameters
+    ----------
+    view_parameters : ViewParameters
+        Frustum corners, view direction, and near-plane center in world coordinates.
+    visual_id : str
+        ID of the visual that requested this region.
+    scene_id : str
+        ID of the scene containing the visual.
+    """
+
+    view_parameters: ViewParameters
+    visual_id: str
+    scene_id: str
+
+
+SelectedRegion = Union[
+    AxisAlignedSelectedRegion, PlaneSelectedRegion, ChunkedSelectedRegion
+]
 
 
 @dataclass(frozen=True)
@@ -268,7 +299,7 @@ class PlaneDataRequest:
         The dimension indices in their displayed order.
     n_displayed : int
         The number of displayed dimensions.
-    index_selection : tuple[Union[int, slice], ...]
+    index_selection : tuple[int | slice, ...]
         The selections for each dimension.
         Has the same order as ordered dims.
     resolution_level : int
@@ -293,7 +324,7 @@ class PlaneDataRequest:
     min_corner_rendered: tuple[int, int]
     ordered_dims: tuple[int, ...]
     n_displayed_dims: int
-    index_selection: tuple[Union[int, slice], ...]
+    index_selection: tuple[int | slice, ...]
     resolution_level: int
     point: np.ndarray
     plane_transform: np.ndarray
@@ -444,3 +475,55 @@ class ChunkData:
     chunk_index: int
     scale_index: int
     data: np.ndarray
+
+
+@dataclass(frozen=True)
+class ChunkedDataRequest:
+    """A batch of chunk requests produced by ChunkedImageStore.get_data_request().
+
+    This object is returned by ``ChunkedImageStore.get_data_request()`` and
+    passed back into ``ChunkedImageStore.get_data()`` by the slicer.
+
+    Parameters
+    ----------
+    scene_id : str
+    visual_id : str
+    resolution_level : int
+    chunk_requests : list[ChunkRequest]
+        Individual chunks selected by ChunkCuller + ChunkSelector.
+    texture_config : TextureConfiguration
+        Texture geometry used during chunk selection.
+    texture_to_world_transform : AffineTransform
+        Maps texture-local coordinates to world coordinates; forwarded to the
+        renderer in the corresponding ChunkedDataResponse.
+    """
+
+    scene_id: str
+    visual_id: str
+    resolution_level: int
+    chunk_requests: list[ChunkRequest]
+    texture_config: TextureConfiguration
+    texture_to_world_transform: AffineTransform
+
+
+@dataclass(frozen=True)
+class ChunkedDataResponse(DataResponse):
+    """Response from ChunkedImageStore.get_data(); consumed by RenderManager.
+
+    Extends DataResponse so it can be emitted on slicer.events.new_slice
+    without changing the signal type.
+
+    Parameters
+    ----------
+    available_chunks : list[ChunkData]
+        Chunks immediately available from the ChunkManager LRU cache.
+    pending_count : int
+        Number of chunks submitted for background loading (not yet available).
+    texture_to_world_transform : AffineTransform
+        Forwarded from the originating ChunkedDataRequest; maps texture-local
+        coordinates to world coordinates for the renderer.
+    """
+
+    available_chunks: list[ChunkData]
+    pending_count: int
+    texture_to_world_transform: AffineTransform
