@@ -116,7 +116,7 @@ def test_atlas_is_none_before_first_set_slice():
         node = GFXChunkedImageNode(model=visual)
 
     assert node._atlas is None
-    assert node._volume_node is None
+    assert node._volume_nodes == []
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +136,9 @@ def test_set_slice_initialises_atlas():
         node.set_slice(response)
 
     assert node._atlas is not None
-    assert node._volume_node is not None
+    assert len(node._volume_nodes) > 0
     # Volume should have been added to the group node
-    node.node.add.assert_called_once_with(node._volume_node)
+    node.node.add.assert_called_once_with(node._volume_nodes[0])
 
 
 # ---------------------------------------------------------------------------
