@@ -114,6 +114,9 @@ class CellierController:
             canvas_widgets=self._canvas_widgets,
         )
 
+        # wire up ChunkedImageStore instances (setup thread pool + connect signals)
+        self._setup_chunked_stores()
+
         # connect events for rendering
         self._connect_render_events()
 
@@ -222,8 +225,15 @@ class CellierController:
 
     def reslice_visual(self, scene_id: str, visual_id: str, canvas_id: str):
         """Reslice a specified visual."""
+        from cellier.models.visuals.chunked_image import ChunkedImageVisual
+
         scene = self._model.scenes.scenes[scene_id]
         visual_model = scene.get_visual_by_id(visual_id)
+
+        # Chunked image visuals use a different reslice path (frustum-based).
+        if isinstance(visual_model, ChunkedImageVisual):
+            self._reslice_chunked_visual(scene_id, visual_id, canvas_id)
+            return
 
         # set the visual transform in the renderer
         self._render_manager._on_visual_transform_update(
@@ -383,6 +393,102 @@ class CellierController:
         for canvas_model in scene_model.canvases.values():
             # refresh the canvas
             self._canvas_widgets[canvas_model.id].update()
+
+    def _setup_chunked_stores(self) -> None:
+        """Initialise all ChunkedImageStore instances and wire their signals.
+
+        For every :class:`~cellier.models.data_stores.chunked_image.ChunkedImageStore`
+        in the viewer model:
+
+        1. Calls ``ChunkedImageStore.setup_chunk_manager`` so the store shares
+           the slicer's thread pool.
+        2. Connects the store's ``ChunkManager.chunk_loaded`` signal to
+           :meth:`~cellier.render._render_manager.RenderManager.connect_chunk_manager`
+           for every :class:`~cellier.models.visuals.chunked_image.ChunkedImageVisual`
+           that uses the store.
+        """
+        from cellier.models.data_stores.chunked_image import ChunkedImageStore
+        from cellier.models.visuals.chunked_image import ChunkedImageVisual
+
+        _MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB default
+
+        for store_id, store in self._model.data.stores.items():
+            if not isinstance(store, ChunkedImageStore):
+                continue
+
+            store.setup_chunk_manager(
+                slicer=self._slicer,
+                max_cache_bytes=_MAX_CACHE_BYTES,
+            )
+
+            # Wire chunk_loaded for every visual backed by this store.
+            for scene in self._model.scenes.scenes.values():
+                for visual_model in scene.visuals:
+                    if (
+                        isinstance(visual_model, ChunkedImageVisual)
+                        and visual_model.data_store_id == store_id
+                    ):
+                        self._render_manager.connect_chunk_manager(
+                            visual_id=visual_model.id,
+                            scene_id=scene.id,
+                            chunk_manager=store._chunk_manager,
+                        )
+
+    def _reslice_chunked_visual(
+        self, scene_id: str, visual_id: str, canvas_id: str
+    ) -> None:
+        """Reslice a :class:`~cellier.models.visuals.chunked_image.ChunkedImageVisual`.
+
+        Builds a :class:`~cellier.types.ChunkedSelectedRegion` from the
+        current camera frustum and submits it to the data slicer.
+
+        Parameters
+        ----------
+        scene_id : str
+            ID of the scene containing the visual.
+        visual_id : str
+            ID of the :class:`~cellier.models.visuals.chunked_image.ChunkedImageVisual`.
+        canvas_id : str
+            ID of the canvas whose camera frustum is used for chunk selection.
+        """
+        import numpy as np
+
+        from cellier.types import ChunkedSelectedRegion
+        from cellier.utils.chunked_image._data_classes import ViewParameters
+
+        scene = self._model.scenes.scenes[scene_id]
+        visual_model = scene.get_visual_by_id(visual_id)
+        camera = scene.canvases[canvas_id].camera
+
+        frustum_corners = camera.frustum  # (2, 4, 3) world coords
+
+        # Derive view direction from near/far plane centroids.
+        near_center = frustum_corners[0].mean(axis=0)
+        far_center = frustum_corners[1].mean(axis=0)
+        raw_dir = far_center - near_center
+        norm = np.linalg.norm(raw_dir)
+        view_direction = raw_dir / norm if norm > 0 else np.array([1.0, 0.0, 0.0])
+
+        view_params = ViewParameters(
+            frustum_corners=frustum_corners,
+            view_direction=view_direction,
+            near_plane_center=near_center,
+        )
+        region = ChunkedSelectedRegion(
+            view_parameters=view_params,
+            visual_id=visual_id,
+            scene_id=scene_id,
+        )
+
+        data_store = self._model.data.stores[visual_model.data_store_id]
+        requests = data_store.get_data_request(
+            selected_region=region,
+            tiling_method=TilingMethod.NONE,
+            scene_id=scene_id,
+            visual_id=visual_id,
+        )
+        if requests:
+            self._slicer.submit(request_list=requests, data_store=data_store)
 
     def _construct_canvas_widgets(self, viewer_model: ViewerModel, parent=None):
         """Make the canvas widgets based on the requested gui framework.

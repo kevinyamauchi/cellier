@@ -194,18 +194,40 @@ class ChunkedImageStore(BaseDataStore):
             scale_level, result.selected_chunk_mask, view_params, world_transform
         )
 
-        # 4. Build ChunkRequest list for all selected chunks
+        # 4. Build ChunkRequest list for all selected chunks, including
+        #    the (z, y, x) voxel offset of each chunk within the texture atlas.
+        grid_shape = scale_level.chunk_grid_shape  # (nz, ny, nx)
+        cz, cy, cx = scale_level.chunk_shape
         selected_indices = np.where(result.selected_chunk_mask)[0]
-        chunk_requests: list[ChunkRequest] = [
-            ChunkRequest(
-                chunk_index=int(idx),
-                scale_index=scale_index,
-                priority=float(priorities[idx]),
-                visual_id=visual_id,
-                scene_id=scene_id,
+        chunk_requests: list[ChunkRequest] = []
+        for idx in selected_indices:
+            # Convert linear index → (iz, iy, ix) grid position
+            iz = int(idx) // (grid_shape[1] * grid_shape[2])
+            iy = (int(idx) // grid_shape[2]) % grid_shape[1]
+            ix = int(idx) % grid_shape[2]
+
+            # Min corner of this chunk in scale_n coordinates
+            scale_n_corner = np.array([[iz * cz, iy * cy, ix * cx]], dtype=np.float64)
+            # Transform scale_n → scale_0 using the scale-level transform
+            scale_0_corner = scale_level.transform.map_coordinates(scale_n_corner)
+            # Invert the texture_to_world_transform to find the voxel offset
+            # within the texture atlas (works correctly when world_transform
+            # is identity, i.e. scale_0 == world).
+            tex_corner = result.texture_to_world_transform.imap_coordinates(
+                scale_0_corner
             )
-            for idx in selected_indices
-        ]
+            texture_offset = tuple(max(0, int(round(v))) for v in tex_corner[0])
+
+            chunk_requests.append(
+                ChunkRequest(
+                    chunk_index=int(idx),
+                    scale_index=scale_index,
+                    priority=float(priorities[idx]),
+                    visual_id=visual_id,
+                    scene_id=scene_id,
+                    texture_offset=texture_offset,
+                )
+            )
 
         return [
             ChunkedDataRequest(
@@ -250,6 +272,7 @@ class ChunkedImageStore(BaseDataStore):
             available_chunks=available,
             pending_count=pending_count,
             texture_to_world_transform=request.texture_to_world_transform,
+            texture_config=request.texture_config,
         )
 
     # ------------------------------------------------------------------

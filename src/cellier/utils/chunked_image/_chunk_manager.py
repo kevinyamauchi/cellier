@@ -118,6 +118,7 @@ class ChunkManager:
                             chunk_index=req.chunk_index,
                             scale_index=req.scale_index,
                             data=self._cache[key],
+                            texture_offset=req.texture_offset,
                         )
                     )
                 else:
@@ -196,6 +197,7 @@ class ChunkManager:
                 chunk_index=req.chunk_index,
                 scale_index=req.scale_index,
                 data=data,
+                texture_offset=req.texture_offset,
             )
         )
 

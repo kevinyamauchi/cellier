@@ -455,6 +455,35 @@ class RenderManager:
         self.render_calls += 1
         logger.debug(f"render: {self.render_calls}")
 
+    def connect_chunk_manager(
+        self,
+        visual_id: VisualId,
+        scene_id: SceneId,
+        chunk_manager: object,
+    ) -> None:
+        """Subscribe to a ChunkManager's ``chunk_loaded`` signal.
+
+        When a background chunk finishes loading, :meth:`_on_background_chunk_loaded`
+        uploads it to the visual's GPU texture atlas and requests a canvas
+        redraw.
+
+        Parameters
+        ----------
+        visual_id : VisualId
+            The visual whose GPU node should receive the chunk.
+        scene_id : SceneId
+            The scene containing *visual_id*; used for the redraw request.
+        chunk_manager : ChunkManager
+            The chunk manager whose ``chunk_loaded`` signal to subscribe to.
+        """
+        chunk_manager.chunk_loaded.connect(  # type: ignore[union-attr]
+            partial(
+                self._on_background_chunk_loaded,
+                visual_id=visual_id,
+                scene_id=scene_id,
+            )
+        )
+
     @ensure_main_thread
     def _on_new_slice(
         self, slice_data: DataResponse, redraw_canvas: bool = True
@@ -467,6 +496,37 @@ class RenderManager:
             self.events.redraw_canvas.emit(
                 CanvasRedrawRequest(scene_id=slice_data.scene_id)
             )
+
+    @ensure_main_thread
+    def _on_background_chunk_loaded(
+        self,
+        chunk_data: object,
+        visual_id: VisualId,
+        scene_id: SceneId,
+    ) -> None:
+        """Upload a background-loaded chunk and trigger a canvas redraw.
+
+        Connected to ``ChunkManager.chunk_loaded`` by :meth:`connect_chunk_manager`.
+        Runs on the main thread via :func:`~superqt.ensure_main_thread`.
+
+        Parameters
+        ----------
+        chunk_data : ChunkData
+            The chunk that finished loading in the background.
+        visual_id : VisualId
+            The visual whose GPU node should receive the chunk.
+        scene_id : SceneId
+            The scene containing *visual_id*; used for the redraw request.
+        """
+        visual_object = self._visuals.get(visual_id)
+        if visual_object is None:
+            logger.warning("Received background chunk for unknown visual %s", visual_id)
+            return
+
+        if hasattr(visual_object, "upload_chunk"):
+            visual_object.upload_chunk(chunk_data)
+
+        self.events.redraw_canvas.emit(CanvasRedrawRequest(scene_id=scene_id))
 
     def _on_canvas_mouse_event(
         self,

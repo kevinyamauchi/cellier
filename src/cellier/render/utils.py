@@ -7,6 +7,8 @@ from cellier.models.visuals import (
     PointsVisual,
 )
 from cellier.models.visuals.base import BaseVisual
+from cellier.models.visuals.chunked_image import ChunkedImageVisual
+from cellier.render.chunked_image import GFXChunkedImageNode
 from cellier.render.image import GFXMultiScaleImageNode
 from cellier.render.labels import GFXMultiScaleLabelsNode
 from cellier.render.lines import GFXLinesVisual
@@ -26,8 +28,14 @@ def construct_pygfx_object(visual_model: BaseVisual):
     elif isinstance(visual_model, MultiscaleLabelsVisual):
         # labels
         return GFXMultiScaleLabelsNode(model=visual_model)
+
     elif isinstance(visual_model, MultiscaleImageVisual):
-        # images
+        # standard multiscale images
         return GFXMultiScaleImageNode(model=visual_model)
+
+    elif isinstance(visual_model, ChunkedImageVisual):
+        # chunked 3-D volume with async loading and texture atlas
+        return GFXChunkedImageNode(model=visual_model)
+
     else:
         raise TypeError(f"Unsupported visual model: {type(visual_model)}")

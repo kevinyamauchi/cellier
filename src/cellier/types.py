@@ -16,6 +16,7 @@ from cellier.models.visuals import (
     MultiscaleLabelsVisual,
     PointsVisual,
 )
+from cellier.models.visuals.chunked_image import ChunkedImageVisual
 
 if TYPE_CHECKING:
     import numpy as np
@@ -28,7 +29,13 @@ if TYPE_CHECKING:
 
 # This is used for a discriminated union for typing the visual models
 VisualType = Annotated[
-    Union[LinesVisual, PointsVisual, MultiscaleLabelsVisual, MultiscaleImageVisual],
+    Union[
+        LinesVisual,
+        PointsVisual,
+        MultiscaleLabelsVisual,
+        MultiscaleImageVisual,
+        ChunkedImageVisual,
+    ],
     Field(discriminator="visual_type"),
 ]
 
@@ -449,6 +456,11 @@ class ChunkRequest:
         ID of the visual that requested this chunk.
     scene_id : str
         ID of the scene containing the visual.
+    texture_offset : tuple[int, int, int]
+        (z, y, x) voxel offset of this chunk's min corner within the
+        texture atlas. Computed by ChunkedImageStore.get_data_request and
+        threaded through to ChunkData so the render node knows where to
+        call ``send_data``. Default is ``(0, 0, 0)``.
     """
 
     chunk_index: int
@@ -456,6 +468,7 @@ class ChunkRequest:
     priority: float
     visual_id: str
     scene_id: str
+    texture_offset: tuple[int, int, int] = (0, 0, 0)
 
 
 @dataclass
@@ -470,11 +483,16 @@ class ChunkData:
         Scale level index matching the originating ChunkRequest.
     data : np.ndarray
         Voxel data as a numpy array. No GPU objects.
+    texture_offset : tuple[int, int, int]
+        (z, y, x) voxel offset within the texture atlas where this chunk
+        should be written. Threaded through from the originating
+        ChunkRequest. Default is ``(0, 0, 0)``.
     """
 
     chunk_index: int
     scale_index: int
     data: np.ndarray
+    texture_offset: tuple[int, int, int] = (0, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -522,8 +540,13 @@ class ChunkedDataResponse(DataResponse):
     texture_to_world_transform : AffineTransform
         Forwarded from the originating ChunkedDataRequest; maps texture-local
         coordinates to world coordinates for the renderer.
+    texture_config : TextureConfiguration
+        Forwarded from the originating ChunkedDataRequest; carries the
+        texture dimensions so the render node can lazily initialise its
+        GPU texture atlas on the first slice it receives.
     """
 
     available_chunks: list[ChunkData]
     pending_count: int
     texture_to_world_transform: AffineTransform
+    texture_config: TextureConfiguration
