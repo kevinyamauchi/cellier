@@ -567,7 +567,6 @@ class CellierController:
 
     def _on_canvas_redraw_event(self, event: CanvasRedrawRequest) -> None:
         """Called by the RenderManager when the canvas needs to be redrawn."""
-        print("redrawing canvas")
         self._redraw_scene(scene_id=event.scene_id)
 
     @classmethod

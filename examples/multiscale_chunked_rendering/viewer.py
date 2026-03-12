@@ -32,7 +32,7 @@ import sys
 
 import cmap
 import numpy as np
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 
 from cellier.models.data_manager import DataManager
 from cellier.models.data_stores import ChunkedImageStore
@@ -323,7 +323,11 @@ class MultiscaleBlobViewer(QtWidgets.QWidget):
         """Reslice the volume then refresh all debug overlays."""
         self._update_frustum_lines()
         self.viewer.reslice_all()
-        self._update_texture_bboxes()
+        # Defer bbox update so the Qt event loop can process the new_slice
+        # signal first — set_slice() updates _active_scale and the volume
+        # matrix asynchronously, so reading them synchronously here would
+        # reflect the *previous* reslice.
+        QtCore.QTimer.singleShot(100, self._update_texture_bboxes)
 
     def _update_frustum_lines(self) -> None:
         """Refresh the green frustum wireframe."""
