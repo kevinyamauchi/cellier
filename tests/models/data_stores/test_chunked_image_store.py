@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import zarr
+from zarr.storage import MemoryStore
 
 from cellier.models.data_stores.chunked_image import ChunkedImageStore
 from cellier.slicer.slicer import AsynchronousDataSlicer
@@ -83,7 +84,7 @@ def _make_view_params(frustum: np.ndarray) -> ViewParameters:
 @pytest.fixture
 def zarr_array():
     """128^3 float32 zarr array backed by an in-memory store."""
-    store = zarr.MemoryStore()
+    store = MemoryStore()
     z = zarr.open(
         store,
         mode="w",
