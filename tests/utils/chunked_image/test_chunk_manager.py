@@ -229,7 +229,9 @@ def test_cache_eviction():
         return data
 
     manager = ChunkManager(
-        slicer=make_mock_slicer(), loader=counting_loader, max_cache_bytes=max_bytes
+        slicer=make_mock_slicer(max_workers=1),
+        loader=counting_loader,
+        max_cache_bytes=max_bytes,
     )
 
     requests = [make_request(chunk_index=i, priority=float(i)) for i in range(3)]
