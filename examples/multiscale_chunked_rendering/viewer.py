@@ -206,7 +206,7 @@ data_extent_visual = LinesVisual(
     data_store_id=data_extent_store.id,
     appearance=LinesUniformAppearance(
         size=2,
-        color=(1.0, 1.0, 1.0, 0.8),
+        color=(0.0, 0.0, 0.0, 1.0),
         size_coordinate_space="screen",
     ),
 )
@@ -351,10 +351,15 @@ class MultiscaleBlobViewer(QtWidgets.QWidget):
 
         for i, (bbox_store, bbox_visual) in enumerate(zip(bbox_stores, bbox_visuals)):
             if i == active:
-                # Read the world-space position from the active volume's matrix.
+                # Read the world-space extent from the active volume's full
+                # affine matrix.  The texture_to_world transform encodes both
+                # translation (mat[:3,3]) AND scale (diagonal of mat[:3,:3]),
+                # so the far corner must be computed via matrix multiplication
+                # rather than simply adding tw.
                 mat = gfx_node._volume_nodes[active].local.matrix  # (4, 4)
                 tex_min = np.array(mat[:3, 3], dtype=np.float32)  # (z, y, x)
-                tex_max = tex_min + tw
+                far = np.array([tw, tw, tw, 1.0], dtype=np.float64)
+                tex_max = (mat @ far)[:3].astype(np.float32)
                 bbox_store.coordinates = _aabb_to_line_pairs(tex_min, tex_max)
                 self.viewer.reslice_visual(scene.id, bbox_visual.id, canvas.id)
 
