@@ -44,7 +44,7 @@ dependencies = [
     "qtpy",
     "scipy>=1.15.2",
     "superqt>=0.7.2",
-    "wgpu<0.29",
+    "wgpu>=0.31.0",
     "zarr",
 ]
 

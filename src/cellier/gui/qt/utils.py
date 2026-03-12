@@ -3,16 +3,14 @@
 from typing import Dict, Optional
 
 from qtpy.QtWidgets import QWidget
-
-# from rendercanvas.qt import QRenderWidget
-from wgpu.gui.qt import WgpuCanvas
+from rendercanvas.qt import QRenderWidget
 
 from cellier.models.viewer import ViewerModel
 
 
 def construct_qt_canvases_from_model(
     viewer_model: ViewerModel, parent: Optional[QWidget] = None
-) -> Dict[str, WgpuCanvas]:
+) -> Dict[str, QRenderWidget]:
     """Construct Qt PyGFX canvas widgets from the viewer model.
 
     Parameters
@@ -35,6 +33,6 @@ def construct_qt_canvases_from_model(
         for canvas_model in scene_model.canvases.values():
             # todo switch to rendercanvas
             # canvas_widgets[canvas_model.id] = QRenderWidget(parent=parent)
-            canvas_widgets[canvas_model.id] = WgpuCanvas(parent=parent)
+            canvas_widgets[canvas_model.id] = QRenderWidget(parent=parent)
 
     return canvas_widgets
