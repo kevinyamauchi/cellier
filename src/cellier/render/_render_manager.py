@@ -9,7 +9,7 @@ import numpy as np
 import pygfx
 import pygfx as gfx
 from psygnal import Signal
-from pygfx.renderers import WgpuRenderer
+from pygfx import WgpuRenderer
 from pylinalg import vec_transform, vec_unproject
 from rendercanvas.pyqt6 import RenderCanvas
 from superqt import ensure_main_thread
