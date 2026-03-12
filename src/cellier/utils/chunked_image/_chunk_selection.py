@@ -132,18 +132,14 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         texture_config: TextureConfiguration,
         view_direction: np.ndarray,
     ) -> np.ndarray:
-        """Anchor the texture using camera-near logic on the primary axis only.
+        """Anchor the texture to the minimum corner of the frustum bounding box.
 
-        On the primary axis (largest view-direction component) the anchor is
-        the camera-near face of the AABB: ``bbox_min`` when looking in the
-        positive direction, ``bbox_max`` when looking in the negative direction.
-        This ensures the chunks closest to the camera are loaded when the
-        volume exceeds the texture width along that axis.
-
-        On the two non-primary axes the anchor is always ``bbox_min``.
-        Those axes are traversed in cross-section — the camera's position
-        along them is irrelevant — so camera-dependent anchoring would only
-        introduce instability without improving correctness.
+        Uses ``bounding_box_min`` as the fixed anchor so the texture position
+        is determined solely by which chunks are in the frustum, not by camera
+        orientation.  This keeps the texture stable as the camera orbits: the
+        same chunks occupy the same texture positions until the frustum-visible
+        set changes.  Any AABB edge that exceeds ``texture_width`` is shortened
+        by moving the far end toward ``bounding_box_min``.
 
         Parameters
         ----------
@@ -154,7 +150,8 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         texture_config : TextureConfiguration
             Texture configuration whose ``texture_width`` caps each edge.
         view_direction : np.ndarray
-            Normalised view direction vector, shape (3,).
+            Normalised view direction vector, shape (3,). Unused; kept for
+            interface consistency.
 
         Returns
         -------
@@ -162,19 +159,10 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             Positioning corner (minimum corner of the texture in scale space),
             shape (3,).
         """
-        primary_axis = self._determine_primary_axis(view_direction)
-
-        # Non-primary axes always anchor to bbox_min.
-        fixed_vertex = bounding_box_min.copy()
-
-        # Primary axis: anchor to the camera-near face.
-        if view_direction[primary_axis] < 0:
-            fixed_vertex[primary_axis] = bounding_box_max[primary_axis]
-
         modified_bbox_min, _ = self._shorten_oversized_edges(
             bounding_box_min,
             bounding_box_max,
-            fixed_vertex,
+            bounding_box_min,
             texture_config.texture_width,
         )
         return modified_bbox_min

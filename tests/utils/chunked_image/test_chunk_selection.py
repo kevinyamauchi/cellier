@@ -328,10 +328,15 @@ def test_camera_low_z_anchors_to_low_z_face_no_clip(
     np.testing.assert_allclose(tex_max, [64.0, 64.0, 64.0], atol=1e-6)
 
 
-def test_camera_high_z_clips_to_high_z_end(
+def test_camera_high_z_clips_to_low_z_end(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-07: Camera on high-z side, texture clips to high-z end."""
+    """T-07: Camera on high-z side, texture still anchors to low-z (bbox_min) end.
+
+    Texture position is determined by bbox_min, not camera orientation, so the
+    anchor is always the low-coordinate corner of the frustum AABB regardless
+    of which way the camera faces.
+    """
     # 4 chunks along z (total 128), 1 along y and x
     chunks = np.stack(
         [
@@ -354,8 +359,8 @@ def test_camera_high_z_clips_to_high_z_end(
         view_params, scale_level_identity, texture_config_64, chunks
     )
 
-    np.testing.assert_allclose(tex_min[0], 64.0, atol=1e-6)
-    np.testing.assert_allclose(tex_max[0], 128.0, atol=1e-6)
+    np.testing.assert_allclose(tex_min[0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(tex_max[0], 64.0, atol=1e-6)
 
 
 def test_all_axes_clipped_when_oversized(
