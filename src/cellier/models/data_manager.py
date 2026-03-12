@@ -7,6 +7,7 @@ from pydantic import Field
 from typing_extensions import Annotated
 
 from cellier.models.data_stores import (
+    ChunkedImageStore,
     ImageMemoryStore,
     LinesMemoryStore,
     PointsMemoryStore,
@@ -14,15 +15,13 @@ from cellier.models.data_stores import (
 
 # types for discrimitive unions
 DataStoreType = Annotated[
-    Union[PointsMemoryStore, LinesMemoryStore, ImageMemoryStore],
+    Union[PointsMemoryStore, LinesMemoryStore, ImageMemoryStore, ChunkedImageStore],
     Field(discriminator="store_type"),
 ]
 
 
 class DataManager(EventedModel):
     """Class to model all data_stores in the viewer.
-
-    todo: add discrimitive union
 
     Attributes
     ----------
