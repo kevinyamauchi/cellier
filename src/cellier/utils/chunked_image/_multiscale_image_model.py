@@ -1,6 +1,6 @@
 """Data class to represent a multiscale, chunked image."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from typing_extensions import Self
@@ -239,16 +239,24 @@ class MultiscaleImageModel:
     ----------
     scales : list[ScaleLevelModel]
         List of scale levels ordered from finest to coarsest resolution.
+    world_transform : AffineTransform, optional
+        Transformation from scale_0 (full resolution) coordinates to world
+        coordinates. Default is identity (scale_0 = world).
 
     Attributes
     ----------
     scales : list[ScaleLevelModel]
         List of scale levels ordered from finest to coarsest resolution.
+    world_transform : AffineTransform
+        Transformation from scale_0 coordinates to world coordinates.
     n_scales : int
         Number of scale levels.
     """
 
     scales: list[ScaleLevelModel]
+    world_transform: AffineTransform = field(
+        default_factory=lambda: AffineTransform.from_translation((0.0, 0.0, 0.0))
+    )
 
     @property
     def n_scales(self) -> int:
