@@ -58,8 +58,10 @@ class GFXChunkedImageNode:
             name=model.id, visible=model.appearance.visible
         )
 
-        # Lazily created on first set_slice().
-        self._volume_node: gfx.Volume | None = None
+        # Lazily created on first set_slice().  One Volume per scale level;
+        # only the active scale's Volume is visible at any given time.
+        self._volume_nodes: list[gfx.Volume] = []
+        self._active_scale: int = 0
         self._atlas: TextureAtlas | None = None
 
     # ------------------------------------------------------------------
@@ -69,18 +71,17 @@ class GFXChunkedImageNode:
     @property
     def callback_handlers(self) -> list[Callable]:
         """Mouse-event handler registration callables for each sub-node."""
-        if self._volume_node is not None:
-            return [self._volume_node.add_event_handler]
-        return []
+        return [vol.add_event_handler for vol in self._volume_nodes]
 
     def set_slice(self, slice_data: ChunkedDataResponse) -> None:  # type: ignore[override]
         """Apply a :class:`~cellier.types.ChunkedDataResponse` to the node.
 
-        On the first call the texture atlas and volume sub-node are
-        created from ``slice_data.texture_config``.  On every call the
-        volume's world transform is updated from
-        ``slice_data.texture_to_world_transform`` and all chunks in
-        ``slice_data.available_chunks`` are uploaded to the atlas.
+        On the first call the texture atlas and all per-scale volume sub-nodes
+        are created from ``slice_data.texture_config``.  On every call the
+        active scale's world transform is updated from
+        ``slice_data.texture_to_world_transform``, visibility is toggled so
+        only the active scale is shown, and available chunks are uploaded to
+        the atlas.
 
         Parameters
         ----------
@@ -91,10 +92,18 @@ class GFXChunkedImageNode:
         if self._atlas is None:
             self._initialize_atlas(slice_data.texture_config)
 
-        # Position the volume in world space.
-        self._volume_node.local.matrix = (  # type: ignore[union-attr]
-            slice_data.texture_to_world_transform.matrix
-        )
+        active = slice_data.resolution_level
+
+        # Position the active scale's volume in world space.
+        self._volume_nodes[
+            active
+        ].local.matrix = slice_data.texture_to_world_transform.matrix
+
+        # Show only the active scale.
+        for i, vol in enumerate(self._volume_nodes):
+            vol.visible = i == active
+
+        self._active_scale = active
 
         # Upload chunks that are immediately available from the CPU cache.
         for chunk_data in slice_data.available_chunks:
@@ -143,18 +152,22 @@ class GFXChunkedImageNode:
     # ------------------------------------------------------------------
 
     def _initialize_atlas(self, texture_config: TextureConfiguration) -> None:
-        """Create the TextureAtlas and Volume sub-node on first use.
+        """Create the TextureAtlas and one Volume sub-node per scale on first use.
 
         Parameters
         ----------
         texture_config : TextureConfiguration
-            Specifies ``texture_width`` — the edge length (in voxels) of the
-            cubic GPU texture.
+            Specifies ``texture_width`` (edge length in voxels) and
+            ``n_scales`` (number of scale levels to allocate).
         """
         tw = texture_config.texture_width
-        self._atlas = TextureAtlas(texture_width=tw, n_scales=1)
+        n_scales = texture_config.n_scales
+        self._atlas = TextureAtlas(texture_width=tw, n_scales=n_scales)
 
-        texture = self._atlas.texture_for_scale(0)
-        geometry = gfx.Geometry(grid=texture)
-        self._volume_node = gfx.Volume(geometry=geometry, material=self._material)
-        self.node.add(self._volume_node)
+        for i in range(n_scales):
+            texture = self._atlas.texture_for_scale(i)
+            geometry = gfx.Geometry(grid=texture)
+            volume = gfx.Volume(geometry=geometry, material=self._material)
+            volume.visible = i == 0  # only scale 0 visible initially
+            self.node.add(volume)
+            self._volume_nodes.append(volume)

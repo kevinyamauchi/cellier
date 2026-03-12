@@ -66,6 +66,9 @@ class TextureConfiguration:
         This value determines the maximum amount of data that can be stored
         in the texture and should be chosen based on available GPU memory
         and performance requirements. Must be positive.
+    n_scales : int, optional
+        Number of scale levels this texture atlas will manage.  One GPU
+        texture is allocated per scale level.  Default is 1 (single-scale).
 
     Notes
     -----
@@ -77,6 +80,7 @@ class TextureConfiguration:
     """
 
     texture_width: int
+    n_scales: int = 1
 
 
 @dataclass

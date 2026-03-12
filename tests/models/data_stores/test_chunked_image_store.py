@@ -118,7 +118,7 @@ def chunked_store(zarr_array, multiscale_model):
     slicer = AsynchronousDataSlicer(max_workers=2)
     cs.setup_chunk_manager(slicer, max_cache_bytes=64 * 1024 * 1024)
     # Inject the in-memory array so no filesystem access occurs
-    cs._zarr_array = zarr_array
+    cs._zarr_arrays = [zarr_array]
     return cs
 
 
@@ -269,7 +269,7 @@ def test_non_identity_world_transform(zarr_array):
     )
     slicer = AsynchronousDataSlicer(max_workers=1)
     base_store.setup_chunk_manager(slicer, max_cache_bytes=64 * 1024 * 1024)
-    base_store._zarr_array = zarr_array
+    base_store._zarr_arrays = [zarr_array]
 
     base_frustum = _make_frustum(
         z_near=32.0, z_far=96.0, y_min=32.0, y_max=96.0, x_min=32.0, x_max=96.0
@@ -296,7 +296,7 @@ def test_non_identity_world_transform(zarr_array):
         texture_config=TextureConfiguration(texture_width=_TEXTURE_WIDTH),
     )
     shifted_store.setup_chunk_manager(slicer, max_cache_bytes=64 * 1024 * 1024)
-    shifted_store._zarr_array = zarr_array
+    shifted_store._zarr_arrays = [zarr_array]
 
     # Frustum shifted by the same translation in world space
     tz, ty, tx = translation

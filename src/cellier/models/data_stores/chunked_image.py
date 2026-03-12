@@ -27,7 +27,7 @@ from cellier.utils.chunked_image._chunk_selection import (
     TextureBoundsFiltering,
 )
 from cellier.utils.chunked_image._data_classes import (
-    TextureConfiguration,  # noqa: TCH001
+    TextureConfiguration,
 )
 from cellier.utils.chunked_image._multiscale_image_model import (  # noqa: TCH001
     MultiscaleImageModel,
@@ -66,7 +66,9 @@ class ChunkedImageStore(BaseDataStore):
     """
 
     multiscale_model: MultiscaleImageModel
-    store_path: str
+    # store_path is kept for backward compatibility; prefer store_paths.
+    store_path: str | None = None
+    store_paths: list[str] | None = None
     texture_config: TextureConfiguration
 
     # discriminated union key for serialisation
@@ -78,12 +80,23 @@ class ChunkedImageStore(BaseDataStore):
     # Private, non-serialised state
     # ------------------------------------------------------------------
     _chunk_manager: Any = PrivateAttr(default=None)
-    _zarr_array: Any = PrivateAttr(default=None)
+    # One lazily-opened zarr array per scale level (index-matched to
+    # multiscale_model.scales / store_paths).
+    _zarr_arrays: list[Any] = PrivateAttr(default_factory=list)
     _culler: ChunkCuller = PrivateAttr(default=None)
     _selector: ChunkSelector = PrivateAttr(default=None)
 
     def model_post_init(self, __context: Any) -> None:
         """Create stateless strategy objects after Pydantic initialisation."""
+        # Normalize store_path (deprecated single-path) → store_paths list.
+        if self.store_paths is None:
+            if self.store_path is not None:
+                self.store_paths = [self.store_path]
+            else:
+                raise ValueError(
+                    "ChunkedImageStore requires either 'store_path' or 'store_paths'."
+                )
+
         self._culler = ChunkCuller()
         self._selector = ChunkSelector(
             positioning_strategy=AxisAlignedTexturePositioning(),
@@ -168,10 +181,19 @@ class ChunkedImageStore(BaseDataStore):
 
         view_params: ViewParameters = selected_region.view_parameters
 
-        # Phase D: always use scale 0 (finest). LOAD deferred to a later phase.
-        scale_index = 0
+        # Select the coarsest scale whose visible chunks still fit in the
+        # texture atlas.  Falls back to the coarsest scale if none qualifies.
+        scale_index = self._select_scale(view_params)
         scale_level: ScaleLevelModel = self.multiscale_model.scales[scale_index]
         world_transform = self.multiscale_model.world_transform
+
+        # Propagate the true number of scales so the renderer can allocate
+        # one Volume node per scale on first use.
+        n_scales = len(self.multiscale_model.scales)
+        texture_config = TextureConfiguration(
+            texture_width=self.texture_config.texture_width,
+            n_scales=n_scales,
+        )
 
         # 1. Frustum culling — boolean mask (n_chunks,)
         frustum_visible_mask = self._culler.cull_chunks(
@@ -182,7 +204,7 @@ class ChunkedImageStore(BaseDataStore):
         result = self._selector.select_chunks(
             scale_level,
             view_params,
-            self.texture_config,
+            texture_config,
             frustum_visible_chunks=frustum_visible_mask,
         )
 
@@ -235,7 +257,7 @@ class ChunkedImageStore(BaseDataStore):
                 visual_id=visual_id,
                 resolution_level=scale_index,
                 chunk_requests=chunk_requests,
-                texture_config=self.texture_config,
+                texture_config=texture_config,
                 texture_to_world_transform=result.texture_to_world_transform,
             )
         ]
@@ -295,13 +317,20 @@ class ChunkedImageStore(BaseDataStore):
         np.ndarray
             Voxel data for the requested chunk as float32.
         """
-        # Lazy-open the backing store on first access so tests can inject an
-        # array directly into self._zarr_array without needing fsspec.
-        if self._zarr_array is None:
+        # Lazily open the backing store for this scale on first access so tests
+        # can inject pre-built arrays directly into self._zarr_arrays without
+        # needing filesystem access.
+        while len(self._zarr_arrays) <= req.scale_index:
+            self._zarr_arrays.append(None)
+
+        if self._zarr_arrays[req.scale_index] is None:
             import zarr
 
-            self._zarr_array = zarr.open(self.store_path, mode="r")
+            self._zarr_arrays[req.scale_index] = zarr.open(
+                self.store_paths[req.scale_index], mode="r"
+            )
 
+        zarr_array = self._zarr_arrays[req.scale_index]
         scale_level: ScaleLevelModel = self.multiscale_model.scales[req.scale_index]
         grid_shape = scale_level.chunk_grid_shape  # (nz, ny, nx)
 
@@ -312,13 +341,56 @@ class ChunkedImageStore(BaseDataStore):
 
         cz, cy, cx = scale_level.chunk_shape
         return np.asarray(
-            self._zarr_array[
+            zarr_array[
                 iz * cz : (iz + 1) * cz,
                 iy * cy : (iy + 1) * cy,
                 ix * cx : (ix + 1) * cx,
             ],
             dtype=np.float32,
         )
+
+    def _select_scale(self, view_params: ViewParameters) -> int:
+        """Choose the coarsest scale whose visible chunks fit in the texture.
+
+        Iterates from finest (index 0) to coarsest (index N-1).  Stops at the
+        first scale where every axis of the frustum-visible AABB is no wider
+        than ``texture_config.texture_width`` voxels *of that scale*.
+
+        Falls back to the coarsest scale when nothing fits (guarantees the
+        whole volume is always renderable).
+
+        Parameters
+        ----------
+        view_params : ViewParameters
+            Current camera state used for frustum culling.
+
+        Returns
+        -------
+        int
+            Scale index to use (0 = finest, N-1 = coarsest).
+        """
+        world_transform = self.multiscale_model.world_transform
+        tw = self.texture_config.texture_width
+
+        for scale_index, scale_level in enumerate(self.multiscale_model.scales):
+            mask = self._culler.cull_chunks(
+                scale_level, view_params.frustum_corners, world_transform
+            )
+            if mask.sum() == 0:
+                continue  # nothing visible at this scale; try coarser
+
+            # AABB of visible chunks in world (scale_0) coordinates.
+            visible_corners = scale_level.chunk_corners_scale_0[mask]  # (n, 8, 3)
+            bbox_min = visible_corners.reshape(-1, 3).min(axis=0)
+            bbox_max = visible_corners.reshape(-1, 3).max(axis=0)
+            extent = bbox_max - bbox_min  # world-space voxels (scale_0 units)
+
+            # Each voxel at this scale occupies 2^scale_index scale_0 voxels.
+            voxel_size = 2.0**scale_index
+            if np.all(extent / voxel_size <= tw):
+                return scale_index
+
+        return len(self.multiscale_model.scales) - 1  # coarsest fallback
 
     def _compute_priorities(
         self,
