@@ -132,15 +132,18 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         texture_config: TextureConfiguration,
         view_direction: np.ndarray,
     ) -> np.ndarray:
-        """Anchor the texture to the camera-near side of the frustum AABB.
+        """Anchor the texture using camera-near logic on the primary axis only.
 
-        For each axis the camera-near side is determined by the sign of the
-        view direction component: a positive component means the camera is on
-        the min side (looking toward +axis), so the anchor is ``bbox_min``; a
-        negative component means the camera is on the max side, so the anchor
-        is ``bbox_max``.  When an edge exceeds ``texture_width`` it is
-        shortened by moving the far end toward the camera-near anchor, keeping
-        the near corner fixed.
+        On the primary axis (largest view-direction component) the anchor is
+        the camera-near face of the AABB: ``bbox_min`` when looking in the
+        positive direction, ``bbox_max`` when looking in the negative direction.
+        This ensures the chunks closest to the camera are loaded when the
+        volume exceeds the texture width along that axis.
+
+        On the two non-primary axes the anchor is always ``bbox_min``.
+        Those axes are traversed in cross-section — the camera's position
+        along them is irrelevant — so camera-dependent anchoring would only
+        introduce instability without improving correctness.
 
         Parameters
         ----------
@@ -159,15 +162,19 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             Positioning corner (minimum corner of the texture in scale space),
             shape (3,).
         """
-        # Per-axis: positive view component → camera on min side → anchor min.
-        #           negative view component → camera on max side → anchor max.
-        camera_near_vertex = np.where(
-            view_direction >= 0, bounding_box_min, bounding_box_max
-        )
+        primary_axis = self._determine_primary_axis(view_direction)
+
+        # Non-primary axes always anchor to bbox_min.
+        fixed_vertex = bounding_box_min.copy()
+
+        # Primary axis: anchor to the camera-near face.
+        if view_direction[primary_axis] < 0:
+            fixed_vertex[primary_axis] = bounding_box_max[primary_axis]
+
         modified_bbox_min, _ = self._shorten_oversized_edges(
             bounding_box_min,
             bounding_box_max,
-            camera_near_vertex,
+            fixed_vertex,
             texture_config.texture_width,
         )
         return modified_bbox_min
