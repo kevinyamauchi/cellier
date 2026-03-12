@@ -73,10 +73,14 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
             frustum_chunk_corners
         )
 
-        # Step 2: Select positioning corner with AABB modification
-        # to fit texture constraints
+        # Step 2: Anchor to the minimum corner of the frustum AABB.
+        # Using a camera-dependent vertex as the anchor causes the texture to
+        # jump as the camera orbits or zooms (different AABB corners win at
+        # different distances).  Anchoring to bbox_min keeps the texture stable:
+        # when the whole volume is in view bbox_min == (0,0,0), so the cube
+        # always has a corner at the data origin.
         positioning_corner = self._select_positioning_corner(
-            bbox_min, bbox_max, view_params.frustum_corners, texture_config
+            bbox_min, bbox_max, texture_config
         )
 
         # Step 3: Calculate texture bounds with positioning corner as minimum
@@ -126,222 +130,39 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         self,
         bounding_box_min: np.ndarray,
         bounding_box_max: np.ndarray,
-        frustum_corners: np.ndarray,
         texture_config: TextureConfiguration,
     ) -> np.ndarray:
-        """Select positioning corner by modifying AABB to fit texture constraints.
+        """Anchor the texture to the minimum corner of the frustum bounding box.
 
-        This method finds the face of the axis-aligned bounding box closest to
-        the camera, identifies the vertex on that face closest to the camera,
-        and then shrinks any oversized edges by moving vertices away from the
-        fixed vertex to ensure the modified AABB fits within texture dimensions.
+        Uses ``bounding_box_min`` as the fixed anchor so the texture always
+        starts from the nearest chunk corner to the data origin.  When the
+        whole volume is in view this equals ``(0, 0, 0)``.  Any AABB edge
+        that exceeds ``texture_width`` is shortened by moving the far end
+        toward the anchor (``bounding_box_min``), keeping the near corner
+        fixed.
 
         Parameters
         ----------
         bounding_box_min : np.ndarray
-            Array of shape (3,) containing minimum coordinates of the
-            original bounding box in (x, y, z) order.
+            Minimum coordinates of the frustum chunks AABB, shape (3,).
         bounding_box_max : np.ndarray
-            Array of shape (3,) containing maximum coordinates of the
-            original bounding box in (x, y, z) order.
-        frustum_corners : np.ndarray
-            Array of shape (2, 4, 3) containing frustum corner coordinates
-            where frustum_corners[0] represents the near plane corners.
+            Maximum coordinates of the frustum chunks AABB, shape (3,).
         texture_config : TextureConfiguration
-            Configuration object containing texture_width which defines
-            the maximum edge length for the texture.
+            Texture configuration whose ``texture_width`` caps each edge.
 
         Returns
         -------
         np.ndarray
-            Array of shape (3,) containing the positioning corner coordinates
-            (minimum corner of the modified bounding box that fits within
-            texture constraints).
+            Positioning corner (minimum corner of the texture in scale space),
+            shape (3,).
         """
-        # Step 1: Calculate camera position as centroid of near plane
-        near_plane_centroid = np.mean(frustum_corners[0], axis=0)  # (3,)
-
-        # Step 2: Find the face of the AABB closest to camera
-        closest_face_idx = self._find_closest_face_to_camera(
-            bounding_box_min, bounding_box_max, near_plane_centroid
-        )
-
-        # Step 3: Get vertices on the closest face and find the one closest to camera
-        face_vertices = self._get_face_vertices(
-            bounding_box_min, bounding_box_max, closest_face_idx
-        )
-        fixed_vertex = self._find_closest_vertex_to_camera(
-            face_vertices, near_plane_centroid
-        )
-
-        # Step 4: Modify AABB by shortening edges that exceed texture width
-        modified_bbox_min, modified_bbox_max = self._shorten_oversized_edges(
+        modified_bbox_min, _ = self._shorten_oversized_edges(
             bounding_box_min,
             bounding_box_max,
-            fixed_vertex,
+            bounding_box_min,  # fixed vertex = minimum corner
             texture_config.texture_width,
         )
-
         return modified_bbox_min
-
-    def _find_closest_face_to_camera(
-        self, bbox_min: np.ndarray, bbox_max: np.ndarray, camera_position: np.ndarray
-    ) -> int:
-        """Find which face of the AABB is closest to the camera.
-
-        Parameters
-        ----------
-        bbox_min : np.ndarray
-            Minimum coordinates of the bounding box, shape (3,).
-        bbox_max : np.ndarray
-            Maximum coordinates of the bounding box, shape (3,).
-        camera_position : np.ndarray
-            Camera position coordinates, shape (3,).
-
-        Returns
-        -------
-        int
-            Index of the closest face (0-5, representing the 6 faces of the AABB).
-        """
-        # Calculate centers of all 6 faces of the AABB
-        face_centers = np.array(
-            [
-                [
-                    bbox_min[0],
-                    (bbox_min[1] + bbox_max[1]) / 2,
-                    (bbox_min[2] + bbox_max[2]) / 2,
-                ],  # -X face
-                [
-                    bbox_max[0],
-                    (bbox_min[1] + bbox_max[1]) / 2,
-                    (bbox_min[2] + bbox_max[2]) / 2,
-                ],  # +X face
-                [
-                    (bbox_min[0] + bbox_max[0]) / 2,
-                    bbox_min[1],
-                    (bbox_min[2] + bbox_max[2]) / 2,
-                ],  # -Y face
-                [
-                    (bbox_min[0] + bbox_max[0]) / 2,
-                    bbox_max[1],
-                    (bbox_min[2] + bbox_max[2]) / 2,
-                ],  # +Y face
-                [
-                    (bbox_min[0] + bbox_max[0]) / 2,
-                    (bbox_min[1] + bbox_max[1]) / 2,
-                    bbox_min[2],
-                ],  # -Z face
-                [
-                    (bbox_min[0] + bbox_max[0]) / 2,
-                    (bbox_min[1] + bbox_max[1]) / 2,
-                    bbox_max[2],
-                ],  # +Z face
-            ]
-        )
-
-        # Calculate distances from camera to each face center
-        distances = np.linalg.norm(face_centers - camera_position, axis=1)
-
-        # Return index of face with minimum distance
-        return int(np.argmin(distances))
-
-    def _get_face_vertices(
-        self, bbox_min: np.ndarray, bbox_max: np.ndarray, face_idx: int
-    ) -> np.ndarray:
-        """Get the 4 vertices that form a specific face of the AABB.
-
-        Parameters
-        ----------
-        bbox_min : np.ndarray
-            Minimum coordinates of the bounding box, shape (3,).
-        bbox_max : np.ndarray
-            Maximum coordinates of the bounding box, shape (3,).
-        face_idx : int
-            Index of the face (0-5).
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (4, 3) containing the vertices of the specified face.
-        """
-        if face_idx == 0:  # -X face
-            return np.array(
-                [
-                    [bbox_min[0], bbox_min[1], bbox_min[2]],
-                    [bbox_min[0], bbox_min[1], bbox_max[2]],
-                    [bbox_min[0], bbox_max[1], bbox_min[2]],
-                    [bbox_min[0], bbox_max[1], bbox_max[2]],
-                ]
-            )
-        elif face_idx == 1:  # +X face
-            return np.array(
-                [
-                    [bbox_max[0], bbox_min[1], bbox_min[2]],
-                    [bbox_max[0], bbox_min[1], bbox_max[2]],
-                    [bbox_max[0], bbox_max[1], bbox_min[2]],
-                    [bbox_max[0], bbox_max[1], bbox_max[2]],
-                ]
-            )
-        elif face_idx == 2:  # -Y face
-            return np.array(
-                [
-                    [bbox_min[0], bbox_min[1], bbox_min[2]],
-                    [bbox_min[0], bbox_min[1], bbox_max[2]],
-                    [bbox_max[0], bbox_min[1], bbox_min[2]],
-                    [bbox_max[0], bbox_min[1], bbox_max[2]],
-                ]
-            )
-        elif face_idx == 3:  # +Y face
-            return np.array(
-                [
-                    [bbox_min[0], bbox_max[1], bbox_min[2]],
-                    [bbox_min[0], bbox_max[1], bbox_max[2]],
-                    [bbox_max[0], bbox_max[1], bbox_min[2]],
-                    [bbox_max[0], bbox_max[1], bbox_max[2]],
-                ]
-            )
-        elif face_idx == 4:  # -Z face
-            return np.array(
-                [
-                    [bbox_min[0], bbox_min[1], bbox_min[2]],
-                    [bbox_min[0], bbox_max[1], bbox_min[2]],
-                    [bbox_max[0], bbox_min[1], bbox_min[2]],
-                    [bbox_max[0], bbox_max[1], bbox_min[2]],
-                ]
-            )
-        else:  # face_idx == 5, +Z face
-            return np.array(
-                [
-                    [bbox_min[0], bbox_min[1], bbox_max[2]],
-                    [bbox_min[0], bbox_max[1], bbox_max[2]],
-                    [bbox_max[0], bbox_min[1], bbox_max[2]],
-                    [bbox_max[0], bbox_max[1], bbox_max[2]],
-                ]
-            )
-
-    def _find_closest_vertex_to_camera(
-        self, face_vertices: np.ndarray, camera_position: np.ndarray
-    ) -> np.ndarray:
-        """Find the vertex on the face that is closest to the camera.
-
-        Parameters
-        ----------
-        face_vertices : np.ndarray
-            Array of shape (4, 3) containing the vertices of a face.
-        camera_position : np.ndarray
-            Camera position coordinates, shape (3,).
-
-        Returns
-        -------
-        np.ndarray
-            Coordinates of the closest vertex, shape (3,).
-        """
-        # Calculate distances from camera to each vertex
-        distances = np.linalg.norm(face_vertices - camera_position, axis=1)
-
-        # Return vertex with minimum distance
-        closest_idx = np.argmin(distances)
-        return face_vertices[closest_idx]
 
     def _shorten_oversized_edges(
         self,

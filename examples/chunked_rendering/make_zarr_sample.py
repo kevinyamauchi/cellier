@@ -35,7 +35,6 @@ blobs = binary_blobs(
     n_dim=3,
     blob_size_fraction=0.1,
     volume_fraction=0.15,
-    seed=42,
 ).astype(np.float32)
 
 # ---------------------------------------------------------------------------

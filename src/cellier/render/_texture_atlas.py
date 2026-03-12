@@ -12,8 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 if TYPE_CHECKING:
     import pygfx as gfx
 
@@ -69,12 +67,11 @@ class TextureAtlas:
         self._textures: list[gfx.Texture] = []
 
         for _ in range(n_scales):
-            # Initialise with zeros so the GPU texture is fully allocated.
-            data = np.zeros(
-                (texture_width, texture_width, texture_width), dtype=np.float32
-            )
+            # Create without local data so send_data() can be used to upload
+            # individual chunk sub-regions.  Textures created with data= store
+            # a local backing array and pygfx refuses send_data() on them.
             texture = gfx.Texture(
-                data=data,
+                size=(texture_width, texture_width, texture_width),
                 dim=3,
                 format="1xf4",
                 usage=wgpu.TextureUsage.COPY_DST,
