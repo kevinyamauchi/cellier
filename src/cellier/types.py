@@ -400,3 +400,47 @@ class LinesDataResponse(DataResponse):
 
     data: np.ndarray
     colors: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class ChunkRequest:
+    """A request to load a single chunk from a chunked image store.
+
+    Parameters
+    ----------
+    chunk_index : int
+        Linear index into ScaleLevelModel (row-major z,y,x order).
+    scale_index : int
+        Which scale level to load from.
+    priority : float
+        Lower value = load first. Typically distance from near plane.
+    visual_id : str
+        ID of the visual that requested this chunk.
+    scene_id : str
+        ID of the scene containing the visual.
+    """
+
+    chunk_index: int
+    scale_index: int
+    priority: float
+    visual_id: str
+    scene_id: str
+
+
+@dataclass
+class ChunkData:
+    """A loaded chunk's voxel data.
+
+    Parameters
+    ----------
+    chunk_index : int
+        Linear index matching the originating ChunkRequest.
+    scale_index : int
+        Scale level index matching the originating ChunkRequest.
+    data : np.ndarray
+        Voxel data as a numpy array. No GPU objects.
+    """
+
+    chunk_index: int
+    scale_index: int
+    data: np.ndarray
