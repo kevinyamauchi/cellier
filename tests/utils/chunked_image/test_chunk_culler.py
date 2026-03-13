@@ -138,6 +138,7 @@ def test_integration_with_chunk_selector(
         scale_level=scale_level_identity,
         view_params=view_params,
         texture_config=texture_config_64,
+        world_transform=identity_world_transform,
         frustum_visible_chunks=mask,
     )
 

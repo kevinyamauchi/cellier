@@ -206,6 +206,7 @@ class ChunkedImageStore(BaseDataStore):
             scale_level,
             view_params,
             texture_config,
+            world_transform=world_transform,
             frustum_visible_chunks=frustum_visible_mask,
         )
 
@@ -231,13 +232,12 @@ class ChunkedImageStore(BaseDataStore):
 
             # Min corner of this chunk in scale_n coordinates
             scale_n_corner = np.array([[iz * cz, iy * cy, ix * cx]], dtype=np.float64)
-            # Transform scale_n → scale_0 using the scale-level transform
+            # Transform scale_N → scale_0 → world, then invert
+            # texture_to_world_transform to get the voxel offset in the atlas.
             scale_0_corner = scale_level.transform.map_coordinates(scale_n_corner)
-            # Invert the texture_to_world_transform to find the voxel offset
-            # within the texture atlas (works correctly when world_transform
-            # is identity, i.e. scale_0 == world).
+            world_corner = world_transform.map_coordinates(scale_0_corner)
             tex_corner = result.texture_to_world_transform.imap_coordinates(
-                scale_0_corner
+                world_corner
             )
             texture_offset = tuple(max(0, int(round(v))) for v in tex_corner[0])
 

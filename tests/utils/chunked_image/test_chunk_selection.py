@@ -22,6 +22,14 @@ from cellier.utils.chunked_image._multiscale_image_model import (
     compute_scale_transform,
 )
 
+# ── Shared constants ──────────────────────────────────────────────────────────
+
+# Identity world transform used as a neutral value wherever select_chunks
+# requires the argument but the test is not exercising world_transform logic.
+_IDENTITY_WT = AffineTransform.from_scale_and_translation(
+    (1.0, 1.0, 1.0), (0.0, 0.0, 0.0)
+)
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -438,7 +446,10 @@ def test_basic_selection_returns_chunks(
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     result = chunk_selector.select_chunks(
-        scale_level_identity, view_params, texture_config_64
+        scale_level_identity,
+        view_params,
+        texture_config_64,
+        world_transform=_IDENTITY_WT,
     )
 
     assert result.n_selected_chunks > 0
@@ -458,6 +469,7 @@ def test_empty_frustum_mask_returns_zero(
         scale_level_identity,
         view_params,
         texture_config_64,
+        world_transform=_IDENTITY_WT,
         frustum_visible_chunks=all_false,
     )
 
@@ -479,6 +491,7 @@ def test_selection_respects_frustum_mask(
         scale_level_identity,
         view_params,
         texture_config_128,
+        world_transform=_IDENTITY_WT,
         frustum_visible_chunks=frustum_mask,
     )
 
@@ -496,7 +509,10 @@ def test_result_transform_is_translation(
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     result = chunk_selector.select_chunks(
-        scale_level_identity, view_params, texture_config_64
+        scale_level_identity,
+        view_params,
+        texture_config_64,
+        world_transform=_IDENTITY_WT,
     )
 
     m = result.texture_to_world_transform.matrix
@@ -512,7 +528,10 @@ def test_selected_chunks_inside_texture_bounds(
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     result = chunk_selector.select_chunks(
-        scale_level_identity, view_params, texture_config_64
+        scale_level_identity,
+        view_params,
+        texture_config_64,
+        world_transform=_IDENTITY_WT,
     )
 
     if result.n_selected_chunks == 0:
@@ -540,10 +559,16 @@ def test_larger_texture_selects_at_least_as_many_chunks(
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     result_small = chunk_selector.select_chunks(
-        scale_level_identity, view_params, TextureConfiguration(texture_width=32)
+        scale_level_identity,
+        view_params,
+        TextureConfiguration(texture_width=32),
+        world_transform=_IDENTITY_WT,
     )
     result_large = chunk_selector.select_chunks(
-        scale_level_identity, view_params, TextureConfiguration(texture_width=128)
+        scale_level_identity,
+        view_params,
+        TextureConfiguration(texture_width=128),
+        world_transform=_IDENTITY_WT,
     )
 
     assert result_large.n_selected_chunks >= result_small.n_selected_chunks
@@ -588,3 +613,148 @@ def test_world_transform_roundtrip(scale_level_identity):
     mapped = model.world_transform.map_coordinates(points)
     roundtrip = model.world_transform.imap_coordinates(mapped)
     np.testing.assert_allclose(roundtrip, points, atol=1e-6)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Group 4: New anchor and world_transform regression tests (T-22..T-23)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_perspective_anchor_centers_texture_on_data(
+    chunk_selector, scale_level_identity, texture_config_64
+):
+    """T-22: Perspective camera outside data — texture centred on data centre.
+
+    With near_dist=1, far_dist=300, half_h_near=0.5, half_h_far=150 the
+    recovered camera sits at scale_N = (-101, 64, 64).  Projecting the data
+    centre (64, 64, 64) onto the +z ray gives anchor = (64, 64, 64), which
+    snaps to tex_min = (32, 32, 32).
+
+    Previously (near_plane_center anchor) the near plane at z≈-100 would
+    have been outside the data, clamping tex_min to (0, 0, 0) — covering only
+    the data face nearest the camera.
+    """
+    # Camera in scale_0 at (-101, 64, 64), looking along +z (axis 0).
+    # near plane at z=-100, far plane at z=199, both centred on (y=64, x=64).
+    near_half_h = 0.5
+    far_half_h = 150.0
+    near_z = -100.0
+    far_z = 199.0
+
+    near = np.array(
+        [
+            [near_z, 64.0 - near_half_h, 64.0 - near_half_h],
+            [near_z, 64.0 - near_half_h, 64.0 + near_half_h],
+            [near_z, 64.0 + near_half_h, 64.0 + near_half_h],
+            [near_z, 64.0 + near_half_h, 64.0 - near_half_h],
+        ],
+        dtype=np.float32,
+    )
+    far = np.array(
+        [
+            [far_z, 64.0 - far_half_h, 64.0 - far_half_h],
+            [far_z, 64.0 - far_half_h, 64.0 + far_half_h],
+            [far_z, 64.0 + far_half_h, 64.0 + far_half_h],
+            [far_z, 64.0 + far_half_h, 64.0 - far_half_h],
+        ],
+        dtype=np.float32,
+    )
+    frustum_corners = np.stack([near, far])
+    view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
+
+    positioning = AxisAlignedTexturePositioning()
+    _, (tex_min, tex_max), _ = positioning.position_texture(
+        view_params, scale_level_identity, texture_config_64
+    )
+
+    # anchor = (64, 64, 64) → raw_corner = (32, 32, 32) → snapped = (32, 32, 32)
+    np.testing.assert_allclose(tex_min, [32.0, 32.0, 32.0], atol=1.0)
+    np.testing.assert_allclose(tex_max, [96.0, 96.0, 96.0], atol=1.0)
+
+
+def test_non_identity_world_transform_texture_offset_roundtrip(
+    chunk_selector, scale_level_identity, texture_config_64
+):
+    """T-23: Texture offset round-trips correctly with non-identity world_transform.
+
+    world_transform = translate(50, 50, 50) shifts every scale_0 point by
+    (50, 50, 50) in world space.  Chunk (1,1,1) has scale_N min corner
+    (32, 32, 32), scale_0 min corner (32, 32, 32), world min corner
+    (82, 82, 82).
+
+    The expected texture offset is (0, 0, 0) because the texture window starts
+    at scale_N (32, 32, 32).  Composing the full chain and inverting should
+    reproduce this exactly.
+    """
+    # Place perspective camera in world space so the full data is in view.
+    # Camera in scale_0 = (-101, 64, 64); in world = (-51, 114, 114).
+    world_transform = AffineTransform.from_translation((50.0, 50.0, 50.0))
+
+    near_half_h = 0.5
+    far_half_h = 150.0
+    near_z_world = -100.0 + 50.0  # = -50.0
+    far_z_world = 199.0 + 50.0  # = 249.0
+    cy_world = 64.0 + 50.0  # = 114.0
+    cx_world = 64.0 + 50.0  # = 114.0
+
+    near = np.array(
+        [
+            [near_z_world, cy_world - near_half_h, cx_world - near_half_h],
+            [near_z_world, cy_world - near_half_h, cx_world + near_half_h],
+            [near_z_world, cy_world + near_half_h, cx_world + near_half_h],
+            [near_z_world, cy_world + near_half_h, cx_world - near_half_h],
+        ],
+        dtype=np.float32,
+    )
+    far = np.array(
+        [
+            [far_z_world, cy_world - far_half_h, cx_world - far_half_h],
+            [far_z_world, cy_world - far_half_h, cx_world + far_half_h],
+            [far_z_world, cy_world + far_half_h, cx_world + far_half_h],
+            [far_z_world, cy_world + far_half_h, cx_world - far_half_h],
+        ],
+        dtype=np.float32,
+    )
+    frustum_corners = np.stack([near, far])
+    view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
+
+    result = chunk_selector.select_chunks(
+        scale_level_identity,
+        view_params,
+        texture_config_64,
+        world_transform=world_transform,
+    )
+
+    assert result.n_selected_chunks > 0, "No chunks selected; cannot validate."
+
+    # Pick one selected chunk and verify the round-trip:
+    # texture_to_world_transform.map_coordinates(tex_offset) == world_corner
+    idx = int(np.flatnonzero(result.selected_chunk_mask)[0])
+    grid = scale_level_identity.chunk_grid_shape
+    iz = idx // (grid[1] * grid[2])
+    iy = (idx // grid[2]) % grid[1]
+    ix = idx % grid[2]
+    cz, cy, cx = scale_level_identity.chunk_shape
+    scale_n_corner = np.array([[iz * cz, iy * cy, ix * cx]], dtype=np.float64)
+
+    # scale_N → scale_0 (identity) → world
+    scale_0_corner = scale_level_identity.transform.map_coordinates(scale_n_corner)
+    expected_world_corner = world_transform.map_coordinates(scale_0_corner)
+
+    # Invert via texture_to_world_transform
+    tex_offset = result.texture_to_world_transform.imap_coordinates(
+        expected_world_corner
+    )
+
+    # Round-trip: mapping tex_offset forward should recover the world corner
+    recovered_world = result.texture_to_world_transform.map_coordinates(tex_offset)
+    np.testing.assert_allclose(
+        recovered_world,
+        expected_world_corner,
+        atol=1e-4,
+        err_msg=(
+            f"Round-trip failed for chunk {idx} (iz={iz}, iy={iy}, ix={ix}).\n"
+            f"Expected world corner: {expected_world_corner}\n"
+            f"Recovered world corner: {recovered_world}"
+        ),
+    )
