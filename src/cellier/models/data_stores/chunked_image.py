@@ -363,6 +363,17 @@ class ChunkedImageStore(BaseDataStore):
         - ``lod_bias > 1``: bias toward coarser scales (better performance).
         - ``lod_bias = 1``: mip-map optimum — one voxel per screen pixel.
 
+        For **perspective** cameras the near clipping plane is typically very
+        close to the camera (PyGFX default: 0.1), making its physical height far
+        too small to use directly.  Instead the camera position is recovered from
+        the ratio of near- and far-plane heights, and the pixel footprint is
+        evaluated at the center of the data bounding box.  This correctly
+        reflects how large data voxels appear on screen regardless of the near-
+        clip distance.
+
+        For **orthographic** cameras the near- and far-plane heights are equal,
+        and the near-plane height divided by ``canvas_size[1]`` is used directly.
+
         Falls back to the coarsest scale if no scale satisfies the criterion
         (e.g., when ``canvas_size`` is (1, 1) — the default placeholder).
 
@@ -378,22 +389,63 @@ class ChunkedImageStore(BaseDataStore):
             Scale index to use (0 = finest, N-1 = coarsest).
         """
         near_corners = view_params.frustum_corners[0]  # (4, 3)
+        far_corners = view_params.frustum_corners[1]  # (4, 3)
         canvas_h = view_params.canvas_size[1]
+        n_scales = len(self.multiscale_model.scales)
 
-        # near_corners order: left-bottom, right-bottom, right-top, left-top
-        near_plane_h = float(np.linalg.norm(near_corners[3] - near_corners[0]))
+        # corner order: left-bottom, right-bottom, right-top, left-top
+        near_h = float(np.linalg.norm(near_corners[3] - near_corners[0]))
+        far_h = float(np.linalg.norm(far_corners[3] - far_corners[0]))
 
-        if canvas_h <= 1 or near_plane_h <= 0:
-            return len(self.multiscale_model.scales) - 1  # coarsest fallback
+        if canvas_h <= 1 or near_h <= 0:
+            return n_scales - 1  # coarsest fallback
 
-        world_per_pixel = near_plane_h / canvas_h
+        if far_h <= near_h * 1.001:
+            # Orthographic camera: pixel size is uniform across depth
+            world_per_pixel = near_h / canvas_h
+        else:
+            # Perspective camera: the near plane is typically very close to the
+            # camera (e.g. default near=0.1 in PyGFX), so using near_h directly
+            # gives a world_per_pixel that is far too small.  Instead, recover the
+            # camera position and evaluate pixel footprint at the data center.
+            #
+            # For a symmetric perspective frustum the ratio of plane heights equals
+            # the ratio of plane distances from the camera:
+            #   near_h / far_h = near_dist / far_dist
+            # Using plane centers and the view direction:
+            near_center = near_corners.mean(axis=0)
+            far_center = far_corners.mean(axis=0)
+            view_dir = view_params.view_direction  # unit vector
 
-        for scale_index in range(len(self.multiscale_model.scales)):
+            k = far_h / near_h  # k > 1
+            # Distance from near plane to far plane along view direction:
+            d_near_far = float(np.dot(far_center - near_center, view_dir))
+            if d_near_far <= 0:
+                return n_scales - 1  # degenerate frustum
+
+            # near_dist = d_near_far / (k - 1)
+            near_dist = d_near_far / (k - 1.0)
+            cam_pos = near_center - near_dist * view_dir
+
+            # Data center in world coordinates (scale_0 coords = world for
+            # default identity world_transform)
+            data_bb_min, data_bb_max = self.multiscale_model.get_full_extent_world()
+            data_center_world = (data_bb_min + data_bb_max) / 2.0
+
+            dist_to_data = float(np.dot(data_center_world - cam_pos, view_dir))
+            if dist_to_data <= 0:
+                dist_to_data = near_dist  # fallback: evaluate at near plane
+
+            # World height at the data plane scales linearly with distance
+            world_h_at_data = near_h * dist_to_data / near_dist
+            world_per_pixel = world_h_at_data / canvas_h
+
+        for scale_index in range(n_scales):
             voxel_size = 2.0**scale_index
             if voxel_size >= world_per_pixel * self.lod_bias:
                 return scale_index
 
-        return len(self.multiscale_model.scales) - 1  # coarsest fallback
+        return n_scales - 1  # coarsest fallback
 
     def _compute_priorities(
         self,
