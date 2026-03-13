@@ -368,11 +368,15 @@ class ChunkedImageStore(BaseDataStore):
 
         ``texture_width * 2^N >= in_view_width * lod_bias``
 
-        ``in_view_width`` is the frustum's perpendicular cross-section width
-        **at the depth where the central view ray enters the data**, in scale_0
-        coordinates.  Using the entry-point cross-section rather than the full
-        frustum AABB prevents the far clipping plane from dominating the metric
-        and ensures the selected scale tracks the camera-to-data distance.
+        ``in_view_width`` is the perpendicular extent of the intersection of
+        the near data face with the frustum, in scale_0 coordinates.  Concretely,
+        each of the four frustum edges (near_corner[i] → far_corner[i]) is
+        intersected individually with the near-data-face plane; the resulting
+        four points are clamped to the data AABB and their bounding box gives
+        the visible window onto the data face.  Using per-corner intersections
+        (rather than a single centre-ray t) handles oblique cameras correctly
+        and, unlike the full frustum AABB, is not dominated by the far clipping
+        plane.
 
         The ``lod_bias`` field shifts the threshold:
         - ``lod_bias < 1``: bias toward finer scales (more detail).
@@ -412,50 +416,54 @@ class ChunkedImageStore(BaseDataStore):
             )
             return n_scales - 1
 
-        # Compute the frustum cross-section at the data-entry depth.
+        # Intersect the near data face with the frustum.
         #
-        # This measures the actual zoom level: for a camera at distance d from
-        # the data surface with half field-of-view theta, the cross-section is
-        # ~2*d*tan(theta), independent of the far clipping distance.
+        # Each frustum edge runs from near_corners_w[i] to far_corners_w[i].
+        # We find the parametric t_i at which that edge crosses the near data
+        # face plane (the data face closest to the camera along the primary
+        # axis).  Using per-corner t values handles oblique cameras correctly:
+        # the four edges can hit the data face at different depths.
         view_dir = view_params.view_direction.astype(float)
         primary_axis = int(np.argmax(np.abs(view_dir)))
         perp_axes = [ax for ax in range(3) if ax != primary_axis]
 
         near_corners_w = np.asarray(view_params.frustum_corners[0], dtype=float)
         far_corners_w = np.asarray(view_params.frustum_corners[1], dtype=float)
-        near_center_w = near_corners_w.mean(axis=0)
-        far_center_w = far_corners_w.mean(axis=0)
-        ray_segment_w = far_center_w - near_center_w  # near → far
+        edge_deltas_w = far_corners_w - near_corners_w  # shape (4, 3)
 
-        # t where the central ray reaches the data face (t=0 at near, t=1 at far).
         data_face_w = (
             data_bb_min_w[primary_axis]
             if view_dir[primary_axis] >= 0
             else data_bb_max_w[primary_axis]
         )
-        ray_denom = ray_segment_w[primary_axis]
-        if abs(ray_denom) < 1e-10:
-            t_entry = 0.0  # ray perpendicular to primary axis → use near plane
-        else:
-            # Clamp to 0: if data face is behind the near plane, stay at near.
-            t_entry = max(
+
+        # Per-corner parametric intersection along the primary axis.
+        # t=0 → near clip plane, t=1 → far clip plane.
+        # Clamp to [0, 1]: t<0 means data face is behind the near clip (camera
+        # inside data → use near clip); t>1 means data face is beyond the far
+        # clip (use far clip corner).
+        denoms = edge_deltas_w[:, primary_axis]  # shape (4,)
+        ts = np.where(
+            np.abs(denoms) < 1e-10,
+            0.0,  # edge parallel to data face → use near clip
+            np.clip(
+                (data_face_w - near_corners_w[:, primary_axis]) / denoms,
                 0.0,
-                (data_face_w - near_center_w[primary_axis]) / ray_denom,
-            )
+                1.0,
+            ),
+        )
+        intersections_w = near_corners_w + ts[:, np.newaxis] * edge_deltas_w
 
-        # Interpolate frustum corners to that depth.
-        corners_at_entry_w = near_corners_w + t_entry * (far_corners_w - near_corners_w)
-
-        # Clamp cross-section to the data AABB, then convert to scale_0 units.
-        cmin_w = np.maximum(corners_at_entry_w.min(axis=0), data_bb_min_w)
-        cmax_w = np.minimum(corners_at_entry_w.max(axis=0), data_bb_max_w)
+        # Clamp intersection polygon to the data AABB, then convert to scale_0.
+        cmin_w = np.maximum(intersections_w.min(axis=0), data_bb_min_w)
+        cmax_w = np.minimum(intersections_w.max(axis=0), data_bb_max_w)
         corners_s0 = world_transform.imap_coordinates(np.vstack([cmin_w, cmax_w]))
         extents_s0 = np.abs(corners_s0[1] - corners_s0[0])
         in_view_width = float(max(extents_s0[ax] for ax in perp_axes))
 
         logger.debug(
-            "_select_scale: t_entry=%.4f  in_view_width_s0=%.2f  primary_axis=%d",
-            t_entry,
+            "_select_scale: ts=%s  in_view_width_s0=%.2f  primary_axis=%d",
+            np.round(ts, 4),
             in_view_width,
             primary_axis,
         )

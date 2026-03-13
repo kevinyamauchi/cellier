@@ -4,12 +4,15 @@ The criterion: return the finest scale i where
 
     texture_width * 2^i >= in_view_width * lod_bias
 
-where ``in_view_width`` is the maximum of the two perpendicular extents of the
-frustum-data overlap AABB (in scale_0 / world coordinates), and ``lod_bias``
+where ``in_view_width`` is the perpendicular extent of the intersection of the
+near data face with the frustum (in scale_0 coordinates), and ``lod_bias``
 shifts the threshold (>1 → coarser, <1 → finer).
 
-This replaces the old mip-map (world-per-pixel) criterion with one that asks
-"can the texture window fit all visible data at this scale?"
+Each frustum edge (near_corner[i] → far_corner[i]) is intersected individually
+with the near-data-face plane; the bounding box of those four intersection
+points, clamped to the data AABB, gives the width of data visible on the near
+data face.  This avoids far-clipping-plane domination while correctly measuring
+"how much data is the camera looking at?"
 """
 
 import numpy as np
@@ -125,11 +128,16 @@ def make_store(lod_bias: float = 1.0, n_scales: int = 3, shape: tuple = _DATA_SH
 
 
 def _compute_in_view_width(frustum_corners, data_bb_min, data_bb_max, view_dir):
-    """Compute in_view_width using the frustum cross-section at data-entry depth.
+    """Compute in_view_width via per-corner frustum-edge / near-data-face intersection.
 
     Mirrors the algorithm in ``ChunkedImageStore._select_scale`` so that tests
     can independently derive the expected width and compare against the
     implementation.
+
+    Each frustum edge (near_corner[i] → far_corner[i]) is intersected with
+    the near data face plane individually.  The perpendicular bounding box of
+    those four intersection points, clamped to the data AABB, gives the width
+    of data visible on the near data face.
     """
     # Quick overlap check — same guard used in _select_scale.
     if compute_in_view_aabb(frustum_corners, data_bb_min, data_bb_max) is None:
@@ -141,24 +149,28 @@ def _compute_in_view_width(frustum_corners, data_bb_min, data_bb_max, view_dir):
 
     near_corners = np.asarray(frustum_corners[0], dtype=float)
     far_corners = np.asarray(frustum_corners[1], dtype=float)
-    near_center = near_corners.mean(axis=0)
-    far_center = far_corners.mean(axis=0)
-    ray_segment = far_center - near_center
+    edge_deltas = far_corners - near_corners  # shape (4, 3)
 
     data_face = (
         data_bb_min[primary_axis]
         if view_dir[primary_axis] >= 0
         else data_bb_max[primary_axis]
     )
-    ray_denom = ray_segment[primary_axis]
-    if abs(ray_denom) < 1e-10:
-        t_entry = 0.0
-    else:
-        t_entry = max(0.0, (data_face - near_center[primary_axis]) / ray_denom)
 
-    corners_at_entry = near_corners + t_entry * (far_corners - near_corners)
-    cmin = np.maximum(corners_at_entry.min(axis=0), data_bb_min)
-    cmax = np.minimum(corners_at_entry.max(axis=0), data_bb_max)
+    denoms = edge_deltas[:, primary_axis]
+    ts = np.where(
+        np.abs(denoms) < 1e-10,
+        0.0,
+        np.clip(
+            (data_face - near_corners[:, primary_axis]) / denoms,
+            0.0,
+            1.0,
+        ),
+    )
+    intersections = near_corners + ts[:, np.newaxis] * edge_deltas
+
+    cmin = np.maximum(intersections.min(axis=0), data_bb_min)
+    cmax = np.minimum(intersections.max(axis=0), data_bb_max)
     extents = cmax - cmin
     return float(max(extents[ax] for ax in perp_axes))
 
