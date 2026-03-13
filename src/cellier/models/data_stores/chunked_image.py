@@ -70,6 +70,7 @@ class ChunkedImageStore(BaseDataStore):
     store_path: str | None = None
     store_paths: list[str] | None = None
     texture_config: TextureConfiguration
+    lod_bias: float = 1.0
 
     # discriminated union key for serialisation
     store_type: Literal["chunked_image"] = "chunked_image"
@@ -350,44 +351,46 @@ class ChunkedImageStore(BaseDataStore):
         )
 
     def _select_scale(self, view_params: ViewParameters) -> int:
-        """Choose the coarsest scale whose visible chunks fit in the texture.
+        """Choose scale using a mip-map criterion on physical pixel size.
 
-        Iterates from finest (index 0) to coarsest (index N-1).  Stops at the
-        first scale where every axis of the frustum-visible AABB is no wider
-        than ``texture_config.texture_width`` voxels *of that scale*.
+        Iterates from finest (index 0) to coarsest (index N-1) and returns
+        the first scale where one data voxel is at least as large as one
+        screen pixel (in world-space units).  This avoids loading unnecessary
+        detail when the camera is zoomed out.
 
-        Falls back to the coarsest scale when nothing fits (guarantees the
-        whole volume is always renderable).
+        The ``lod_bias`` field shifts the threshold:
+        - ``lod_bias < 1``: bias toward finer scales (more detail).
+        - ``lod_bias > 1``: bias toward coarser scales (better performance).
+        - ``lod_bias = 1``: mip-map optimum — one voxel per screen pixel.
+
+        Falls back to the coarsest scale if no scale satisfies the criterion
+        (e.g., when ``canvas_size`` is (1, 1) — the default placeholder).
 
         Parameters
         ----------
         view_params : ViewParameters
-            Current camera state used for frustum culling.
+            Current camera state.  ``frustum_corners`` and ``canvas_size``
+            are used to derive world-space-per-pixel.
 
         Returns
         -------
         int
             Scale index to use (0 = finest, N-1 = coarsest).
         """
-        world_transform = self.multiscale_model.world_transform
-        tw = self.texture_config.texture_width
+        near_corners = view_params.frustum_corners[0]  # (4, 3)
+        canvas_h = view_params.canvas_size[1]
 
-        for scale_index, scale_level in enumerate(self.multiscale_model.scales):
-            mask = self._culler.cull_chunks(
-                scale_level, view_params.frustum_corners, world_transform
-            )
-            if mask.sum() == 0:
-                continue  # nothing visible at this scale; try coarser
+        # near_corners order: left-bottom, right-bottom, right-top, left-top
+        near_plane_h = float(np.linalg.norm(near_corners[3] - near_corners[0]))
 
-            # AABB of visible chunks in world (scale_0) coordinates.
-            visible_corners = scale_level.chunk_corners_scale_0[mask]  # (n, 8, 3)
-            bbox_min = visible_corners.reshape(-1, 3).min(axis=0)
-            bbox_max = visible_corners.reshape(-1, 3).max(axis=0)
-            extent = bbox_max - bbox_min  # world-space voxels (scale_0 units)
+        if canvas_h <= 1 or near_plane_h <= 0:
+            return len(self.multiscale_model.scales) - 1  # coarsest fallback
 
-            # Each voxel at this scale occupies 2^scale_index scale_0 voxels.
+        world_per_pixel = near_plane_h / canvas_h
+
+        for scale_index in range(len(self.multiscale_model.scales)):
             voxel_size = 2.0**scale_index
-            if np.all(extent / voxel_size <= tw):
+            if voxel_size >= world_per_pixel * self.lod_bias:
                 return scale_index
 
         return len(self.multiscale_model.scales) - 1  # coarsest fallback

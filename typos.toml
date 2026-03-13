@@ -1,0 +1,6 @@
+# typos configuration
+# https://github.com/crate-ci/typos
+
+[default.extend-words]
+# "lod" is a standard graphics abbreviation for Level of Detail
+lod = "lod"

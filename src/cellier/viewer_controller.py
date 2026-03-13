@@ -469,10 +469,13 @@ class CellierController:
         norm = np.linalg.norm(raw_dir)
         view_direction = raw_dir / norm if norm > 0 else np.array([1.0, 0.0, 0.0])
 
+        canvas_size = self._render_manager.renderers[canvas_id].logical_size
+
         view_params = ViewParameters(
             frustum_corners=frustum_corners,
             view_direction=view_direction,
             near_plane_center=near_center,
+            canvas_size=canvas_size,
         )
         region = ChunkedSelectedRegion(
             view_parameters=view_params,

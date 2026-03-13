@@ -37,6 +37,10 @@ class ViewParameters:
         Array of shape (3,) containing the center point of the near clipping
         plane in world coordinates as (z, y, x). This point is typically used
         as a reference for texture positioning algorithms.
+    canvas_size : tuple[int, int], optional
+        Viewport dimensions in pixels as (width, height).  Used by scale
+        selection to compute world-space-per-pixel.  Defaults to (1, 1)
+        which disables meaningful scale selection.
 
     Notes
     -----
@@ -48,6 +52,7 @@ class ViewParameters:
     frustum_corners: np.ndarray
     view_direction: np.ndarray
     near_plane_center: np.ndarray
+    canvas_size: tuple[int, int] = (1, 1)
 
 
 @dataclass
