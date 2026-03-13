@@ -368,8 +368,11 @@ class ChunkedImageStore(BaseDataStore):
 
         ``texture_width * 2^N >= in_view_width * lod_bias``
 
-        where ``in_view_width`` is the larger of the two perpendicular extents
-        of the frustum-data overlap AABB in scale_0 coordinates.
+        ``in_view_width`` is the frustum's perpendicular cross-section width
+        **at the depth where the central view ray enters the data**, in scale_0
+        coordinates.  Using the entry-point cross-section rather than the full
+        frustum AABB prevents the far clipping plane from dominating the metric
+        and ensures the selected scale tracks the camera-to-data distance.
 
         The ``lod_bias`` field shifts the threshold:
         - ``lod_bias < 1``: bias toward finer scales (more detail).
@@ -396,34 +399,63 @@ class ChunkedImageStore(BaseDataStore):
         # Data bounding box in world coordinates.
         data_bb_min_w, data_bb_max_w = self.multiscale_model.get_full_extent_world()
 
-        # In-view AABB: frustum ∩ data, in world space.
-        in_view = compute_in_view_aabb(
-            view_params.frustum_corners, data_bb_min_w, data_bb_max_w
-        )
-        if in_view is None:
+        # Quick overlap check: if full frustum AABB misses the data, bail early.
+        if (
+            compute_in_view_aabb(
+                view_params.frustum_corners, data_bb_min_w, data_bb_max_w
+            )
+            is None
+        ):
             logger.debug(
                 "_select_scale: frustum does not overlap data → coarsest scale %d",
                 n_scales - 1,
             )
             return n_scales - 1
 
-        in_view_min_w, in_view_max_w = in_view
-
-        # Primary axis and perpendicular extents in scale_0 coordinates.
+        # Compute the frustum cross-section at the data-entry depth.
+        #
+        # This measures the actual zoom level: for a camera at distance d from
+        # the data surface with half field-of-view theta, the cross-section is
+        # ~2*d*tan(theta), independent of the far clipping distance.
         view_dir = view_params.view_direction.astype(float)
         primary_axis = int(np.argmax(np.abs(view_dir)))
         perp_axes = [ax for ax in range(3) if ax != primary_axis]
 
-        corners_w = np.vstack([in_view_min_w, in_view_max_w])
-        corners_s0 = world_transform.imap_coordinates(corners_w)
+        near_corners_w = np.asarray(view_params.frustum_corners[0], dtype=float)
+        far_corners_w = np.asarray(view_params.frustum_corners[1], dtype=float)
+        near_center_w = near_corners_w.mean(axis=0)
+        far_center_w = far_corners_w.mean(axis=0)
+        ray_segment_w = far_center_w - near_center_w  # near → far
+
+        # t where the central ray reaches the data face (t=0 at near, t=1 at far).
+        data_face_w = (
+            data_bb_min_w[primary_axis]
+            if view_dir[primary_axis] >= 0
+            else data_bb_max_w[primary_axis]
+        )
+        ray_denom = ray_segment_w[primary_axis]
+        if abs(ray_denom) < 1e-10:
+            t_entry = 0.0  # ray perpendicular to primary axis → use near plane
+        else:
+            # Clamp to 0: if data face is behind the near plane, stay at near.
+            t_entry = max(
+                0.0,
+                (data_face_w - near_center_w[primary_axis]) / ray_denom,
+            )
+
+        # Interpolate frustum corners to that depth.
+        corners_at_entry_w = near_corners_w + t_entry * (far_corners_w - near_corners_w)
+
+        # Clamp cross-section to the data AABB, then convert to scale_0 units.
+        cmin_w = np.maximum(corners_at_entry_w.min(axis=0), data_bb_min_w)
+        cmax_w = np.minimum(corners_at_entry_w.max(axis=0), data_bb_max_w)
+        corners_s0 = world_transform.imap_coordinates(np.vstack([cmin_w, cmax_w]))
         extents_s0 = np.abs(corners_s0[1] - corners_s0[0])
         in_view_width = float(max(extents_s0[ax] for ax in perp_axes))
 
         logger.debug(
-            "_select_scale: in_view AABB world min=%s max=%s  "
-            "in_view_width_s0=%.2f  primary_axis=%d",
-            in_view_min_w,
-            in_view_max_w,
+            "_select_scale: t_entry=%.4f  in_view_width_s0=%.2f  primary_axis=%d",
+            t_entry,
             in_view_width,
             primary_axis,
         )

@@ -125,15 +125,41 @@ def make_store(lod_bias: float = 1.0, n_scales: int = 3, shape: tuple = _DATA_SH
 
 
 def _compute_in_view_width(frustum_corners, data_bb_min, data_bb_max, view_dir):
-    """Compute in_view_width independently to cross-check the implementation."""
-    in_view = compute_in_view_aabb(frustum_corners, data_bb_min, data_bb_max)
-    if in_view is None:
+    """Compute in_view_width using the frustum cross-section at data-entry depth.
+
+    Mirrors the algorithm in ``ChunkedImageStore._select_scale`` so that tests
+    can independently derive the expected width and compare against the
+    implementation.
+    """
+    # Quick overlap check — same guard used in _select_scale.
+    if compute_in_view_aabb(frustum_corners, data_bb_min, data_bb_max) is None:
         return None
-    in_view_min, in_view_max = in_view
+
     view_dir = np.asarray(view_dir, dtype=float)
     primary_axis = int(np.argmax(np.abs(view_dir)))
     perp_axes = [ax for ax in range(3) if ax != primary_axis]
-    extents = in_view_max - in_view_min
+
+    near_corners = np.asarray(frustum_corners[0], dtype=float)
+    far_corners = np.asarray(frustum_corners[1], dtype=float)
+    near_center = near_corners.mean(axis=0)
+    far_center = far_corners.mean(axis=0)
+    ray_segment = far_center - near_center
+
+    data_face = (
+        data_bb_min[primary_axis]
+        if view_dir[primary_axis] >= 0
+        else data_bb_max[primary_axis]
+    )
+    ray_denom = ray_segment[primary_axis]
+    if abs(ray_denom) < 1e-10:
+        t_entry = 0.0
+    else:
+        t_entry = max(0.0, (data_face - near_center[primary_axis]) / ray_denom)
+
+    corners_at_entry = near_corners + t_entry * (far_corners - near_corners)
+    cmin = np.maximum(corners_at_entry.min(axis=0), data_bb_min)
+    cmax = np.minimum(corners_at_entry.max(axis=0), data_bb_max)
+    extents = cmax - cmin
     return float(max(extents[ax] for ax in perp_axes))
 
 
@@ -175,10 +201,16 @@ def test_fine_scale_when_close_to_data():
 
 
 def test_coarse_scale_when_far_from_data():
-    """Wide frustum (large far dist) → in_view_width = full data → coarsest scale."""
-    # far=5000: far plane covers ±2330, so full 1024^3 data is in view.
+    """Camera far from data face → large cross-section → coarsest scale.
+
+    With the camera 2000 units outside the data the frustum cross-section at
+    the data face is ~2*2000*tan(25 deg) ~ 1863 voxels, which exceeds the data
+    extent (1024) and is clamped to it.  The coverage criterion then selects
+    scale 2 (texture_width*4 = 1024 >= 1024).
+    """
     view_dir = np.array([0.0, 0.0, 1.0])
-    cam_pos = np.array([512.0, 512.0, -100.0])
+    # Camera 2000 units outside the data face (z=0 → camera at z=-2000).
+    cam_pos = np.array([512.0, 512.0, -2000.0])
 
     vp = make_view_params_perspective(cam_pos, view_dir, near=1.0, far=5000.0)
     store = make_store()
@@ -189,30 +221,31 @@ def test_coarse_scale_when_far_from_data():
     assert width is not None
     expected = _expected_scale_coverage(width)
     assert store._select_scale(vp) == expected
-    # Full data extent (1024) with texture_width=256 → coverage satisfied at scale 2
     assert (
         expected == 2
     ), f"Expected coarsest scale 2, got {expected} (width={width:.1f})"
 
 
-def test_scale_transitions_with_increasing_far():
-    """Scale index is non-decreasing as far distance (= visible extent) increases.
+def test_scale_transitions_with_increasing_distance():
+    """Scale is non-decreasing as camera distance from the data increases.
 
-    Camera is 100 units outside the data (z=-100).  All four far values place
-    the far plane inside the data, giving in_view_widths of roughly
-    [140, 373, 653, 1024] → scales [0, 1, 2, 2] (non-decreasing).
+    The frustum cross-section at the data face scales with camera distance, so
+    a camera further from the data needs a coarser LOD.
+
+    Distances [100, 400, 700, 2000] give cross-sections ≈ [93, 373, 653, 1024]
+    → scales [0, 1, 2, 2] (non-decreasing), for texture_width=256, n_scales=3.
     """
     view_dir = np.array([0.0, 0.0, 1.0])
-    cam_pos = np.array([512.0, 512.0, -100.0])
     store = make_store(n_scales=3)
 
     prev_scale = 0
-    for far in [150.0, 400.0, 700.0, 5000.0]:
-        vp = make_view_params_perspective(cam_pos, view_dir, near=1.0, far=far)
+    for dist in [100.0, 400.0, 700.0, 2000.0]:
+        cam_pos = np.array([512.0, 512.0, -dist])
+        vp = make_view_params_perspective(cam_pos, view_dir, near=1.0, far=5000.0)
         scale = store._select_scale(vp)
         assert scale >= prev_scale, (
-            f"Scale should be non-decreasing with far distance; "
-            f"far={far} → scale={scale}, prev={prev_scale}"
+            f"Scale should be non-decreasing with camera distance; "
+            f"dist={dist} → scale={scale}, prev={prev_scale}"
         )
         prev_scale = scale
 
