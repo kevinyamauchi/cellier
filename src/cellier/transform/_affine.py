@@ -74,6 +74,52 @@ class AffineTransform(BaseTransform):
             np.linalg.norm(transformed_vector, axis=1), axis=1
         )
 
+    def map_direction(self, direction: np.ndarray) -> np.ndarray:
+        """Apply the transformation to a direction vector (ignores translation).
+
+        Direction vectors represent orientations rather than positions.
+        Unlike :meth:`map_coordinates`, the translation component of the
+        affine transform is suppressed by using a homogeneous ``w = 0``
+        coordinate.  Only the linear (scale/rotation) part is applied.
+
+        Parameters
+        ----------
+        direction : np.ndarray
+            Direction vector(s) to transform.  Shape ``(3,)`` or ``(n, 3)``.
+
+        Returns
+        -------
+        np.ndarray
+            Transformed direction vector(s), same shape as input.
+        """
+        d = np.atleast_2d(direction)
+        d_h = np.pad(d, pad_width=((0, 0), (0, 1)), constant_values=0)
+        return np.dot(d_h, self.matrix.T)[:, :3]
+
+    def imap_direction(self, direction: np.ndarray) -> np.ndarray:
+        """Apply the inverse transformation to a direction vector (ignores translation).
+
+        Direction vectors represent orientations rather than positions.
+        Unlike :meth:`imap_coordinates`, the translation component of the
+        inverse affine transform is suppressed by using a homogeneous
+        ``w = 0`` coordinate.  Only the linear (scale/rotation) part of the
+        inverse is applied.
+
+        Parameters
+        ----------
+        direction : np.ndarray
+            Direction vector(s) to inverse-transform.  Shape ``(3,)`` or
+            ``(n, 3)``.
+
+        Returns
+        -------
+        np.ndarray
+            Inverse-transformed direction vector(s), same shape as input.
+        """
+        d = np.atleast_2d(direction)
+        d_h = np.pad(d, pad_width=((0, 0), (0, 1)), constant_values=0)
+        return np.dot(d_h, np.linalg.inv(self.matrix).T)[:, :3]
+
     def imap_normal_vector(self, normal_vector: np.ndarray):
         """Apply the inverse transform to a normal vector defining an orientation.
 

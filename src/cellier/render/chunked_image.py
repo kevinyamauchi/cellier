@@ -92,12 +92,21 @@ class GFXChunkedImageNode:
         if self._atlas is None:
             self._initialize_atlas(slice_data.texture_config)
 
+        import numpy as np
+
         active = slice_data.resolution_level
+        new_matrix = slice_data.texture_to_world_transform.matrix
+
+        # If the texture-to-world transform has changed the texture has been
+        # repositioned.  Stale voxel data written for the previous position
+        # must be zeroed before new chunks are uploaded, otherwise old data
+        # renders at the wrong world coordinates.
+        old_matrix = self._volume_nodes[active].local.matrix
+        if not np.array_equal(old_matrix, new_matrix):
+            self._atlas.clear_scale(active)  # type: ignore[union-attr]
 
         # Position the active scale's volume in world space.
-        self._volume_nodes[
-            active
-        ].local.matrix = slice_data.texture_to_world_transform.matrix
+        self._volume_nodes[active].local.matrix = new_matrix
 
         # Show only the active scale.
         for i, vol in enumerate(self._volume_nodes):

@@ -156,3 +156,31 @@ class TextureAtlas:
             Linear chunk index within that scale level.
         """
         self._regions.pop((scale_index, chunk_index), None)
+
+    def clear_scale(self, scale_index: int) -> None:
+        """Zero every resident chunk region for *scale_index* on the GPU.
+
+        Only the sub-regions that were previously written via
+        :meth:`upload_chunk` are zeroed, rather than the entire
+        ``texture_width³`` cube.  This keeps the GPU transfer cost
+        proportional to the number of uploaded chunks rather than the
+        full texture allocation.
+
+        The residency records for *scale_index* are removed so that
+        subsequent :meth:`has_chunk` queries return ``False``.
+
+        Parameters
+        ----------
+        scale_index : int
+            Scale level whose texture should be cleared.
+        """
+        import numpy as np
+
+        texture = self._textures[scale_index]
+        keys = [k for k in self._regions if k[0] == scale_index]
+        for key in keys:
+            region = self._regions.pop(key)
+            zeros = np.zeros(region.shape, dtype=np.float32)
+            # send_data expects (x, y, z); region.offset is (z, y, x).
+            offset_xyz = (region.offset[2], region.offset[1], region.offset[0])
+            texture.send_data(offset_xyz, zeros)

@@ -614,8 +614,10 @@ class ChunkSelector:
             view_params.frustum_corners.shape
         )
 
-        # Transform view direction
-        view_direction_scale = scale_level.transform.imap_coordinates(
+        # Transform view direction — use imap_direction (w=0) so the
+        # centre-alignment translation of the scale transform is not applied
+        # to what is a vector, not a position.
+        view_direction_scale = scale_level.transform.imap_direction(
             view_params.view_direction.reshape(1, -1)
         ).flatten()
 
