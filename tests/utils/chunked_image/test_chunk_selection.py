@@ -188,17 +188,13 @@ def test_primary_axis_along_positive_z(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
     """T-01: View along +z selects axis 0."""
-    frustum_chunk_corners = chunk_corners_from_bbox(
-        np.array([0.0, 0.0, 0.0]), np.array([32.0, 32.0, 32.0])
-    )[np.newaxis]  # (1, 8, 3)
-
     frustum_corners = make_axis_frustum(
         near_center=np.array([-10.0, 16.0, 16.0]), half_size=16.0, depth=20.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     _, _, primary_axis = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, frustum_chunk_corners
+        view_params, scale_level_identity, texture_config_64
     )
     assert primary_axis == 0
 
@@ -222,17 +218,13 @@ def test_primary_axis_all_directions(
     expected_axis,
 ):
     """T-02: All six canonical directions map to correct primary axis."""
-    frustum_chunk_corners = chunk_corners_from_bbox(
-        np.array([0.0, 0.0, 0.0]), np.array([32.0, 32.0, 32.0])
-    )[np.newaxis]
-
     frustum_corners = make_axis_frustum(
         np.array([16.0, 16.0, 16.0]), half_size=8.0, depth=10.0
     )
     view_params = make_view_params(frustum_corners, view_dir)
 
     _, _, primary_axis = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, frustum_chunk_corners
+        view_params, scale_level_identity, texture_config_64
     )
     assert primary_axis == expected_axis
 
@@ -241,17 +233,13 @@ def test_texture_bounds_are_cube(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
     """T-03: texture_max - texture_min equals texture_width on every axis."""
-    frustum_chunk_corners = chunk_corners_from_bbox(
-        np.array([0.0, 0.0, 0.0]), np.array([32.0, 32.0, 32.0])
-    )[np.newaxis]
-
     frustum_corners = make_axis_frustum(
         np.array([-10.0, 16.0, 16.0]), half_size=16.0, depth=20.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, frustum_chunk_corners
+        view_params, scale_level_identity, texture_config_64
     )
     np.testing.assert_allclose(tex_max - tex_min, texture_config_64.texture_width)
 
@@ -260,17 +248,13 @@ def test_transform_is_pure_translation(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
     """T-04: Returned AffineTransform has identity upper-left 3x3 block."""
-    frustum_chunk_corners = chunk_corners_from_bbox(
-        np.array([0.0, 0.0, 0.0]), np.array([32.0, 32.0, 32.0])
-    )[np.newaxis]
-
     frustum_corners = make_axis_frustum(
         np.array([-10.0, 16.0, 16.0]), half_size=16.0, depth=20.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     transform, _, _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, frustum_chunk_corners
+        view_params, scale_level_identity, texture_config_64
     )
     np.testing.assert_allclose(transform.matrix[:3, :3], np.eye(3), atol=1e-6)
     np.testing.assert_allclose(transform.matrix[3, :], [0.0, 0.0, 0.0, 1.0], atol=1e-6)
@@ -280,17 +264,13 @@ def test_transform_translation_equals_texture_min(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
     """T-05: Mapping texture-space origin (0,0,0) through transform gives tex_min."""
-    frustum_chunk_corners = chunk_corners_from_bbox(
-        np.array([16.0, 16.0, 16.0]), np.array([48.0, 48.0, 48.0])
-    )[np.newaxis]
-
     frustum_corners = make_axis_frustum(
         np.array([-10.0, 32.0, 32.0]), half_size=8.0, depth=10.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     transform, (tex_min, _), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, frustum_chunk_corners
+        view_params, scale_level_identity, texture_config_64
     )
 
     origin = np.array([[0.0, 0.0, 0.0]])
@@ -298,119 +278,149 @@ def test_transform_translation_equals_texture_min(
     np.testing.assert_allclose(mapped, tex_min, atol=1e-6)
 
 
-def test_camera_low_z_anchors_to_low_z_face_no_clip(
+def test_near_plane_outside_data_clamps_to_min(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-06: Camera on low-z side, texture anchored to low-z face (no clipping)."""
-    # 2 chunks along z, 1 along y and x  ->  bbox [0,0,0] to [64,32,32]
-    chunks = np.stack(
-        [
-            chunk_corners_from_bbox(
-                np.array([0.0, 0.0, 0.0]), np.array([32.0, 32.0, 32.0])
-            ),
-            chunk_corners_from_bbox(
-                np.array([32.0, 0.0, 0.0]), np.array([64.0, 32.0, 32.0])
-            ),
-        ],
-        axis=0,
-    )  # (2, 8, 3)
-
+    """T-06: Near plane far below data extent — texture clamped to [0, tw] boundary."""
+    # near_plane_center at z=-100, well outside data [0, 128]
     frustum_corners = make_axis_frustum(
         near_center=np.array([-100.0, 0.0, 0.0]), half_size=8.0, depth=10.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, chunks
+        view_params, scale_level_identity, texture_config_64
     )
 
     np.testing.assert_allclose(tex_min, [0.0, 0.0, 0.0], atol=1e-6)
     np.testing.assert_allclose(tex_max, [64.0, 64.0, 64.0], atol=1e-6)
 
 
-def test_camera_high_z_clips_to_low_z_end(
+def test_near_plane_outside_data_clamps_to_max(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-07: Camera on high-z side, texture still anchors to low-z (bbox_min) end.
-
-    Texture position is determined by bbox_min, not camera orientation, so the
-    anchor is always the low-coordinate corner of the frustum AABB regardless
-    of which way the camera faces.
-    """
-    # 4 chunks along z (total 128), 1 along y and x
-    chunks = np.stack(
-        [
-            chunk_corners_from_bbox(
-                np.array([i * 32.0, 0.0, 0.0]),
-                np.array([(i + 1) * 32.0, 32.0, 32.0]),
-            )
-            for i in range(4)
-        ],
-        axis=0,
-    )  # (4, 8, 3)
-
+    """T-07: Near plane far above data extent — texture clamped to [tw, 2*tw]."""
+    # near_plane_center at z=200, well outside data [0, 128]
     frustum_corners = make_axis_frustum(
         near_center=np.array([200.0, 0.0, 0.0]), half_size=8.0, depth=10.0
     )
-    # Camera looking toward -z (into the scene)
     view_params = make_view_params(frustum_corners, np.array([-1.0, 0.0, 0.0]))
 
     _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, chunks
+        view_params, scale_level_identity, texture_config_64
     )
 
-    np.testing.assert_allclose(tex_min[0], 0.0, atol=1e-6)
-    np.testing.assert_allclose(tex_max[0], 64.0, atol=1e-6)
+    # max_valid[0] = 128 - 64 = 64; clamp(168, 0, 64) = 64
+    np.testing.assert_allclose(tex_min[0], 64.0, atol=1e-6)
+    np.testing.assert_allclose(tex_max[0], 128.0, atol=1e-6)
 
 
-def test_all_axes_clipped_when_oversized(
+def test_texture_always_texture_width_wide(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-08: All three axes clipped when AABB greatly exceeds texture_width."""
-    chunks = chunk_corners_from_bbox(
-        np.array([0.0, 0.0, 0.0]), np.array([200.0, 200.0, 200.0])
-    )[np.newaxis]  # pretend it is one giant chunk for positioning purposes
-
+    """T-08: Texture is always exactly texture_width on every axis."""
     frustum_corners = make_axis_frustum(
         near_center=np.array([-100.0, 0.0, 0.0]), half_size=8.0, depth=10.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, chunks
+        view_params, scale_level_identity, texture_config_64
     )
 
     np.testing.assert_allclose(tex_max - tex_min, 64.0, atol=1e-6)
-    np.testing.assert_allclose(tex_min, [0.0, 0.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(tex_max, [64.0, 64.0, 64.0], atol=1e-6)
 
 
 def test_single_chunk_contained_in_texture_bounds(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-09: A single chunk's 8 corners fall within texture bounds."""
-    single_chunk = chunk_corners_from_bbox(
-        np.array([32.0, 32.0, 32.0]), np.array([64.0, 64.0, 64.0])
-    )[np.newaxis]  # (1, 8, 3)
-
+    """T-09: A single chunk whose center matches near_plane_center is inside bounds."""
+    # near_plane_center at (48, 48, 48) — center of chunk at [32..64]^3
     frustum_corners = make_axis_frustum(
         near_center=np.array([-10.0, 48.0, 48.0]), half_size=16.0, depth=20.0
     )
     view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
 
     _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
-        view_params, scale_level_identity, texture_config_64, single_chunk
+        view_params, scale_level_identity, texture_config_64
     )
 
-    corners = single_chunk[0]  # (8, 3)
+    single_chunk = chunk_corners_from_bbox(
+        np.array([32.0, 32.0, 32.0]), np.array([64.0, 64.0, 64.0])
+    )
     within = np.all(
-        (corners >= tex_min[np.newaxis] - 1e-5)
-        & (corners <= tex_max[np.newaxis] + 1e-5)
+        (single_chunk >= tex_min[np.newaxis] - 1e-5)
+        & (single_chunk <= tex_max[np.newaxis] + 1e-5)
     )
     assert within, (
         f"Single chunk corners not inside texture bounds.\n"
-        f"tex=[{tex_min}, {tex_max}]\nchunk corners=\n{corners}"
+        f"tex=[{tex_min}, {tex_max}]\nchunk corners=\n{single_chunk}"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Group 1b: Camera-centered positioning behaviour (T-19..T-21)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_texture_centered_on_near_plane(
+    positioning_strategy, scale_level_identity, texture_config_64
+):
+    """T-19: Texture min corner is chunk-grid-snapped centering of near_plane_center."""
+    # near_plane_center at (64, 64, 64) — exact centre of volume
+    # raw_corner = (64-32, 64-32, 64-32) = (32, 32, 32)
+    # chunk_shape = 32, so snapped = (32, 32, 32) — already on grid
+    frustum_corners = make_axis_frustum(
+        near_center=np.array([64.0, 64.0, 64.0]), half_size=8.0, depth=10.0
+    )
+    view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
+
+    _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
+        view_params, scale_level_identity, texture_config_64
+    )
+
+    np.testing.assert_allclose(tex_min, [32.0, 32.0, 32.0], atol=1e-6)
+    np.testing.assert_allclose(tex_max, [96.0, 96.0, 96.0], atol=1e-6)
+
+
+def test_texture_snapped_to_chunk_grid(
+    positioning_strategy, scale_level_identity, texture_config_64
+):
+    """T-20: Positioning corner is always a multiple of chunk_shape."""
+    # Use a near_center that is NOT on the chunk grid
+    frustum_corners = make_axis_frustum(
+        near_center=np.array([50.0, 50.0, 50.0]), half_size=8.0, depth=10.0
+    )
+    view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
+
+    _, (tex_min, _), _ = positioning_strategy.position_texture(
+        view_params, scale_level_identity, texture_config_64
+    )
+
+    chunk = np.array(scale_level_identity.chunk_shape, dtype=float)
+    remainder = tex_min % chunk
+    np.testing.assert_allclose(remainder, 0.0, atol=1e-6)
+
+
+def test_texture_stays_within_data_extent(
+    positioning_strategy, scale_level_identity, texture_config_64
+):
+    """T-21: Texture bounds always stay within [0, shape] regardless of near plane."""
+    for near_z in [-500.0, 0.0, 64.0, 127.0, 500.0]:
+        frustum_corners = make_axis_frustum(
+            near_center=np.array([near_z, 64.0, 64.0]), half_size=8.0, depth=10.0
+        )
+        view_params = make_view_params(frustum_corners, np.array([1.0, 0.0, 0.0]))
+
+        _, (tex_min, tex_max), _ = positioning_strategy.position_texture(
+            view_params, scale_level_identity, texture_config_64
+        )
+
+        shape = np.array(scale_level_identity.shape, dtype=float)
+        assert np.all(tex_min >= 0.0), f"tex_min below 0 for near_z={near_z}: {tex_min}"
+        assert np.all(
+            tex_max <= shape + 1e-6
+        ), f"tex_max above shape for near_z={near_z}: {tex_max}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
