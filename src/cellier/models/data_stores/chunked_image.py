@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -25,6 +26,7 @@ from cellier.utils.chunked_image._chunk_selection import (
     AxisAlignedTexturePositioning,
     ChunkSelector,
     TextureBoundsFiltering,
+    compute_in_view_aabb,
 )
 from cellier.utils.chunked_image._data_classes import (
     TextureConfiguration,
@@ -32,6 +34,8 @@ from cellier.utils.chunked_image._data_classes import (
 from cellier.utils.chunked_image._multiscale_image_model import (  # noqa: TCH001
     MultiscaleImageModel,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from cellier.slicer.slicer import AsynchronousDataSlicer
@@ -182,9 +186,9 @@ class ChunkedImageStore(BaseDataStore):
 
         view_params: ViewParameters = selected_region.view_parameters
 
-        # Select the coarsest scale whose visible chunks still fit in the
-        # texture atlas.  Falls back to the coarsest scale if none qualifies.
+        # Select the scale based on in-view coverage criterion.
         scale_index = self._select_scale(view_params)
+        logger.debug("get_data_request: selected scale_index=%d", scale_index)
         scale_level: ScaleLevelModel = self.multiscale_model.scales[scale_index]
         world_transform = self.multiscale_model.world_transform
 
@@ -208,6 +212,11 @@ class ChunkedImageStore(BaseDataStore):
             texture_config,
             world_transform=world_transform,
             frustum_visible_chunks=frustum_visible_mask,
+        )
+        logger.debug(
+            "get_data_request: n_selected_chunks=%d  texture_bounds_world=%s",
+            result.n_selected_chunks,
+            result.texture_bounds_world,
         )
 
         if result.n_selected_chunks == 0:
@@ -351,101 +360,94 @@ class ChunkedImageStore(BaseDataStore):
         )
 
     def _select_scale(self, view_params: ViewParameters) -> int:
-        """Choose scale using a mip-map criterion on physical pixel size.
+        """Choose scale using a texture-coverage criterion.
 
         Iterates from finest (index 0) to coarsest (index N-1) and returns
-        the first scale where one data voxel is at least as large as one
-        screen pixel (in world-space units).  This avoids loading unnecessary
-        detail when the camera is zoomed out.
+        the first scale N where the texture (``texture_width * 2^N`` scale_0
+        voxels) is large enough to cover the in-view data width:
+
+        ``texture_width * 2^N >= in_view_width * lod_bias``
+
+        where ``in_view_width`` is the larger of the two perpendicular extents
+        of the frustum-data overlap AABB in scale_0 coordinates.
 
         The ``lod_bias`` field shifts the threshold:
         - ``lod_bias < 1``: bias toward finer scales (more detail).
         - ``lod_bias > 1``: bias toward coarser scales (better performance).
-        - ``lod_bias = 1``: mip-map optimum — one voxel per screen pixel.
+        - ``lod_bias = 1``: coverage optimum.
 
-        For **perspective** cameras the near clipping plane is typically very
-        close to the camera (PyGFX default: 0.1), making its physical height far
-        too small to use directly.  Instead the camera position is recovered from
-        the ratio of near- and far-plane heights, and the pixel footprint is
-        evaluated at the center of the data bounding box.  This correctly
-        reflects how large data voxels appear on screen regardless of the near-
-        clip distance.
-
-        For **orthographic** cameras the near- and far-plane heights are equal,
-        and the near-plane height divided by ``canvas_size[1]`` is used directly.
-
-        Falls back to the coarsest scale if no scale satisfies the criterion
-        (e.g., when ``canvas_size`` is (1, 1) — the default placeholder).
+        Falls back to the coarsest scale when the frustum does not intersect
+        the data, or when no scale satisfies the criterion.
 
         Parameters
         ----------
         view_params : ViewParameters
-            Current camera state.  ``frustum_corners`` and ``canvas_size``
-            are used to derive world-space-per-pixel.
+            Current camera state.  ``frustum_corners`` and ``view_direction``
+            are used; ``canvas_size`` is not needed for this criterion.
 
         Returns
         -------
         int
             Scale index to use (0 = finest, N-1 = coarsest).
         """
-        near_corners = view_params.frustum_corners[0]  # (4, 3)
-        far_corners = view_params.frustum_corners[1]  # (4, 3)
-        canvas_h = view_params.canvas_size[1]
         n_scales = len(self.multiscale_model.scales)
+        world_transform = self.multiscale_model.world_transform
 
-        # corner order: left-bottom, right-bottom, right-top, left-top
-        near_h = float(np.linalg.norm(near_corners[3] - near_corners[0]))
-        far_h = float(np.linalg.norm(far_corners[3] - far_corners[0]))
+        # Data bounding box in world coordinates.
+        data_bb_min_w, data_bb_max_w = self.multiscale_model.get_full_extent_world()
 
-        if canvas_h <= 1 or near_h <= 0:
-            return n_scales - 1  # coarsest fallback
+        # In-view AABB: frustum ∩ data, in world space.
+        in_view = compute_in_view_aabb(
+            view_params.frustum_corners, data_bb_min_w, data_bb_max_w
+        )
+        if in_view is None:
+            logger.debug(
+                "_select_scale: frustum does not overlap data → coarsest scale %d",
+                n_scales - 1,
+            )
+            return n_scales - 1
 
-        if far_h <= near_h * 1.001:
-            # Orthographic camera: pixel size is uniform across depth
-            world_per_pixel = near_h / canvas_h
-        else:
-            # Perspective camera: the near plane is typically very close to the
-            # camera (e.g. default near=0.1 in PyGFX), so using near_h directly
-            # gives a world_per_pixel that is far too small.  Instead, recover the
-            # camera position and evaluate pixel footprint at the data center.
-            #
-            # For a symmetric perspective frustum the ratio of plane heights equals
-            # the ratio of plane distances from the camera:
-            #   near_h / far_h = near_dist / far_dist
-            # Using plane centers and the view direction:
-            near_center = near_corners.mean(axis=0)
-            far_center = far_corners.mean(axis=0)
-            view_dir = view_params.view_direction  # unit vector
+        in_view_min_w, in_view_max_w = in_view
 
-            k = far_h / near_h  # k > 1
-            # Distance from near plane to far plane along view direction:
-            d_near_far = float(np.dot(far_center - near_center, view_dir))
-            if d_near_far <= 0:
-                return n_scales - 1  # degenerate frustum
+        # Primary axis and perpendicular extents in scale_0 coordinates.
+        view_dir = view_params.view_direction.astype(float)
+        primary_axis = int(np.argmax(np.abs(view_dir)))
+        perp_axes = [ax for ax in range(3) if ax != primary_axis]
 
-            # near_dist = d_near_far / (k - 1)
-            near_dist = d_near_far / (k - 1.0)
-            cam_pos = near_center - near_dist * view_dir
+        corners_w = np.vstack([in_view_min_w, in_view_max_w])
+        corners_s0 = world_transform.imap_coordinates(corners_w)
+        extents_s0 = np.abs(corners_s0[1] - corners_s0[0])
+        in_view_width = float(max(extents_s0[ax] for ax in perp_axes))
 
-            # Data center in world coordinates (scale_0 coords = world for
-            # default identity world_transform)
-            data_bb_min, data_bb_max = self.multiscale_model.get_full_extent_world()
-            data_center_world = (data_bb_min + data_bb_max) / 2.0
+        logger.debug(
+            "_select_scale: in_view AABB world min=%s max=%s  "
+            "in_view_width_s0=%.2f  primary_axis=%d",
+            in_view_min_w,
+            in_view_max_w,
+            in_view_width,
+            primary_axis,
+        )
 
-            dist_to_data = float(np.dot(data_center_world - cam_pos, view_dir))
-            if dist_to_data <= 0:
-                dist_to_data = near_dist  # fallback: evaluate at near plane
-
-            # World height at the data plane scales linearly with distance
-            world_h_at_data = near_h * dist_to_data / near_dist
-            world_per_pixel = world_h_at_data / canvas_h
+        texture_width = float(self.texture_config.texture_width)
 
         for scale_index in range(n_scales):
-            voxel_size = 2.0**scale_index
-            if voxel_size >= world_per_pixel * self.lod_bias:
+            factor = 2.0**scale_index
+            coverage = texture_width * factor
+            if coverage >= in_view_width * self.lod_bias:
+                logger.debug(
+                    "_select_scale: selected scale %d "
+                    "(coverage=%.1f >= threshold=%.1f)",
+                    scale_index,
+                    coverage,
+                    in_view_width * self.lod_bias,
+                )
                 return scale_index
 
-        return n_scales - 1  # coarsest fallback
+        logger.debug(
+            "_select_scale: no scale satisfies coverage → coarsest %d",
+            n_scales - 1,
+        )
+        return n_scales - 1
 
     def _compute_priorities(
         self,

@@ -1,9 +1,11 @@
 """Axis-aligned grid-snapped texture positioning strategy.
 
 This module implements the core positioning algorithm that places a cubic texture
-in world space by centering it on the camera position projected onto the data and
-snapping to chunk grid boundaries.
+in world space by anchoring to the front face of the frustum-data overlap AABB,
+snapping to chunk grid boundaries, and centering on the perpendicular axes.
 """
+
+import logging
 
 import numpy as np
 
@@ -19,17 +21,63 @@ from cellier.utils.chunked_image._data_classes import (
 )
 from cellier.utils.chunked_image._multiscale_image_model import ScaleLevelModel
 
+logger = logging.getLogger(__name__)
+
+
+def compute_in_view_aabb(
+    frustum_corners: np.ndarray,
+    data_min: np.ndarray,
+    data_max: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return the component-wise overlap of the frustum AABB and the data AABB.
+
+    Parameters
+    ----------
+    frustum_corners : np.ndarray
+        Shape ``(2, 4, 3)`` or any ``(N, 3)`` array of frustum corner
+        coordinates in the same space as *data_min*/*data_max*.
+    data_min : np.ndarray
+        Shape ``(3,)``.  Minimum corner of the data bounding box.
+    data_max : np.ndarray
+        Shape ``(3,)``.  Maximum corner of the data bounding box.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray] or None
+        ``(in_view_min, in_view_max)`` of the overlap AABB, each shape ``(3,)``,
+        or ``None`` when the frustum does not intersect the data.
+    """
+    corners_flat = np.asarray(frustum_corners, dtype=float).reshape(-1, 3)
+    frustum_min = corners_flat.min(axis=0)
+    frustum_max = corners_flat.max(axis=0)
+
+    in_view_min = np.maximum(frustum_min, data_min)
+    in_view_max = np.minimum(frustum_max, data_max)
+
+    if np.any(in_view_min >= in_view_max):
+        return None
+    return in_view_min, in_view_max
+
 
 class AxisAlignedTexturePositioning(TexturePositioningStrategy):
-    """Position texture centered on the point where the camera ray meets the data.
+    """Position texture anchored to the front face of the frustum-data overlap.
 
-    The texture is placed as a fixed-size axis-aligned cube whose centre is
-    the projection of the data-volume centre onto the camera ray (in scale_N
-    space), snapped to the chunk grid for cache stability.  The window is
-    clamped so it stays within the data extent.
+    The texture is placed as a fixed-size axis-aligned cube whose position is
+    determined by:
 
-    For orthographic frustums (or degenerate cameras) the anchor falls back
-    to the near-plane centre.
+    1. Computing the **in-view AABB** — the component-wise overlap of the
+       frustum corners' AABB and the data AABB in scale_N space.
+    2. Choosing a **front face**: on the primary view axis the texture starts
+       at the in-view AABB face closest to the camera (``min`` for positive
+       view direction, ``max - texture_width`` for negative).
+    3. **Centering** the texture on the perpendicular axes relative to the
+       in-view AABB centre.
+    4. **Snapping** to the chunk grid for cache stability.
+    5. **Clamping** so the full window fits within ``[0, shape]``.
+
+    When the frustum does not overlap the data the full data AABB is used as
+    the in-view AABB so the front-face logic still places the texture at the
+    correct data face.
     """
 
     def position_texture(
@@ -38,14 +86,13 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         scale_level: ScaleLevelModel,
         texture_config: TextureConfiguration,
     ) -> tuple[AffineTransform, tuple[np.ndarray, np.ndarray], int]:
-        """Position texture centred on the camera-ray / data-centre intersection.
+        """Position texture anchored to the front face of the frustum-data overlap.
 
         Parameters
         ----------
         view_params : ViewParameters
             Camera view information **already transformed to scale_N space**.
-            ``frustum_corners``, ``view_direction``, and ``near_plane_center``
-            are all in scale_N coordinates.
+            ``frustum_corners`` and ``view_direction`` are in scale_N coordinates.
         scale_level : ScaleLevelModel
             Scale level metadata used for coordinate transforms and clamping.
         texture_config : TextureConfiguration
@@ -61,71 +108,23 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         primary_axis : int
             Index of the dominant viewing axis (0, 1, or 2).
         """
-        # Compute chunk-grid-snapped positioning corner
         positioning_corner = self._compute_positioning_corner(
             view_params, scale_level, texture_config
         )
-
-        # Texture bounds in scale_N space
         texture_bounds = self._calculate_texture_bounds(
             positioning_corner, texture_config
         )
-
-        # Texture-to-scale transform (pure translation)
         texture_to_scale_transform = AffineTransform.from_translation(
             positioning_corner
         )
-
-        # Primary axis from scale_N view direction
         primary_axis = self._determine_primary_axis(view_params.view_direction)
 
+        logger.debug(
+            "Texture bounds (scale_N): min=%s  max=%s",
+            texture_bounds[0],
+            texture_bounds[1],
+        )
         return texture_to_scale_transform, texture_bounds, primary_axis
-
-    def _recover_camera_position_scale(
-        self,
-        view_params_scale: ViewParameters,
-    ) -> np.ndarray | None:
-        """Recover camera position in scale_N from the frustum corners.
-
-        Uses the ratio of near-to-far plane heights to locate the perspective
-        apex.  Returns *None* for orthographic frustums (far_h ≈ near_h) or
-        degenerate inputs.
-
-        Parameters
-        ----------
-        view_params_scale : ViewParameters
-            View parameters already in scale_N space.
-
-        Returns
-        -------
-        np.ndarray or None
-            Camera position in scale_N coordinates, shape (3,), or None.
-        """
-        near_corners = view_params_scale.frustum_corners[0]  # (4, 3)
-        far_corners = view_params_scale.frustum_corners[1]  # (4, 3)
-
-        near_h = float(np.linalg.norm(near_corners[3] - near_corners[0]))
-        far_h = float(np.linalg.norm(far_corners[3] - far_corners[0]))
-
-        if far_h <= near_h * 1.001:
-            return None  # orthographic or near-degenerate
-
-        view_dir = view_params_scale.view_direction.astype(float)
-        view_dir_norm = float(np.linalg.norm(view_dir))
-        if view_dir_norm < 1e-9:
-            return None
-        view_dir_unit = view_dir / view_dir_norm
-
-        near_center = near_corners.mean(axis=0).astype(float)
-        far_center = far_corners.mean(axis=0).astype(float)
-
-        d_near_far = float(np.dot(far_center - near_center, view_dir_unit))
-        if d_near_far <= 0:
-            return None
-
-        k = far_h / near_h  # > 1 for perspective
-        near_dist = d_near_far / (k - 1.0)
-        return near_center - near_dist * view_dir_unit
 
     def _compute_positioning_corner(
         self,
@@ -133,20 +132,12 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         scale_level: ScaleLevelModel,
         texture_config: TextureConfiguration,
     ) -> np.ndarray:
-        """Compute the texture's min corner in scale_N space.
-
-        Projects the data-volume centre onto the camera ray to obtain an anchor
-        that is always inside the data, then centres the texture window on that
-        anchor.  Snaps to the chunk grid for cache stability and clamps so the
-        window stays within ``[0, shape]``.
-
-        For orthographic frustums (or degenerate cameras), falls back to
-        centering on ``near_plane_center``.
+        """Compute the texture min corner using in-view AABB front-face alignment.
 
         Parameters
         ----------
         view_params_scale : ViewParameters
-            Camera view information already in scale_N coordinates.
+            Camera view parameters already in scale_N coordinates.
         scale_level : ScaleLevelModel
             Provides ``chunk_shape`` and ``shape`` for snapping and clamping.
         texture_config : TextureConfiguration
@@ -155,49 +146,79 @@ class AxisAlignedTexturePositioning(TexturePositioningStrategy):
         Returns
         -------
         np.ndarray
-            Positioning corner (min corner of the texture window), shape (3,).
+            Positioning corner (min corner of the texture window), shape ``(3,)``.
         """
-        data_center_N = np.array(scale_level.shape, dtype=float) / 2.0
+        data_min = np.zeros(3, dtype=float)
+        data_max = np.array(scale_level.shape, dtype=float)
 
-        cam_pos_N = self._recover_camera_position_scale(view_params_scale)
+        view_dir = view_params_scale.view_direction.astype(float)
+        primary_axis = self._determine_primary_axis(view_dir)
+        perp_axes = [ax for ax in range(3) if ax != primary_axis]
 
-        if cam_pos_N is None:
-            # Orthographic fallback: centre on near_plane_center
-            anchor_N = view_params_scale.near_plane_center.copy().astype(float)
+        in_view = compute_in_view_aabb(
+            view_params_scale.frustum_corners, data_min, data_max
+        )
+
+        if in_view is None:
+            # Frustum does not intersect data; fall back to full data AABB so
+            # front-face logic still places the texture at the correct data face.
+            logger.debug(
+                "compute_in_view_aabb: frustum does not overlap data "
+                "(scale shape=%s); using full data AABB as fallback.",
+                scale_level.shape,
+            )
+            in_view_min = data_min.copy()
+            in_view_max = data_max.copy()
         else:
-            view_dir = view_params_scale.view_direction.astype(float)
-            view_dir_norm = float(np.linalg.norm(view_dir))
-            if view_dir_norm < 1e-9:
-                anchor_N = data_center_N.copy()
-            else:
-                view_dir_unit = view_dir / view_dir_norm
-                # Project data centre onto camera ray to get the anchor depth
-                t = float(np.dot(data_center_N - cam_pos_N, view_dir_unit))
-                t = max(t, 0.0)  # don't project behind the camera
-                anchor_N = cam_pos_N + t * view_dir_unit
-                # Clamp anchor to data extent before centering
-                anchor_N = np.clip(
-                    anchor_N, 0.0, np.array(scale_level.shape, dtype=float)
-                )
+            in_view_min, in_view_max = in_view
 
+        logger.debug(
+            "In-view AABB (scale_N): min=%s  max=%s  primary_axis=%d  "
+            "view_dir[primary]=%.3f",
+            in_view_min,
+            in_view_max,
+            primary_axis,
+            float(view_dir[primary_axis]),
+        )
+
+        in_view_center = (in_view_min + in_view_max) / 2.0
         half = texture_config.texture_width / 2.0
-        raw_corner = anchor_N - half
 
-        # Snap to chunk grid for cache stability
+        raw_corner = np.empty(3)
+        # Primary axis: start at the front face of the in-view AABB.
+        if view_dir[primary_axis] >= 0:
+            # Camera looks in the + direction; front face is the min face.
+            raw_corner[primary_axis] = in_view_min[primary_axis]
+        else:
+            # Camera looks in the - direction; front face is the max face.
+            # Set texture min corner so the texture ends at the front face.
+            raw_corner[primary_axis] = (
+                in_view_max[primary_axis] - texture_config.texture_width
+            )
+        # Perpendicular axes: centre on the in-view AABB.
+        for ax in perp_axes:
+            raw_corner[ax] = in_view_center[ax] - half
+
+        # Snap to chunk grid for cache stability.
         chunk = np.array(scale_level.chunk_shape, dtype=float)
         snapped = np.floor(raw_corner / chunk) * chunk
 
-        # Clamp so the full texture window fits within the data extent
-        max_valid = np.maximum(
-            0.0,
-            np.array(scale_level.shape, dtype=float) - texture_config.texture_width,
+        # Clamp so the full texture fits within the data extent.
+        max_valid = np.maximum(0.0, data_max - texture_config.texture_width)
+        positioning_corner = np.clip(snapped, 0.0, max_valid)
+
+        logger.debug(
+            "Positioning corner: raw=%s  snapped=%s  clamped=%s",
+            raw_corner,
+            snapped,
+            positioning_corner,
         )
-        return np.clip(snapped, 0.0, max_valid)
+        return positioning_corner
 
     def _calculate_texture_bounds(
         self, positioning_corner: np.ndarray, texture_config: TextureConfiguration
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (texture_min, texture_max) in scale_N coordinates."""
+        """Return ``(texture_min, texture_max)`` in scale_N coordinates."""
         texture_min = positioning_corner.copy()
         texture_max = positioning_corner + texture_config.texture_width
         return texture_min, texture_max
@@ -272,7 +293,7 @@ class ChunkSelector:
     --------
     1. Transform view parameters from world → scale_N (via world_transform and
        scale_level.transform).
-    2. Position the texture centred on the camera-ray / data-centre intersection.
+    2. Position the texture using in-view AABB front-face alignment.
     3. Find all chunks whose corners lie completely within the texture bounds.
     4. Intersect with the frustum-visible mask (if provided).
     5. Compose transforms (texture → scale_N → scale_0 → world) and transform
@@ -323,7 +344,7 @@ class ChunkSelector:
             view_params, scale_level, world_transform
         )
 
-        # Step 2: Position texture (anchor = camera-ray projection onto data)
+        # Step 2: Position texture (front-face of in-view AABB)
         transform_scale, texture_bounds_scale, primary_axis = (
             self._positioning_strategy.position_texture(
                 view_params_scale,
@@ -349,6 +370,15 @@ class ChunkSelector:
             full_scale_mask = texture_mask
 
         n_selected = int(np.sum(full_scale_mask))
+
+        logger.debug(
+            "select_chunks: texture_mask=%d  frustum_mask=%s  final=%d",
+            int(np.sum(texture_mask)),
+            int(np.sum(frustum_visible_chunks))
+            if frustum_visible_chunks is not None
+            else "N/A",
+            n_selected,
+        )
 
         if n_selected == 0:
             identity_transform = AffineTransform.from_translation(np.zeros(3))

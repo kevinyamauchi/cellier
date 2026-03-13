@@ -289,8 +289,13 @@ def test_transform_translation_equals_texture_min(
 def test_near_plane_outside_data_clamps_to_min(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-06: Near plane far below data extent — texture clamped to [0, tw] boundary."""
-    # near_plane_center at z=-100, well outside data [0, 128]
+    """T-06: Frustum entirely before data — texture at front face of data.
+
+    Frustum z=[-100, -90] does not overlap data [0, 128] on axis 0.
+    Fallback to full data AABB: in_view_center=(64,64,64), view_dir[0]>=0
+    → front_depth=0 on axis 0, centred on data in perp axes.
+    """
+    # Frustum at z=-100..-90, looking in +z, well outside data [0, 128]
     frustum_corners = make_axis_frustum(
         near_center=np.array([-100.0, 0.0, 0.0]), half_size=8.0, depth=10.0
     )
@@ -300,8 +305,12 @@ def test_near_plane_outside_data_clamps_to_min(
         view_params, scale_level_identity, texture_config_64
     )
 
-    np.testing.assert_allclose(tex_min, [0.0, 0.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(tex_max, [64.0, 64.0, 64.0], atol=1e-6)
+    # Primary axis 0: front_depth=0 → tex_min[0]=0, tex_max[0]=64
+    np.testing.assert_allclose(tex_min[0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(tex_max[0], 64.0, atol=1e-6)
+    # Perpendicular axes: centred on data → in_view_center=(64,64), raw=32
+    np.testing.assert_allclose(tex_min[1], 32.0, atol=1e-6)
+    np.testing.assert_allclose(tex_min[2], 32.0, atol=1e-6)
 
 
 def test_near_plane_outside_data_clamps_to_max(
@@ -371,13 +380,18 @@ def test_single_chunk_contained_in_texture_bounds(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_texture_centered_on_near_plane(
+def test_texture_starts_at_front_face(
     positioning_strategy, scale_level_identity, texture_config_64
 ):
-    """T-19: Texture min corner is chunk-grid-snapped centering of near_plane_center."""
-    # near_plane_center at (64, 64, 64) — exact centre of volume
-    # raw_corner = (64-32, 64-32, 64-32) = (32, 32, 32)
-    # chunk_shape = 32, so snapped = (32, 32, 32) — already on grid
+    """T-19: Texture starts at the front face of the frustum-data overlap.
+
+    Frustum z=[64,74], y=[56,72], x=[56,72] (near_center=(64,64,64), half=8,
+    depth=10, view_dir=[1,0,0]).  In-view AABB = same (frustum is inside data).
+    view_dir[0]>=0 → front_depth = in_view_min[0] = 64.
+    Perpendicular centering: in_view_center[1,2]=(64,64) → raw[1]=64-32=32, raw[2]=32.
+    Snap (chunk=32): all already on grid.  max_valid=64 → clamped=[64,32,32].
+    → tex_min=[64,32,32], tex_max=[128,96,96].
+    """
     frustum_corners = make_axis_frustum(
         near_center=np.array([64.0, 64.0, 64.0]), half_size=8.0, depth=10.0
     )
@@ -387,8 +401,8 @@ def test_texture_centered_on_near_plane(
         view_params, scale_level_identity, texture_config_64
     )
 
-    np.testing.assert_allclose(tex_min, [32.0, 32.0, 32.0], atol=1e-6)
-    np.testing.assert_allclose(tex_max, [96.0, 96.0, 96.0], atol=1e-6)
+    np.testing.assert_allclose(tex_min, [64.0, 32.0, 32.0], atol=1e-6)
+    np.testing.assert_allclose(tex_max, [128.0, 96.0, 96.0], atol=1e-6)
 
 
 def test_texture_snapped_to_chunk_grid(
@@ -620,22 +634,19 @@ def test_world_transform_roundtrip(scale_level_identity):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_perspective_anchor_centers_texture_on_data(
+def test_perspective_camera_outside_data_covers_near_face(
     chunk_selector, scale_level_identity, texture_config_64
 ):
-    """T-22: Perspective camera outside data — texture centred on data centre.
+    """T-22: Perspective camera outside data looking in +z — covers the near data face.
 
-    With near_dist=1, far_dist=300, half_h_near=0.5, half_h_far=150 the
-    recovered camera sits at scale_N = (-101, 64, 64).  Projecting the data
-    centre (64, 64, 64) onto the +z ray gives anchor = (64, 64, 64), which
-    snaps to tex_min = (32, 32, 32).
+    Frustum: near_half_h=0.5, far_half_h=150.  The frustum AABB vastly exceeds
+    the data on all axes, so the in-view AABB = full data [0,128]^3.
+    view_dir[0]>=0 → front_depth = in_view_min[0] = 0.
+    Perpendicular centering: in_view_center[1,2]=(64,64) → raw[1,2]=32.
+    → tex_min=[0,32,32], tex_max=[64,96,96].
 
-    Previously (near_plane_center anchor) the near plane at z≈-100 would
-    have been outside the data, clamping tex_min to (0, 0, 0) — covering only
-    the data face nearest the camera.
+    The texture covers the data face nearest to the camera (z=[0,64]).
     """
-    # Camera in scale_0 at (-101, 64, 64), looking along +z (axis 0).
-    # near plane at z=-100, far plane at z=199, both centred on (y=64, x=64).
     near_half_h = 0.5
     far_half_h = 150.0
     near_z = -100.0
@@ -667,9 +678,9 @@ def test_perspective_anchor_centers_texture_on_data(
         view_params, scale_level_identity, texture_config_64
     )
 
-    # anchor = (64, 64, 64) → raw_corner = (32, 32, 32) → snapped = (32, 32, 32)
-    np.testing.assert_allclose(tex_min, [32.0, 32.0, 32.0], atol=1.0)
-    np.testing.assert_allclose(tex_max, [96.0, 96.0, 96.0], atol=1.0)
+    # in-view AABB = full data; front_depth=0; perpendicular centred → raw[1,2]=32
+    np.testing.assert_allclose(tex_min, [0.0, 32.0, 32.0], atol=1.0)
+    np.testing.assert_allclose(tex_max, [64.0, 96.0, 96.0], atol=1.0)
 
 
 def test_non_identity_world_transform_texture_offset_roundtrip(
@@ -758,3 +769,55 @@ def test_non_identity_world_transform_texture_offset_roundtrip(
             f"Recovered world corner: {recovered_world}"
         ),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Group 5: Negative view direction tests (T-24)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_negative_z_direction_selects_far_face(
+    positioning_strategy, scale_level_identity, texture_config_64
+):
+    """T-24: Camera on high-z side looking in -z — texture covers the far data face.
+
+    Camera at z≈300 looks in -z (view_dir[0]=-1).  Far plane covers the full
+    data in y/x; near plane is narrow at z=290.  The frustum AABB spans from
+    z=-200 to z=290, overlapping data z=[0,128] fully.
+
+    In-view AABB = [0,128]^3.  view_dir[0]<0 → front face is the high-z face
+    (z=128); raw_corner[0] = 128 - 64 = 64.  Perpendicular centering gives
+    raw_corner[1,2]=32.  Snap+clamp → tex_min=[64,32,32], tex_max=[128,96,96].
+
+    This is the bug the algorithm fixes: the high-z face is now covered.
+    """
+    near_z, far_z = 290.0, -200.0
+    near = np.array(
+        [
+            [near_z, 56.0, 56.0],
+            [near_z, 56.0, 72.0],
+            [near_z, 72.0, 72.0],
+            [near_z, 72.0, 56.0],
+        ],
+        dtype=np.float32,
+    )
+    far = np.array(
+        [
+            [far_z, 0.0, 0.0],
+            [far_z, 0.0, 128.0],
+            [far_z, 128.0, 128.0],
+            [far_z, 128.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    frustum_corners = np.stack([near, far])
+    view_params = make_view_params(frustum_corners, np.array([-1.0, 0.0, 0.0]))
+
+    _, (tex_min, tex_max), primary_axis = positioning_strategy.position_texture(
+        view_params, scale_level_identity, texture_config_64
+    )
+
+    assert primary_axis == 0
+    # front_depth = in_view_max[0] - texture_width = 128 - 64 = 64
+    np.testing.assert_allclose(tex_min[0], 64.0, atol=1.0)
+    np.testing.assert_allclose(tex_max[0], 128.0, atol=1.0)
