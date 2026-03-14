@@ -63,9 +63,7 @@ for factor, name in LEVELS:
         data = blobs
     else:
         print(f"Downscaling by {factor}x …")
-        data = downscale_local_mean(blobs, (factor, factor, factor)).astype(
-            np.float32
-        )
+        data = downscale_local_mean(blobs, (factor, factor, factor)).astype(np.float32)
 
     print(f"Writing {name}: shape={data.shape} → {OUT_PATH}/{name} …")
     arr = store.create_array(

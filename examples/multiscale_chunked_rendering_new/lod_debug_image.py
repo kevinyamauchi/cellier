@@ -33,12 +33,15 @@ from __future__ import annotations
 
 import itertools
 import pathlib
+import queue
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
 import pygfx as gfx
 import zarr
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -141,6 +144,122 @@ class LodResult:
     primary_axis: int
     visible_chunk_indices: np.ndarray  # (M,) — indices into ScaleLevel.chunk_corners
     timings: dict[str, float] = field(default_factory=dict)  # step name → seconds
+
+
+@dataclass
+class ChunkRequest:
+    """Everything needed to load one chunk into a texture.
+
+    Produced by the plan phase (pure arithmetic, main thread).
+    Consumed by the execute phase (I/O, can move to a worker).
+    """
+    chunk_index: int
+    scale_idx: int
+    zarr_slice: tuple[slice, slice, slice]      # where to read (array zyx order)
+    texture_slice: tuple[slice, slice, slice]    # where to write (array zyx order)
+
+
+@dataclass
+class ChunkResponse:
+    """Result of loading one chunk on a worker thread.
+
+    Carried from worker → result queue → main thread timer.
+    """
+    generation: int
+    chunk_index: int
+    scale_idx: int
+    texture_slice: tuple[slice, slice, slice]    # where to write (array zyx order)
+    data: np.ndarray                             # chunk data (z, y, x)
+
+
+def _load_chunk_worker(
+    request: ChunkRequest,
+    zarr_arr,
+    generation: int,
+) -> ChunkResponse:
+    """Worker function — runs on a thread pool thread.
+
+    Reads one chunk from zarr and packages it as a ChunkResponse.
+    This function is standalone (not a method) for clean thread safety.
+    """
+    data = np.asarray(zarr_arr[request.zarr_slice], dtype=np.float32)
+    return ChunkResponse(
+        generation=generation,
+        chunk_index=request.chunk_index,
+        scale_idx=request.scale_idx,
+        texture_slice=request.texture_slice,
+        data=data,
+    )
+
+
+class AsyncChunkLoader:
+    """Async chunk loading via a thread pool and result queue.
+
+    Modeled on Cellier's ``AsynchronousDataSlicer``:
+    - Workers produce ``ChunkResponse`` objects into a thread-safe queue.
+    - The main thread drains the queue on a timer tick.
+    - A generation counter invalidates stale responses.
+    """
+
+    def __init__(self, max_workers: int = 4) -> None:
+        self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._result_queue: queue.Queue[ChunkResponse] = queue.Queue()
+        self._pending_futures: list[Future] = []
+        self._futures_to_ignore: list[Future] = []
+        self.generation: int = 0
+
+    def submit(
+        self,
+        generation: int,
+        requests: list[ChunkRequest],
+        zarr_arr,
+    ) -> None:
+        """Cancel previous work and submit new chunk requests."""
+        self._cancel_pending()
+        self.generation = generation
+
+        for req in requests:
+            future = self._pool.submit(
+                _load_chunk_worker, req, zarr_arr, generation
+            )
+            future.add_done_callback(self._on_future_done)
+            self._pending_futures.append(future)
+
+    def _cancel_pending(self) -> None:
+        """Best-effort cancellation of in-flight futures."""
+        for future in self._pending_futures:
+            cancelled = future.cancel()
+            if not cancelled:
+                self._futures_to_ignore.append(future)
+        self._pending_futures.clear()
+
+    def _on_future_done(self, future: Future) -> None:
+        """Callback — runs on the worker thread. Puts result in queue."""
+        if future.cancelled():
+            return
+        if future in self._futures_to_ignore:
+            self._futures_to_ignore.remove(future)
+            return
+        try:
+            response = future.result()
+            self._result_queue.put(response)
+        except Exception as e:
+            print(f"Chunk load error: {e}")
+
+    def drain_results(self) -> list[ChunkResponse]:
+        """Non-blocking drain of all available results (main thread)."""
+        results: list[ChunkResponse] = []
+        while True:
+            try:
+                results.append(self._result_queue.get_nowait())
+            except queue.Empty:
+                break
+        return results
+
+    def shutdown(self) -> None:
+        """Clean shutdown of the thread pool."""
+        self._cancel_pending()
+        self._pool.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +751,69 @@ def select_visible_chunks(
     return candidate_indices[visible], timings
 
 
+def plan_chunk_loads(
+    result: LodResult,
+    scale: ScaleLevel,
+) -> list[ChunkRequest]:
+    """Compute the zarr and texture slices for each visible chunk.
+
+    This is the plan phase — pure arithmetic, no I/O.  The returned
+    ``ChunkRequest`` list can be executed synchronously or dispatched
+    to worker threads.
+
+    Parameters
+    ----------
+    result : LodResult
+        Output from the LOD pipeline (provides texture_min, scale_idx,
+        visible_chunk_indices).
+    scale : ScaleLevel
+        The selected scale level.
+
+    Returns
+    -------
+    requests : list[ChunkRequest]
+    """
+    vs = scale.voxel_size
+    cs = np.array(scale.chunk_shape, dtype=int)
+    requests: list[ChunkRequest] = []
+
+    for idx in result.visible_chunk_indices:
+        # Chunk world-space min corner (x, y, z)
+        chunk_world_min = scale.chunk_corners[idx, 0]
+
+        # Source: zarr array coords.  World (x,y,z) → array (z,y,x).
+        src_xyz = (chunk_world_min / vs).astype(int)
+        src_start = np.array([src_xyz[2], src_xyz[1], src_xyz[0]])
+        src_end = src_start + cs
+        zarr_slice = (
+            slice(src_start[0], src_end[0]),
+            slice(src_start[1], src_end[1]),
+            slice(src_start[2], src_end[2]),
+        )
+
+        # Destination: texture array coords.  Offset from texture_min,
+        # then world (x,y,z) → array (z,y,x).
+        dst_xyz = ((chunk_world_min - result.texture_min) / vs).astype(int)
+        dst_start = np.array([dst_xyz[2], dst_xyz[1], dst_xyz[0]])
+        dst_end = dst_start + cs
+        texture_slice = (
+            slice(dst_start[0], dst_end[0]),
+            slice(dst_start[1], dst_end[1]),
+            slice(dst_start[2], dst_end[2]),
+        )
+
+        requests.append(
+            ChunkRequest(
+                chunk_index=idx,
+                scale_idx=result.scale_idx,
+                zarr_slice=zarr_slice,
+                texture_slice=texture_slice,
+            )
+        )
+
+    return requests
+
+
 # ---------------------------------------------------------------------------
 # Section 5 — Top-level LOD pipeline
 # ---------------------------------------------------------------------------
@@ -843,10 +1025,23 @@ class LodDebugApp(QMainWindow):
         self._scale_volumes: list[dict] | None = None  # per-scale rendering
         self._zarr_arrays: list | None = None  # per-scale zarr Array handles
 
+        # Async chunk loading state
+        self._chunk_loader = AsyncChunkLoader(max_workers=4)
+        self._generation: int = 0
+        self._chunks_expected: int = 0
+        self._chunks_received: int = 0
+        self._load_start_time: float = 0.0
+
         self._setup_scene()
         self._load_reference_volume()
         self._setup_scale_volumes()
         self._setup_ui()
+
+        # Timer for polling async chunk results (~60 fps)
+        self._chunk_timer = QTimer(self)
+        self._chunk_timer.setInterval(16)
+        self._chunk_timer.timeout.connect(self._on_chunk_timer)
+        self._chunk_timer.start()
 
     # ---- scene setup ------------------------------------------------------
 
@@ -1091,68 +1286,33 @@ class LodDebugApp(QMainWindow):
             )
             self._canvas.update()
 
-    # ---- chunk loading -----------------------------------------------------
+    # ---- chunk loading (async) -----------------------------------------------
 
     def _load_chunks_to_texture(self, result: LodResult) -> None:
-        """Load visible chunks from zarr into the active scale's texture."""
+        """Plan chunk loads and submit to async workers."""
         if self._scale_volumes is None or self._zarr_arrays is None:
             return
 
         scale_idx = result.scale_idx
         scale = self._dataset.scales[scale_idx]
         vs = scale.voxel_size
-        cs = np.array(scale.chunk_shape, dtype=int)  # (3,) chunk dims
 
-        sv = self._scale_volumes[scale_idx]
-        data = sv["data"]
-        tex = sv["texture"]
-        volume = sv["volume"]
-        zarr_arr = self._zarr_arrays[scale_idx]
+        # Increment generation — invalidates any in-flight responses
+        self._generation += 1
 
-        # Hide all scale volumes
+        # Plan phase (pure arithmetic, main thread)
+        t0 = time.perf_counter()
+        requests = plan_chunk_loads(result, scale)
+        plan_ms = (time.perf_counter() - t0) * 1000
+
+        # Hide all scale volumes and zero the backing array
         for entry in self._scale_volumes:
             entry["volume"].visible = False
+        sv = self._scale_volumes[scale_idx]
+        sv["data"][:] = 0
 
-        # Zero the backing array
-        data[:] = 0
-
-        # Load each visible chunk
-        t0 = time.perf_counter()
-        for idx in result.visible_chunk_indices:
-            # Chunk world-space min corner (x, y, z)
-            chunk_world_min = scale.chunk_corners[idx, 0]
-
-            # Source: zarr array coords.  World (x,y,z) → array (z,y,x).
-            src_xyz = (chunk_world_min / vs).astype(int)
-            src_start = np.array([src_xyz[2], src_xyz[1], src_xyz[0]])
-            src_end = src_start + cs
-            chunk_data = zarr_arr[
-                src_start[0]:src_end[0],
-                src_start[1]:src_end[1],
-                src_start[2]:src_end[2],
-            ]
-
-            # Destination: texture array coords.  Offset from texture_min,
-            # then world (x,y,z) → array (z,y,x).
-            dst_xyz = ((chunk_world_min - result.texture_min) / vs).astype(int)
-            dst_start = np.array([dst_xyz[2], dst_xyz[1], dst_xyz[0]])
-            dst_end = dst_start + cs
-            data[
-                dst_start[0]:dst_end[0],
-                dst_start[1]:dst_end[1],
-                dst_start[2]:dst_end[2],
-            ] = chunk_data
-
-        elapsed = time.perf_counter() - t0
-        print(
-            f"Loaded {len(result.visible_chunk_indices)} chunks "
-            f"into scale {scale_idx} texture in {elapsed * 1000:.1f} ms"
-        )
-
-        # Push to GPU
-        tex.update_range((0, 0, 0), tex.size)
-
-        # Position the volume in world space
+        # Position and show the volume immediately (empty — chunks stream in)
+        volume = sv["volume"]
         volume.local.scale = (vs, vs, vs)
         offset = vs * 0.5
         volume.local.position = (
@@ -1162,9 +1322,69 @@ class LodDebugApp(QMainWindow):
         )
         volume.visible = True
 
+        # Track progress
+        self._chunks_expected = len(requests)
+        self._chunks_received = 0
+        self._load_start_time = time.perf_counter()
+
+        # Submit to async workers — returns immediately
+        zarr_arr = self._zarr_arrays[scale_idx]
+        self._chunk_loader.submit(self._generation, requests, zarr_arr)
+
+        print(
+            f"Chunks: plan {plan_ms:.1f} ms, "
+            f"submitted {len(requests)} requests (async, gen={self._generation})"
+        )
+
+    def _on_chunk_timer(self) -> None:
+        """Polled by QTimer — drain results and upload to GPU."""
+        if self._scale_volumes is None:
+            return
+
+        responses = self._chunk_loader.drain_results()
+        if not responses:
+            return
+
+        # Group by scale_idx (in practice all same for a given generation)
+        applied = 0
+        for resp in responses:
+            # Discard stale responses
+            if resp.generation != self._generation:
+                continue
+
+            sv = self._scale_volumes[resp.scale_idx]
+            data = sv["data"]
+            tex = sv["texture"]
+
+            # Write chunk data into the backing array
+            data[resp.texture_slice] = resp.data
+
+            # Per-chunk GPU upload: convert array (z,y,x) slice → PyGFX (x,y,z)
+            zs, ys, xs = resp.texture_slice
+            offset = (xs.start, ys.start, zs.start)
+            size = (xs.stop - xs.start, ys.stop - ys.start, zs.stop - zs.start)
+            tex.update_range(offset, size)
+
+            applied += 1
+            self._chunks_received += 1
+
+        if applied > 0:
+            self._canvas.update()
+
+            if self._chunks_received >= self._chunks_expected:
+                elapsed = (time.perf_counter() - self._load_start_time) * 1000
+                print(
+                    f"All {self._chunks_expected} chunks loaded "
+                    f"in {elapsed:.1f} ms (gen={self._generation})"
+                )
+
     # ---- helpers ----------------------------------------------------------
 
     def _clear_dynamic_visuals(self) -> None:
+        # Invalidate in-flight async chunks
+        self._generation += 1
+        self._chunk_loader._cancel_pending()
+
         if self._frustum_line is not None:
             self._scene.remove(self._frustum_line)
             self._frustum_line = None
@@ -1181,6 +1401,11 @@ class LodDebugApp(QMainWindow):
         if self._scale_volumes is not None:
             for entry in self._scale_volumes:
                 entry["volume"].visible = False
+
+    def closeEvent(self, event) -> None:
+        self._chunk_timer.stop()
+        self._chunk_loader.shutdown()
+        super().closeEvent(event)
 
     def _animate(self) -> None:
         self._renderer.render(self._scene, self._camera)
