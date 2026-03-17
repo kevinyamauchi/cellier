@@ -79,6 +79,7 @@ FRUSTUM_COLOR = "#00cc44"
 ZARR_PATH = pathlib.Path(__file__).parent / "multiscale_blobs.zarr"
 COARSEST_SCALE_NAME = "s2"
 ZARR_SCALE_NAMES = ["s0", "s1", "s2"]  # one per scale level
+CAMERA_DEBOUNCE_MS = 300  # ms to wait after camera stops before re-running LOD
 
 # ---------------------------------------------------------------------------
 # Section 1 — Data structures
@@ -1043,6 +1044,15 @@ class LodDebugApp(QMainWindow):
         self._chunk_timer.timeout.connect(self._on_chunk_timer)
         self._chunk_timer.start()
 
+        # Camera debounce: re-run LOD pipeline after camera stops moving
+        self._last_camera_matrix = np.array(
+            self._camera.world.matrix, dtype=np.float64
+        ).copy()
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(CAMERA_DEBOUNCE_MS)
+        self._debounce_timer.timeout.connect(self._on_camera_settled)
+
     # ---- scene setup ------------------------------------------------------
 
     def _setup_scene(self) -> None:
@@ -1176,6 +1186,7 @@ class LodDebugApp(QMainWindow):
     # ---- button handler ---------------------------------------------------
 
     def _on_button_clicked(self) -> None:
+        """Manual LOD check with full debug output."""
         # --- Camera state (always printed) ------------------------------------
         cam_pos = get_camera_position_world(self._camera)
         view_dir = get_view_direction_world(self._camera)
@@ -1195,7 +1206,20 @@ class LodDebugApp(QMainWindow):
         print(f"far corners:\n{frustum_corners[1]}")
         print("-" * 70)
         # ----------------------------------------------------------------------
+        self._run_lod_pipeline(verbose=True)
 
+    def _on_camera_settled(self) -> None:
+        """Called by debounce timer after camera stops moving."""
+        self._run_lod_pipeline(verbose=False)
+
+    def _run_lod_pipeline(self, verbose: bool = False) -> None:
+        """Run the full LOD pipeline and update visuals.
+
+        Parameters
+        ----------
+        verbose : bool
+            If True, print detailed result and timing output.
+        """
         try:
             result = run_lod_check(self._dataset, self._camera)
         except ValueError as e:
@@ -1210,27 +1234,26 @@ class LodDebugApp(QMainWindow):
 
         self._clear_dynamic_visuals()
 
-        # --- Result debug output ----------------------------------------------
-        print("=" * 70)
-        print(f"union_vertices ({result.union_vertices.shape[0]} pts):\n{result.union_vertices}")
-        centroid = np.mean(result.union_vertices, axis=0)
-        print(f"union centroid:  {centroid}")
-        scale = self._dataset.scales[result.scale_idx]
-        T = TEXTURE_WIDTH * scale.voxel_size
-        print(f"scale_idx={result.scale_idx}  voxel_size={scale.voxel_size}  T={T}")
-        print(f"texture_min:     {result.texture_min}")
-        print(f"texture_max:     {result.texture_max}")
-        print(f"texture_size:    {result.texture_max - result.texture_min}")
-        print(f"visible_chunks:  {len(result.visible_chunk_indices)}")
-        print("=" * 70)
+        if verbose:
+            print("=" * 70)
+            print(f"union_vertices ({result.union_vertices.shape[0]} pts):\n{result.union_vertices}")
+            centroid = np.mean(result.union_vertices, axis=0)
+            print(f"union centroid:  {centroid}")
+            scale = self._dataset.scales[result.scale_idx]
+            T = TEXTURE_WIDTH * scale.voxel_size
+            print(f"scale_idx={result.scale_idx}  voxel_size={scale.voxel_size}  T={T}")
+            print(f"texture_min:     {result.texture_min}")
+            print(f"texture_max:     {result.texture_max}")
+            print(f"texture_size:    {result.texture_max - result.texture_min}")
+            print(f"visible_chunks:  {len(result.visible_chunk_indices)}")
+            print("=" * 70)
 
-        # --- Timing ---------------------------------------------------------------
-        total = sum(v for k, v in result.timings.items() if not k.startswith("  "))
-        print("--- timing (ms) ---")
-        for step, elapsed in result.timings.items():
-            print(f"  {step + ':':<28s} {elapsed * 1000:>7.2f}")
-        print(f"  {'total pipeline:':<28s} {total * 1000:>7.2f}")
-        print("---")
+            total = sum(v for k, v in result.timings.items() if not k.startswith("  "))
+            print("--- timing (ms) ---")
+            for step, elapsed in result.timings.items():
+                print(f"  {step + ':':<28s} {elapsed * 1000:>7.2f}")
+            print(f"  {'total pipeline:':<28s} {total * 1000:>7.2f}")
+            print("---")
 
         # Frustum wireframe
         self._frustum_line = make_frustum_wireframe(
@@ -1253,6 +1276,7 @@ class LodDebugApp(QMainWindow):
         self._scene.add(self._union_points)
 
         # Visible chunk wireframes (same color as texture)
+        scale = self._dataset.scales[result.scale_idx]
         vis_corners = scale.chunk_corners[result.visible_chunk_indices]
         for i in range(len(vis_corners)):
             c_min = vis_corners[i, 0]   # corner 0 = (min, min, min)
@@ -1310,6 +1334,7 @@ class LodDebugApp(QMainWindow):
             entry["volume"].visible = False
         sv = self._scale_volumes[scale_idx]
         sv["data"][:] = 0
+        sv["texture"].update_range((0, 0, 0), sv["texture"].size)
 
         # Position and show the volume immediately (empty — chunks stream in)
         volume = sv["volume"]
@@ -1404,11 +1429,20 @@ class LodDebugApp(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._chunk_timer.stop()
+        self._debounce_timer.stop()
         self._chunk_loader.shutdown()
         super().closeEvent(event)
 
     def _animate(self) -> None:
         self._renderer.render(self._scene, self._camera)
+
+        # Detect camera movement and (re)start debounce timer
+        current_matrix = np.asarray(
+            self._camera.world.matrix, dtype=np.float64
+        )
+        if not np.array_equal(current_matrix, self._last_camera_matrix):
+            self._last_camera_matrix = current_matrix.copy()
+            self._debounce_timer.start()  # restarts if already running
 
 
 # ---------------------------------------------------------------------------
