@@ -117,10 +117,8 @@ def precompute_chunk_corners(
 
     n_per_axis = (shape_arr / chunk_arr).astype(int)  # (3,)
     # Meshgrid of chunk indices → min-corner positions
-    ix, iy, iz = [np.arange(n) for n in n_per_axis]
-    grid = np.stack(
-        np.meshgrid(ix, iy, iz, indexing="ij"), axis=-1
-    )  # (nx, ny, nz, 3)
+    ix, iy, iz = (np.arange(n) for n in n_per_axis)
+    grid = np.stack(np.meshgrid(ix, iy, iz, indexing="ij"), axis=-1)  # (nx, ny, nz, 3)
     mins = grid.reshape(-1, 3).astype(np.float64) * chunk_world  # (N, 3)
 
     # Expand to 8 corners: (N, 1, 3) + (1, 8, 3)
@@ -154,10 +152,11 @@ class ChunkRequest:
     Produced by the plan phase (pure arithmetic, main thread).
     Consumed by the execute phase (I/O, can move to a worker).
     """
+
     chunk_index: int
     scale_idx: int
-    zarr_slice: tuple[slice, slice, slice]      # where to read (array zyx order)
-    texture_slice: tuple[slice, slice, slice]    # where to write (array zyx order)
+    zarr_slice: tuple[slice, slice, slice]  # where to read (array zyx order)
+    texture_slice: tuple[slice, slice, slice]  # where to write (array zyx order)
 
 
 @dataclass
@@ -166,11 +165,12 @@ class ChunkResponse:
 
     Carried from worker → result queue → main thread timer.
     """
+
     generation: int
     chunk_index: int
     scale_idx: int
-    texture_slice: tuple[slice, slice, slice]    # where to write (array zyx order)
-    data: np.ndarray                             # chunk data (z, y, x)
+    texture_slice: tuple[slice, slice, slice]  # where to write (array zyx order)
+    data: np.ndarray  # chunk data (z, y, x)
 
 
 def _load_chunk_worker(
@@ -220,9 +220,7 @@ class AsyncChunkLoader:
         self.generation = generation
 
         for req in requests:
-            future = self._pool.submit(
-                _load_chunk_worker, req, zarr_arr, generation
-            )
+            future = self._pool.submit(_load_chunk_worker, req, zarr_arr, generation)
             future.add_done_callback(self._on_future_done)
             self._pending_futures.append(future)
 
@@ -383,9 +381,7 @@ def frustum_edges(corners: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def select_primary_axis(
-    view_direction: np.ndarray, aabb_extents: np.ndarray
-) -> int:
+def select_primary_axis(view_direction: np.ndarray, aabb_extents: np.ndarray) -> int:
     """Select the primary viewing axis.
 
     Convention: (x, y, z) — axis 0 = x, 1 = y, 2 = z.
@@ -397,9 +393,7 @@ def select_primary_axis(
     return int(candidates[np.argmax(aabb_extents[candidates])])
 
 
-def get_aabb_faces(
-    aabb_min: np.ndarray, aabb_max: np.ndarray
-) -> list[dict]:
+def get_aabb_faces(aabb_min: np.ndarray, aabb_max: np.ndarray) -> list[dict]:
     """Return the 6 faces of an AABB.
 
     Each face dict contains: axis, outward_normal, face_coord, corners (4,3),
@@ -424,8 +418,12 @@ def get_aabb_faces(
             # Ordered: (min_q, min_r), (max_q, min_r),
             #          (max_q, max_r), (min_q, max_r)
             for i, (vq, vr) in enumerate(
-                [(vals_q[0], vals_r[0]), (vals_q[1], vals_r[0]),
-                 (vals_q[1], vals_r[1]), (vals_q[0], vals_r[1])]
+                [
+                    (vals_q[0], vals_r[0]),
+                    (vals_q[1], vals_r[0]),
+                    (vals_q[1], vals_r[1]),
+                    (vals_q[0], vals_r[1]),
+                ]
             ):
                 corners[i, a] = coord
                 corners[i, q] = vq
@@ -452,9 +450,7 @@ def is_camera_inside(
     aabb_min: np.ndarray,
     aabb_max: np.ndarray,
 ) -> bool:
-    return bool(
-        np.all(camera_pos >= aabb_min) and np.all(camera_pos <= aabb_max)
-    )
+    return bool(np.all(camera_pos >= aabb_min) and np.all(camera_pos <= aabb_max))
 
 
 def clip_polygon_against_plane(
@@ -578,9 +574,7 @@ def compute_near_visible_extent(
     faces = get_aabb_faces(aabb_min, aabb_max)
 
     # Collect all near-facing faces (outward normal opposes view direction)
-    near_faces = [
-        f for f in faces if np.dot(f["outward_normal"], view_direction) < 0
-    ]
+    near_faces = [f for f in faces if np.dot(f["outward_normal"], view_direction) < 0]
 
     # Sort: primary-axis face first, then by dot-product magnitude
     # (strongest opposition = most head-on to the camera)
@@ -594,9 +588,7 @@ def compute_near_visible_extent(
     for face in near_faces:
         if not face_intersects_frustum(face, frustum_corners, frustum_planes):
             continue
-        clipped = clip_face_against_frustum_sides(
-            face["corners"], frustum_planes
-        )
+        clipped = clip_face_against_frustum_sides(face["corners"], frustum_planes)
         if clipped is None:
             continue
 
@@ -623,9 +615,7 @@ def select_scale(
         T = texture_width * scale.voxel_size
         if T >= extent_q and T >= extent_r:
             return scale_idx
-    raise ValueError(
-        "No scale has a texture large enough to cover the visible extent."
-    )
+    raise ValueError("No scale has a texture large enough to cover the visible extent.")
 
 
 # ---------------------------------------------------------------------------
@@ -864,9 +854,7 @@ def run_lod_check(
     union_vertices, extent_q, extent_r, primary_axis = result
 
     t0 = time.perf_counter()
-    scale_idx = select_scale(
-        dataset, extent_q, extent_r, primary_axis, TEXTURE_WIDTH
-    )
+    scale_idx = select_scale(dataset, extent_q, extent_r, primary_axis, TEXTURE_WIDTH)
     scale = dataset.scales[scale_idx]
     timings["scale_selection"] = time.perf_counter() - t0
 
@@ -948,9 +936,18 @@ def get_camera_position_world(camera: gfx.PerspectiveCamera) -> np.ndarray:
 # 12 edge index pairs for an AABB — pairs of the 8 corner indices (from
 # itertools.product) that differ in exactly one bit.
 _AABB_EDGE_INDICES = [
-    (0, 1), (2, 3), (4, 5), (6, 7),  # vary z
-    (0, 2), (1, 3), (4, 6), (5, 7),  # vary y
-    (0, 4), (1, 5), (2, 6), (3, 7),  # vary x
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),  # vary z
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),  # vary y
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),  # vary x
 ]
 
 
@@ -978,9 +975,7 @@ def make_box_wireframe(
     return gfx.Line(geometry, material)
 
 
-def make_frustum_wireframe(
-    frustum_corners: np.ndarray, color: str
-) -> gfx.Line:
+def make_frustum_wireframe(frustum_corners: np.ndarray, color: str) -> gfx.Line:
     """Build a wireframe frustum as ``gfx.Line`` with segment material."""
     edges = frustum_edges(frustum_corners)  # (12, 2, 3)
     positions = edges.reshape(-1, 3).astype(np.float32)
@@ -1005,9 +1000,7 @@ class LodDebugApp(QMainWindow):
                     chunk_corners=precompute_chunk_corners(
                         s["shape"], CHUNK_SHAPE, s["voxel_size"]
                     ),
-                    n_chunks_per_axis=(
-                        np.array(s["shape"]) // np.array(CHUNK_SHAPE)
-                    ),
+                    n_chunks_per_axis=(np.array(s["shape"]) // np.array(CHUNK_SHAPE)),
                     chunk_world=np.array(CHUNK_SHAPE, dtype=np.float64)
                     * s["voxel_size"],
                     chunk_shape=CHUNK_SHAPE,
@@ -1060,9 +1053,7 @@ class LodDebugApp(QMainWindow):
         self._renderer = gfx.WgpuRenderer(self._canvas)
         self._scene = gfx.Scene()
 
-        self._camera = gfx.PerspectiveCamera(
-            fov=50, aspect=1, depth_range=(1, 8000)
-        )
+        self._camera = gfx.PerspectiveCamera(fov=50, aspect=1, depth_range=(1, 8000))
         self._camera.local.position = (512, 512, 3500)
         self._camera.show_pos((512, 512, 512))
 
@@ -1124,9 +1115,7 @@ class LodDebugApp(QMainWindow):
     def _setup_scale_volumes(self) -> None:
         """Pre-allocate a Volume + Texture per scale and open zarr arrays."""
         if not ZARR_PATH.exists():
-            print(
-                "WARNING: zarr not found — chunk rendering disabled."
-            )
+            print("WARNING: zarr not found — chunk rendering disabled.")
             return
 
         store = zarr.open_group(str(ZARR_PATH), mode="r")
@@ -1148,14 +1137,9 @@ class LodDebugApp(QMainWindow):
             volume.visible = False
             self._scene.add(volume)
 
-            self._scale_volumes.append(
-                dict(volume=volume, texture=tex, data=data)
-            )
+            self._scale_volumes.append(dict(volume=volume, texture=tex, data=data))
 
-        print(
-            f"Prepared {len(self._scale_volumes)} scale volumes "
-            f"({tw}³ textures)"
-        )
+        print(f"Prepared {len(self._scale_volumes)} scale volumes " f"({tw}³ textures)")
 
     # ---- UI layout --------------------------------------------------------
 
@@ -1236,7 +1220,9 @@ class LodDebugApp(QMainWindow):
 
         if verbose:
             print("=" * 70)
-            print(f"union_vertices ({result.union_vertices.shape[0]} pts):\n{result.union_vertices}")
+            print(
+                f"union_vertices ({result.union_vertices.shape[0]} pts):\n{result.union_vertices}"
+            )
             centroid = np.mean(result.union_vertices, axis=0)
             print(f"union centroid:  {centroid}")
             scale = self._dataset.scales[result.scale_idx]
@@ -1279,8 +1265,8 @@ class LodDebugApp(QMainWindow):
         scale = self._dataset.scales[result.scale_idx]
         vis_corners = scale.chunk_corners[result.visible_chunk_indices]
         for i in range(len(vis_corners)):
-            c_min = vis_corners[i, 0]   # corner 0 = (min, min, min)
-            c_max = vis_corners[i, 7]   # corner 7 = (max, max, max)
+            c_min = vis_corners[i, 0]  # corner 0 = (min, min, min)
+            c_max = vis_corners[i, 7]  # corner 7 = (max, max, max)
             line = make_box_wireframe(c_min, c_max, color=color)
             self._scene.add(line)
             self._chunk_lines.append(line)
@@ -1305,9 +1291,7 @@ class LodDebugApp(QMainWindow):
     def _on_toggle_volume(self, checked: bool) -> None:
         if self._reference_volume is not None:
             self._reference_volume.visible = checked
-            self._toggle_vol_btn.setText(
-                "Hide volume" if checked else "Show volume"
-            )
+            self._toggle_vol_btn.setText("Hide volume" if checked else "Show volume")
             self._canvas.update()
 
     # ---- chunk loading (async) -----------------------------------------------
@@ -1437,9 +1421,7 @@ class LodDebugApp(QMainWindow):
         self._renderer.render(self._scene, self._camera)
 
         # Detect camera movement and (re)start debounce timer
-        current_matrix = np.asarray(
-            self._camera.world.matrix, dtype=np.float64
-        )
+        current_matrix = np.asarray(self._camera.world.matrix, dtype=np.float64)
         if not np.array_equal(current_matrix, self._last_camera_matrix):
             self._last_camera_matrix = current_matrix.copy()
             self._debounce_timer.start()  # restarts if already running

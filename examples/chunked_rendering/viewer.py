@@ -295,14 +295,14 @@ class ChunkedBlobViewer(QtWidgets.QWidget):
         gfx_node = self.viewer._render_manager._visuals[visual.id]
 
         # The atlas and volume node are created lazily on the first reslice.
-        if gfx_node._atlas is None or gfx_node._volume_node is None:
+        if gfx_node._atlas is None or gfx_node._volume_nodes == []:
             return
 
         tw = float(gfx_node._atlas.texture_width)
         # The volume's local matrix is the texture-to-world affine transform.
         # AffineTransform.from_translation(positioning_corner) puts the
         # (z, y, x) corner in matrix column 3 (rows 0-2).
-        mat = gfx_node._volume_node.local.matrix  # (4, 4)
+        mat = gfx_node._volume_nodes[0].local.matrix  # (4, 4)
         tex_min = np.array(mat[:3, 3], dtype=np.float32)  # (z, y, x) min corner
         tex_max = tex_min + tw
 
