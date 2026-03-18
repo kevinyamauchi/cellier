@@ -72,6 +72,11 @@ from block_volume.frustum import (
 BLOCK_SIZE = 32
 GPU_BUDGET = 1024 * 1024**2  # 1 GiB — fits all L3 (512) + all L2 (4096) bricks for a 1024³ volume
 
+# Bricks committed per Qt yield in the async load loop.
+# Higher → fewer render interruptions → faster total load, less visual feedback.
+# Lower  → more frequent screen updates, slower total load.
+COMMIT_BATCH_SIZE = 8
+
 LOD_BIAS = 1.0
 
 ZARR_PATH = pathlib.Path(__file__).parent / "multiscale_blobs.zarr"
@@ -369,6 +374,7 @@ class BlockVolumeApp(QMainWindow):
             self._state.commit_bricks_async(
                 fill_plan,
                 status_callback=self._status_label.setText,
+                batch_size=COMMIT_BATCH_SIZE,
             )
         )
 

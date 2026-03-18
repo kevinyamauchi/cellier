@@ -335,35 +335,64 @@ class BlockVolumeState:
         self,
         fill_plan: list[tuple[BrickKey, object]],
         status_callback: "Callable[[str], None] | None" = None,
+        batch_size: int = 8,
     ) -> None:
-        """Load and commit each brick in fill_plan, yielding to Qt between bricks.
+        """Load and commit bricks in fill_plan, batching GPU work for throughput.
+
+        Per-batch behaviour
+        -------------------
+        1. All ``batch_size`` reads are issued concurrently with
+           ``asyncio.gather`` so tensorstore can pipeline I/O.
+        2. Each arrived brick is written into the CPU cache array and its
+           ``update_range`` is scheduled (cheap — no GPU round-trip yet).
+        3. ``rebuild_lut`` is called **once per batch** rather than once per
+           brick, reducing LUT texture uploads by ``batch_size``×.
+        4. ``await asyncio.sleep(0)`` yields to Qt **once per batch** so the
+           renderer flushes all pending ``update_range`` calls and redraws.
+           This reduces raycaster invocations from ``total`` to
+           ``ceil(total / batch_size)`` — typically 10–20× fewer frames.
 
         Parameters
         ----------
         fill_plan : list[tuple[BrickKey, TileSlot]]
             Ordered nearest-first.  Produced by ``plan_update()``.
         status_callback : callable or None
-            Optional ``f(text: str) -> None`` called after each brick
-            commit and on completion/cancellation.  Runs on the Qt main
-            thread (QtAsyncio single-thread model).
+            Optional ``f(text: str) -> None`` called after each batch.
+            Runs on the Qt main thread (QtAsyncio single-thread model).
+        batch_size : int
+            Number of bricks to read and commit before yielding to Qt.
+            Higher values → fewer render interruptions → faster total load,
+            but less visual feedback.  Default 8 is a good balance.
         """
         arrived = 0
         total = len(fill_plan)
-        try:
-            for brick_key, slot in fill_plan:
-                # Step 1: async I/O — yields to Qt event loop.
-                data = await self._read_brick_async(brick_key)
 
-                # Step 2: write into cache backing array + schedule GPU upload.
-                commit_brick(
-                    self.cache_data,
-                    self.cache_tex,
-                    slot.grid_pos,
-                    self.cache_info.padded_block_size,
-                    data,
+        # Split fill_plan into batches.
+        batches = [fill_plan[i : i + batch_size] for i in range(0, total, batch_size)]
+
+        try:
+            for batch in batches:
+                # ── Step 1: issue all reads in this batch concurrently ────
+                # asyncio.gather suspends until every read completes, allowing
+                # tensorstore to pipeline chunk fetches across the batch.
+                results = await asyncio.gather(
+                    *[self._read_brick_async(bk) for bk, _slot in batch]
                 )
 
-                # Step 3: rebuild LUT so this brick is visible immediately.
+                # ── Step 2: commit each brick into the CPU cache ──────────
+                # update_range calls accumulate; they are not flushed to the
+                # GPU until Qt renders the next frame (after the yield below).
+                for (brick_key, slot), data in zip(batch, results):
+                    commit_brick(
+                        self.cache_data,
+                        self.cache_tex,
+                        slot.grid_pos,
+                        self.cache_info.padded_block_size,
+                        data,
+                    )
+                    arrived += 1
+
+                # ── Step 3: rebuild LUT once for the whole batch ──────────
                 rebuild_lut(
                     self.base_layout,
                     self.tile_manager,
@@ -372,14 +401,13 @@ class BlockVolumeState:
                     self.lut_tex,
                 )
 
-                arrived += 1
-
-                # Live status update.
+                # ── Step 4: status update ─────────────────────────────────
                 if status_callback is not None:
                     status_callback(f"Loading: {arrived} / {total} bricks")
 
-                # Step 4: explicit yield — critical for local NVMe where the
-                # read above returns without giving Qt any CPU time.
+                # ── Step 5: yield to Qt ───────────────────────────────────
+                # The renderer will flush all pending update_range calls and
+                # run one raycaster pass showing all bricks committed so far.
                 await asyncio.sleep(0)
 
         except asyncio.CancelledError:
@@ -388,7 +416,8 @@ class BlockVolumeState:
                 status_callback(f"Cancelled ({arrived}/{total} bricks)")
             raise  # mandatory — re-raise so asyncio marks the task cancelled
 
-        print(f"  commit complete: {arrived}/{total} bricks")
+        print(f"  commit complete: {arrived}/{total} bricks  "
+              f"({len(batches)} batches of up to {batch_size})")
         if status_callback is not None:
             status_callback(f"Ready  ({arrived} bricks loaded)")
 
