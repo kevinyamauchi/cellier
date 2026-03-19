@@ -302,3 +302,78 @@ def bricks_in_frustum(
         "mask_ms": mask_ms,
     }
     return visible, timings
+
+
+def bricks_in_frustum_arr(
+    arr: np.ndarray,
+    block_size: int,
+    frustum_planes: np.ndarray,
+) -> tuple[np.ndarray, dict]:
+    """Conservative AABB frustum test over a brick array.
+
+    Vectorised; operates entirely on numpy arrays — no BrickKey objects.
+
+    Parameters
+    ----------
+    arr : ndarray, shape (M, 4), dtype int32
+        Columns: ``[level, gz_c, gy_c, gx_c]``.
+    block_size : int
+        Level-1 brick side length in voxels.
+    frustum_planes : ndarray, shape (6, 4)
+        Inward-pointing half-space planes.
+
+    Returns
+    -------
+    visible_arr : ndarray, shape (K, 4)
+        Subset of rows that pass the frustum test.
+    timings : dict
+        Wall-clock timings in milliseconds.
+    """
+    import time as _time
+
+    M = len(arr)
+    if M == 0:
+        return arr, {"build_corners_ms": 0.0, "einsum_ms": 0.0, "mask_ms": 0.0}
+
+    levels = arr[:, 0]
+    gz_c   = arr[:, 1]
+    gy_c   = arr[:, 2]
+    gx_c   = arr[:, 3]
+
+    # ── Brick world sizes and min corners ─────────────────────────────
+    t0 = _time.perf_counter()
+    scales     = np.left_shift(1, (levels - 1)).astype(np.float64)  # (M,)
+    bw         = float(block_size) * scales                          # (M,)
+    brick_mins = np.stack(
+        [gx_c.astype(np.float64) * bw,   # x
+         gy_c.astype(np.float64) * bw,   # y
+         gz_c.astype(np.float64) * bw],  # z
+        axis=1,
+    )  # (M, 3)
+
+    # (M, 8, 3) via broadcasting
+    all_corners = (
+        brick_mins[:, np.newaxis, :]
+        + CORNER_OFFSETS[np.newaxis, :, :] * bw[:, np.newaxis, np.newaxis]
+    )
+    build_corners_ms = (_time.perf_counter() - t0) * 1000
+
+    # ── Signed-distance test, shape (M, 8, 6) ─────────────────────────
+    t0 = _time.perf_counter()
+    dists = (
+        np.einsum("ijk,lk->ijl", all_corners, frustum_planes[:, :3])
+        + frustum_planes[:, 3]
+    )
+    einsum_ms = (_time.perf_counter() - t0) * 1000
+
+    # ── Visibility mask ────────────────────────────────────────────────
+    t0 = _time.perf_counter()
+    visible_mask = (dists.max(axis=1) >= 0.0).all(axis=1)  # (M,)
+    mask_ms = (_time.perf_counter() - t0) * 1000
+
+    timings = {
+        "build_corners_ms": build_corners_ms,
+        "einsum_ms": einsum_ms,
+        "mask_ms": mask_ms,
+    }
+    return arr[visible_mask], timings

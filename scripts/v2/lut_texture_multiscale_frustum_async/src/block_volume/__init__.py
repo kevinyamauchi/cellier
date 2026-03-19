@@ -39,9 +39,15 @@ from block_volume.cache import (
     commit_brick,
     compute_cache_info,
 )
-from block_volume.frustum import bricks_in_frustum
+from block_volume.frustum import bricks_in_frustum_arr
 from block_volume.layout import BLOCK_SIZE_DEFAULT, BlockLayout
-from block_volume.lod import select_levels, sort_by_distance
+from block_volume.lod import (
+    build_level_grids,
+    select_levels_from_cache,
+    select_levels_arr_forced,
+    sort_arr_by_distance,
+    arr_to_brick_keys,
+)
 from block_volume.lut import build_lut_texture, rebuild_lut
 from block_volume.material import VolumeBlockMaterial
 from block_volume.tile_manager import BrickKey, TileManager
@@ -94,6 +100,9 @@ class BlockVolumeState:
         Number of LOD levels.
     frame_number : int
         Monotonically increasing update counter.
+    _level_grids : list[dict]
+        Precomputed per-level coarse grid arrays (static after init).
+        See ``lod.build_level_grids`` for structure.
     """
 
     def __init__(
@@ -122,6 +131,12 @@ class BlockVolumeState:
         self.overlap = overlap
         self.n_levels = len(ts_stores)
         self.frame_number = 0
+        # Precompute static coarse grid arrays for each LOD level.
+        # Runs once at startup; plan_update reads the cache, no allocation.
+        self._level_grids = build_level_grids(layouts[0], self.n_levels)
+        total_bricks = sum(len(g["arr"]) for g in self._level_grids)
+        print(f"  LOD grid cache: {self.n_levels} levels, "
+              f"{total_bricks} total coarse bricks cached")
 
     # ------------------------------------------------------------------
     # Synchronous planning phase (identical logic to Phase 2 update())
@@ -162,37 +177,34 @@ class BlockVolumeState:
         t_plan_start = time.perf_counter()
         self.frame_number += 1
 
-        # ── 1. LOD selection (vectorised) ─────────────────────────────
+        # ── 1. LOD selection — reads precomputed cache, no allocation ──
+        # select_levels_from_cache enumerates each level's coarse grid
+        # directly, applies its distance band, and concatenates.  No
+        # deduplication needed (bands are disjoint) and no new arrays
+        # are allocated — only distance computation + boolean masking.
         t0 = time.perf_counter()
         if force_level is not None:
-            gd, gh, gw = self.base_layout.grid_dims
-            required: dict[BrickKey, int] = {}
-            for gz in range(gd):
-                for gy in range(gh):
-                    for gx in range(gw):
-                        scale = 2 ** (force_level - 1)
-                        key = BrickKey(
-                            level=force_level,
-                            gz=gz // scale,
-                            gy=gy // scale,
-                            gx=gx // scale,
-                        )
-                        required[key] = force_level
+            brick_arr = select_levels_arr_forced(
+                self.base_layout, force_level, self._level_grids
+            )
         else:
-            required = select_levels(
-                self.base_layout,
+            brick_arr = select_levels_from_cache(
+                self._level_grids,
                 self.n_levels,
                 camera_pos,
                 thresholds=thresholds,
+                base_layout=self.base_layout,
             )
         lod_select_ms = (time.perf_counter() - t0) * 1000
 
-        # ── 2. Distance sort (vectorised) ─────────────────────────────
+        # ── 2. Distance sort — uses precomputed centres from cache ─────
         t0 = time.perf_counter()
-        sorted_required = sort_by_distance(required, camera_pos, self.block_size)
+        brick_arr = sort_arr_by_distance(
+            brick_arr, camera_pos, self.block_size, self._level_grids
+        )
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
-        n_total = len(sorted_required)
+        n_total = len(brick_arr)
 
         # ── 3. Frustum cull (optional) ────────────────────────────────
         cull_timings: dict = {}
@@ -201,22 +213,26 @@ class BlockVolumeState:
 
         if frustum_planes is not None:
             t0 = time.perf_counter()
-            sorted_required, cull_timings = bricks_in_frustum(
-                sorted_required, self.base_layout, self.block_size, frustum_planes
+            brick_arr, cull_timings = bricks_in_frustum_arr(
+                brick_arr, self.block_size, frustum_planes
             )
             frustum_cull_ms = (time.perf_counter() - t0) * 1000
-            n_culled = n_total - len(sorted_required)
+            n_culled = n_total - len(brick_arr)
 
         # ── 4. Truncate to cache budget ───────────────────────────────
-        n_needed = len(sorted_required)
+        n_needed = len(brick_arr)
         n_budget = self.cache_info.n_slots
         n_dropped = max(0, n_needed - n_budget)
         if n_dropped:
-            sorted_required = dict(list(sorted_required.items())[:n_budget])
+            brick_arr = brick_arr[:n_budget]
         print(f"chunks: {n_needed} needed / {n_budget} cache slots  ({n_dropped} dropped)")
 
-        # ── 5. Stage (find hits and misses, plan fills) ───────────────
+        # ── 5. Convert to BrickKey dict — first and only Python loop ──
+        # By this point M is small (culled + truncated), so the loop is cheap.
         t0 = time.perf_counter()
+        sorted_required = arr_to_brick_keys(brick_arr)
+
+        # ── 6. Stage (find hits and misses, plan fills) ───────────────
         fill_plan = self.tile_manager.stage(sorted_required, self.frame_number)
         stage_ms = (time.perf_counter() - t0) * 1000
 
