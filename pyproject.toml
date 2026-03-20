@@ -44,6 +44,7 @@ dependencies = [
     "qtpy",
     "scipy>=1.15.2",
     "superqt>=0.7.2",
+    "tensorstore>=0.1.74",
     "zarr",
 ]
 
@@ -153,3 +154,7 @@ ignore = [
     ".ruff_cache/**/*",
     "tests/**/*",
 ]
+
+[tool.typos.default.extend-words]
+# LOD = Level Of Detail — not a typo for "load"
+lod = "lod"
