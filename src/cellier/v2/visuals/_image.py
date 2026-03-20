@@ -6,20 +6,23 @@ from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
 
 class ImageAppearance(BaseAppearance):
-    """Material for a image visual.
+    """Appearance parameters for an image visual.
 
     Parameters
     ----------
     color_map : cmap.Colormap
-        The color map to use for the labels. This is a cmap Colormap object.
+        The color map to use for the image. This is a cmap Colormap object.
         You can pass the object or the name of a cmap colormap as a string.
         https://cmap-docs.readthedocs.io/en/stable/
+    clim : tuple[float, float]
+        The contrast limits (min, max) used to normalise the image data
+        before colour mapping.  Default is (0.0, 1.0).
     visible : bool
-        If True, the visual is visible.
-        Default value is True.
+        If True, the visual is visible.  Default is True.
     """
 
     color_map: Colormap
+    clim: tuple[float, float] = (0.0, 1.0)
 
 
 class MultiscaleImageVisual(BaseVisual):
