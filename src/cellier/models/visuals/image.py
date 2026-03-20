@@ -1,8 +1,10 @@
 """Visual for display images."""
 
-from typing import Literal
+import uuid
+from typing import Annotated
 
 from cmap import Colormap
+from pydantic import UUID4, AfterValidator, Field
 
 from cellier.models.visuals.base import BaseAppearance, BaseVisual
 
@@ -29,26 +31,25 @@ class MultiscaleImageVisual(BaseVisual):
 
     Parameters
     ----------
-    name : str
-        The name of the visual
-    data_store_id : str
-        The id of the data store to be visualized.
-    downscale_factors : list[int]
-        The downscale factors for each scale level of the labels.
+    id : UUID4
+        The unique identifier for the visual.
+        The default value is a UUID4 id.
     appearance : ImageAppearance
-        The material to use for the labels visual.
+        The appearance of the visual.
+        This should be overridden with the visual-specific
+        implementation in the subclasses.
     pick_write : bool
-        If True, the visual can be picked.
+        If True, the visual can be picked in the canvas via
+        the picking buffer.
         Default value is True.
-    id : str
-        The unique id of the visual.
-        The default value is a uuid4-generated hex string.
-        Do not populate this field manually.
+    name : str
+        The name of the visual.
+    data_store_id : UUID
+        The unique identifier for the data store that this visual is
+        rendering from.
     """
 
-    data_store_id: str
-    downscale_factors: list[int]
+    data_store_id: (
+        UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))]
+    ) = Field(default_factory=lambda: uuid.uuid4())
     appearance: ImageAppearance
-
-    # this is used for a discriminated union
-    visual_type: Literal["image"] = "image"
