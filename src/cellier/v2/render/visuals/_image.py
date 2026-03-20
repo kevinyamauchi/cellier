@@ -348,9 +348,7 @@ class GFXMultiscaleImageVisual:
 
         # 2. Distance sort
         t0 = time.perf_counter()
-        brick_arr = sort_arr_by_distance(
-            brick_arr, camera_pos, geo.block_size, geo._level_grids
-        )
+        brick_arr = sort_arr_by_distance(brick_arr, camera_pos, geo.block_size)
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
         n_total = len(brick_arr)
