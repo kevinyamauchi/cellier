@@ -112,11 +112,14 @@ select = [
     "TID",  # flake8-tidy-imports
 ]
 ignore = [
-    "D401", # First line should be in imperative mood (remove to opt in)
+    "D401",  # First line should be in imperative mood (remove to opt in)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["D", "S"]
+# Pydantic v2 models require these imports at runtime for field type resolution
+"src/cellier/v2/scene/*.py" = ["TCH001", "TCH003"]
+"src/cellier/v2/viewer_model.py" = ["TCH001", "TCH003"]
 
 # https://docs.astral.sh/ruff/formatter/
 [tool.ruff.format]
@@ -158,3 +161,5 @@ ignore = [
 [tool.typos.default.extend-words]
 # LOD = Level Of Detail — not a typo for "load"
 lod = "lod"
+# ser = serialization abbreviation (pydantic_core API uses _ser_schema suffixes)
+ser = "ser"

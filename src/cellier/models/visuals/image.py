@@ -1,7 +1,7 @@
 """Visual for display images."""
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from cmap import Colormap
 from pydantic import UUID4, AfterValidator, Field
@@ -49,6 +49,7 @@ class MultiscaleImageVisual(BaseVisual):
         rendering from.
     """
 
+    visual_type: Literal["multiscale_image"] = "multiscale_image"
     data_store_id: (
         UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))]
     ) = Field(default_factory=lambda: uuid.uuid4())
