@@ -16,10 +16,10 @@ from cellier.v2.render.block_cache._tile_manager import (
 
 __all__ = [
     "BlockCache3D",
-    "TileManager",
+    "BlockCacheParameters3D",
     "BlockKey3D",
+    "TileManager",
     "TileSlot",
     "commit_block",
     "compute_block_cache_parameters",
-    "BlockCacheParameters3D",
 ]
