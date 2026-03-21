@@ -1,5 +1,7 @@
 """Visuals for representing image data."""
 
+from typing import Literal
+
 from cmap import Colormap
 
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
@@ -19,10 +21,22 @@ class ImageAppearance(BaseAppearance):
         before colour mapping.  Default is (0.0, 1.0).
     visible : bool
         If True, the visual is visible.  Default is True.
+    lod_bias : float
+        Multiplier on the screen-space LOD threshold. Higher values force
+        finer levels. Default is 1.0.
+    force_level : int | None
+        When set, overrides automatic LOD selection and always uses this
+        scale index. ``None`` means automatic. Default is None.
+    frustum_cull : bool
+        When True, bricks outside the camera frustum are skipped during
+        brick planning. Default is True.
     """
 
     color_map: Colormap
     clim: tuple[float, float] = (0.0, 1.0)
+    lod_bias: float = 1.0
+    force_level: int | None = None
+    frustum_cull: bool = True
 
 
 class MultiscaleImageVisual(BaseVisual):
@@ -30,6 +44,8 @@ class MultiscaleImageVisual(BaseVisual):
 
     Parameters
     ----------
+    visual_type : Literal["multiscale_image"]
+        Discriminator field. Always ``"multiscale_image"``.
     name : str
         The name of the visual
     data_store_id : str
@@ -47,6 +63,7 @@ class MultiscaleImageVisual(BaseVisual):
         Do not populate this field manually.
     """
 
+    visual_type: Literal["multiscale_image"] = "multiscale_image"
     data_store_id: str
     downscale_factors: list[int]
     appearance: ImageAppearance

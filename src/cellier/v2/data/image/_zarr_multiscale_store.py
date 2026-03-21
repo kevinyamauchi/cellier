@@ -18,7 +18,7 @@ base class definition.
 from __future__ import annotations
 
 import pathlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import tensorstore as ts
@@ -112,6 +112,8 @@ class MultiscaleZarrDataStore(BaseDataStore):
 
     Parameters
     ----------
+    store_type : Literal["multiscale_zarr"]
+        Discriminator field. Always ``"multiscale_zarr"``.
     zarr_path :
         Path to the root directory of the multiscale zarr store.
         Pass as a string; ``pathlib.Path`` is accepted and coerced.
@@ -131,6 +133,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
     """
 
     # ── Public pydantic fields ──────────────────────────────────────────
+    store_type: Literal["multiscale_zarr"] = "multiscale_zarr"
     zarr_path: str
     scale_names: list[str]
     name: str = "multiscale zarr data store"

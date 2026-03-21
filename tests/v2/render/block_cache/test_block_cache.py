@@ -13,6 +13,14 @@ from cellier.v2.render.block_cache import (
 CACHE_INFO = compute_block_cache_parameters(block_size=4, gpu_budget_bytes=8 * 6**3 * 4)
 
 
+def _stage_and_commit(cache: BlockCache3D, bricks: dict, frame_number: int):
+    """Stage bricks and immediately commit all misses (synchronous helper)."""
+    fill_plan = cache.stage(bricks, frame_number=frame_number)
+    for key, slot in fill_plan:
+        cache.tile_manager.commit(key, slot)
+    return fill_plan
+
+
 def test_first_request_is_a_miss() -> None:
     cache = BlockCache3D(CACHE_INFO)
     key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
@@ -24,7 +32,7 @@ def test_first_request_is_a_miss() -> None:
 def test_repeated_request_is_a_hit() -> None:
     cache = BlockCache3D(CACHE_INFO)
     key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
-    cache.stage({key: 1}, frame_number=1)
+    _stage_and_commit(cache, {key: 1}, frame_number=1)
     fill_plan = cache.stage({key: 1}, frame_number=2)
     assert fill_plan == []
 
@@ -32,7 +40,7 @@ def test_repeated_request_is_a_hit() -> None:
 def test_hit_does_not_change_slot() -> None:
     cache = BlockCache3D(CACHE_INFO)
     key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
-    first_plan = cache.stage({key: 1}, frame_number=1)
+    first_plan = _stage_and_commit(cache, {key: 1}, frame_number=1)
     first_slot = first_plan[0][1]
 
     cache.stage({key: 1}, frame_number=2)
@@ -48,13 +56,13 @@ def test_lru_evicts_oldest_brick() -> None:
     cache = BlockCache3D(CACHE_INFO)
     keys = [BlockKey3D(level=1, gz=i, gy=0, gx=0) for i in range(7)]
     for frame, key in enumerate(keys, start=1):
-        cache.stage({key: 1}, frame_number=frame)
+        _stage_and_commit(cache, {key: 1}, frame_number=frame)
 
     key_a = keys[0]
     slot_a_index = cache.tile_manager.tilemap[key_a].index
 
     key_b = keys[1]
-    cache.stage({key_b: 1}, frame_number=8)
+    cache.stage({key_b: 1}, frame_number=8)  # hit — no commit needed
 
     key_h = BlockKey3D(level=1, gz=99, gy=0, gx=0)
     fill_plan = cache.stage({key_h: 1}, frame_number=9)

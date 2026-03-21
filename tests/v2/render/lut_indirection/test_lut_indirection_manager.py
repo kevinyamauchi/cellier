@@ -14,6 +14,14 @@ BASE_LAYOUT = BlockLayout3D(volume_shape=(4, 4, 4), block_size=1)
 N_LEVELS = 2
 
 
+def _stage_and_commit(tile_manager: TileManager, bricks: dict, frame_number: int):
+    """Stage bricks and immediately commit all misses (synchronous helper)."""
+    fill_plan = tile_manager.stage(bricks, frame_number=frame_number)
+    for key, slot in fill_plan:
+        tile_manager.commit(key, slot)
+    return fill_plan
+
+
 def test_rebuild_empty_lut_is_all_zeros() -> None:
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
@@ -33,7 +41,7 @@ def test_coarse_brick_fills_its_fine_cells() -> None:
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
-    fill_plan = tile_manager.stage({coarse_key: 2}, frame_number=1)
+    fill_plan = _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
     slot = fill_plan[0][1]
     sz, sy, sx = slot.grid_pos
 
@@ -51,7 +59,7 @@ def test_uncovered_cells_remain_zero() -> None:
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
-    tile_manager.stage({coarse_key: 2}, frame_number=1)
+    _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
 
     lut.rebuild(tile_manager)
 
@@ -70,7 +78,7 @@ def test_fine_brick_overwrites_coarse_at_its_cell() -> None:
     tile_manager = TileManager(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
     fine_key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
-    tile_manager.stage({coarse_key: 2, fine_key: 1}, frame_number=1)
+    _stage_and_commit(tile_manager, {coarse_key: 2, fine_key: 1}, frame_number=1)
 
     lut.rebuild(tile_manager)
 
@@ -86,7 +94,9 @@ def test_fine_brick_slot_coordinates_are_correct() -> None:
     tile_manager = TileManager(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
     fine_key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
-    fill_plan = tile_manager.stage({coarse_key: 2, fine_key: 1}, frame_number=1)
+    fill_plan = _stage_and_commit(
+        tile_manager, {coarse_key: 2, fine_key: 1}, frame_number=1
+    )
 
     fine_slot = next(slot for key, slot in fill_plan if key == fine_key)
     sz, sy, sx = fine_slot.grid_pos
