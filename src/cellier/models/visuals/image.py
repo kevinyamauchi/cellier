@@ -1,10 +1,8 @@
 """Visual for display images."""
 
-import uuid
-from typing import Annotated, Literal
+from typing import Literal
 
 from cmap import Colormap
-from pydantic import UUID4, AfterValidator, Field
 
 from cellier.models.visuals.base import BaseAppearance, BaseVisual
 
@@ -50,7 +48,6 @@ class MultiscaleImageVisual(BaseVisual):
     """
 
     visual_type: Literal["multiscale_image"] = "multiscale_image"
-    data_store_id: (
-        UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))]
-    ) = Field(default_factory=lambda: uuid.uuid4())
+    data_store_id: str
+    downscale_factors: list[int]
     appearance: ImageAppearance
