@@ -11,8 +11,8 @@ import pygfx as gfx
 from psygnal import Signal
 from pygfx.renderers import WgpuRenderer
 from pylinalg import vec_transform, vec_unproject
+from rendercanvas.pyqt6 import RenderCanvas
 from superqt import ensure_main_thread
-from wgpu.gui import WgpuCanvasBase
 
 from cellier.models.scene import Scene as SceneModel
 from cellier.models.viewer import ViewerModel
@@ -154,7 +154,7 @@ class RenderManager:
         return self._visuals
 
     def add_from_viewer_model(
-        self, viewer_model: ViewerModel, canvas_widgets: Dict[CanvasId, WgpuCanvasBase]
+        self, viewer_model: ViewerModel, canvas_widgets: Dict[CanvasId, RenderCanvas]
     ):
         """Populate the RenderManager from a ViewerModel."""
         for scene_model in viewer_model.scenes.scenes.values():
@@ -350,7 +350,7 @@ class RenderManager:
         scene_id = model.id
         self._scenes.update({scene_id: scene})
 
-    def add_canvas(self, canvas_model, scene_id, canvas_widget: WgpuCanvasBase):
+    def add_canvas(self, canvas_model, scene_id, canvas_widget: RenderCanvas):
         """Add a canvas to the render manager.
 
         This creates a renderer for the canvas and connects the mouse events.
@@ -361,7 +361,7 @@ class RenderManager:
             The model of the canvas to add.
         scene_id : SceneId
             The ID of the scene the canvas belongs to.
-        canvas_widget : WgpuCanvasBase
+        canvas_widget : RenderCanvas
             The GUI widget used to render the canvas.
         """
         canvas_id = canvas_model.id
