@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
     from cellier.v2.data.image import MultiscaleZarrDataStore
     from cellier.v2.render._requests import ReslicingRequest
+    from cellier.v2.render._scene_config import VisualRenderConfig
     from cellier.v2.render.scene_manager import SceneManager
     from cellier.v2.slicer import AsyncSlicer
 
@@ -49,7 +50,11 @@ class SliceCoordinator:
         self._data_stores = data_stores
         self._active_slice_ids: dict[tuple[UUID, UUID], UUID] = {}
 
-    def submit(self, request: ReslicingRequest) -> None:
+    def submit(
+        self,
+        request: ReslicingRequest,
+        visual_configs: dict[UUID, VisualRenderConfig],
+    ) -> None:
         """Execute the full reslicing cycle for the scene in ``request.scene_id``.
 
         Cancels in-flight tasks for visuals that will be re-submitted before
@@ -60,6 +65,9 @@ class SliceCoordinator:
         ----------
         request : ReslicingRequest
             The reslicing request to process.
+        visual_configs : dict[UUID, VisualRenderConfig]
+            Per-visual render configuration forwarded to
+            ``SceneManager.build_slice_requests``.
         """
         scene_manager = self._scenes[request.scene_id]
 
@@ -71,7 +79,7 @@ class SliceCoordinator:
         for visual_id in to_cancel:
             self.cancel_visual(request.scene_id, visual_id)
 
-        requests_by_visual = scene_manager.build_slice_requests(request)
+        requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 
         for visual_id, chunk_requests in requests_by_visual.items():
             visual = scene_manager.get_visual(visual_id)

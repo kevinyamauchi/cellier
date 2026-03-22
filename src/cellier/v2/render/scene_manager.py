@@ -8,7 +8,7 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.v2.render._frustum import frustum_planes_from_corners
-from cellier.v2.render._scene_config import SceneRenderConfig
+from cellier.v2.render._scene_config import VisualRenderConfig
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -31,16 +31,12 @@ class SceneManager:
         Unique identifier for this scene.
     dim : str
         Dimensionality, either ``"2d"`` or ``"3d"``.
-    config : SceneRenderConfig or None
-        Initial render configuration.  A default ``SceneRenderConfig`` is
-        created if ``None`` is supplied.
     """
 
     def __init__(
         self,
         scene_id: UUID,
         dim: str,
-        config: SceneRenderConfig | None = None,
     ) -> None:
         if dim not in ("2d", "3d"):
             raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
@@ -48,7 +44,6 @@ class SceneManager:
         self._dim = dim
         self._scene = gfx.Scene()
         self._visuals: dict[UUID, GFXMultiscaleImageVisual] = {}
-        self._config = config if config is not None else SceneRenderConfig()
 
     @property
     def scene_id(self) -> UUID:
@@ -64,15 +59,6 @@ class SceneManager:
     def scene(self) -> gfx.Scene:
         """The pygfx Scene object. Passed to CanvasView via get_scene_fn."""
         return self._scene
-
-    @property
-    def config(self) -> SceneRenderConfig:
-        """Live render configuration for this scene.
-
-        The application may mutate fields on the returned object at any
-        time.  The next reslicing cycle picks up the current values.
-        """
-        return self._config
 
     @property
     def visual_ids(self) -> list[UUID]:
@@ -144,19 +130,24 @@ class SceneManager:
         return self._visuals[visual_id]
 
     def build_slice_requests(
-        self, request: ReslicingRequest
+        self,
+        request: ReslicingRequest,
+        visual_configs: dict[UUID, VisualRenderConfig],
     ) -> dict[UUID, list[ChunkRequest]]:
         """Collect ChunkRequests from all (or targeted) registered visuals.
 
-        Frustum planes, LOD thresholds, and force-level are derived from
-        ``self.config`` at call time so application changes take effect on
-        the next reslicing cycle without any re-registration.
+        Per-visual render settings (LOD bias, force level, frustum cull) are
+        read from ``visual_configs`` at call time.  When a visual's ID is
+        absent from the dict, a default ``VisualRenderConfig()`` is used.
 
         Parameters
         ----------
         request : ReslicingRequest
             The reslicing request.  If ``request.target_visual_ids`` is not
             ``None``, only visuals whose ID is in that set are processed.
+        visual_configs : dict[UUID, VisualRenderConfig]
+            Per-visual render configuration.  Missing entries fall back to
+            ``VisualRenderConfig()`` defaults.
 
         Returns
         -------
@@ -165,12 +156,6 @@ class SceneManager:
             ordered nearest-first within each list.  Visuals with no missing
             bricks (all cached) are omitted from the dict.
         """
-        frustum_planes = (
-            frustum_planes_from_corners(request.frustum_corners)
-            if self._config.frustum_cull
-            else None
-        )
-
         result: dict[UUID, list[ChunkRequest]] = {}
         for visual_id, visual in self._visuals.items():
             if (
@@ -179,14 +164,22 @@ class SceneManager:
             ):
                 continue
 
+            cfg = visual_configs.get(visual_id, VisualRenderConfig())
+
+            frustum_planes = (
+                frustum_planes_from_corners(request.frustum_corners)
+                if cfg.frustum_cull
+                else None
+            )
+
             n_levels = visual._volume_geometry.n_levels
-            thresholds = self._compute_thresholds(request, n_levels)
+            thresholds = self._compute_thresholds(request, n_levels, cfg.lod_bias)
 
             chunk_requests = visual.build_slice_request(
                 camera_pos=request.camera_pos,
                 frustum_planes=frustum_planes,
                 thresholds=thresholds,
-                force_level=self._config.force_level,
+                force_level=cfg.force_level,
             )
             if chunk_requests:
                 result[visual_id] = chunk_requests
@@ -194,9 +187,9 @@ class SceneManager:
         return result
 
     def _compute_thresholds(
-        self, request: ReslicingRequest, n_levels: int
+        self, request: ReslicingRequest, n_levels: int, lod_bias: float
     ) -> list[float]:
-        """Compute LOD distance thresholds from camera parameters and config.
+        """Compute LOD distance thresholds from camera parameters.
 
         Parameters
         ----------
@@ -204,18 +197,17 @@ class SceneManager:
             The reslicing request providing FOV and screen height.
         n_levels : int
             Number of LOD levels for this visual.
+        lod_bias : float
+            Multiplier on the computed thresholds.
 
         Returns
         -------
         list[float]
             One threshold per level boundary (length ``n_levels - 1``).
-            Distance in world units at which the renderer transitions from
-            level k to level k+1, scaled by ``self.config.lod_bias``.
         """
         focal_half_height = (request.screen_height_px / 2.0) / np.tan(
             request.fov_y_rad / 2.0
         )
         return [
-            (2 ** (k - 1)) * focal_half_height * self._config.lod_bias
-            for k in range(1, n_levels)
+            (2 ** (k - 1)) * focal_half_height * lod_bias for k in range(1, n_levels)
         ]
