@@ -60,6 +60,7 @@ class CanvasView:
         self._scene_id = scene_id
         self._get_scene_fn = get_scene_fn
         self._applying_model_state: bool = False
+        self._id: UUID = uuid4()
 
         self._canvas = QRenderWidget(parent=parent, update_mode="continuous")
         self._renderer = gfx.WgpuRenderer(self._canvas)

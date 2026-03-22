@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import UUID, uuid4
 
-from cellier.v2.render._requests import DimsState
+from cellier.v2._state import DimsState
+from cellier.v2.events import (
+    AppearanceChangedEvent,
+    CameraChangedEvent,
+    DimsChangedEvent,
+    EventBus,
+    SceneAddedEvent,
+    SubscriptionHandle,
+    VisualAddedEvent,
+    VisualVisibilityChangedEvent,
+)
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
@@ -19,10 +29,16 @@ from cellier.v2.visuals._image import MultiscaleImageVisual
 if TYPE_CHECKING:
     import pathlib
 
+    from psygnal import EmissionInfo
     from PySide6.QtWidgets import QWidget
 
+    from cellier.v2._state import CameraState
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.visuals._image import ImageAppearance
+
+
+# Appearance fields that require a reslice (not just a GPU material update).
+_RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
 
 
 class CellierController:
@@ -41,6 +57,13 @@ class CellierController:
         self._canvas_to_scene: dict[UUID, UUID] = {}
         # Forward map: scene_id → list[canvas_id]
         self._scene_to_canvases: dict[UUID, list[UUID]] = {}
+        # Event bus
+        self._id: UUID = uuid4()
+        self._event_bus: EventBus = EventBus()
+        # Cache of last-known displayed_axes per scene for change detection
+        self._dims_cache: dict[UUID, tuple[int, ...]] = {}
+        # Handles for externally-registered callbacks
+        self._external_handles: list[SubscriptionHandle] = []
 
     def set_widget_parent(self, parent: QWidget) -> None:
         """Set the Qt parent for subsequently created canvas widgets."""
@@ -145,6 +168,8 @@ class CellierController:
         self._model.scenes[scene.id] = scene
         self._render_manager.add_scene(scene.id, dim=dim)
         self._scene_to_canvases[scene.id] = []
+        self._wire_dims_model(scene)
+        self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
         return scene
 
     # ------------------------------------------------------------------
@@ -246,7 +271,26 @@ class CellierController:
 
         self._render_manager.add_visual(scene_id, gfx_visual, data)
         self._visual_to_scene[visual_model.id] = scene_id
-
+        self._wire_appearance(visual_model)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
         return visual_model
 
     def add_visual(
@@ -417,6 +461,69 @@ class CellierController:
             slice_indices=dims.slice_indices,
         )
 
+    # ------------------------------------------------------------------
+    # psygnal bridges
+    # ------------------------------------------------------------------
+
+    def _wire_dims_model(self, scene: Scene) -> None:
+        """Subscribe to all field changes on a scene's DimsManager."""
+        self._dims_cache[scene.id] = scene.dims.displayed_axes
+        scene.dims.events.connect(self._make_dims_handler(scene.id))
+
+    def _make_dims_handler(self, scene_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a scene's DimsManager."""
+
+        def _on_dims_psygnal(info: EmissionInfo) -> None:
+            dims = self._model.scenes[scene_id].dims
+            new_state = DimsState(
+                displayed_axes=dims.displayed_axes,
+                slice_indices=dims.slice_indices,
+            )
+            prev_axes = self._dims_cache[scene_id]
+            displayed_axes_changed = prev_axes != new_state.displayed_axes
+            self._dims_cache[scene_id] = new_state.displayed_axes
+            self._event_bus.emit(
+                DimsChangedEvent(
+                    source_id=self._id,
+                    scene_id=scene_id,
+                    dims_state=new_state,
+                    displayed_axes_changed=displayed_axes_changed,
+                )
+            )
+
+        return _on_dims_psygnal
+
+    def _wire_appearance(self, visual: MultiscaleImageVisual) -> None:
+        """Subscribe to all field changes on a visual's ImageAppearance."""
+        visual.appearance.events.connect(self._make_appearance_handler(visual.id))
+
+    def _make_appearance_handler(self, visual_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a visual's ImageAppearance."""
+
+        def _on_appearance_psygnal(info: EmissionInfo) -> None:
+            field_name: str = info.signal.name
+            new_value = info.args[0]
+            if field_name == "visible":
+                self._event_bus.emit(
+                    VisualVisibilityChangedEvent(
+                        source_id=self._id,
+                        visual_id=visual_id,
+                        visible=new_value,
+                    )
+                )
+            else:
+                self._event_bus.emit(
+                    AppearanceChangedEvent(
+                        source_id=self._id,
+                        visual_id=visual_id,
+                        field_name=field_name,
+                        new_value=new_value,
+                        requires_reslice=(field_name in _RESLICE_FIELDS),
+                    )
+                )
+
+        return _on_appearance_psygnal
+
     def reslice_all(self) -> None:
         """Trigger a data load for all visuals across all scenes."""
         for scene_id in self._model.scenes:
@@ -507,12 +614,30 @@ class CellierController:
         raise NotImplementedError("add_mesh is not implemented in Phase 1.")
 
     def remove_scene(self, scene_id: UUID) -> None:
-        """Not implemented in Phase 1."""
-        raise NotImplementedError("remove_scene is not implemented in Phase 1.")
+        """Clean up bus subscriptions for a scene and its canvases.
+
+        Render-layer teardown is not yet implemented.
+        """
+        for canvas_id in self._scene_to_canvases.pop(scene_id, []):
+            self._event_bus.unsubscribe_all(canvas_id)
+            self._canvas_to_scene.pop(canvas_id, None)
+        self._event_bus.unsubscribe_all(scene_id)
+        raise NotImplementedError(
+            "Scene render-layer teardown not yet implemented. "
+            "Bus subscriptions have been cleaned up."
+        )
 
     def remove_visual(self, visual_id: UUID) -> None:
-        """Not implemented in Phase 1."""
-        raise NotImplementedError("remove_visual is not implemented in Phase 1.")
+        """Clean up bus subscriptions for a visual.
+
+        Render-layer teardown is not yet implemented.
+        """
+        self._event_bus.unsubscribe_all(visual_id)
+        self._visual_to_scene.pop(visual_id, None)
+        raise NotImplementedError(
+            "Visual render-layer teardown not yet implemented. "
+            "Bus subscriptions have been cleaned up."
+        )
 
     def remove_data_store(self, data_store_id: UUID) -> None:
         """Not implemented in Phase 1."""
@@ -525,9 +650,46 @@ class CellierController:
         """
         raise NotImplementedError("get_dims_widget is not implemented in Phase 1.")
 
-    def on_dims_changed(self, scene_id: UUID, callback) -> None:
-        """Register a callback to be called when dims change.
+    def on_dims_changed(
+        self, scene_id: UUID, callback: Callable[[DimsState], None]
+    ) -> None:
+        """Register a callback fired whenever the dims for *scene_id* change.
 
-        Not implemented in Phase 1.
+        The callback receives a ``DimsState`` snapshot.
         """
-        raise NotImplementedError("on_dims_changed is not implemented in Phase 1.")
+        handle = self._event_bus.subscribe(
+            DimsChangedEvent,
+            lambda e: callback(e.dims_state),
+            entity_id=scene_id,
+            owner_id=self._id,
+        )
+        self._external_handles.append(handle)
+
+    def on_camera_changed(
+        self, scene_id: UUID, callback: Callable[[CameraState], None]
+    ) -> None:
+        """Register a callback fired whenever the camera for *scene_id* changes.
+
+        Camera event wiring is dormant in this phase; the subscription is
+        registered but will never fire until camera events are wired.
+        """
+        handle = self._event_bus.subscribe(
+            CameraChangedEvent,
+            lambda e: callback(e.camera_state),
+            entity_id=scene_id,
+            owner_id=self._id,
+        )
+        self._external_handles.append(handle)
+
+    def on_visual_changed(self, visual_id: UUID, callback: Callable) -> None:
+        """Register a callback fired whenever the appearance of *visual_id* changes.
+
+        The callback receives the live ``MultiscaleImageVisual`` model.
+        """
+        handle = self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            lambda e: callback(self.get_visual_model(e.visual_id)),
+            entity_id=visual_id,
+            owner_id=self._id,
+        )
+        self._external_handles.append(handle)

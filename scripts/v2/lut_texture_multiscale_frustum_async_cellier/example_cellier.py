@@ -17,6 +17,7 @@ Controls
 --------
 Mouse                  — orbit / zoom at any time
 Update btn             — freeze camera, plan, submit async commit task
+Colormap btn           — toggle between viridis and gray (live, no Update needed)
 Frustum cull checkbox  — enable / disable brick culling
 Show frustum checkbox  — toggle wireframe visibility (no pipeline re-run)
 Auto / 1 / 2 / 3 radio — select force-level
@@ -32,6 +33,7 @@ import datetime
 import pathlib
 import sys
 import time
+from typing import ClassVar
 
 import numpy as np
 import pygfx as gfx
@@ -149,11 +151,14 @@ def make_frustum_wireframe(corners: np.ndarray, color: str = "#00cc44") -> gfx.L
 class MainWindow(QMainWindow):
     """PySide6 main window using CellierController."""
 
+    _COLORMAPS: ClassVar[list[str]] = ["viridis", "gray"]
+
     def __init__(self, data_store: MultiscaleZarrDataStore) -> None:
         super().__init__()
         self._frustum_line: gfx.Line | None = None
         self._update_count = 0
         self._force_level: int | None = None
+        self._colormap_index: int = 0  # index into _COLORMAPS
 
         self._controller = CellierController(widget_parent=self)
         cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
@@ -208,6 +213,12 @@ class MainWindow(QMainWindow):
             lambda: asyncio.ensure_future(self._on_update_clicked())
         )
         panel_layout.addWidget(self._update_btn)
+
+        self._colormap_btn = QPushButton(
+            f"Colormap: {self._COLORMAPS[self._colormap_index]}"
+        )
+        self._colormap_btn.clicked.connect(self._on_toggle_colormap)
+        panel_layout.addWidget(self._colormap_btn)
 
         self._frustum_cull_cb = QCheckBox("Frustum cull")
         self._frustum_cull_cb.setChecked(True)
@@ -269,6 +280,13 @@ class MainWindow(QMainWindow):
             scene_id=self._scene.id,
             depth_range=(1.0, value),
         )
+
+    def _on_toggle_colormap(self) -> None:
+        self._colormap_index = (self._colormap_index + 1) % len(self._COLORMAPS)
+        new_cmap = self._COLORMAPS[self._colormap_index]
+        self._visual.appearance.color_map = new_cmap
+        self._colormap_btn.setText(f"Colormap: {new_cmap}")
+        print(f"[colormap] switched to '{new_cmap}'")
 
     # ── Update button handler ───────────────────────────────────────────
 

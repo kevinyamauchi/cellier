@@ -134,3 +134,21 @@ class SliceCoordinator:
                 visual.cancel_pending()
             except KeyError:
                 pass
+
+    # ── Dormant EventBus handler stubs ───────────────────────────────────
+
+    def _on_dims_changed(self, event) -> None:
+        """Dormant stub — not yet subscribed to the bus.
+
+        Will schedule async reslice when bus-driven triggers are enabled
+        in a future phase.
+        """
+        pass
+
+    def _on_appearance_changed(self, event) -> None:
+        """Dormant stub — not yet subscribed to the bus.
+
+        Will schedule async reslice for requires_reslice=True fields
+        in a future phase.
+        """
+        pass
