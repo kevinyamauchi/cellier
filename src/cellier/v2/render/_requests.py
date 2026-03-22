@@ -4,27 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from cellier.v2._state import DimsState
+
+__all__ = ["DimsState", "ReslicingRequest"]
+
 if TYPE_CHECKING:
     from uuid import UUID
 
     import numpy as np
-
-
-class DimsState(NamedTuple):
-    """Current dimension display state.
-
-    Parameters
-    ----------
-    displayed_axes : tuple[int, ...]
-        Indices of axes currently displayed, e.g. ``(0, 1, 2)`` for a 3D
-        view or ``(0, 1)`` for a 2D view.
-    slice_indices : tuple[int, ...]
-        Current slice index for each non-displayed axis, in the same order
-        as the non-displayed axes.
-    """
-
-    displayed_axes: tuple[int, ...]
-    slice_indices: tuple[int, ...]
 
 
 class ReslicingRequest(NamedTuple):

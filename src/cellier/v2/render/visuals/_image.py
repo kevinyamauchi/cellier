@@ -33,6 +33,12 @@ from cellier.v2.render.shaders._block_volume import (
 )
 
 if TYPE_CHECKING:
+    from cellier.v2.events._events import (
+        AppearanceChangedEvent,
+        DataStoreContentsChangedEvent,
+        DataStoreMetadataChangedEvent,
+        VisualVisibilityChangedEvent,
+    )
     from cellier.v2.visuals._image import MultiscaleImageVisual
 
 # Importing this module registers VolumeBlockShader with pygfx via the
@@ -470,6 +476,54 @@ class GFXMultiscaleImageVisual:
         """
         self._block_cache.tile_manager.release_all_in_flight()
         self._pending_slot_map = {}
+
+    # ── EventBus handler methods ─────────────────────────────────────────
+
+    def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
+        """Apply GPU-only appearance changes.
+
+        Reslice-field changes (lod_bias, force_level, frustum_cull) are
+        no-ops here; new values are read from the model at the next
+        trigger_update() call.
+        """
+        if event.field_name == "color_map":
+            from cmap import Colormap
+
+            colormap = (
+                Colormap(event.new_value)
+                if isinstance(event.new_value, str)
+                else event.new_value
+            )
+            new_map = cmap_to_gfx_colormap(colormap)
+            if self.material_3d is not None:
+                self.material_3d.map = new_map
+            if self.material_2d is not None:
+                self.material_2d.map = new_map
+        elif event.field_name == "clim":
+            if self.material_3d is not None:
+                self.material_3d.clim = event.new_value
+            if self.material_2d is not None:
+                self.material_2d.clim = event.new_value
+        # lod_bias / force_level / frustum_cull: no GPU state to update here.
+
+    def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
+        """Apply visibility change to all render nodes."""
+        if self.node_3d is not None:
+            self.node_3d.visible = event.visible
+        if self.node_2d is not None:
+            self.node_2d.visible = event.visible
+
+    def on_data_store_contents_changed(
+        self, event: DataStoreContentsChangedEvent
+    ) -> None:
+        """Stub — brick eviction deferred to a future phase."""
+        pass
+
+    def on_data_store_metadata_changed(
+        self, event: DataStoreMetadataChangedEvent
+    ) -> None:
+        """Stub — geometry rebuild deferred to a future phase."""
+        pass
 
     # ── Private helpers ─────────────────────────────────────────────────
 
