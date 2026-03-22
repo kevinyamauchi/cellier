@@ -14,7 +14,7 @@ import pytest
 
 from cellier.v2.data.image import ChunkRequest
 from cellier.v2.render._requests import DimsState, ReslicingRequest
-from cellier.v2.render._scene_config import SceneRenderConfig
+from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
 
@@ -184,7 +184,7 @@ def test_scene_manager_build_slice_requests_all_visuals() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        result = sm.build_slice_requests(req)
+        result = sm.build_slice_requests(req, {})
 
     assert v1.visual_model_id in result
     assert v2.visual_model_id not in result
@@ -223,7 +223,7 @@ def test_scene_manager_build_slice_requests_target_filtering() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        result = sm.build_slice_requests(req)
+        result = sm.build_slice_requests(req, {})
 
     assert v1.visual_model_id in result
     assert v2.visual_model_id not in result
@@ -295,7 +295,7 @@ def test_slice_coordinator_submit_once_no_prior_task() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        coordinator.submit(req)
+        coordinator.submit(req, {})
 
     assert len(stub_slicer.submitted) == 1
     assert len(stub_slicer.cancelled) == 0
@@ -309,8 +309,8 @@ def test_slice_coordinator_second_submit_cancels_first() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id))
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id))
+        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     assert len(stub_slicer.submitted) == 2
     assert len(stub_slicer.cancelled) == 1
@@ -325,7 +325,7 @@ def test_slice_coordinator_cancel_visual_releases_pending() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id))
+        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     visual.cancel_pending.reset_mock()
     coordinator.cancel_visual(scene_id, visual.visual_model_id)
@@ -343,7 +343,7 @@ def test_slice_coordinator_cancel_visual_only_affects_one() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id))
+        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     n_cancelled_before = len(stub_slicer.cancelled)
     coordinator.cancel_visual(scene_id, v1.visual_model_id)
@@ -360,7 +360,7 @@ def test_slice_coordinator_cancel_scene_cancels_all() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id))
+        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     coordinator.cancel_scene(scene_id)
     assert len(coordinator._active_slice_ids) == 0
@@ -423,7 +423,7 @@ def test_reslice_visual_only_targets_one_visual() -> None:
     captured_requests: list[ReslicingRequest] = []
 
     class _CapturingCoordinator:
-        def submit(self, req):
+        def submit(self, req, visual_configs=None):
             captured_requests.append(req)
 
     rm._slice_coordinator = _CapturingCoordinator()
@@ -448,42 +448,31 @@ def test_reslice_visual_only_targets_one_visual() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SceneRenderConfig — defaults and threading through SceneManager
+# VisualRenderConfig — defaults
 # ---------------------------------------------------------------------------
 
 
-def test_scene_render_config_defaults() -> None:
-    config = SceneRenderConfig()
+def test_visual_render_config_defaults() -> None:
+    config = VisualRenderConfig()
     assert config.lod_bias == 1.0
     assert config.force_level is None
     assert config.frustum_cull is True
 
 
-def test_scene_manager_exposes_config() -> None:
-    sm = SceneManager(scene_id=uuid4(), dim="3d")
-    assert isinstance(sm.config, SceneRenderConfig)
-
-
-def test_scene_manager_accepts_custom_config() -> None:
-    cfg = SceneRenderConfig(lod_bias=2.0, force_level=1, frustum_cull=False)
-    sm = SceneManager(scene_id=uuid4(), dim="3d", config=cfg)
-    assert sm.config is cfg
+# ---------------------------------------------------------------------------
+# SceneManager — per-visual config delivery
+# ---------------------------------------------------------------------------
 
 
 def test_lod_bias_scales_thresholds() -> None:
     """lod_bias=2.0 must double every threshold value."""
     scene_id = uuid4()
-    sm_default = SceneManager(scene_id=scene_id, dim="3d")
-    sm_biased = SceneManager(
-        scene_id=scene_id,
-        dim="3d",
-        config=SceneRenderConfig(lod_bias=2.0),
-    )
+    sm = SceneManager(scene_id=scene_id, dim="3d")
     req = _make_reslicing_request(scene_id=scene_id, screen_height_px=800.0)
     n_levels = 3
 
-    t_default = sm_default._compute_thresholds(req, n_levels)
-    t_biased = sm_biased._compute_thresholds(req, n_levels)
+    t_default = sm._compute_thresholds(req, n_levels, 1.0)
+    t_biased = sm._compute_thresholds(req, n_levels, 2.0)
 
     assert len(t_default) == len(t_biased) == n_levels - 1
     for td, tb in zip(t_default, t_biased):
@@ -497,21 +486,16 @@ def test_lod_bias_one_is_identity() -> None:
     req = _make_reslicing_request(scene_id=scene_id)
     n_levels = 3
 
-    t1 = sm._compute_thresholds(req, n_levels)
-    sm.config.lod_bias = 1.0
-    t2 = sm._compute_thresholds(req, n_levels)
+    t1 = sm._compute_thresholds(req, n_levels, 1.0)
+    t2 = sm._compute_thresholds(req, n_levels, 1.0)
 
     assert t1 == t2
 
 
 def test_force_level_forwarded_to_visual() -> None:
-    """SceneManager must pass config.force_level to visual.build_slice_request."""
+    """SceneManager must pass force_level from visual_configs to build_slice_request."""
     scene_id = uuid4()
-    sm = SceneManager(
-        scene_id=scene_id,
-        dim="3d",
-        config=SceneRenderConfig(force_level=2),
-    )
+    sm = SceneManager(scene_id=scene_id, dim="3d")
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
     sm.add_visual(visual)
@@ -521,7 +505,9 @@ def test_force_level_forwarded_to_visual() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        sm.build_slice_requests(req)
+        sm.build_slice_requests(
+            req, {visual.visual_model_id: VisualRenderConfig(force_level=2)}
+        )
 
     _, kwargs = visual.build_slice_request.call_args
     assert kwargs.get("force_level") == 2
@@ -540,7 +526,7 @@ def test_force_level_none_forwarded_to_visual() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ):
-        sm.build_slice_requests(req)
+        sm.build_slice_requests(req, {})
 
     _, kwargs = visual.build_slice_request.call_args
     assert kwargs.get("force_level") is None
@@ -549,11 +535,7 @@ def test_force_level_none_forwarded_to_visual() -> None:
 def test_frustum_cull_false_passes_none_planes() -> None:
     """frustum_cull=False must pass None for frustum_planes, skipping the call."""
     scene_id = uuid4()
-    sm = SceneManager(
-        scene_id=scene_id,
-        dim="3d",
-        config=SceneRenderConfig(frustum_cull=False),
-    )
+    sm = SceneManager(scene_id=scene_id, dim="3d")
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
     sm.add_visual(visual)
@@ -563,7 +545,9 @@ def test_frustum_cull_false_passes_none_planes() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=np.zeros((6, 4)),
     ) as mock_frustum:
-        sm.build_slice_requests(req)
+        sm.build_slice_requests(
+            req, {visual.visual_model_id: VisualRenderConfig(frustum_cull=False)}
+        )
 
     mock_frustum.assert_not_called()
     _, kwargs = visual.build_slice_request.call_args
@@ -584,40 +568,8 @@ def test_frustum_cull_true_passes_planes() -> None:
         "cellier.v2.render.scene_manager.frustum_planes_from_corners",
         return_value=fake_planes,
     ) as mock_frustum:
-        sm.build_slice_requests(req)
+        sm.build_slice_requests(req, {})
 
     mock_frustum.assert_called_once()
     _, kwargs = visual.build_slice_request.call_args
     assert kwargs.get("frustum_planes") is fake_planes
-
-
-def test_render_manager_get_scene_config() -> None:
-    """get_scene_config must return the live SceneRenderConfig for the scene."""
-    from cellier.v2.render.render_manager import RenderManager
-
-    rm = RenderManager()
-    scene_id = uuid4()
-    rm.add_scene(scene_id, dim="3d")
-
-    cfg = rm.get_scene_config(scene_id)
-    assert isinstance(cfg, SceneRenderConfig)
-    assert cfg is rm._scenes[scene_id].config
-
-
-def test_render_manager_config_mutation_is_live() -> None:
-    """Mutating the returned config object must be reflected on the SceneManager."""
-    from cellier.v2.render.render_manager import RenderManager
-
-    rm = RenderManager()
-    scene_id = uuid4()
-    rm.add_scene(scene_id, dim="3d")
-
-    cfg = rm.get_scene_config(scene_id)
-    cfg.lod_bias = 3.5
-    cfg.force_level = 1
-    cfg.frustum_cull = False
-
-    live = rm._scenes[scene_id].config
-    assert live.lod_bias == 3.5
-    assert live.force_level == 1
-    assert live.frustum_cull is False

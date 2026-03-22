@@ -1,7 +1,7 @@
 """Components for the rendering backend."""
 
 from cellier.v2.render._requests import DimsState, ReslicingRequest
-from cellier.v2.render._scene_config import SceneRenderConfig
+from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.scene_manager import SceneManager
@@ -13,6 +13,6 @@ __all__ = [
     "RenderManager",
     "ReslicingRequest",
     "SceneManager",
-    "SceneRenderConfig",
+    "VisualRenderConfig",
     "SliceCoordinator",
 ]

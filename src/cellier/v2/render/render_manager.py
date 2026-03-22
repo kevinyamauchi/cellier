@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
@@ -17,7 +18,6 @@ if TYPE_CHECKING:
 
     from cellier.v2.data.image import MultiscaleZarrDataStore
     from cellier.v2.render._requests import DimsState
-    from cellier.v2.render._scene_config import SceneRenderConfig
     from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 
 
@@ -124,24 +124,6 @@ class RenderManager:
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
 
-    def get_scene_config(self, scene_id: UUID) -> SceneRenderConfig:
-        """Return the live render config for ``scene_id``.
-
-        The returned object is mutable.  Mutate fields in-place before
-        calling any reslicing entry point and the new values will be used
-        immediately.
-
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of the scene whose config should be returned.
-
-        Returns
-        -------
-        SceneRenderConfig
-        """
-        return self._scenes[scene_id].config
-
     def get_scene(self, scene_id: UUID) -> gfx.Scene:
         """Return the pygfx Scene for ``scene_id``.
 
@@ -160,24 +142,37 @@ class RenderManager:
         """
         return self._scenes[scene_id].scene
 
-    def trigger_update(self, dims_state: DimsState) -> None:
+    def trigger_update(
+        self,
+        dims_state: DimsState,
+        visual_configs: dict[UUID, VisualRenderConfig] | None = None,
+    ) -> None:
         """Reslice all visuals across all scenes.
 
         Builds one ``ReslicingRequest`` per canvas using the current camera
-        state, then submits each to the ``SliceCoordinator``.  This is the
-        method called by an Update button or similar explicit trigger.
+        state, then submits each to the ``SliceCoordinator``.
 
         Parameters
         ----------
         dims_state : DimsState
             Current dimension display state.
+        visual_configs : dict[UUID, VisualRenderConfig] or None
+            Per-visual render configuration.  ``None`` falls back to defaults
+            for all visuals.
         """
+        if visual_configs is None:
+            visual_configs = {}
         for canvas_id, _scene_id in self._canvas_to_scene.items():
             canvas = self._canvases[canvas_id]
             request = canvas.capture_reslicing_request(dims_state)
-            self._slice_coordinator.submit(request)
+            self._slice_coordinator.submit(request, visual_configs)
 
-    def reslice_scene(self, scene_id: UUID, dims_state: DimsState) -> None:
+    def reslice_scene(
+        self,
+        scene_id: UUID,
+        dims_state: DimsState,
+        visual_configs: dict[UUID, VisualRenderConfig] | None = None,
+    ) -> None:
         """Reslice all visuals in one scene.
 
         Parameters
@@ -186,20 +181,28 @@ class RenderManager:
             ID of the scene to reslice.
         dims_state : DimsState
             Current dimension display state.
+        visual_configs : dict[UUID, VisualRenderConfig] or None
+            Per-visual render configuration.  ``None`` falls back to defaults.
         """
+        if visual_configs is None:
+            visual_configs = {}
         canvas = self._find_canvas_for_scene(scene_id)
         if canvas is None:
             return
         request = canvas.capture_reslicing_request(dims_state)
-        self._slice_coordinator.submit(request)
+        self._slice_coordinator.submit(request, visual_configs)
 
-    def reslice_visual(self, visual_id: UUID, dims_state: DimsState) -> None:
+    def reslice_visual(
+        self,
+        visual_id: UUID,
+        dims_state: DimsState,
+        visual_config: VisualRenderConfig | None = None,
+    ) -> None:
         """Reslice one visual.
 
         Looks up which scene owns ``visual_id``, builds a
         ``ReslicingRequest`` with ``target_visual_ids={visual_id}``, and
-        submits it.  The camera snapshot still uses the full current camera
-        state — LOD thresholds and frustum culling depend on it.
+        submits it.
 
         Parameters
         ----------
@@ -207,7 +210,10 @@ class RenderManager:
             ID of the visual to reslice.
         dims_state : DimsState
             Current dimension display state.
+        visual_config : VisualRenderConfig or None
+            Render configuration for this visual.  ``None`` uses defaults.
         """
+        cfg = visual_config if visual_config is not None else VisualRenderConfig()
         scene_id = self._visual_to_scene[visual_id]
         canvas = self._find_canvas_for_scene(scene_id)
         if canvas is None:
@@ -215,7 +221,7 @@ class RenderManager:
         request = canvas.capture_reslicing_request(
             dims_state, target_visual_ids=frozenset({visual_id})
         )
-        self._slice_coordinator.submit(request)
+        self._slice_coordinator.submit(request, {visual_id: cfg})
 
     def _find_canvas_for_scene(self, scene_id: UUID) -> CanvasView | None:
         for canvas_id, s_id in self._canvas_to_scene.items():

@@ -1,4 +1,4 @@
-"""Per-scene render configuration for the RenderManager pipeline."""
+"""Per-visual render configuration for the RenderManager pipeline."""
 
 from __future__ import annotations
 
@@ -6,13 +6,12 @@ from dataclasses import dataclass
 
 
 @dataclass
-class SceneRenderConfig:
-    """Mutable render settings for one scene.
+class VisualRenderConfig:
+    """Mutable render settings for one visual.
 
-    The application retrieves the live config object from
-    ``RenderManager.get_scene_config(scene_id)`` and mutates fields
-    in-place.  The next call to ``trigger_update()`` (or any reslicing
-    entry point) picks up the current values automatically.
+    Passed through the call stack at reslice time.  When a visual's ID is
+    absent from the ``visual_configs`` dict supplied to
+    ``SceneManager.build_slice_requests``, a default instance is used.
 
     Parameters
     ----------

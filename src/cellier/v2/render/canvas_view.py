@@ -121,6 +121,16 @@ class CanvasView:
             target_visual_ids=target_visual_ids,
         )
 
+    def set_depth_range(self, depth_range: tuple[float, float]) -> None:
+        """Set the camera near/far clip distances.
+
+        Parameters
+        ----------
+        depth_range : tuple[float, float]
+            ``(near, far)`` clip distances in world units.
+        """
+        self._camera.depth_range = depth_range
+
     def show_object(self, scene: gfx.Scene) -> None:
         """Fit the camera to the scene bounding box.
 
