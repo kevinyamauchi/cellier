@@ -8,21 +8,21 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class BlockLayout3D:
-    """Brick grid geometry for one LOAD level of a 3-D volume.
+    """Brick grid geometry for one level of detail level of a 3-D volume.
 
     Describes how a 3-D volume is divided into a regular grid of
-    fixed-size bricks.  The layout is computed once per LOAD level at
-    startup and then read by the LOAD selector, the LUT builder, and
+    fixed-size bricks.  The layout is computed once per level of detail level at
+    startup and then read by the level of detail selector, the LUT builder, and
     the shader uniform construction.  It has no mutable state and no
     knowledge of GPU resources.
 
     In the rendering pipeline, ``BlockLayout3D`` serves as the shared
     coordinate reference between the planner (which selects which bricks
-    to load) and the indirection system (which builds the LUT texture
+    to level of detail) and the indirection system (which builds the LUT texture
     mapping virtual grid positions to physical cache slots).
 
-    Parameters (independent)
-    ------------------------
+    Parameters
+    ----------
     volume_shape : tuple[int, int, int]
         Array dimensions of this level of detail level in numpy axis order.
         For a multiscale pyramid this is the shape of
@@ -38,8 +38,8 @@ class BlockLayout3D:
         of the underlying zarr store. We should investigate allowing
         anisotropic block sizes in the future. Defaults to 32.
 
-    Attributes (derived)
-    --------------------
+    Attributes
+    ----------
     grid_dims : tuple[int, int, int]
         Number of bricks needed to tile this LOAD level along each axis
         of the volume, in numpy axis order.

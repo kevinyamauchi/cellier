@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cellier.v2.render.block_cache._cache_parameters import (
+from cellier.v2.render.block_cache._cache_parameters_3d import (
     BlockCacheParameters3D,
-    build_cache_texture,
-    commit_block,
+    build_cache_texture_3d,
+    commit_block_3d,
 )
 from cellier.v2.render.block_cache._tile_manager import (
     BlockKey3D,
@@ -29,7 +29,7 @@ class BlockCache3D:
 
     Parameters
     ----------
-    cache_info : CacheInfo
+    cache_parameters : CacheInfo
         Cache sizing metadata produced by ``compute_cache_info()``.
 
     Attributes
@@ -44,10 +44,10 @@ class BlockCache3D:
         GPU 3-D float32 texture wrapping ``cache_data``.
     """
 
-    def __init__(self, cache_info: BlockCacheParameters3D) -> None:
-        self.info = cache_info
-        self.tile_manager = TileManager(cache_info)
-        self.cache_data, self.cache_tex = build_cache_texture(cache_info)
+    def __init__(self, cache_parameters: BlockCacheParameters3D) -> None:
+        self.info = cache_parameters
+        self.tile_manager = TileManager(cache_parameters)
+        self.cache_data, self.cache_tex = build_cache_texture_3d(cache_parameters)
 
     def stage(
         self,
@@ -91,7 +91,7 @@ class BlockCache3D:
             Float32 array of shape ``(pbs, pbs, pbs)`` where
             ``pbs = block_size + 2 * overlap``.
         """
-        commit_block(
+        commit_block_3d(
             cache_data=self.cache_data,
             cache_tex=self.cache_tex,
             grid_pos=slot.grid_pos,

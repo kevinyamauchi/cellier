@@ -6,11 +6,13 @@ import pytest
 from cellier.v2.render.block_cache import (
     BlockCache3D,
     BlockKey3D,
-    compute_block_cache_parameters,
+    compute_block_cache_parameters_3d,
 )
 
 # Cache used throughout: block_size=4, overlap=1, grid_side=2, 8 slots (7 usable).
-CACHE_INFO = compute_block_cache_parameters(block_size=4, gpu_budget_bytes=8 * 6**3 * 4)
+CACHE_INFO = compute_block_cache_parameters_3d(
+    block_size=4, gpu_budget_bytes=8 * 6**3 * 4
+)
 
 
 def _stage_and_commit(cache: BlockCache3D, bricks: dict, frame_number: int):

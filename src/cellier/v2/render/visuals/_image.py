@@ -22,14 +22,26 @@ from cellier.v2.render.block_cache import (
     BlockCache3D,
     BlockKey3D,
     TileSlot,
-    compute_block_cache_parameters,
+    compute_block_cache_parameters_3d,
+)
+from cellier.v2.render.block_cache._block_cache_2d import BlockCache2D
+from cellier.v2.render.block_cache._cache_parameters_2d import (
+    compute_block_cache_parameters_2d,
 )
 from cellier.v2.render.lut_indirection import BlockLayout3D, LutIndirectionManager3D
-from cellier.v2.render.pygfx_utils import cmap_to_gfx_colormap
+from cellier.v2.render.lut_indirection._layout_2d import BlockLayout2D
+from cellier.v2.render.lut_indirection._lut_buffers_2d import (
+    build_block_scales_buffer_2d,
+    build_lut_params_buffer_2d,
+)
+from cellier.v2.render.lut_indirection._lut_indirection_manager_2d import (
+    LutIndirectionManager2D,
+)
+from cellier.v2.render.shaders._block_image import ImageBlockMaterial
 from cellier.v2.render.shaders._block_volume import (
     VolumeBlockMaterial,
-    build_block_scales_buffer,
-    build_lut_params_buffer,
+    build_block_scales_buffer_3d,
+    build_lut_params_buffer_3d,
 )
 
 if TYPE_CHECKING:
@@ -202,22 +214,56 @@ class GFXMultiscaleImageVisual:
         self._last_plan_stats: dict = {}
 
         # ── GPU resources ───────────────────────────────────────────────
-        cache_info = compute_block_cache_parameters(
+        cache_parameters_3d = compute_block_cache_parameters_3d(
             block_size=volume_geometry.block_size,
             gpu_budget_bytes=gpu_budget_bytes,
         )
-        self._block_cache = BlockCache3D(cache_info=cache_info)
-        self._lut_manager = LutIndirectionManager3D(
+        self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
+        self._lut_manager_3d = LutIndirectionManager3D(
             base_layout=volume_geometry.base_layout,
             n_levels=volume_geometry.n_levels,
         )
-        self._lut_params_buffer = build_lut_params_buffer(
+        self._lut_params_buffer_3d = build_lut_params_buffer_3d(
             volume_geometry.base_layout,
-            cache_info,
+            cache_parameters_3d,
             proxy_voxels_per_brick=volume_geometry.block_size,
         )
-        self._block_scales_buffer = build_block_scales_buffer(
+        self._block_scales_buffer_3d = build_block_scales_buffer_3d(
             volume_geometry.downscale_factors
+        )
+
+        # 2D GPU resources
+        # 2. Compute cache info.
+        cache_parameters_2d = compute_block_cache_parameters_2d(
+            gpu_budget_bytes=gpu_budget_bytes, block_size=volume_geometry.block_size
+        )
+        self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
+        pbs = cache_parameters_2d.padded_block_size
+        gs = cache_parameters_2d.grid_side
+        cache_pixels = gs * pbs
+        cache_mb = cache_pixels * cache_pixels * 4 / (1024**2)
+        print(
+            f"  cache: {gs}x{gs} slots = {cache_parameters_2d.n_slots} slots, "
+            f"texture {cache_pixels}x{cache_pixels} ({cache_mb:.1f} MB)"
+        )
+
+        # 3. Build LUT texture.
+        # need to integrate base_layout with VolumeGeometry
+        base_layout = BlockLayout2D.from_shape(
+            shape=volume_geometry.level_shapes[0][1:3],
+            block_size=volume_geometry.block_size,
+        )
+        self._lut_manager_2d = LutIndirectionManager2D(
+            base_layout=base_layout,
+            n_levels=volume_geometry.n_levels,
+        )
+
+        # 4. Build uniform buffers.
+        self._lut_params_buffer_2d = build_lut_params_buffer_2d(
+            base_layout, cache_parameters_2d
+        )
+        self._block_scales_buffer_2d = build_block_scales_buffer_2d(
+            volume_geometry.n_levels
         )
 
         if colormap is None:
@@ -226,18 +272,23 @@ class GFXMultiscaleImageVisual:
         # ── 3D node ─────────────────────────────────────────────────────
         self.node_3d: gfx.Volume | None = None
         self.material_3d: VolumeBlockMaterial | None = None
-        self._proxy_tex: gfx.Texture | None = None
+        self._proxy_tex_3d: gfx.Texture | None = None
         if "3d" in render_modes:
-            self.node_3d, self.material_3d, self._proxy_tex = self._build_3d_node(
+            self.node_3d, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
                 interpolation=interpolation,
             )
 
-        # ── 2D node (not yet implemented) ───────────────────────────────
-        self.node_2d = None
-        self.material_2d = None
+        # ── 2D node -----------------------───────────────────────────────
+        self.node_2d = gfx.Image | None
+        self.material_2d = ImageBlockMaterial | None
+        if "2d" in render_modes:
+            print(colormap)
+            self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
+                colormap=colormap, clim=clim, interpolation=interpolation
+            )
 
     @classmethod
     def from_cellier_model(
@@ -284,7 +335,7 @@ class GFXMultiscaleImageVisual:
         volume_geometry = VolumeGeometry.from_cellier_model(
             model, level_shapes, block_size
         )
-        colormap = cmap_to_gfx_colormap(model.appearance.color_map)
+        colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
 
         return cls(
@@ -373,7 +424,7 @@ class GFXMultiscaleImageVisual:
 
         # 4. Budget truncation
         n_needed = len(brick_arr)
-        n_budget = self._block_cache.info.n_slots - 1
+        n_budget = self._block_cache_3d.info.n_slots - 1
         n_dropped = max(0, n_needed - n_budget)
         if n_dropped:
             brick_arr = brick_arr[:n_budget]
@@ -381,7 +432,7 @@ class GFXMultiscaleImageVisual:
         # 5. Stage: find cache hits/misses, reserve slots for misses
         t0 = time.perf_counter()
         sorted_required = arr_to_brick_keys(brick_arr)
-        fill_plan = self._block_cache.tile_manager.stage(
+        fill_plan = self._block_cache_3d.tile_manager.stage(
             sorted_required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
@@ -394,7 +445,7 @@ class GFXMultiscaleImageVisual:
         for brick_key, slot in fill_plan:
             chunk_id = uuid4()
             z0, y0, x0, z1, y1, x1 = _brick_key_to_padded_coords(
-                brick_key, geo.block_size, self._block_cache.info.overlap
+                brick_key, geo.block_size, self._block_cache_3d.info.overlap
             )
             req = ChunkRequest(
                 chunk_request_id=chunk_id,
@@ -418,7 +469,7 @@ class GFXMultiscaleImageVisual:
         for gz in range(gd):
             for gy in range(gh):
                 for gx in range(gw):
-                    lv = int(self._lut_manager.lut_data[gz, gy, gx, 3])
+                    lv = int(self._lut_manager_3d.lut_data[gz, gy, gx, 3])
                     level_counts[lv] = level_counts.get(lv, 0) + 1
 
         self._last_plan_stats = {
@@ -461,10 +512,10 @@ class GFXMultiscaleImageVisual:
             if entry is None:
                 continue
             brick_key, slot = entry
-            self._block_cache.write_brick(slot, data)
-            self._block_cache.tile_manager.commit(brick_key, slot)
+            self._block_cache_3d.write_brick(slot, data)
+            self._block_cache_3d.tile_manager.commit(brick_key, slot)
 
-        self._lut_manager.rebuild(self._block_cache.tile_manager)
+        self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
 
     def cancel_pending(self) -> None:
         """Release all in-flight slots reserved by the last build_slice_request.
@@ -474,7 +525,7 @@ class GFXMultiscaleImageVisual:
         Only previously committed (valid) bricks remain renderable after
         this call.
         """
-        self._block_cache.tile_manager.release_all_in_flight()
+        self._block_cache_3d.tile_manager.release_all_in_flight()
         self._pending_slot_map = {}
 
     # ── EventBus handler methods ─────────────────────────────────────────
@@ -494,7 +545,7 @@ class GFXMultiscaleImageVisual:
                 if isinstance(event.new_value, str)
                 else event.new_value
             )
-            new_map = cmap_to_gfx_colormap(colormap)
+            new_map = colormap.to_pygfx(N=256)
             if self.material_3d is not None:
                 self.material_3d.map = new_map
             if self.material_2d is not None:
@@ -542,10 +593,10 @@ class GFXMultiscaleImageVisual:
         proxy_tex = gfx.Texture(proxy_data, dim=3)
 
         material = VolumeBlockMaterial(
-            cache_texture=self._block_cache.cache_tex,
-            lut_texture=self._lut_manager.lut_tex,
-            lut_params_buffer=self._lut_params_buffer,
-            block_scales_buffer=self._block_scales_buffer,
+            cache_texture=self._block_cache_3d.cache_tex,
+            lut_texture=self._lut_manager_3d.lut_tex,
+            lut_params_buffer=self._lut_params_buffer_3d,
+            block_scales_buffer=self._block_scales_buffer_3d,
             clim=clim,
             map=colormap,
             interpolation=interpolation,
@@ -561,3 +612,47 @@ class GFXMultiscaleImageVisual:
         vol.local.position = (off, off, off)
 
         return vol, material, proxy_tex
+
+    def _build_2d_node(
+        self,
+        colormap: gfx.TextureMap,
+        clim: tuple[float, float],
+        interpolation: str,
+    ) -> tuple[gfx.Image, ImageBlockMaterial, gfx.Texture]:
+        gh, gw = self._lut_manager_2d._base_layout.grid_dims
+
+        proxy_data = np.zeros((gh, gw), dtype=np.float32)
+        proxy_tex = gfx.Texture(proxy_data, dim=2)
+
+        material = ImageBlockMaterial(
+            cache_texture=self._block_cache_2d.cache_tex,
+            lut_texture=self._lut_manager_2d.lut_tex,
+            lut_params_buffer=self._lut_params_buffer_2d,
+            block_scales_buffer=self._block_scales_buffer_2d,
+            clim=clim,
+            map=colormap,
+        )
+
+        # 8. Build Image.
+        geometry = gfx.Geometry(grid=proxy_tex)
+        image = gfx.Image(geometry, material)
+
+        # 9. Scale: proxy has 1 texel per tile, so scale by block_size
+        #    to make the quad cover the correct world-space extent.
+        image.local.scale = (
+            self._volume_geometry.block_size,
+            self._volume_geometry.block_size,
+            1.0,
+        )
+
+        # get_im_geometry() positions the quad from (-0.5, -0.5) to
+        # (gW-0.5, gH-0.5) in proxy texels.  After scaling by block_size
+        # the quad spans (-bs/2, -bs/2) to (gW*bs - bs/2, gH*bs - bs/2).
+        # Shift by +bs/2 so it sits at (0, 0) to (gW*bs, gH*bs).
+        image.local.position = (
+            self._volume_geometry.block_size * 0.5,
+            self._volume_geometry.block_size * 0.5,
+            0,
+        )
+
+        return image, material, proxy_tex

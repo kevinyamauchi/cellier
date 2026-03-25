@@ -197,7 +197,7 @@ LUT_PARAMS_DTYPE = np.dtype(
 )
 
 
-def build_lut_params_buffer(
+def build_lut_params_buffer_3d(
     base_layout: BlockLayout3D,
     cache_info: BlockCacheParameters3D,
     proxy_voxels_per_brick: float | None = None,
@@ -267,7 +267,7 @@ MAX_LEVELS = 10
 BLOCK_SCALES_DTYPE = np.dtype([(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)])
 
 
-def build_block_scales_buffer(downscale_factors: list[int]) -> Buffer:
+def build_block_scales_buffer_3d(downscale_factors: list[int]) -> Buffer:
     """Build the block-scales uniform buffer.
 
     Level 0 is reserved (all zeros — renders black/out-of-bounds).
