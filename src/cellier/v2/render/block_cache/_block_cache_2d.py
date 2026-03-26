@@ -1,10 +1,15 @@
 import numpy as np
 
+from cellier.v2.logging import _GPU_LOGGER
 from cellier.v2.render.block_cache._cache_parameters_2d import (
     BlockCacheParameters2D,
     build_cache_texture_2d,
 )
-from cellier.v2.render.block_cache._tile_manager_2d import TileManager2D, TileSlot
+from cellier.v2.render.block_cache._tile_manager_2d import (
+    BlockKey2D,
+    TileManager2D,
+    TileSlot,
+)
 
 
 class BlockCache2D:
@@ -32,7 +37,9 @@ class BlockCache2D:
         self.tile_manager = TileManager2D(cache_parameters)
         self.cache_data, self.cache_tex = build_cache_texture_2d(cache_parameters)
 
-    def write_tile(self, slot: TileSlot, data: np.ndarray) -> None:
+    def write_tile(
+        self, slot: TileSlot, data: np.ndarray, key: BlockKey2D | None = None
+    ) -> None:
         """Write a padded 2D tile into the CPU array and mark dirty for GPU upload.
 
         Parameters
@@ -42,6 +49,8 @@ class BlockCache2D:
         data : np.ndarray
             Float32 array of shape ``(pbs, pbs)`` where
             ``pbs = block_size + 2 * overlap``.
+        key : BlockKey2D or None
+            Tile identity for logging.
         """
         sy, sx = slot.grid_pos
         pbs = self.info.padded_block_size
@@ -51,4 +60,10 @@ class BlockCache2D:
         self.cache_tex.update_range(
             offset=(x0, y0, 0),
             size=(pbs, pbs, 1),
+        )
+        _GPU_LOGGER.debug(
+            "brick_written  key=%s  slot=%d  grid_pos=%s",
+            key,
+            slot.index,
+            slot.grid_pos,
         )
