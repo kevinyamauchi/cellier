@@ -30,14 +30,16 @@ def _make_dims_state() -> DimsState:
 def _make_reslicing_request(
     scene_id: UUID | None = None,
     target_visual_ids: frozenset[UUID] | None = None,
-    screen_height_px: float = 800.0,
+    screen_size_px: tuple[float, float] = (1200.0, 800.0),
     fov_y_rad: float = 1.2217,  # ~70 degrees
 ) -> ReslicingRequest:
     return ReslicingRequest(
+        camera_type="perspective",
         camera_pos=np.array([100.0, 200.0, 300.0], dtype=np.float64),
         frustum_corners=np.zeros((2, 4, 3), dtype=np.float64),
         fov_y_rad=fov_y_rad,
-        screen_height_px=screen_height_px,
+        screen_size_px=screen_size_px,
+        world_extent=(0.0, 0.0),
         dims_state=_make_dims_state(),
         request_id=uuid4(),
         scene_id=scene_id or uuid4(),
@@ -468,11 +470,11 @@ def test_lod_bias_scales_thresholds() -> None:
     """lod_bias=2.0 must double every threshold value."""
     scene_id = uuid4()
     sm = SceneManager(scene_id=scene_id, dim="3d")
-    req = _make_reslicing_request(scene_id=scene_id, screen_height_px=800.0)
+    req = _make_reslicing_request(scene_id=scene_id, screen_size_px=(1200.0, 800.0))
     n_levels = 3
 
-    t_default = sm._compute_thresholds(req, n_levels, 1.0)
-    t_biased = sm._compute_thresholds(req, n_levels, 2.0)
+    t_default = sm._compute_thresholds_3d(req, n_levels, 1.0)
+    t_biased = sm._compute_thresholds_3d(req, n_levels, 2.0)
 
     assert len(t_default) == len(t_biased) == n_levels - 1
     for td, tb in zip(t_default, t_biased):
@@ -486,8 +488,8 @@ def test_lod_bias_one_is_identity() -> None:
     req = _make_reslicing_request(scene_id=scene_id)
     n_levels = 3
 
-    t1 = sm._compute_thresholds(req, n_levels, 1.0)
-    t2 = sm._compute_thresholds(req, n_levels, 1.0)
+    t1 = sm._compute_thresholds_3d(req, n_levels, 1.0)
+    t2 = sm._compute_thresholds_3d(req, n_levels, 1.0)
 
     assert t1 == t2
 
