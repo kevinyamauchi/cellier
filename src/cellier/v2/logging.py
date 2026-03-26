@@ -21,12 +21,14 @@ _PERF_LOGGER = logging.getLogger("cellier.render.perf")
 _GPU_LOGGER = logging.getLogger("cellier.render.gpu")
 _CACHE_LOGGER = logging.getLogger("cellier.render.cache")
 _SLICER_LOGGER = logging.getLogger("cellier.render.slicer")
+_CAMERA_LOGGER = logging.getLogger("cellier.render.camera")
 
 _CATEGORY_MAP = {
     "perf": _PERF_LOGGER,
     "gpu": _GPU_LOGGER,
     "cache": _CACHE_LOGGER,
     "slicer": _SLICER_LOGGER,
+    "camera": _CAMERA_LOGGER,
 }
 
 _ALL_CATEGORIES = tuple(_CATEGORY_MAP.keys())
@@ -109,6 +111,7 @@ _COLOR_MAP = {
     "cellier.render.gpu": ("green", "GPU"),
     "cellier.render.cache": ("yellow", "CACHE"),
     "cellier.render.slicer": ("magenta", "SLICER"),
+    "cellier.render.camera": ("blue", "CAMERA"),
 }
 
 

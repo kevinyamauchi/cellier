@@ -9,12 +9,17 @@ import numpy as np
 import pygfx as gfx
 from rendercanvas.qt import QRenderWidget
 
+from cellier.v2._state import CameraState
+from cellier.v2.events._events import CameraChangedEvent
+from cellier.v2.logging import _CAMERA_LOGGER
 from cellier.v2.render._requests import DimsState, ReslicingRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from PySide6.QtWidgets import QWidget
+
+    from cellier.v2.events._bus import EventBus
 
 
 class CanvasView:
@@ -25,10 +30,10 @@ class CanvasView:
     instead it receives a ``get_scene_fn`` callable that is invoked each
     frame so ownership of the scene stays with ``SceneManager``.
 
-    Camera sync loop prevention is implemented via the
-    ``_applying_model_state`` flag, which suppresses re-entrant
-    ``_on_controller_event`` calls during programmatic camera updates.
-    This guard is dormant until EventBus wiring is added.
+    Camera change detection is implemented by comparing a cached
+    ``CameraState`` snapshot each frame in ``_draw_frame``.  The
+    ``_applying_model_state`` flag suppresses detection during
+    programmatic camera updates to prevent feedback loops.
 
     Parameters
     ----------
@@ -59,6 +64,7 @@ class CanvasView:
         parent: QWidget | None = None,
         fov: float = 70.0,
         depth_range: tuple[float, float] = (1.0, 8000.0),
+        event_bus: EventBus | None = None,
     ) -> None:
         self._canvas_id = canvas_id
         self._scene_id = scene_id
@@ -66,6 +72,8 @@ class CanvasView:
         self._applying_model_state: bool = False
         self._id: UUID = uuid4()
         self._dim = dim
+        self._event_bus: EventBus | None = event_bus
+        self._camera_dirty: bool = False
 
         self._canvas = QRenderWidget(parent=parent, update_mode="continuous")
         self._renderer = gfx.WgpuRenderer(self._canvas)
@@ -81,6 +89,7 @@ class CanvasView:
                 camera=self._camera, register_events=self._renderer
             )
 
+        self._last_camera_state: CameraState = self._capture_camera_state()
         self._canvas.request_draw(self._draw_frame)
 
     @property
@@ -240,12 +249,70 @@ class CanvasView:
             self._camera.world.position = tuple(request.camera_pos)
         finally:
             self._applying_model_state = False
+        self._last_camera_state = self._capture_camera_state()
+
+    def set_event_bus(self, event_bus: EventBus) -> None:
+        """Wire the EventBus after construction."""
+        self._event_bus = event_bus
+
+    def _capture_camera_state(self) -> CameraState:
+        """Snapshot the current pygfx camera into a CameraState NamedTuple."""
+        cam = self._camera
+        pos = cam.world.position
+        rot = cam.world.rotation  # quaternion (x, y, z, w)
+        dr = cam.depth_range
+        depth_range = (float(dr[0]), float(dr[1])) if dr is not None else (0.0, 0.0)
+
+        if self._dim == "2d":
+            return CameraState(
+                camera_type="orthographic",
+                position=(float(pos[0]), float(pos[1]), float(pos[2])),
+                rotation=(float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+                up=(0.0, 1.0, 0.0),
+                fov=0.0,
+                zoom=float(cam.zoom),
+                extent=(float(cam.width), float(cam.height)),
+                depth_range=depth_range,
+            )
+        else:
+            up = cam.world.up
+            return CameraState(
+                camera_type="perspective",
+                position=(float(pos[0]), float(pos[1]), float(pos[2])),
+                rotation=(float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+                up=(float(up[0]), float(up[1]), float(up[2])),
+                fov=float(cam.fov),
+                zoom=float(cam.zoom),
+                extent=(0.0, 0.0),
+                depth_range=depth_range,
+            )
 
     def _draw_frame(self) -> None:
+        # Detect camera changes by comparing against the cached state.
+        current_state = self._capture_camera_state()
+        if current_state != self._last_camera_state and not self._applying_model_state:
+            self._camera_dirty = True
+            self._last_camera_state = current_state
+            _CAMERA_LOGGER.debug(
+                "camera_changed  canvas=%s  scene=%s",
+                self._canvas_id,
+                self._scene_id,
+            )
+
+        if self._camera_dirty and self._event_bus is not None:
+            self._camera_dirty = False
+            _CAMERA_LOGGER.debug(
+                "emit_camera_event  canvas=%s  scene=%s",
+                self._canvas_id,
+                self._scene_id,
+            )
+            self._event_bus.emit(
+                CameraChangedEvent(
+                    source_id=self._canvas_id,
+                    scene_id=self._scene_id,
+                    camera_state=current_state,
+                )
+            )
+
         scene = self._get_scene_fn(self._scene_id)
         self._renderer.render(scene, self._camera)
-
-    def _on_controller_event(self, event) -> None:
-        if self._applying_model_state:
-            return
-        # future: self._event_bus.emit(CameraMovedEvent(source="controller", ...))

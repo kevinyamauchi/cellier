@@ -48,6 +48,8 @@ class BaseVisual(EventedModel):
     appearance: BaseAppearance
     pick_write: bool = True
 
+    requires_camera_reslice: bool = Field(default=False, frozen=True)
+
     # store a UUID to identify this specific visual
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())

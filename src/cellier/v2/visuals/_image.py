@@ -3,6 +3,7 @@
 from typing import Literal
 
 from cmap import Colormap
+from pydantic import Field
 
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
@@ -67,3 +68,4 @@ class MultiscaleImageVisual(BaseVisual):
     data_store_id: str
     downscale_factors: list[int]
     appearance: ImageAppearance
+    requires_camera_reslice: bool = Field(default=True, frozen=True)

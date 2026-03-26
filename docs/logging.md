@@ -16,6 +16,7 @@ pipeline:
 | `gpu` | `cellier.render.gpu` | Brick/tile writes, LUT rebuilds |
 | `cache` | `cellier.render.cache` | Cache hit/miss summaries, eviction, clear |
 | `slicer` | `cellier.render.slicer` | Async task lifecycle, batch progress |
+| `camera` | `cellier.render.camera` | Camera change detection, settle timer, reslice trigger |
 
 All four live under the `cellier.render` parent logger, so standard Python
 logging hierarchy applies.
@@ -130,6 +131,7 @@ default handler colors each category:
 | GPU | green |
 | CACHE | yellow |
 | SLICER | magenta |
+| CAMERA | blue |
 
 If Rich is not available, output falls back to a plain `StreamHandler`
 automatically.
