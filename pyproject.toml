@@ -56,6 +56,7 @@ pyside = ["PySide6"]
 pyqt = ["PyQt6"]
 test = [
     "pytest",
+    "pytest-asyncio",
     "pytest-cov",
     "pytest-qt"
 ]
@@ -135,6 +136,8 @@ skip-magic-trailing-comma = false  # default is false
 minversion = "7.0"
 testpaths = ["tests"]
 filterwarnings = ["error"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 # https://coverage.readthedocs.io/
 [tool.coverage.report]

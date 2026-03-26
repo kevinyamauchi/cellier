@@ -178,6 +178,7 @@ class RenderManager:
         scene_id: UUID,
         dims_state: DimsState,
         visual_configs: dict[UUID, VisualRenderConfig] | None = None,
+        target_visual_ids: frozenset[UUID] | None = None,
     ) -> None:
         """Reslice all visuals in one scene.
 
@@ -189,13 +190,17 @@ class RenderManager:
             Current dimension display state.
         visual_configs : dict[UUID, VisualRenderConfig] or None
             Per-visual render configuration.  ``None`` falls back to defaults.
+        target_visual_ids : frozenset[UUID] or None
+            ``None`` reslices all visuals in the scene.
         """
         if visual_configs is None:
             visual_configs = {}
         canvas = self._find_canvas_for_scene(scene_id)
         if canvas is None:
             return
-        request = canvas.capture_reslicing_request(dims_state)
+        request = canvas.capture_reslicing_request(
+            dims_state, target_visual_ids=target_visual_ids
+        )
         self._slice_coordinator.submit(request, visual_configs)
 
     def reslice_visual(

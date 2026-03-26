@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Callable
 from uuid import UUID, uuid4
 
-from cellier.v2._state import DimsState
+import numpy as np
+
+from cellier.v2._state import CameraState, DimsState
 from cellier.v2.events import (
     AppearanceChangedEvent,
     CameraChangedEvent,
@@ -16,10 +19,15 @@ from cellier.v2.events import (
     VisualAddedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.v2.logging import _CAMERA_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
+from cellier.v2.scene.cameras import (
+    OrbitCameraController,
+    OrthographicCamera,
+    PerspectiveCamera,
+)
 from cellier.v2.scene.canvas import Canvas
 from cellier.v2.scene.dims import CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
@@ -32,13 +40,14 @@ if TYPE_CHECKING:
     from psygnal import EmissionInfo
     from PySide6.QtWidgets import QWidget
 
-    from cellier.v2._state import CameraState
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.visuals._image import ImageAppearance
 
 
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
+
+DEFAULT_CAMERA_SETTLE_THRESHOLD_S: float = 0.3
 
 
 class CellierController:
@@ -51,6 +60,8 @@ class CellierController:
         self,
         widget_parent: QWidget | None = None,
         slicer_batch_size: int = 8,
+        camera_settle_threshold_s: float = DEFAULT_CAMERA_SETTLE_THRESHOLD_S,
+        camera_reslice_enabled: bool = True,
     ) -> None:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
@@ -68,6 +79,15 @@ class CellierController:
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
         # Handles for externally-registered callbacks
         self._external_handles: list[SubscriptionHandle] = []
+        # Camera settle
+        self._camera_settle_threshold_s: float = camera_settle_threshold_s
+        self._camera_reslice_enabled: bool = camera_reslice_enabled
+        self._settle_tasks: dict[UUID, asyncio.Task] = {}
+        self._event_bus.subscribe(
+            CameraChangedEvent,
+            self._on_camera_changed,
+            owner_id=self._id,
+        )
 
     def set_widget_parent(self, parent: QWidget) -> None:
         """Set the Qt parent for subsequently created canvas widgets."""
@@ -407,6 +427,7 @@ class CellierController:
             fov=fov,
             depth_range=depth_range,
         )
+        canvas_view.set_event_bus(self._event_bus)
 
         self._canvas_to_scene[canvas_id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_id)
@@ -560,6 +581,106 @@ class CellierController:
         else:
             cfg = VisualRenderConfig()
         self._render_manager.reslice_visual(visual_id, dims_state, cfg)
+
+    # ------------------------------------------------------------------
+    # Camera settle
+    # ------------------------------------------------------------------
+
+    @property
+    def camera_reslice_enabled(self) -> bool:
+        """Whether camera movement triggers automatic reslicing."""
+        return self._camera_reslice_enabled
+
+    @camera_reslice_enabled.setter
+    def camera_reslice_enabled(self, value: bool) -> None:
+        self._camera_reslice_enabled = value
+        if not value:
+            for task in self._settle_tasks.values():
+                if not task.done():
+                    task.cancel()
+            self._settle_tasks.clear()
+
+    def _on_camera_changed(self, event: CameraChangedEvent) -> None:
+        """Synchronous bus handler — updates camera model and schedules settle task."""
+        self._update_camera_model(event.scene_id, event.camera_state)
+
+        if not self._camera_reslice_enabled:
+            return
+
+        canvas_id = event.source_id
+        existing = self._settle_tasks.get(canvas_id)
+        if existing is not None and not existing.done():
+            _CAMERA_LOGGER.debug(
+                "settle_cancel  canvas=%s  scene=%s",
+                canvas_id,
+                event.scene_id,
+            )
+            existing.cancel()
+
+        _CAMERA_LOGGER.debug(
+            "settle_schedule  canvas=%s  scene=%s  threshold=%.3fs",
+            canvas_id,
+            event.scene_id,
+            self._camera_settle_threshold_s,
+        )
+        self._settle_tasks[canvas_id] = asyncio.create_task(
+            self._settle_after(canvas_id, event.scene_id)
+        )
+
+    def _update_camera_model(self, scene_id: UUID, camera_state: CameraState) -> None:
+        """Write a CameraState snapshot back into the model-layer camera.
+
+        Branches on the actual model type (not camera_state.camera_type)
+        because add_canvas may create a PerspectiveCamera even for 2D scenes.
+        """
+        scene = self._model.scenes[scene_id]
+        # Find the first canvas and its first camera.
+        canvas_model = next(iter(scene.canvases.values()))
+        camera_model = next(iter(canvas_model.cameras.values()))
+
+        # Common fields present on both camera model types.
+        camera_model.position = np.array(camera_state.position, dtype=np.float32)
+        camera_model.rotation = np.array(camera_state.rotation, dtype=np.float32)
+        camera_model.zoom = camera_state.zoom
+        camera_model.near_clipping_plane = camera_state.depth_range[0]
+        camera_model.far_clipping_plane = camera_state.depth_range[1]
+
+        # Type-specific fields.
+        if isinstance(camera_model, PerspectiveCamera):
+            camera_model.up_direction = np.array(camera_state.up, dtype=np.float32)
+            camera_model.fov = camera_state.fov
+        elif isinstance(camera_model, OrthographicCamera):
+            camera_model.width = camera_state.extent[0]
+            camera_model.height = camera_state.extent[1]
+
+    async def _settle_after(self, canvas_id: UUID, scene_id: UUID) -> None:
+        """Wait for the settle threshold, then reslice camera-sensitive visuals."""
+        try:
+            await asyncio.sleep(self._camera_settle_threshold_s)
+        except asyncio.CancelledError:
+            raise
+
+        scene = self._model.scenes[scene_id]
+        target_ids = frozenset(v.id for v in scene.visuals if v.requires_camera_reslice)
+
+        if not target_ids:
+            return
+
+        dims_state = self._dims_state_for_scene(scene_id)
+        visual_configs = self._build_visual_configs_for_scene(scene_id)
+
+        _CAMERA_LOGGER.info(
+            "settle_reslice  scene=%s  visuals=%d",
+            scene_id,
+            len(target_ids),
+        )
+
+        self._render_manager.reslice_scene(
+            scene_id=scene_id,
+            dims_state=dims_state,
+            visual_configs=visual_configs,
+            target_visual_ids=target_ids,
+        )
 
     # ------------------------------------------------------------------
     # Camera operations

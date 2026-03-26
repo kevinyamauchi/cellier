@@ -5,12 +5,15 @@ All tests are headless — no Qt event loop, no GPU.
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
 
+from cellier.v2._state import CameraState
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
+from cellier.v2.events._events import CameraChangedEvent
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
@@ -378,3 +381,146 @@ def test_unsubscribe_all_cleans_up(small_zarr_store):
 
     visual.appearance.color_map = "plasma"
     assert fired == []
+
+
+# ---------------------------------------------------------------------------
+# Camera settle tests (async — no Qt, no GPU)
+# ---------------------------------------------------------------------------
+
+
+def _make_camera_state() -> CameraState:
+    """Minimal perspective CameraState for event payloads."""
+    return CameraState(
+        camera_type="perspective",
+        position=(0.0, 0.0, 100.0),
+        rotation=(0.0, 0.0, 0.0, 1.0),
+        up=(0.0, 1.0, 0.0),
+        fov=70.0,
+        zoom=1.0,
+        extent=(0.0, 0.0),
+        depth_range=(1.0, 8000.0),
+    )
+
+
+def _make_camera_event(canvas_id, scene_id) -> CameraChangedEvent:
+    return CameraChangedEvent(
+        source_id=canvas_id,
+        scene_id=scene_id,
+        camera_state=_make_camera_state(),
+    )
+
+
+def _make_settle_controller(small_zarr_store, threshold_s=0.05):
+    """Build a minimal controller wired for settle tests.
+
+    Returns (controller, scene, visual, canvas_id, reslice_calls).
+    """
+    controller = CellierController(camera_settle_threshold_s=threshold_s)
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    store = MultiscaleZarrDataStore(
+        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
+    )
+    visual = controller.add_image(
+        data=store,
+        scene_id=scene.id,
+        appearance=_make_appearance(lod_bias=1.0, force_level=None, frustum_cull=True),
+        name="vol",
+    )
+
+    reslice_calls = []
+
+    def _capturing_reslice(
+        scene_id, dims_state, visual_configs=None, target_visual_ids=None
+    ):
+        reslice_calls.append(
+            {
+                "scene_id": scene_id,
+                "target_visual_ids": target_visual_ids,
+            }
+        )
+
+    controller._render_manager.reslice_scene = _capturing_reslice
+    # Bypass camera model writeback — no canvas model wired in headless tests.
+    controller._update_camera_model = lambda scene_id, camera_state: None
+
+    canvas_id = uuid4()
+    return controller, scene, visual, canvas_id, reslice_calls
+
+
+async def test_settle_fires_reslice_after_threshold(small_zarr_store):
+    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+        small_zarr_store, threshold_s=0.05
+    )
+
+    event = _make_camera_event(canvas_id, scene.id)
+    controller._on_camera_changed(event)
+
+    # Before threshold: no reslice yet.
+    await asyncio.sleep(0.01)
+    assert len(reslice_calls) == 0
+
+    # After threshold: exactly one reslice.
+    await asyncio.sleep(0.1)
+    assert len(reslice_calls) == 1
+
+
+async def test_settle_cancellation_on_rapid_events(small_zarr_store):
+    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+        small_zarr_store, threshold_s=0.05
+    )
+
+    event = _make_camera_event(canvas_id, scene.id)
+    controller._on_camera_changed(event)  # starts first settle task
+    controller._on_camera_changed(event)  # cancels it; starts second
+
+    await asyncio.sleep(0.15)
+    assert len(reslice_calls) == 1
+
+
+async def test_settle_disabled_flag_suppresses_reslice(small_zarr_store):
+    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+        small_zarr_store, threshold_s=0.05
+    )
+
+    # Disable camera reslicing.
+    controller.camera_reslice_enabled = False
+
+    event = _make_camera_event(canvas_id, scene.id)
+    controller._on_camera_changed(event)
+
+    # Wait well past the threshold.
+    await asyncio.sleep(0.15)
+    assert len(reslice_calls) == 0
+
+    # Re-enable and confirm reslicing resumes.
+    controller.camera_reslice_enabled = True
+    controller._on_camera_changed(event)
+    await asyncio.sleep(0.15)
+    assert len(reslice_calls) == 1
+
+
+async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_store):
+    from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
+
+    class _NonResliceVisual(BaseVisual):
+        appearance: BaseAppearance = BaseAppearance()
+
+    _NonResliceVisual.model_rebuild()
+
+    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+        small_zarr_store, threshold_s=0.05
+    )
+
+    # Append a non-camera-reslice visual directly to the scene model.
+    non_reslice = _NonResliceVisual(name="static")
+    scene.visuals.append(non_reslice)
+
+    event = _make_camera_event(canvas_id, scene.id)
+    controller._on_camera_changed(event)
+    await asyncio.sleep(0.15)
+
+    assert len(reslice_calls) == 1
+    ids = reslice_calls[0]["target_visual_ids"]
+    assert visual.id in ids
+    assert non_reslice.id not in ids
