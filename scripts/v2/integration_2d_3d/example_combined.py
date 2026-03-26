@@ -1,0 +1,590 @@
+"""Combined 2D / 3D async multiscale viewer using CellierController.
+
+Single window with two cellier scenes (one 2D, one 3D) sharing the same
+data store.  A toggle button swaps between the two canvases.  Camera state
+is preserved independently for each mode across toggles.
+
+Uses the full cellier v2 pipeline — no BlockState2D or BlockVolumeState.
+
+Usage
+-----
+Generate the multiscale zarr store (once):
+
+    uv run example.py --make-files
+
+Then launch the combined viewer:
+
+    uv run example_combined.py [--zarr-path PATH]
+
+Controls
+--------
+Mouse                  — pan/zoom (2D) or orbit (3D) at any time
+Update btn             — trigger async render pipeline for active mode
+Toggle 2D/3D btn       — switch between 2D and 3D (camera state preserved)
+Colormap btn           — toggle between viridis and gray (live, both modes)
+Z-slice spinbox (2D)   — change XY slice; clears cache and auto-reslices
+Viewport cull (2D)     — enable/disable tile culling outside viewport
+Frustum cull (3D)      — enable/disable brick frustum culling
+Show frustum (3D)      — toggle frustum wireframe visibility
+Force-level radios     — override automatic LOD selection
+LOD bias spinbox       — scale LOD thresholds
+Far plane spinbox (3D) — camera far clipping distance
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import pathlib
+import sys
+import time
+from typing import ClassVar
+
+import numpy as np
+import pygfx as gfx
+import PySide6.QtAsyncio as QtAsyncio
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QDoubleSpinBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from cellier.v2.controller import CellierController
+from cellier.v2.data.image import MultiscaleZarrDataStore
+from cellier.v2.scene.dims import CoordinateSystem
+from cellier.v2.visuals._image import ImageAppearance
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+BLOCK_SIZE = 32
+GPU_BUDGET_2D = 64 * 1024**2  # 64 MiB for 2D tile cache
+GPU_BUDGET_3D = 512 * 1024**2  # 512 MiB for 3D brick cache
+LOD_BIAS = 1.0
+
+ZARR_PATH = pathlib.Path(__file__).parent / "multiscale_blobs.zarr"
+ZARR_SCALE_NAMES = ["s0", "s1", "s2"]
+
+FRUSTUM_COLOR = "#00cc44"
+AABB_COLOR = "#ff00ff"
+
+# ---------------------------------------------------------------------------
+# Scene helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_box_wireframe(
+    box_min: np.ndarray, box_max: np.ndarray, color: str
+) -> gfx.Line:
+    """Build an AABB wireframe as disconnected edge pairs."""
+    x0, y0, z0 = box_min
+    x1, y1, z1 = box_max
+    positions = np.array(
+        [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+            [x0, y1, z1],
+            [x0, y0, z1],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x1, y1, z0],
+            [x1, y1, z1],
+            [x0, y1, z0],
+            [x0, y1, z1],
+        ],
+        dtype=np.float32,
+    )
+    return gfx.Line(
+        gfx.Geometry(positions=positions),
+        gfx.LineSegmentMaterial(color=color, thickness=1.0),
+    )
+
+
+def _make_frustum_wireframe(corners: np.ndarray, color: str = "#00cc44") -> gfx.Line:
+    """Build a wireframe from 8 frustum corners (shape 2x4x3)."""
+    edge_indices = [
+        ((0, 0), (0, 1)),
+        ((0, 1), (0, 2)),
+        ((0, 2), (0, 3)),
+        ((0, 3), (0, 0)),
+        ((1, 0), (1, 1)),
+        ((1, 1), (1, 2)),
+        ((1, 2), (1, 3)),
+        ((1, 3), (1, 0)),
+        ((0, 0), (1, 0)),
+        ((0, 1), (1, 1)),
+        ((0, 2), (1, 2)),
+        ((0, 3), (1, 3)),
+    ]
+    positions = np.array(
+        [[corners[a], corners[b]] for (a, b) in edge_indices],
+        dtype=np.float32,
+    ).reshape(-1, 3)
+    return gfx.Line(
+        gfx.Geometry(positions=positions),
+        gfx.LineSegmentMaterial(color=color, thickness=1.5),
+    )
+
+
+def _make_separator() -> QFrame:
+    """Horizontal separator line for the side panel."""
+    sep = QFrame()
+    sep.setFrameShape(QFrame.Shape.HLine)
+    sep.setFrameShadow(QFrame.Shadow.Sunken)
+    return sep
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
+
+
+class CombinedApp(QMainWindow):
+    """Single-window viewer toggling between 2D and 3D cellier scenes."""
+
+    _COLORMAPS: ClassVar[list[str]] = ["viridis", "gray"]
+
+    def __init__(self, data_store: MultiscaleZarrDataStore) -> None:
+        super().__init__()
+        self._update_count = 0
+        self._force_level: int | None = None
+        self._colormap_index: int = 0
+        self._active_mode: str = "2d"
+        self._frustum_line: gfx.Line | None = None
+
+        self._controller = CellierController(widget_parent=self, slicer_batch_size=128)
+        cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+
+        z_depth = data_store.level_shapes[0][0]
+        self._z_max = z_depth - 1
+
+        # ── 2D scene ──────────────────────────────────────────────────
+        self._scene_2d = self._controller.add_scene(
+            dim="2d", coordinate_system=cs, name="scene_2d"
+        )
+        self._scene_2d.dims.slice_indices = (z_depth // 2,)
+
+        self._visual_2d = self._controller.add_image(
+            data=data_store,
+            scene_id=self._scene_2d.id,
+            appearance=ImageAppearance(
+                color_map="viridis",
+                clim=(0.0, 1.0),
+                lod_bias=LOD_BIAS,
+                force_level=None,
+                frustum_cull=True,
+            ),
+            name="image_2d",
+            block_size=BLOCK_SIZE,
+            gpu_budget_bytes=GPU_BUDGET_2D,
+        )
+        self._canvas_widget_2d = self._controller.add_canvas(self._scene_2d.id)
+
+        # ── 3D scene ──────────────────────────────────────────────────
+        self._scene_3d = self._controller.add_scene(
+            dim="3d", coordinate_system=cs, name="scene_3d"
+        )
+
+        self._visual_3d = self._controller.add_image(
+            data=data_store,
+            scene_id=self._scene_3d.id,
+            appearance=ImageAppearance(
+                color_map="viridis",
+                clim=(0.0, 1.0),
+                lod_bias=LOD_BIAS,
+                force_level=None,
+                frustum_cull=True,
+            ),
+            name="volume_3d",
+            block_size=BLOCK_SIZE,
+            gpu_budget_bytes=GPU_BUDGET_3D,
+            threshold=0.2,
+        )
+        self._canvas_widget_3d = self._controller.add_canvas(self._scene_3d.id)
+
+        # Add AABB wireframe to the 3D scene.
+        gfx_visual_3d = self._get_gfx_visual_3d()
+        d, h, w = gfx_visual_3d._volume_geometry.base_layout.volume_shape
+        pad = 1.0
+        gfx_scene_3d = self._controller._render_manager.get_scene(self._scene_3d.id)
+        gfx_scene_3d.add(
+            _make_box_wireframe(
+                np.array([-0.5 - pad, -0.5 - pad, -0.5 - pad]),
+                np.array([w - 0.5 + pad, h - 0.5 + pad, d - 0.5 + pad]),
+                AABB_COLOR,
+            )
+        )
+
+        self._setup_ui()
+
+    # ── Render-layer visual accessors ─────────────────────────────────
+
+    def _get_gfx_visual_2d(self):
+        return self._controller._render_manager._scenes[self._scene_2d.id]._visuals[
+            self._visual_2d.id
+        ]
+
+    def _get_gfx_visual_3d(self):
+        return self._controller._render_manager._scenes[self._scene_3d.id]._visuals[
+            self._visual_3d.id
+        ]
+
+    # ── UI setup ──────────────────────────────────────────────────────
+
+    def _setup_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        panel = QWidget()
+        panel.setFixedWidth(230)
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(8, 8, 8, 8)
+
+        # ── Shared controls ───────────────────────────────────────────
+        self._update_btn = QPushButton("Update")
+        self._update_btn.clicked.connect(
+            lambda: asyncio.ensure_future(self._on_update_clicked())
+        )
+        pl.addWidget(self._update_btn)
+
+        self._toggle_btn = QPushButton("Toggle 2D / 3D")
+        self._toggle_btn.clicked.connect(self._on_toggle_clicked)
+        pl.addWidget(self._toggle_btn)
+
+        self._colormap_btn = QPushButton(
+            f"Colormap: {self._COLORMAPS[self._colormap_index]}"
+        )
+        self._colormap_btn.clicked.connect(self._on_toggle_colormap)
+        pl.addWidget(self._colormap_btn)
+
+        self._mode_label = QLabel("Mode: 2D")
+        pl.addWidget(self._mode_label)
+
+        pl.addWidget(_make_separator())
+
+        # ── 2D-only controls ─────────────────────────────────────────
+        self._widget_2d: list[QWidget] = []
+
+        lbl_z = QLabel("Z-slice:")
+        pl.addWidget(lbl_z)
+        self._widget_2d.append(lbl_z)
+
+        self._z_slice_sb = QSpinBox()
+        self._z_slice_sb.setRange(0, self._z_max)
+        self._z_slice_sb.setValue(self._scene_2d.dims.slice_indices[0])
+        self._z_slice_sb.valueChanged.connect(self._on_z_slice_changed)
+        pl.addWidget(self._z_slice_sb)
+        self._widget_2d.append(self._z_slice_sb)
+
+        self._viewport_cull_cb = QCheckBox("Viewport cull")
+        self._viewport_cull_cb.setChecked(True)
+        pl.addWidget(self._viewport_cull_cb)
+        self._widget_2d.append(self._viewport_cull_cb)
+
+        _sep_2d = _make_separator()
+        pl.addWidget(_sep_2d)
+        self._widget_2d.append(_sep_2d)
+
+        # ── 3D-only controls ─────────────────────────────────────────
+        self._widget_3d: list[QWidget] = []
+
+        self._frustum_cull_cb = QCheckBox("Frustum cull")
+        self._frustum_cull_cb.setChecked(True)
+        pl.addWidget(self._frustum_cull_cb)
+        self._widget_3d.append(self._frustum_cull_cb)
+
+        self._show_frustum_cb = QCheckBox("Show frustum")
+        self._show_frustum_cb.setChecked(False)
+        self._show_frustum_cb.toggled.connect(self._on_show_frustum_toggled)
+        pl.addWidget(self._show_frustum_cb)
+        self._widget_3d.append(self._show_frustum_cb)
+
+        lbl_far = QLabel("Far plane:")
+        pl.addWidget(lbl_far)
+        self._widget_3d.append(lbl_far)
+
+        self._far_plane_sb = QDoubleSpinBox()
+        self._far_plane_sb.setRange(100.0, 200_000.0)
+        self._far_plane_sb.setSingleStep(500.0)
+        self._far_plane_sb.setDecimals(0)
+        self._far_plane_sb.setValue(8000.0)
+        self._far_plane_sb.valueChanged.connect(self._on_far_plane_changed)
+        pl.addWidget(self._far_plane_sb)
+        self._widget_3d.append(self._far_plane_sb)
+
+        _sep_3d = _make_separator()
+        pl.addWidget(_sep_3d)
+        self._widget_3d.append(_sep_3d)
+
+        # ── Shared LOD controls ──────────────────────────────────────
+        pl.addWidget(QLabel("Force level:"))
+        self._level_group = QButtonGroup(self)
+        for label, value in [("Auto", None), ("1", 1), ("2", 2), ("3", 3)]:
+            rb = QRadioButton(label)
+            if value is None:
+                rb.setChecked(True)
+            self._level_group.addButton(rb)
+            rb.setProperty("force_level", value)
+            pl.addWidget(rb)
+        self._level_group.buttonClicked.connect(self._on_level_radio_clicked)
+
+        pl.addWidget(QLabel("LOD bias:"))
+        self._lod_bias_sb = QDoubleSpinBox()
+        self._lod_bias_sb.setRange(0.1, 10.0)
+        self._lod_bias_sb.setSingleStep(0.1)
+        self._lod_bias_sb.setDecimals(2)
+        self._lod_bias_sb.setValue(LOD_BIAS)
+        pl.addWidget(self._lod_bias_sb)
+
+        pl.addStretch()
+
+        self._status_label = QLabel("Ready")
+        self._status_label.setWordWrap(True)
+        pl.addWidget(self._status_label)
+
+        # Start with 3D widgets hidden (2D is active).
+        for w in self._widget_3d:
+            w.setVisible(False)
+
+        # Canvas container — holds both canvas widgets, only one visible.
+        self._canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(self._canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.addWidget(self._canvas_widget_2d)
+        canvas_layout.addWidget(self._canvas_widget_3d)
+        self._canvas_widget_3d.setVisible(False)
+
+        root.addWidget(panel)
+        root.addWidget(self._canvas_container, stretch=1)
+
+    # ── Toggle button ─────────────────────────────────────────────────
+
+    def _on_toggle_clicked(self) -> None:
+        # Cancel in-flight slicing requests for the scene we are leaving.
+        coordinator = self._controller._render_manager._slice_coordinator
+        if self._active_mode == "2d":
+            coordinator.cancel_scene(self._scene_2d.id)
+            self._active_mode = "3d"
+            self._canvas_widget_2d.setVisible(False)
+            self._canvas_widget_3d.setVisible(True)
+            self._mode_label.setText("Mode: 3D")
+            for w in self._widget_2d:
+                w.setVisible(False)
+            for w in self._widget_3d:
+                w.setVisible(True)
+        else:
+            coordinator.cancel_scene(self._scene_3d.id)
+            self._active_mode = "2d"
+            self._canvas_widget_3d.setVisible(False)
+            self._canvas_widget_2d.setVisible(True)
+            self._mode_label.setText("Mode: 2D")
+            for w in self._widget_3d:
+                w.setVisible(False)
+            for w in self._widget_2d:
+                w.setVisible(True)
+
+        self._status_label.setText("Ready")
+
+    # ── UI callbacks ──────────────────────────────────────────────────
+
+    def _on_toggle_colormap(self) -> None:
+        self._colormap_index = (self._colormap_index + 1) % len(self._COLORMAPS)
+        new_cmap = self._COLORMAPS[self._colormap_index]
+        # Update both visuals.
+        self._visual_2d.appearance.color_map = new_cmap
+        self._visual_3d.appearance.color_map = new_cmap
+        self._colormap_btn.setText(f"Colormap: {new_cmap}")
+        print(f"[colormap] switched to '{new_cmap}'")
+
+    def _on_level_radio_clicked(self, button: QRadioButton) -> None:
+        self._force_level = button.property("force_level")
+
+    def _on_z_slice_changed(self, value: int) -> None:
+        self._scene_2d.dims.slice_indices = (value,)
+        # All cached tiles are from the old z-plane — clear and re-fetch.
+        gfx_visual = self._get_gfx_visual_2d()
+        gfx_visual._block_cache_2d.tile_manager.clear()
+        gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
+        self._reslice_task = asyncio.ensure_future(self._on_update_clicked())
+
+    def _on_show_frustum_toggled(self, checked: bool) -> None:
+        if self._frustum_line is not None:
+            self._frustum_line.visible = checked
+
+    def _on_far_plane_changed(self, value: float) -> None:
+        self._controller.set_camera_depth_range(
+            scene_id=self._scene_3d.id,
+            depth_range=(1.0, value),
+        )
+
+    # ── Update button — dispatches to active mode ─────────────────────
+
+    async def _on_update_clicked(self) -> None:
+        if self._active_mode == "2d":
+            await self._update_2d()
+        else:
+            await self._update_3d()
+
+    # ── 2D update pipeline ────────────────────────────────────────────
+
+    async def _update_2d(self) -> None:
+        self._update_count += 1
+        t_total = time.perf_counter()
+
+        self._visual_2d.appearance.lod_bias = self._lod_bias_sb.value()
+        self._visual_2d.appearance.force_level = self._force_level
+        self._visual_2d.appearance.frustum_cull = self._viewport_cull_cb.isChecked()
+
+        self._controller.reslice_scene(self._scene_2d.id)
+
+        t_ms = (time.perf_counter() - t_total) * 1000
+        stats = self._get_gfx_visual_2d()._last_plan_stats
+
+        total = stats.get("fills", 0)
+        if total == 0:
+            self._status_label.setText(
+                f"2D: all {stats.get('total_required', 0)} tiles cached"
+            )
+        else:
+            self._status_label.setText(f"2D: loading 0 / {total} tiles")
+
+        print(
+            f"[2D update #{self._update_count}]  planning={t_ms:.1f}ms  "
+            f"fills={stats.get('fills', 0)}  hits={stats.get('hits', 0)}  "
+            f"culled={stats.get('n_culled', 0)}  "
+            f"dropped={stats.get('n_dropped', 0)}"
+        )
+
+    # ── 3D update pipeline ────────────────────────────────────────────
+
+    async def _update_3d(self) -> None:
+        self._update_count += 1
+        t_total = time.perf_counter()
+
+        self._visual_3d.appearance.lod_bias = self._lod_bias_sb.value()
+        self._visual_3d.appearance.force_level = self._force_level
+        self._visual_3d.appearance.frustum_cull = self._frustum_cull_cb.isChecked()
+
+        self._controller.reslice_scene(self._scene_3d.id)
+
+        t_ms = (time.perf_counter() - t_total) * 1000
+        stats = self._get_gfx_visual_3d()._last_plan_stats
+
+        # Rebuild frustum wireframe.
+        canvas_view = self._controller._render_manager._find_canvas_for_scene(
+            self._scene_3d.id
+        )
+        cam = canvas_view._camera
+        corners = np.asarray(cam.frustum, dtype=np.float64).copy()
+        self._rebuild_frustum_wireframe(corners)
+
+        total = stats.get("fills", 0)
+        if total == 0:
+            self._status_label.setText(
+                f"3D: all {stats.get('total_required', 0)} bricks cached"
+            )
+        else:
+            self._status_label.setText(f"3D: loading 0 / {total} bricks")
+
+        print(
+            f"[3D update #{self._update_count}]  planning={t_ms:.1f}ms  "
+            f"fills={stats.get('fills', 0)}  hits={stats.get('hits', 0)}  "
+            f"culled={stats.get('n_culled', 0)}  "
+            f"dropped={stats.get('n_dropped', 0)}"
+        )
+
+    def _rebuild_frustum_wireframe(self, corners: np.ndarray) -> None:
+        gfx_scene = self._controller._render_manager.get_scene(self._scene_3d.id)
+        if self._frustum_line is not None:
+            gfx_scene.remove(self._frustum_line)
+        self._frustum_line = _make_frustum_wireframe(corners, color=FRUSTUM_COLOR)
+        self._frustum_line.visible = self._show_frustum_cb.isChecked()
+        gfx_scene.add(self._frustum_line)
+
+
+# ---------------------------------------------------------------------------
+# Async entry point
+# ---------------------------------------------------------------------------
+
+
+async def async_main(data_store: MultiscaleZarrDataStore) -> None:
+    """Create the main window and run the Qt event loop."""
+    app = QApplication.instance()
+    window = CombinedApp(data_store)
+    window.resize(1280, 800)
+    window.setWindowTitle("Combined 2D / 3D viewer — CellierController")
+    window.show()
+
+    close_event = asyncio.Event()
+    app.aboutToQuit.connect(close_event.set)
+    await close_event.wait()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    """Parse CLI args, build the data store, and launch the viewer."""
+    parser = argparse.ArgumentParser(
+        description="Combined 2D/3D async multiscale viewer (CellierController)"
+    )
+    parser.add_argument(
+        "--zarr-path",
+        type=pathlib.Path,
+        default=ZARR_PATH,
+        help="Path to the multiscale zarr store.",
+    )
+    args = parser.parse_args()
+
+    if not args.zarr_path.exists():
+        print(f"Error: zarr store not found at '{args.zarr_path}'")
+        print("Run example.py with --make-files first:")
+        print("    uv run example.py --make-files")
+        sys.exit(1)
+
+    print("Opening tensorstore stores via MultiscaleZarrDataStore ...")
+    data_store = MultiscaleZarrDataStore(
+        zarr_path=str(args.zarr_path),
+        scale_names=ZARR_SCALE_NAMES,
+    )
+    print(f"  {data_store.n_levels} levels opened.")
+    for i, shape in enumerate(data_store.level_shapes):
+        print(f"  s{i}: shape={shape}")
+    print()
+    print("Press 'Update' to render.  " "Toggle between 2D and 3D with the button.\n")
+
+    _app = QApplication([sys.argv[0]])
+    QtAsyncio.run(async_main(data_store), handle_sigint=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -52,6 +52,7 @@ from uuid import UUID
 
 import numpy as np
 import pygfx as gfx
+import PySide6.QtAsyncio as QtAsyncio
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -66,14 +67,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from rendercanvas.qt import QRenderWidget
-import PySide6.QtAsyncio as QtAsyncio
 
 from cellier.v2.render._frustum import frustum_planes_from_corners
-
 
 # ---------------------------------------------------------------------------
 # App-layer camera / scene helpers (pygfx-specific, not part of the package)
 # ---------------------------------------------------------------------------
+
 
 def get_frustum_corners_world(camera: gfx.PerspectiveCamera) -> np.ndarray:
     """Return world-space frustum corners, shape (2, 4, 3)."""
@@ -96,9 +96,18 @@ def get_view_direction_world(camera: gfx.PerspectiveCamera) -> np.ndarray:
 def make_frustum_wireframe(corners: np.ndarray, color: str = "#00cc44") -> gfx.Line:
     """Build a frustum wireframe as a gfx.Line with segment material."""
     edge_indices = [
-        ((0, 0), (0, 1)), ((0, 1), (0, 2)), ((0, 2), (0, 3)), ((0, 3), (0, 0)),
-        ((1, 0), (1, 1)), ((1, 1), (1, 2)), ((1, 2), (1, 3)), ((1, 3), (1, 0)),
-        ((0, 0), (1, 0)), ((0, 1), (1, 1)), ((0, 2), (1, 2)), ((0, 3), (1, 3)),
+        ((0, 0), (0, 1)),
+        ((0, 1), (0, 2)),
+        ((0, 2), (0, 3)),
+        ((0, 3), (0, 0)),
+        ((1, 0), (1, 1)),
+        ((1, 1), (1, 2)),
+        ((1, 2), (1, 3)),
+        ((1, 3), (1, 0)),
+        ((0, 0), (1, 0)),
+        ((0, 1), (1, 1)),
+        ((0, 2), (1, 2)),
+        ((0, 3), (1, 3)),
     ]
     positions = np.array(
         [[corners[a], corners[b]] for (a, b) in edge_indices],
@@ -109,18 +118,19 @@ def make_frustum_wireframe(corners: np.ndarray, color: str = "#00cc44") -> gfx.L
         gfx.LineSegmentMaterial(color=color, thickness=1.5),
     )
 
+
 # Cellier package imports
 from cellier.v2.data.image import MultiscaleZarrDataStore
-from cellier.v2.slicer import AsyncSlicer
-from cellier.v2.visuals import MultiscaleImageVisual, ImageAppearance
 from cellier.v2.render.visuals import GFXMultiscaleImageVisual
+from cellier.v2.slicer import AsyncSlicer
+from cellier.v2.visuals import ImageAppearance, MultiscaleImageVisual
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 BLOCK_SIZE = 32
-GPU_BUDGET = 1024 * 1024**2   # 1 GiB
+GPU_BUDGET = 1024 * 1024**2  # 1 GiB
 COMMIT_BATCH_SIZE = 8
 LOD_BIAS = 1.0
 
@@ -137,24 +147,39 @@ AABB_COLOR = "#ff00ff"
 # Scene helpers
 # ---------------------------------------------------------------------------
 
-def _make_box_wireframe(box_min: np.ndarray, box_max: np.ndarray, color: str) -> gfx.Line:
+
+def _make_box_wireframe(
+    box_min: np.ndarray, box_max: np.ndarray, color: str
+) -> gfx.Line:
     """Build a wireframe AABB as a gfx.Line."""
     x0, y0, z0 = box_min
     x1, y1, z1 = box_max
     positions = np.array(
         [
-            [x0, y0, z0], [x1, y0, z0],
-            [x1, y0, z0], [x1, y1, z0],
-            [x1, y1, z0], [x0, y1, z0],
-            [x0, y1, z0], [x0, y0, z0],
-            [x0, y0, z1], [x1, y0, z1],
-            [x1, y0, z1], [x1, y1, z1],
-            [x1, y1, z1], [x0, y1, z1],
-            [x0, y1, z1], [x0, y0, z1],
-            [x0, y0, z0], [x0, y0, z1],
-            [x1, y0, z0], [x1, y0, z1],
-            [x1, y1, z0], [x1, y1, z1],
-            [x0, y1, z0], [x0, y1, z1],
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+            [x0, y1, z1],
+            [x0, y0, z1],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x1, y1, z0],
+            [x1, y1, z1],
+            [x0, y1, z0],
+            [x0, y1, z1],
         ],
         dtype=np.float32,
     )
@@ -167,11 +192,12 @@ def _make_box_wireframe(box_min: np.ndarray, box_max: np.ndarray, color: str) ->
 # Zarr generation helper
 # ---------------------------------------------------------------------------
 
+
 def make_multiscale_zarr(zarr_path: pathlib.Path) -> None:
     """Generate a 3-level multiscale zarr store using tensorstore (zarr v3)."""
     import tensorstore as ts
-    from skimage.data import binary_blobs
     from scipy.ndimage import zoom
+    from skimage.data import binary_blobs
 
     print(f"Generating multiscale zarr (v3) at '{zarr_path}' …")
     print("  generating 1024³ base volume — this may take a minute …")
@@ -180,12 +206,14 @@ def make_multiscale_zarr(zarr_path: pathlib.Path) -> None:
     quadrant = binary_blobs(
         length=half, blob_size_fraction=0.05, n_dim=3, volume_fraction=0.2, rng=42
     ).astype(np.float32)
-    base = np.tile(quadrant, (2, 2, 2))   # (1024, 1024, 1024)
+    base = np.tile(quadrant, (2, 2, 2))  # (1024, 1024, 1024)
 
     chunk = (BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
 
     for name, factor in [("s0", 1), ("s1", 2), ("s2", 4)]:
-        data = zoom(base, 1.0 / factor, order=1).astype(np.float32) if factor > 1 else base
+        data = (
+            zoom(base, 1.0 / factor, order=1).astype(np.float32) if factor > 1 else base
+        )
         level_path = zarr_path / name
         spec = {
             "driver": "zarr3",
@@ -215,6 +243,7 @@ def make_multiscale_zarr(zarr_path: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 # Main application window
 # ---------------------------------------------------------------------------
+
 
 class BlockVolumeApp(QMainWindow):
     """PySide6 main window for the async volume viewer."""
@@ -362,9 +391,9 @@ class BlockVolumeApp(QMainWindow):
                 self._status_label.setText("Cancelled — new update starting …")
 
         # ── Snapshot camera and compute thresholds synchronously ──────
-        cam_pos  = get_camera_position_world(self._camera)
+        cam_pos = get_camera_position_world(self._camera)
         view_dir = get_view_direction_world(self._camera)
-        corners  = get_frustum_corners_world(self._camera)
+        corners = get_frustum_corners_world(self._camera)
 
         fov_y_rad = np.radians(self._camera.fov)
         _, screen_h = self._canvas.get_logical_size()
@@ -372,8 +401,7 @@ class BlockVolumeApp(QMainWindow):
         focal_half_height = (screen_h / 2) / np.tan(fov_y_rad / 2)
         n_levels = self._visual._volume_geometry.n_levels
         thresholds = [
-            (2 ** (k - 1)) * focal_half_height / lod_bias
-            for k in range(1, n_levels)
+            (2 ** (k - 1)) * focal_half_height / lod_bias for k in range(1, n_levels)
         ]
 
         planes = frustum_planes_from_corners(corners)
@@ -394,8 +422,15 @@ class BlockVolumeApp(QMainWindow):
         # ── Print planning summary ────────────────────────────────────
         t_planning_ms = (time.perf_counter() - t_total) * 1000
         self._print_update_summary(
-            cam_pos, view_dir, corners, planes, thresholds, stats,
-            t_planning_ms, prev_was_cancelled, task_age_ms,
+            cam_pos,
+            view_dir,
+            corners,
+            planes,
+            thresholds,
+            stats,
+            t_planning_ms,
+            prev_was_cancelled,
+            task_age_ms,
         )
 
         if not chunk_requests:
@@ -458,15 +493,19 @@ class BlockVolumeApp(QMainWindow):
 
         print("async task (previous)")
         if prev_was_cancelled:
-            print(f"  status:          cancelled")
+            print("  status:          cancelled")
             print(f"  task_age:        {task_age_ms:.1f} ms")
         else:
-            print(f"  status:          none / complete")
+            print("  status:          none / complete")
 
         print()
         print("camera")
-        print(f"  position:   [{cam_pos[0]:>8.2f}, {cam_pos[1]:>8.2f}, {cam_pos[2]:>8.2f}]")
-        print(f"  view_dir:   [{view_dir[0]:>8.3f}, {view_dir[1]:>8.3f}, {view_dir[2]:>8.3f}]")
+        print(
+            f"  position:   [{cam_pos[0]:>8.2f}, {cam_pos[1]:>8.2f}, {cam_pos[2]:>8.2f}]"
+        )
+        print(
+            f"  view_dir:   [{view_dir[0]:>8.3f}, {view_dir[1]:>8.3f}, {view_dir[2]:>8.3f}]"
+        )
 
         plane_names = ["near  ", "far   ", "left  ", "right ", "top   ", "bottom"]
         print()
@@ -504,15 +543,17 @@ class BlockVolumeApp(QMainWindow):
         else:
             print(f"  total bricks:    {stats['total_required']}  (no culling)")
 
-        n_needed  = stats.get("n_needed", 0)
-        n_budget  = stats.get("n_budget", 0)
+        n_needed = stats.get("n_needed", 0)
+        n_budget = stats.get("n_budget", 0)
         n_dropped = stats.get("n_dropped", 0)
         print()
         print("cache budget")
-        drop_flag = f"  *** {n_dropped} DROPPED (nearest-first) ***" if n_dropped else ""
+        drop_flag = (
+            f"  *** {n_dropped} DROPPED (nearest-first) ***" if n_dropped else ""
+        )
         print(f"  chunks needed / cache size:  {n_needed} / {n_budget}{drop_flag}")
 
-        tilemap_size = len(self._visual._block_cache.tile_manager.tilemap)
+        tilemap_size = len(self._visual._block_cache_3d.tile_manager.tilemap)
         print()
         print("cache  (planning phase)")
         print(f"  hits:           {stats['hits']}")
@@ -520,7 +561,7 @@ class BlockVolumeApp(QMainWindow):
         print(f"  tilemap:        {tilemap_size}")
         print(f"  stage:          {stats['stage_ms']:.2f} ms")
         print(f"  plan_total:     {stats['plan_total_ms']:.2f} ms")
-        print(f"  (commit is async — see status label for progress)")
+        print("  (commit is async — see status label for progress)")
 
         print()
         print("timings (outer)")
@@ -531,6 +572,7 @@ class BlockVolumeApp(QMainWindow):
 # ---------------------------------------------------------------------------
 # Async entry point
 # ---------------------------------------------------------------------------
+
 
 async def async_main(
     visual: GFXMultiscaleImageVisual,
@@ -550,6 +592,7 @@ async def async_main(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Async multiscale volume renderer")
@@ -610,7 +653,7 @@ def main() -> None:
     )
 
     geo = visual._volume_geometry
-    cache_info = visual._block_cache.info
+    cache_info = visual._block_cache_3d.info
     print(
         f"Cache: {cache_info.grid_side}³ grid = "
         f"{cache_info.n_slots} slots "
@@ -620,7 +663,9 @@ def main() -> None:
     )
     print(f"LUT:   {geo.base_layout.grid_dims} grid")
     print(f"Levels: {geo.n_levels}  downscale_factors={geo.downscale_factors}\n")
-    print("Press 'Update' to run the pipeline.  Orbit with the mouse between presses.\n")
+    print(
+        "Press 'Update' to run the pipeline.  Orbit with the mouse between presses.\n"
+    )
 
     app = QApplication([sys.argv[0]])
     QtAsyncio.run(async_main(visual, data_store), handle_sigint=True)

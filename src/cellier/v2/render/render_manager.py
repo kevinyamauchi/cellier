@@ -32,13 +32,13 @@ class RenderManager:
     registered via the ``add_*`` methods.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, slicer_batch_size: int = 8) -> None:
         self._scenes: dict[UUID, SceneManager] = {}
         self._canvases: dict[UUID, CanvasView] = {}
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, MultiscaleZarrDataStore] = {}
-        self._slicer = AsyncSlicer(batch_size=8)
+        self._slicer = AsyncSlicer(batch_size=slicer_batch_size)
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
             slicer=self._slicer,
@@ -85,13 +85,19 @@ class RenderManager:
             Parent widget for the underlying ``QRenderWidget``.
         **canvas_view_kwargs
             Additional keyword arguments forwarded to ``CanvasView.__init__``
-            (e.g. ``fov``, ``depth_range``).
+            (e.g. ``dim``, ``fov``, ``depth_range``).
 
         Returns
         -------
         CanvasView
             The newly created canvas view.
         """
+        # Auto-inject dim from the scene if not explicitly provided.
+        if "dim" not in canvas_view_kwargs:
+            scene_manager = self._scenes.get(scene_id)
+            if scene_manager is not None:
+                canvas_view_kwargs["dim"] = scene_manager.dim
+
         canvas_view = CanvasView(
             canvas_id=canvas_id,
             scene_id=scene_id,

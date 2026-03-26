@@ -1,11 +1,21 @@
 """Tile manager with LRU eviction for the 2D tile cache.
 
-Manages the bidirectional map TileKey <-> TileSlot with O(log N)
+Manages the bidirectional map BlockKey2D <-> TileSlot with O(log N)
 LRU eviction via a min-heap with lazy deletion.
 
-This is the 2D specialisation: TileKey omits ``gz`` and
-``_slot_grid_pos`` uses 2D grid arithmetic.  A 3D subclass (Phase 2)
-would override ``_slot_grid_pos`` to use 3D arithmetic.
+Slot lifecycle
+--------------
+1. ``stage()``                 -- allocates a slot; records it in
+                                  ``_in_flight`` (NOT in ``tilemap``).
+2. ``commit()``                -- called after data is written to the
+                                  GPU cache; moves the entry from
+                                  ``_in_flight`` into ``tilemap`` and
+                                  pushes it onto the LRU heap.
+3. ``release_all_in_flight()`` -- called on cancellation; returns all
+                                  reserved-but-not-yet-committed slots
+                                  to ``free_slots``.  ``tilemap`` is
+                                  untouched, so only valid tiles remain
+                                  renderable.
 """
 
 from __future__ import annotations
@@ -57,22 +67,22 @@ class TileSlot:
 
 
 class TileManager2D:
-    """Manage tile-to-slot mapping with LRU eviction.
+    """Manage tile-to-slot mapping with LRU eviction and late insertion.
 
     Uses a min-heap with lazy deletion for O(log N) eviction.
 
     Parameters
     ----------
-    cache_parameters : CacheInfo
+    cache_parameters : BlockCacheParameters2D
         Cache sizing metadata (grid dimensions, slot count, etc.).
     """
 
     def __init__(self, cache_parameters: BlockCacheParameters2D) -> None:
         self.cache_info = cache_parameters
 
-        # tile -> slot
+        # tile -> slot  (committed, renderable tiles only)
         self.tilemap: dict[BlockKey2D, TileSlot] = {}
-        # slot index -> tile (or None)
+        # slot index -> tile  (committed tiles only; None = free or in-flight)
         self.slot_index: dict[int, BlockKey2D | None] = {
             i: None for i in range(cache_parameters.n_slots)
         }
@@ -80,6 +90,9 @@ class TileManager2D:
         self.slot_index[0] = BlockKey2D(level=0, gy=0, gx=0)
         # Free slots (everything except slot 0).
         self.free_slots: list[int] = list(range(cache_parameters.n_slots - 1, 0, -1))
+
+        # slot index -> tile  (allocated by stage() but not yet committed)
+        self._in_flight: dict[int, BlockKey2D] = {}
 
         # Min-heap of (timestamp, slot_index) tuples.
         self._lru_heap: list[tuple[int, int]] = []
@@ -95,25 +108,30 @@ class TileManager2D:
         required: dict[BlockKey2D, int],
         frame_number: int,
     ) -> list[tuple[BlockKey2D, TileSlot]]:
-        """Process required tiles: mark hits, plan fills for misses.
+        """Process required tiles: mark hits, reserve slots for misses.
+
+        Hits update the timestamp of the existing committed slot.
+        Misses allocate a slot (evicting LRU if necessary) and record it
+        in ``_in_flight``.  The slot is **not** added to ``tilemap`` here
+        -- only ``commit()`` does that.
 
         Parameters
         ----------
-        required : dict[TileKey, int]
+        required : dict[BlockKey2D, int]
             Mapping from tile key to desired level.
         frame_number : int
             Current frame number for LRU timestamps.
 
         Returns
         -------
-        fill_plan : list[tuple[TileKey, TileSlot]]
+        fill_plan : list[tuple[BlockKey2D, TileSlot]]
             Tiles that need data uploaded, paired with their target slots.
         """
         miss_list: list[BlockKey2D] = []
 
         for tile_key in required:
             if tile_key in self.tilemap:
-                # Hit -- update timestamp.
+                # Hit -- refresh timestamp.
                 slot = self.tilemap[tile_key]
                 slot.timestamp = frame_number
                 heapq.heappush(self._lru_heap, (frame_number, slot.index))
@@ -123,21 +141,47 @@ class TileManager2D:
         fill_plan: list[tuple[BlockKey2D, TileSlot]] = []
 
         for tile_key in miss_list:
-            if self.free_slots:
-                slot_idx = self.free_slots.pop()
-            else:
-                slot_idx = self._evict_lru()
+            slot_idx = self.free_slots.pop() if self.free_slots else self._evict_lru()
 
             grid_pos = self._slot_grid_pos(slot_idx)
             slot = TileSlot(index=slot_idx, grid_pos=grid_pos, timestamp=frame_number)
 
-            self.tilemap[tile_key] = slot
-            self.slot_index[slot_idx] = tile_key
-            heapq.heappush(self._lru_heap, (frame_number, slot_idx))
+            # Reserve: mark as in-flight only.
+            self._in_flight[slot_idx] = tile_key
 
             fill_plan.append((tile_key, slot))
 
         return fill_plan
+
+    def commit(self, tile_key: BlockKey2D, slot: TileSlot) -> None:
+        """Move a tile from in-flight to committed (renderable).
+
+        Must be called after data has been written into the GPU cache
+        slot.  After this call the tile appears in ``tilemap`` and will
+        be picked up by the next ``rebuild_lut``.
+
+        Parameters
+        ----------
+        tile_key : BlockKey2D
+            The tile being committed.
+        slot : TileSlot
+            The slot returned by ``stage()`` for this tile.
+        """
+        self._in_flight.pop(slot.index, None)
+        self.tilemap[tile_key] = slot
+        self.slot_index[slot.index] = tile_key
+        heapq.heappush(self._lru_heap, (slot.timestamp, slot.index))
+
+    def release_all_in_flight(self) -> None:
+        """Return all reserved-but-not-committed slots to the free pool.
+
+        Called on cancellation so that slots reserved by ``stage()`` but
+        never committed are reclaimed.  ``tilemap`` is untouched, so only
+        valid tiles remain renderable.
+        """
+        for slot_idx in list(self._in_flight.keys()):
+            self.free_slots.append(slot_idx)
+        self._in_flight.clear()
 
     def _evict_lru(self) -> int:
         """Evict the least-recently-used slot and return its index.
@@ -170,6 +214,7 @@ class TileManager2D:
     def clear(self) -> None:
         """Remove all resident tiles (reset to empty cache)."""
         self.tilemap.clear()
+        self._in_flight.clear()
         for i in range(self.cache_info.n_slots):
             self.slot_index[i] = None
         self.slot_index[0] = BlockKey2D(level=0, gy=0, gx=0)

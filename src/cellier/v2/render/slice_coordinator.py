@@ -29,14 +29,11 @@ class SliceCoordinator:
     Parameters
     ----------
     scenes : dict[UUID, SceneManager]
-        Shared scene registry from ``RenderManager``.  The same dict object
-        is mutated by ``RenderManager.add_scene()`` so new scenes are
-        automatically visible here.
+        Shared scene registry from ``RenderManager``.
     slicer : AsyncSlicer
         Shared async slicer instance.
     data_stores : dict[UUID, MultiscaleZarrDataStore]
         Mapping of ``visual_model_id`` to the data store for that visual.
-        The same dict object is mutated by ``RenderManager.add_visual()``.
     """
 
     def __init__(
@@ -58,16 +55,14 @@ class SliceCoordinator:
         """Execute the full reslicing cycle for the scene in ``request.scene_id``.
 
         Cancels in-flight tasks for visuals that will be re-submitted before
-        running the synchronous planning phase.  No-op for visuals not
-        targeted by ``request.target_visual_ids``.
+        running the synchronous planning phase.
 
         Parameters
         ----------
         request : ReslicingRequest
             The reslicing request to process.
         visual_configs : dict[UUID, VisualRenderConfig]
-            Per-visual render configuration forwarded to
-            ``SceneManager.build_slice_requests``.
+            Per-visual render configuration.
         """
         scene_manager = self._scenes[request.scene_id]
 
@@ -81,13 +76,19 @@ class SliceCoordinator:
 
         requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 
+        is_2d = scene_manager.dim == "2d"
+
         for visual_id, chunk_requests in requests_by_visual.items():
             visual = scene_manager.get_visual(visual_id)
             data_store = self._data_stores[visual_id]
+
+            # Use the appropriate callback for the scene dimensionality.
+            callback = visual.on_data_ready_2d if is_2d else visual.on_data_ready
+
             slice_id = self._slicer.submit(
                 chunk_requests,
                 fetch_fn=data_store.get_data,
-                callback=visual.on_data_ready,
+                callback=callback,
                 consumer_id=str(visual_id),
             )
             if slice_id is not None:
@@ -112,8 +113,9 @@ class SliceCoordinator:
     def cancel_visual(self, scene_id: UUID, visual_id: UUID) -> None:
         """Cancel the in-flight task for one visual.
 
-        Also calls ``visual.cancel_pending()`` to release any GPU slots
-        reserved during the last planning phase that were never committed.
+        Also calls ``visual.cancel_pending()`` or ``cancel_pending_2d()``
+        to release any GPU slots reserved during the last planning phase
+        that were never committed.
 
         Parameters
         ----------
@@ -131,24 +133,19 @@ class SliceCoordinator:
         if scene is not None:
             try:
                 visual = scene.get_visual(visual_id)
-                visual.cancel_pending()
+                if scene.dim == "2d":
+                    visual.cancel_pending_2d()
+                else:
+                    visual.cancel_pending()
             except KeyError:
                 pass
 
     # ── Dormant EventBus handler stubs ───────────────────────────────────
 
     def _on_dims_changed(self, event) -> None:
-        """Dormant stub — not yet subscribed to the bus.
-
-        Will schedule async reslice when bus-driven triggers are enabled
-        in a future phase.
-        """
+        """Dormant stub — not yet subscribed to the bus."""
         pass
 
     def _on_appearance_changed(self, event) -> None:
-        """Dormant stub — not yet subscribed to the bus.
-
-        Will schedule async reslice for requires_reslice=True fields
-        in a future phase.
-        """
+        """Dormant stub — not yet subscribed to the bus."""
         pass

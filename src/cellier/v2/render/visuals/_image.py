@@ -1,4 +1,4 @@
-"""GFXMultiscaleImageVisual — 3D image visual using LUT brick-cache rendering."""
+"""GFXMultiscaleImageVisual — render-layer visual for multiscale images."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from cellier.v2.render._level_of_detail import (
     select_levels_arr_forced,
     select_levels_from_cache,
     sort_arr_by_distance,
+)
+from cellier.v2.render._level_of_detail_2d import (
+    arr_to_block_keys_2d,
+    build_tile_grids_2d,
+    select_lod_2d,
+    sort_tiles_by_distance_2d,
+    viewport_cull_2d,
 )
 from cellier.v2.render.block_cache import (
     BlockCache3D,
@@ -50,6 +57,12 @@ if TYPE_CHECKING:
         DataStoreContentsChangedEvent,
         DataStoreMetadataChangedEvent,
         VisualVisibilityChangedEvent,
+    )
+    from cellier.v2.render.block_cache._tile_manager_2d import (
+        BlockKey2D,
+    )
+    from cellier.v2.render.block_cache._tile_manager_2d import (
+        TileSlot as TileSlot2D,
     )
     from cellier.v2.visuals._image import MultiscaleImageVisual
 
@@ -136,7 +149,46 @@ class VolumeGeometry:
 
 
 # ---------------------------------------------------------------------------
-# Coordinate helper
+# ImageGeometry2D
+# ---------------------------------------------------------------------------
+
+
+class ImageGeometry2D:
+    """Pre-built metadata cache for a multiscale 2-D image.
+
+    Analogous to ``VolumeGeometry`` but for 2D tile grids.
+
+    Parameters
+    ----------
+    level_shapes : list[tuple[int, int, int]]
+        Volume shape ``(D, H, W)`` at each scale level, finest first.
+        The 2D image shape is ``(H, W)`` from each level.
+    block_size : int
+        Tile side length in pixels.
+    n_levels : int
+        Number of LOD levels.
+    """
+
+    def __init__(
+        self,
+        level_shapes: list[tuple[int, int, int]],
+        block_size: int,
+        n_levels: int,
+    ) -> None:
+        self.block_size = block_size
+        self.n_levels = n_levels
+        self.level_shapes = list(level_shapes)
+
+        # Build 2D base layout from finest level (H, W).
+        self.base_layout = BlockLayout2D.from_shape(
+            shape=(level_shapes[0][1], level_shapes[0][2]),
+            block_size=block_size,
+        )
+        self._level_grids = build_tile_grids_2d(self.base_layout, n_levels)
+
+
+# ---------------------------------------------------------------------------
+# Coordinate helpers
 # ---------------------------------------------------------------------------
 
 
@@ -157,6 +209,21 @@ def _brick_key_to_padded_coords(
     return z0, y0, x0, z0 + padded, y0 + padded, x0 + padded
 
 
+def _block_key_2d_to_padded_coords(
+    key: BlockKey2D,
+    block_size: int,
+    overlap: int,
+) -> tuple[int, int, int, int]:
+    """Translate a BlockKey2D to padded pixel coordinates.
+
+    Returns y0, x0, y1, x1.  May extend outside store bounds.
+    """
+    padded = block_size + 2 * overlap
+    y0 = key.gy * block_size - overlap
+    x0 = key.gx * block_size - overlap
+    return y0, x0, y0 + padded, x0 + padded
+
+
 # ---------------------------------------------------------------------------
 # GFXMultiscaleImageVisual
 # ---------------------------------------------------------------------------
@@ -165,14 +232,10 @@ def _brick_key_to_padded_coords(
 class GFXMultiscaleImageVisual:
     """Render-layer wrapper for one logical multiscale image visual.
 
-    Owns the 3D pygfx ``Volume`` node, the GPU brick cache, and the LUT
-    indirection texture.  Implements ``build_slice_request()`` and
-    ``on_data_ready()`` for use by a ``SliceCoordinator`` (or, in the
-    prototype, directly by the application).
-
-    The associated ``MultiscaleImageVisual`` model is identified only by
-    ``visual_model_id`` — no model reference crosses the render-layer
-    boundary.
+    Owns GPU resources (brick caches, LUT textures, pygfx nodes) for both
+    2D and 3D rendering.  Implements ``build_slice_request()`` /
+    ``build_slice_request_2d()`` and ``on_data_ready()`` /
+    ``on_data_ready_2d()`` for use by a ``SliceCoordinator``.
 
     Parameters
     ----------
@@ -211,9 +274,10 @@ class GFXMultiscaleImageVisual:
         self._volume_geometry = volume_geometry
         self._frame_number = 0
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
+        self._pending_slot_map_2d: dict[UUID, tuple[BlockKey2D, TileSlot2D]] = {}
         self._last_plan_stats: dict = {}
 
-        # ── GPU resources ───────────────────────────────────────────────
+        # ── 3D GPU resources ───────────────────────────────────────────
         cache_parameters_3d = compute_block_cache_parameters_3d(
             block_size=volume_geometry.block_size,
             gpu_budget_bytes=gpu_budget_bytes,
@@ -232,35 +296,24 @@ class GFXMultiscaleImageVisual:
             volume_geometry.downscale_factors
         )
 
-        # 2D GPU resources
-        # 2. Compute cache info.
+        # ── 2D GPU resources ───────────────────────────────────────────
         cache_parameters_2d = compute_block_cache_parameters_2d(
             gpu_budget_bytes=gpu_budget_bytes, block_size=volume_geometry.block_size
         )
         self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
-        pbs = cache_parameters_2d.padded_block_size
-        gs = cache_parameters_2d.grid_side
-        cache_pixels = gs * pbs
-        cache_mb = cache_pixels * cache_pixels * 4 / (1024**2)
-        print(
-            f"  cache: {gs}x{gs} slots = {cache_parameters_2d.n_slots} slots, "
-            f"texture {cache_pixels}x{cache_pixels} ({cache_mb:.1f} MB)"
-        )
 
-        # 3. Build LUT texture.
-        # need to integrate base_layout with VolumeGeometry
-        base_layout = BlockLayout2D.from_shape(
-            shape=volume_geometry.level_shapes[0][1:3],
+        self._image_geometry_2d = ImageGeometry2D(
+            level_shapes=volume_geometry.level_shapes,
             block_size=volume_geometry.block_size,
-        )
-        self._lut_manager_2d = LutIndirectionManager2D(
-            base_layout=base_layout,
             n_levels=volume_geometry.n_levels,
         )
 
-        # 4. Build uniform buffers.
+        self._lut_manager_2d = LutIndirectionManager2D(
+            base_layout=self._image_geometry_2d.base_layout,
+            n_levels=volume_geometry.n_levels,
+        )
         self._lut_params_buffer_2d = build_lut_params_buffer_2d(
-            base_layout, cache_parameters_2d
+            self._image_geometry_2d.base_layout, cache_parameters_2d
         )
         self._block_scales_buffer_2d = build_block_scales_buffer_2d(
             volume_geometry.n_levels
@@ -281,11 +334,11 @@ class GFXMultiscaleImageVisual:
                 interpolation=interpolation,
             )
 
-        # ── 2D node -----------------------───────────────────────────────
-        self.node_2d = gfx.Image | None
-        self.material_2d = ImageBlockMaterial | None
+        # ── 2D node ─────────────────────────────────────────────────────
+        self.node_2d: gfx.Image | None = None
+        self.material_2d: ImageBlockMaterial | None = None
+        self._proxy_tex_2d: gfx.Texture | None = None
         if "2d" in render_modes:
-            print(colormap)
             self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
                 colormap=colormap, clim=clim, interpolation=interpolation
             )
@@ -303,19 +356,12 @@ class GFXMultiscaleImageVisual:
     ) -> GFXMultiscaleImageVisual:
         """Build a ``GFXMultiscaleImageVisual`` from a ``MultiscaleImageVisual`` model.
 
-        Reads appearance parameters from the model and constructs the visual
-        with plain values only.  The model reference does not cross the
-        render-layer boundary after this call.
-
         Parameters
         ----------
         model : MultiscaleImageVisual
-            Source visual model.  ``model.id``,
-            ``model.appearance.color_map``, ``model.appearance.clim``,
-            and ``model.downscale_factors`` are consumed.
+            Source visual model.
         level_shapes : list[tuple[int, int, int]]
-            Volume shape ``(D, H, W)`` per level, finest first.  Read
-            from the data store by the caller before invoking this method.
+            Volume shape ``(D, H, W)`` per level, finest first.
         render_modes : set[str]
             Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
             ``{"2d", "3d"}``.
@@ -349,7 +395,7 @@ class GFXMultiscaleImageVisual:
             gpu_budget_bytes=gpu_budget_bytes,
         )
 
-    # ── SliceCoordinator interface ──────────────────────────────────────
+    # ── 3D SliceCoordinator interface ──────────────────────────────────
 
     def build_slice_request(
         self,
@@ -358,30 +404,10 @@ class GFXMultiscaleImageVisual:
         thresholds: list[float] | None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
-        """Run the synchronous planning phase and return ChunkRequests.
+        """Run the synchronous 3D planning phase and return ChunkRequests.
 
-        Pipeline: LOAD select → distance sort → optional frustum cull →
-        budget cap → stage() → build ``ChunkRequest`` objects.
-
-        Side effects: populates ``self._pending_slot_map`` (replacing any
-        previous map) and ``self._last_plan_stats``.
-
-        Parameters
-        ----------
-        camera_pos : ndarray, shape (3,)
-            Camera world-space position ``(x, y, z)``.
-        frustum_planes : ndarray, shape (6, 4) or None
-            Inward-pointing half-space planes.  ``None`` disables
-            frustum culling.
-        thresholds : list[float] or None
-            LOAD cutoff distances, one per level boundary.
-        force_level : int or None
-            Override: all bricks assigned this 1-based level.
-
-        Returns
-        -------
-        list[ChunkRequest]
-            Nearest-first.  Empty when all required bricks are cached.
+        Pipeline: LOAD select -> distance sort -> optional frustum cull ->
+        budget cap -> stage() -> build ``ChunkRequest`` objects.
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
@@ -495,18 +521,7 @@ class GFXMultiscaleImageVisual:
         self,
         batch: list[tuple[ChunkRequest, np.ndarray]],
     ) -> None:
-        """Commit an arriving batch of bricks to the GPU cache.
-
-        Writes each brick into the cache texture and advances it from
-        in-flight to committed in the tile manager.  Rebuilds the LUT
-        once per batch (not once per brick) for efficiency.
-
-        Parameters
-        ----------
-        batch : list of (ChunkRequest, ndarray)
-            Each item is a ``(request, data)`` pair where ``data`` has
-            shape ``(padded_D, padded_H, padded_W)``, dtype float32.
-        """
+        """Commit an arriving batch of 3D bricks to the GPU cache."""
         for req, data in batch:
             entry = self._pending_slot_map.get(req.chunk_request_id)
             if entry is None:
@@ -518,25 +533,188 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
 
     def cancel_pending(self) -> None:
-        """Release all in-flight slots reserved by the last build_slice_request.
-
-        Call this before submitting a new ``build_slice_request()`` to
-        cleanly reclaim slots that were reserved but never committed.
-        Only previously committed (valid) bricks remain renderable after
-        this call.
-        """
+        """Release all in-flight 3D slots."""
         self._block_cache_3d.tile_manager.release_all_in_flight()
         self._pending_slot_map = {}
+
+    # ── 2D SliceCoordinator interface ──────────────────────────────────
+
+    def build_slice_request_2d(
+        self,
+        camera_pos: np.ndarray,
+        viewport_width_px: float,
+        world_width: float,
+        view_min: np.ndarray | None,
+        view_max: np.ndarray | None,
+        z_slice: int,
+        lod_bias: float = 1.0,
+        force_level: int | None = None,
+        use_culling: bool = True,
+    ) -> list[ChunkRequest]:
+        """Run the synchronous 2D planning phase and return ChunkRequests.
+
+        Pipeline: LOD select -> distance sort -> optional viewport cull ->
+        budget cap -> stage() -> build ``ChunkRequest`` objects.
+
+        Parameters
+        ----------
+        camera_pos : ndarray, shape (3,)
+            Camera world-space position ``(x, y, z)``.
+        viewport_width_px : float
+            Viewport width in logical pixels.
+        world_width : float
+            Visible world width in world units.
+        view_min : ndarray, shape (2,) or None
+            Viewport AABB minimum ``(x, y)``.  ``None`` disables culling.
+        view_max : ndarray, shape (2,) or None
+            Viewport AABB maximum ``(x, y)``.  ``None`` disables culling.
+        z_slice : int
+            Z-slice index at the finest scale level.
+        lod_bias : float
+            Multiplicative LOD bias.
+        force_level : int or None
+            Override: all tiles assigned this 1-based level.
+        use_culling : bool
+            Enable viewport culling.
+
+        Returns
+        -------
+        list[ChunkRequest]
+            Nearest-first.  Empty when all required tiles are cached.
+        """
+        t_plan_start = time.perf_counter()
+        self._frame_number += 1
+        geo2d = self._image_geometry_2d
+        block_size = geo2d.block_size
+        n_levels = geo2d.n_levels
+
+        # 1. LOD selection
+        t0 = time.perf_counter()
+        tile_arr = select_lod_2d(
+            geo2d._level_grids,
+            n_levels,
+            viewport_width_px=viewport_width_px,
+            world_width=world_width,
+            lod_bias=lod_bias,
+            force_level=force_level,
+        )
+        lod_select_ms = (time.perf_counter() - t0) * 1000
+
+        # 2. Distance sort
+        t0 = time.perf_counter()
+        tile_arr = sort_tiles_by_distance_2d(tile_arr, camera_pos, block_size)
+        distance_sort_ms = (time.perf_counter() - t0) * 1000
+
+        # Convert to dict
+        required = arr_to_block_keys_2d(tile_arr)
+        n_total = len(required)
+
+        # 3. Viewport culling
+        n_culled = 0
+        cull_ms = 0.0
+        if use_culling and view_min is not None and view_max is not None:
+            t0 = time.perf_counter()
+            required, n_culled = viewport_cull_2d(
+                required, block_size, view_min, view_max
+            )
+            cull_ms = (time.perf_counter() - t0) * 1000
+
+        # 4. Budget truncation
+        n_needed = len(required)
+        n_budget = self._block_cache_2d.info.n_slots - 1
+        n_dropped = max(0, n_needed - n_budget)
+        if n_dropped:
+            keys_to_keep = list(required.keys())[:n_budget]
+            required = {k: required[k] for k in keys_to_keep}
+
+        # 5. Stage
+        t0 = time.perf_counter()
+        fill_plan = self._block_cache_2d.tile_manager.stage(
+            required, self._frame_number
+        )
+        stage_ms = (time.perf_counter() - t0) * 1000
+
+        # 6. Build ChunkRequests
+        slice_id = uuid4()
+        chunk_requests: list[ChunkRequest] = []
+        self._pending_slot_map_2d = {}
+
+        overlap = self._block_cache_2d.info.overlap
+
+        for tile_key, slot in fill_plan:
+            chunk_id = uuid4()
+            y0, x0, y1, x1 = _block_key_2d_to_padded_coords(
+                tile_key, block_size, overlap
+            )
+            # Compute z-slice at this scale level.
+            scale = 2 ** (tile_key.level - 1)
+            z_slice_at_level = z_slice // scale
+
+            req = ChunkRequest(
+                chunk_request_id=chunk_id,
+                slice_request_id=slice_id,
+                scale_index=tile_key.level - 1,
+                z_start=0,
+                y_start=y0,
+                x_start=x0,
+                z_stop=0,
+                y_stop=y1,
+                x_stop=x1,
+                z_slice=z_slice_at_level,
+            )
+            chunk_requests.append(req)
+            self._pending_slot_map_2d[chunk_id] = (tile_key, slot)
+
+        plan_total_ms = (time.perf_counter() - t_plan_start) * 1000
+
+        self._last_plan_stats = {
+            "hits": len(required) - len(fill_plan),
+            "fills": len(fill_plan),
+            "total_required": n_total,
+            "n_culled": n_culled,
+            "n_needed": n_needed,
+            "n_budget": n_budget,
+            "n_dropped": n_dropped,
+            "lod_select_ms": lod_select_ms,
+            "distance_sort_ms": distance_sort_ms,
+            "cull_ms": cull_ms,
+            "stage_ms": stage_ms,
+            "plan_total_ms": plan_total_ms,
+        }
+
+        return chunk_requests
+
+    def on_data_ready_2d(
+        self,
+        batch: list[tuple[ChunkRequest, np.ndarray]],
+    ) -> None:
+        """Commit an arriving batch of 2D tiles to the GPU cache.
+
+        Parameters
+        ----------
+        batch : list of (ChunkRequest, ndarray)
+            Each item is a ``(request, data)`` pair where ``data`` has
+            shape ``(pbs, pbs)``, dtype float32.
+        """
+        for req, data in batch:
+            entry = self._pending_slot_map_2d.get(req.chunk_request_id)
+            if entry is None:
+                continue
+            tile_key, slot = entry
+            self._block_cache_2d.write_tile(slot, data)
+            self._block_cache_2d.tile_manager.commit(tile_key, slot)
+
+        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+
+    def cancel_pending_2d(self) -> None:
+        """Release all in-flight 2D slots."""
+        self._block_cache_2d.tile_manager.release_all_in_flight()
+        self._pending_slot_map_2d = {}
 
     # ── EventBus handler methods ─────────────────────────────────────────
 
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
-        """Apply GPU-only appearance changes.
-
-        Reslice-field changes (lod_bias, force_level, frustum_cull) are
-        no-ops here; new values are read from the model at the next
-        trigger_update() call.
-        """
+        """Apply GPU-only appearance changes."""
         if event.field_name == "color_map":
             from cmap import Colormap
 
@@ -555,7 +733,6 @@ class GFXMultiscaleImageVisual:
                 self.material_3d.clim = event.new_value
             if self.material_2d is not None:
                 self.material_2d.clim = event.new_value
-        # lod_bias / force_level / frustum_cull: no GPU state to update here.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""
@@ -619,7 +796,7 @@ class GFXMultiscaleImageVisual:
         clim: tuple[float, float],
         interpolation: str,
     ) -> tuple[gfx.Image, ImageBlockMaterial, gfx.Texture]:
-        gh, gw = self._lut_manager_2d._base_layout.grid_dims
+        gh, gw = self._image_geometry_2d.base_layout.grid_dims
 
         proxy_data = np.zeros((gh, gw), dtype=np.float32)
         proxy_tex = gfx.Texture(proxy_data, dim=2)
@@ -633,26 +810,11 @@ class GFXMultiscaleImageVisual:
             map=colormap,
         )
 
-        # 8. Build Image.
         geometry = gfx.Geometry(grid=proxy_tex)
         image = gfx.Image(geometry, material)
 
-        # 9. Scale: proxy has 1 texel per tile, so scale by block_size
-        #    to make the quad cover the correct world-space extent.
-        image.local.scale = (
-            self._volume_geometry.block_size,
-            self._volume_geometry.block_size,
-            1.0,
-        )
-
-        # get_im_geometry() positions the quad from (-0.5, -0.5) to
-        # (gW-0.5, gH-0.5) in proxy texels.  After scaling by block_size
-        # the quad spans (-bs/2, -bs/2) to (gW*bs - bs/2, gH*bs - bs/2).
-        # Shift by +bs/2 so it sits at (0, 0) to (gW*bs, gH*bs).
-        image.local.position = (
-            self._volume_geometry.block_size * 0.5,
-            self._volume_geometry.block_size * 0.5,
-            0,
-        )
+        bs = self._volume_geometry.block_size
+        image.local.scale = (bs, bs, 1.0)
+        image.local.position = (bs * 0.5, bs * 0.5, 0)
 
         return image, material, proxy_tex

@@ -19,7 +19,9 @@ class ChunkRequest(NamedTuple):
     may be negative or exceed the store bounds; ``get_data()`` on the
     ``MultiscaleZarrDataStore`` is responsible for clamping and
     zero-padding so the returned array always has the full requested
-    shape ``(z_stop-z_start, y_stop-y_start, x_stop-x_start)``.
+    shape ``(z_stop-z_start, y_stop-y_start, x_stop-x_start)`` for 3D
+    requests, or ``(y_stop-y_start, x_stop-x_start)`` for 2D requests
+    (when ``z_slice`` is set).
 
     Parameters
     ----------
@@ -41,6 +43,11 @@ class ChunkRequest(NamedTuple):
     z_stop, y_stop, x_stop :
         Padded region end (exclusive) in voxels.  May exceed store
         bounds for boundary bricks.
+    z_slice :
+        If not ``None``, this is a 2D request: the data store reads a
+        single z-plane at this index (at the current scale level) and
+        returns a 2D ``(H, W)`` array.  ``z_start`` and ``z_stop`` are
+        ignored when ``z_slice`` is set.
     """
 
     chunk_request_id: UUID
@@ -52,3 +59,4 @@ class ChunkRequest(NamedTuple):
     z_stop: int
     y_stop: int
     x_stop: int
+    z_slice: int | None = None
