@@ -19,44 +19,24 @@ class ChunkRequest(NamedTuple):
     may be negative or exceed the store bounds; ``get_data()`` on the
     ``MultiscaleZarrDataStore`` is responsible for clamping and
     zero-padding so the returned array always has the full requested
-    shape ``(z_stop-z_start, y_stop-y_start, x_stop-x_start)`` for 3D
-    requests, or ``(y_stop-y_start, x_stop-x_start)`` for 2D requests
-    (when ``z_slice`` is set).
+    shape.
 
     Parameters
     ----------
     chunk_request_id :
-        Unique ID for this individual chunk.  Used by the callback to look
-        up the corresponding ``TileSlot`` in the ``slot_map`` closure.
+        Unique ID for this individual chunk.
     slice_request_id :
-        Shared ID for all chunks that belong to the same planning event
-        (one Update press → one ``slice_request_id``).  Used by
-        ``AsyncSlicer.cancel()`` to cancel all in-flight work for a
-        single update cycle.
+        Shared ID for all chunks that belong to the same planning event.
     scale_index :
-        0-based index into ``MultiscaleZarrDataStore`` levels
-        (0 = finest).  Note: this is ``scale_index``, not
-        ``BrickKey.level`` (which is 1-based).
-    z_start, y_start, x_start :
-        Padded region origin in voxels at this scale level.  May be
-        negative for boundary bricks.
-    z_stop, y_stop, x_stop :
-        Padded region end (exclusive) in voxels.  May exceed store
-        bounds for boundary bricks.
-    z_slice :
-        If not ``None``, this is a 2D request: the data store reads a
-        single z-plane at this index (at the current scale level) and
-        returns a 2D ``(H, W)`` array.  ``z_start`` and ``z_stop`` are
-        ignored when ``z_slice`` is set.
+        0-based index into ``MultiscaleZarrDataStore`` levels (0 = finest).
+    axis_selections :
+        Per-axis selection in data axis order.  Each element is either:
+        - ``int`` → axis is sliced (single plane, already scaled to this level)
+        - ``(start, stop)`` → axis is displayed (windowed range; may extend
+          outside bounds)
     """
 
     chunk_request_id: UUID
     slice_request_id: UUID
     scale_index: int
-    z_start: int
-    y_start: int
-    x_start: int
-    z_stop: int
-    y_stop: int
-    x_stop: int
-    z_slice: int | None = None
+    axis_selections: tuple[int | tuple[int, int], ...]

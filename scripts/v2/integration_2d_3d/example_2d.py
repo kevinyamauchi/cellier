@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
             z_slice = z_depth // 2
 
         # Set initial slice index on the scene's dims.
-        self._scene.dims.slice_indices = (z_slice,)
+        self._scene.dims.selection.slice_indices = {0: z_slice}
 
         # Add the image through the standard controller API.
         appearance = ImageAppearance(
@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         panel_layout.addWidget(QLabel("Z slice:"))
         self._z_slice_sb = QSpinBox()
         self._z_slice_sb.setRange(0, self._z_max)
-        self._z_slice_sb.setValue(self._scene.dims.slice_indices[0])
+        self._z_slice_sb.setValue(self._scene.dims.selection.slice_indices[0])
         self._z_slice_sb.valueChanged.connect(self._on_z_slice_changed)
         panel_layout.addWidget(self._z_slice_sb)
 
@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
         self._force_level = button.property("force_level")
 
     def _on_z_slice_changed(self, value: int) -> None:
-        self._scene.dims.slice_indices = (value,)
+        self._scene.dims.selection.slice_indices = {0: value}
         # All cached tiles are from the old z-plane — clear and re-fetch.
         gfx_visual = self._get_gfx_visual()
         gfx_visual._block_cache_2d.tile_manager.clear()

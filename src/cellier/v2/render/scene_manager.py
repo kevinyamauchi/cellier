@@ -177,13 +177,14 @@ class SceneManager:
                 else None
             )
 
-            n_levels = visual._volume_geometry.n_levels
+            n_levels = visual.n_levels
             thresholds = self._compute_thresholds_3d(request, n_levels, cfg.lod_bias)
 
             chunk_requests = visual.build_slice_request(
                 camera_pos=request.camera_pos,
                 frustum_planes=frustum_planes,
                 thresholds=thresholds,
+                dims_state=request.dims_state,
                 force_level=cfg.force_level,
             )
             if chunk_requests:
@@ -198,14 +199,6 @@ class SceneManager:
     ) -> dict[UUID, list[ChunkRequest]]:
         """2D planning path using orthographic camera and viewport culling."""
         result: dict[UUID, list[ChunkRequest]] = {}
-
-        # Extract z-slice from dims_state.
-        # For 2D scenes, slice_indices contains the z-slice index.
-        z_slice = (
-            request.dims_state.slice_indices[0]
-            if request.dims_state.slice_indices
-            else 0
-        )
 
         world_width, world_height = request.world_extent
         viewport_width_px, viewport_height_px = request.screen_size_px
@@ -233,7 +226,7 @@ class SceneManager:
                 world_width=world_width,
                 view_min=view_min if cfg.frustum_cull else None,
                 view_max=view_max if cfg.frustum_cull else None,
-                z_slice=z_slice,
+                dims_state=request.dims_state,
                 lod_bias=cfg.lod_bias,
                 force_level=cfg.force_level,
                 use_culling=cfg.frustum_cull,

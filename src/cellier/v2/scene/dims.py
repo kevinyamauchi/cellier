@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, Union
 from uuid import uuid4
 
 from psygnal import EventedModel
-from pydantic import UUID4, AfterValidator, Field
+from pydantic import UUID4, AfterValidator, Field, model_validator
+
+from cellier.v2._state import (
+    AxisAlignedSelectionState,
+    DimsState,
+    PlaneSelectionState,
+)
 
 
 class CoordinateSystem(EventedModel):
@@ -25,6 +31,54 @@ class CoordinateSystem(EventedModel):
     axis_labels: tuple[str, ...]
 
 
+class AxisAlignedSelection(EventedModel):
+    """Mutable selection model for axis-aligned slicing.
+
+    Parameters
+    ----------
+    selector_type : Literal["axis_aligned"]
+        Discriminator field.
+    displayed_axes : tuple[int, ...]
+        Indices into the coordinate system that are rendered.
+        Length 2 → 2D; length 3 → 3D.
+    slice_indices : dict[int, int]
+        Mapping of axis index → slice value for non-displayed axes.
+    """
+
+    selector_type: Literal["axis_aligned"] = "axis_aligned"
+    displayed_axes: tuple[int, ...]
+    slice_indices: dict[int, int] = Field(default_factory=dict)
+
+    def to_state(self) -> AxisAlignedSelectionState:
+        """Return an immutable snapshot of this selection."""
+        return AxisAlignedSelectionState(
+            displayed_axes=self.displayed_axes,
+            slice_indices=dict(self.slice_indices),
+        )
+
+
+class PlaneSelection(EventedModel):
+    """Stub — not yet implemented.
+
+    Parameters
+    ----------
+    selector_type : Literal["plane"]
+        Discriminator field.
+    """
+
+    selector_type: Literal["plane"] = "plane"
+
+    def to_state(self) -> PlaneSelectionState:
+        """Return an immutable snapshot of this selection."""
+        raise NotImplementedError("PlaneSelection is not yet implemented.")
+
+
+SelectionType = Annotated[
+    Union[AxisAlignedSelection, PlaneSelection],
+    Field(discriminator="selector_type"),
+]
+
+
 class DimsManager(EventedModel):
     """Tracks which axes are displayed and the slice index for non-displayed axes.
 
@@ -36,25 +90,46 @@ class DimsManager(EventedModel):
         Unique identifier. Auto-generated.
     coordinate_system : CoordinateSystem
         Defines the world axis names.
-    displayed_axes : tuple[int, ...]
-        Indices into ``coordinate_system.axis_labels`` currently rendered.
-        Length 2 → 2D; length 3 → 3D.
-    slice_indices : tuple[int, ...]
-        One integer index per non-displayed axis, in the same axis order as
-        ``coordinate_system``. Length must equal
-        ``len(axis_labels) - len(displayed_axes)``.
+    selection : SelectionType
+        The current axis selection (axis-aligned or plane).
     """
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
     )
     coordinate_system: CoordinateSystem
-    displayed_axes: tuple[int, ...]
-    slice_indices: tuple[int, ...]
+    selection: SelectionType
+
+    @model_validator(mode="after")
+    def _validate_axis_coverage(self) -> DimsManager:
+        """Verify displayed + sliced axes cover all coordinate axes."""
+        if isinstance(self.selection, AxisAlignedSelection):
+            ndim = len(self.coordinate_system.axis_labels)
+            covered = set(self.selection.displayed_axes) | set(
+                self.selection.slice_indices.keys()
+            )
+            expected = set(range(ndim))
+            if covered != expected:
+                raise ValueError(
+                    f"Axis coverage mismatch: displayed_axes | slice_indices.keys() "
+                    f"= {covered}, expected {expected} for ndim={ndim}"
+                )
+        return self
 
     def model_post_init(self, __context: Any) -> None:
-        """Wire coordinate system event relay after model initialization."""
+        """Wire event relays after model initialization."""
         self.coordinate_system.events.all.connect(self._on_coordinate_system_updated)
+        self.selection.events.all.connect(self._on_selection_updated)
 
     def _on_coordinate_system_updated(self, info: Any) -> None:
         self.events.coordinate_system.emit(self.coordinate_system)
+
+    def _on_selection_updated(self, info: Any) -> None:
+        self.events.selection.emit(self.selection)
+
+    def to_state(self) -> DimsState:
+        """Return an immutable snapshot of the current dims state."""
+        return DimsState(
+            axis_labels=self.coordinate_system.axis_labels,
+            selection=self.selection.to_state(),
+        )

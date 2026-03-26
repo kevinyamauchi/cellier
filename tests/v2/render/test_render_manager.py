@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 
+from cellier.v2._state import AxisAlignedSelectionState
 from cellier.v2.data.image import ChunkRequest
 from cellier.v2.render._requests import DimsState, ReslicingRequest
 from cellier.v2.render._scene_config import VisualRenderConfig
@@ -24,7 +25,13 @@ from cellier.v2.render.slice_coordinator import SliceCoordinator
 
 
 def _make_dims_state() -> DimsState:
-    return DimsState(displayed_axes=(0, 1, 2), slice_indices=())
+    return DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(0, 1, 2),
+            slice_indices={},
+        ),
+    )
 
 
 def _make_reslicing_request(
@@ -92,15 +99,23 @@ class _StubSlicer:
 
 
 def test_dims_state_construction() -> None:
-    ds = DimsState(displayed_axes=(0, 1, 2), slice_indices=())
-    assert ds.displayed_axes == (0, 1, 2)
-    assert ds.slice_indices == ()
+    ds = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(displayed_axes=(0, 1, 2), slice_indices={}),
+    )
+    assert ds.selection.displayed_axes == (0, 1, 2)
+    assert ds.selection.slice_indices == {}
 
 
 def test_dims_state_2d() -> None:
-    ds = DimsState(displayed_axes=(1, 2), slice_indices=(5,))
-    assert ds.displayed_axes == (1, 2)
-    assert ds.slice_indices == (5,)
+    ds = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2), slice_indices={0: 5}
+        ),
+    )
+    assert ds.selection.displayed_axes == (1, 2)
+    assert ds.selection.slice_indices == {0: 5}
 
 
 def test_reslicing_request_construction() -> None:
@@ -166,12 +181,7 @@ def test_scene_manager_build_slice_requests_all_visuals() -> None:
         chunk_request_id=uuid4(),
         slice_request_id=uuid4(),
         scale_index=0,
-        z_start=0,
-        y_start=0,
-        x_start=0,
-        z_stop=32,
-        y_stop=32,
-        x_stop=32,
+        axis_selections=((0, 32), (0, 32), (0, 32)),
     )
     v1 = _make_mock_visual()
     v1.build_slice_request.return_value = [chunk]
@@ -202,12 +212,7 @@ def test_scene_manager_build_slice_requests_target_filtering() -> None:
         chunk_request_id=uuid4(),
         slice_request_id=uuid4(),
         scale_index=0,
-        z_start=0,
-        y_start=0,
-        x_start=0,
-        z_stop=32,
-        y_stop=32,
-        x_stop=32,
+        axis_selections=((0, 32), (0, 32), (0, 32)),
     )
     v1 = _make_mock_visual()
     v1.build_slice_request.return_value = [chunk]
@@ -271,12 +276,7 @@ def _make_coordinator_with_scene(
         chunk_request_id=uuid4(),
         slice_request_id=uuid4(),
         scale_index=0,
-        z_start=0,
-        y_start=0,
-        x_start=0,
-        z_stop=32,
-        y_stop=32,
-        x_stop=32,
+        axis_selections=((0, 32), (0, 32), (0, 32)),
     )
 
     visuals = []

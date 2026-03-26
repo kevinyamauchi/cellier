@@ -4,7 +4,7 @@ import uuid
 
 from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import CoordinateSystem, DimsManager
+from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 
@@ -12,8 +12,10 @@ from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 def test_scene_roundtrip(tmp_path):
     dims = DimsManager(
         coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
-        displayed_axes=(0, 1, 2),
-        slice_indices=(),
+        selection=AxisAlignedSelection(
+            displayed_axes=(0, 1, 2),
+            slice_indices={},
+        ),
     )
     visual = MultiscaleImageVisual(
         name="volume",

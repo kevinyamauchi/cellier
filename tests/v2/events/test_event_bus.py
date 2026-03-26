@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from cellier.v2._state import DimsState
+from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.events import (
     DimsChangedEvent,
     EventBus,
@@ -22,7 +22,12 @@ def _make_dims_event(scene_id=None) -> DimsChangedEvent:
     return DimsChangedEvent(
         source_id=uuid4(),
         scene_id=scene_id or uuid4(),
-        dims_state=DimsState(displayed_axes=(0, 1, 2), slice_indices=()),
+        dims_state=DimsState(
+            axis_labels=("z", "y", "x"),
+            selection=AxisAlignedSelectionState(
+                displayed_axes=(0, 1, 2), slice_indices={}
+            ),
+        ),
         displayed_axes_changed=False,
     )
 

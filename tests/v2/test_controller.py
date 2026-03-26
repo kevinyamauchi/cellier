@@ -171,9 +171,9 @@ def test_dims_bridge_emits_event():
     fired = []
     controller.on_dims_changed(scene.id, fired.append)
 
-    controller.get_scene(scene.id).dims.slice_indices = (5,)
+    controller.get_scene(scene.id).dims.selection.slice_indices = {0: 5}
     assert len(fired) == 1
-    assert fired[0].slice_indices == (5,)
+    assert fired[0].selection.slice_indices == {0: 5}
 
 
 def test_dims_bridge_displayed_axes_flag_true():
@@ -188,7 +188,7 @@ def test_dims_bridge_displayed_axes_flag_true():
         entity_id=scene.id,
     )
 
-    controller.get_scene(scene.id).dims.displayed_axes = (0, 1)
+    controller.get_scene(scene.id).dims.selection.displayed_axes = (0, 1)
     assert len(events) == 1
     assert events[0].displayed_axes_changed is True
 
@@ -205,7 +205,7 @@ def test_dims_bridge_displayed_axes_flag_false():
         entity_id=scene.id,
     )
 
-    controller.get_scene(scene.id).dims.slice_indices = (3,)
+    controller.get_scene(scene.id).dims.selection.slice_indices = {0: 3}
     assert len(events) == 1
     assert events[0].displayed_axes_changed is False
 
@@ -352,9 +352,9 @@ def test_on_dims_changed_callback():
     fired = []
     controller.on_dims_changed(scene.id, fired.append)
 
-    controller.get_scene(scene.id).dims.slice_indices = (7,)
+    controller.get_scene(scene.id).dims.selection.slice_indices = {0: 7}
     assert len(fired) == 1
-    assert fired[0].slice_indices == (7,)
+    assert fired[0].selection.slice_indices == {0: 7}
 
 
 def test_unsubscribe_all_cleans_up(small_zarr_store):
