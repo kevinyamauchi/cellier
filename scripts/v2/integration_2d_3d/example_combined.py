@@ -65,6 +65,72 @@ from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.visuals._image import ImageAppearance
 
 # ---------------------------------------------------------------------------
+# Debug-logging CLI helper (power-user per-category:level syntax)
+# ---------------------------------------------------------------------------
+
+
+def _setup_debug_logging(spec: str) -> None:
+    """Parse ``--debug-log`` spec and configure cellier loggers.
+
+    Supports several forms::
+
+        "all"                           -> all categories at DEBUG
+        "all:info"                      -> all categories at INFO
+        "perf,cache"                    -> perf+cache at DEBUG
+        "perf:info,cache:debug"         -> per-category levels
+
+    A bare category name (no colon) defaults to DEBUG.
+    """
+    import logging as _logging
+
+    from cellier.v2.logging import _CATEGORY_MAP, enable_debug_logging
+
+    _LEVEL_NAMES = {
+        "debug": _logging.DEBUG,
+        "info": _logging.INFO,
+        "warning": _logging.WARNING,
+    }
+
+    # Parse spec into {category: level_int} pairs.
+    overrides: dict[str, int] = {}
+    all_cats = tuple(_CATEGORY_MAP.keys())
+    default_level = _logging.DEBUG
+
+    if spec in ("", "all"):
+        # All categories at DEBUG — no overrides needed.
+        pass
+    elif spec.startswith("all:"):
+        level_str = spec.split(":", 1)[1].strip().lower()
+        default_level = _LEVEL_NAMES.get(level_str, _logging.DEBUG)
+    else:
+        for token in spec.split(","):
+            token = token.strip()
+            if ":" in token:
+                cat, level_str = token.split(":", 1)
+                overrides[cat.strip()] = _LEVEL_NAMES.get(
+                    level_str.strip().lower(), _logging.DEBUG
+                )
+            else:
+                overrides[token] = _logging.DEBUG
+
+    # Determine which categories to enable.
+    if overrides:
+        cats = tuple(overrides.keys())
+    else:
+        cats = all_cats
+
+    # Step 1: enable handler + set all requested categories to DEBUG.
+    enable_debug_logging(categories=cats)
+
+    # Step 2: apply per-category level overrides (or global default).
+    for cat in cats:
+        target_level = overrides.get(cat, default_level)
+        logger = _CATEGORY_MAP.get(cat)
+        if logger is not None:
+            logger.setLevel(target_level)
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -563,6 +629,24 @@ def main() -> None:
         default=ZARR_PATH,
         help="Path to the multiscale zarr store.",
     )
+    parser.add_argument(
+        "--debug-log",
+        metavar="SPEC",
+        default=None,
+        const="all",
+        nargs="?",
+        help=(
+            "Enable debug logging. Comma-separated list of categories "
+            "(perf, gpu, cache, slicer). "
+            "Omit value or use 'all' for all categories at DEBUG level. "
+            "Power-user: append :LEVEL to set per-category levels. "
+            "Examples:\n"
+            "  --debug-log                    (all at DEBUG)\n"
+            "  --debug-log perf,cache         (perf+cache at DEBUG)\n"
+            "  --debug-log all:info           (all at INFO — summaries only)\n"
+            "  --debug-log perf:info,cache:debug,slicer:info"
+        ),
+    )
     args = parser.parse_args()
 
     if not args.zarr_path.exists():
@@ -570,6 +654,9 @@ def main() -> None:
         print("Run example.py with --make-files first:")
         print("    uv run example.py --make-files")
         sys.exit(1)
+
+    if args.debug_log is not None:
+        _setup_debug_logging(args.debug_log)
 
     print("Opening tensorstore stores via MultiscaleZarrDataStore ...")
     data_store = MultiscaleZarrDataStore(
@@ -580,6 +667,9 @@ def main() -> None:
     for i, shape in enumerate(data_store.level_shapes):
         print(f"  s{i}: shape={shape}")
     print()
+    print(
+        "Debug logging: --debug-log [SPEC]  " "(e.g. all:info, perf:info,cache:debug)"
+    )
     print("Press 'Update' to render.  " "Toggle between 2D and 3D with the button.\n")
 
     _app = QApplication([sys.argv[0]])

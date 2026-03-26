@@ -21,8 +21,11 @@ Slot lifecycle
 from __future__ import annotations
 
 import heapq
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from cellier.v2.logging import _CACHE_LOGGER
 
 if TYPE_CHECKING:
     from cellier.v2.render.block_cache._cache_parameters_2d import (
@@ -139,9 +142,14 @@ class TileManager2D:
                 miss_list.append(tile_key)
 
         fill_plan: list[tuple[BlockKey2D, TileSlot]] = []
+        n_evictions = 0
 
         for tile_key in miss_list:
-            slot_idx = self.free_slots.pop() if self.free_slots else self._evict_lru()
+            if self.free_slots:
+                slot_idx = self.free_slots.pop()
+            else:
+                slot_idx = self._evict_lru()
+                n_evictions += 1
 
             grid_pos = self._slot_grid_pos(slot_idx)
             slot = TileSlot(index=slot_idx, grid_pos=grid_pos, timestamp=frame_number)
@@ -150,6 +158,22 @@ class TileManager2D:
             self._in_flight[slot_idx] = tile_key
 
             fill_plan.append((tile_key, slot))
+
+        if _CACHE_LOGGER.isEnabledFor(logging.INFO):
+            n_hits = len(required) - len(miss_list)
+            n_occupied = len(self.tilemap)
+            n_total = self.cache_info.n_slots
+            _CACHE_LOGGER.info(
+                "cache_state  frame=%d  occupied=%d/%d  free=%d  "
+                "hits=%d  misses=%d  evictions=%d",
+                frame_number,
+                n_occupied,
+                n_total,
+                len(self.free_slots),
+                n_hits,
+                len(miss_list),
+                n_evictions,
+            )
 
         return fill_plan
 
@@ -207,12 +231,14 @@ class TileManager2D:
             # Valid LRU victim found.
             del self.tilemap[tile_key]
             self.slot_index[slot_idx] = None
+            _CACHE_LOGGER.debug("evict  victim=%s  slot=%d", tile_key, slot_idx)
             return slot_idx
 
         raise RuntimeError("_evict_lru: heap exhausted with no valid victim")
 
     def clear(self) -> None:
         """Remove all resident tiles (reset to empty cache)."""
+        was_occupied = len(self.tilemap)
         self.tilemap.clear()
         self._in_flight.clear()
         for i in range(self.cache_info.n_slots):
@@ -220,3 +246,4 @@ class TileManager2D:
         self.slot_index[0] = BlockKey2D(level=0, gy=0, gx=0)
         self.free_slots = list(range(self.cache_info.n_slots - 1, 0, -1))
         self._lru_heap.clear()
+        _CACHE_LOGGER.info("cache_cleared  was_occupied=%d", was_occupied)

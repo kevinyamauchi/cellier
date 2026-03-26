@@ -10,6 +10,7 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.v2.data.image import ChunkRequest
+from cellier.v2.logging import _GPU_LOGGER, _PERF_LOGGER
 from cellier.v2.render._frustum import bricks_in_frustum_arr
 from cellier.v2.render._level_of_detail import (
     arr_to_brick_keys,
@@ -498,8 +499,9 @@ class GFXMultiscaleImageVisual:
                     lv = int(self._lut_manager_3d.lut_data[gz, gy, gx, 3])
                     level_counts[lv] = level_counts.get(lv, 0) + 1
 
-        self._last_plan_stats = {
+        self._last_plan_stats = stats = {
             "hits": len(sorted_required) - len(fill_plan),
+            "misses": len(fill_plan),
             "fills": len(fill_plan),
             "total_required": n_total,
             "n_culled": n_culled,
@@ -515,6 +517,29 @@ class GFXMultiscaleImageVisual:
             "plan_total_ms": plan_total_ms,
         }
 
+        if n_dropped > 0:
+            _PERF_LOGGER.warning(
+                "budget_exceeded  required=%d  budget=%d  dropped=%d  "
+                "(consider larger cache or tighter LOD thresholds)",
+                n_needed,
+                n_budget,
+                n_dropped,
+            )
+
+        _PERF_LOGGER.info(
+            "[frame %d]  lod_select=%.1fms  dist_sort=%.1fms  frustum_cull=%.1fms  "
+            "stage=%.1fms  |  required=%d  culled=%d  hits=%d  misses=%d",
+            self._frame_number,
+            stats["lod_select_ms"],
+            stats["distance_sort_ms"],
+            stats.get("frustum_cull_ms", 0.0),
+            stats.get("stage_ms", 0.0),
+            stats["total_required"],
+            stats.get("n_culled", 0),
+            stats["hits"],
+            stats["misses"],
+        )
+
         return chunk_requests
 
     def on_data_ready(
@@ -527,10 +552,22 @@ class GFXMultiscaleImageVisual:
             if entry is None:
                 continue
             brick_key, slot = entry
-            self._block_cache_3d.write_brick(slot, data)
+            self._block_cache_3d.write_brick(slot, data, key=brick_key)
             self._block_cache_3d.tile_manager.commit(brick_key, slot)
 
+        _GPU_LOGGER.info(
+            "gpu_flush  bricks_in_batch=%d  resident=%d",
+            len(batch),
+            self._block_cache_3d.n_resident,
+        )
+
         self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
+
+        _GPU_LOGGER.info(
+            "lut_rebuilt  resident=%d  frame=%d",
+            self._block_cache_3d.n_resident,
+            self._frame_number,
+        )
 
     def cancel_pending(self) -> None:
         """Release all in-flight 3D slots."""
@@ -667,8 +704,9 @@ class GFXMultiscaleImageVisual:
 
         plan_total_ms = (time.perf_counter() - t_plan_start) * 1000
 
-        self._last_plan_stats = {
+        self._last_plan_stats = stats = {
             "hits": len(required) - len(fill_plan),
+            "misses": len(fill_plan),
             "fills": len(fill_plan),
             "total_required": n_total,
             "n_culled": n_culled,
@@ -681,6 +719,29 @@ class GFXMultiscaleImageVisual:
             "stage_ms": stage_ms,
             "plan_total_ms": plan_total_ms,
         }
+
+        if n_dropped > 0:
+            _PERF_LOGGER.warning(
+                "budget_exceeded  required=%d  budget=%d  dropped=%d  "
+                "(consider larger cache or tighter LOD thresholds)",
+                n_needed,
+                n_budget,
+                n_dropped,
+            )
+
+        _PERF_LOGGER.info(
+            "[frame %d]  lod_select=%.1fms  dist_sort=%.1fms  cull=%.1fms  "
+            "stage=%.1fms  |  required=%d  culled=%d  hits=%d  misses=%d",
+            self._frame_number,
+            stats["lod_select_ms"],
+            stats["distance_sort_ms"],
+            stats.get("cull_ms", 0.0),
+            stats.get("stage_ms", 0.0),
+            stats["total_required"],
+            stats.get("n_culled", 0),
+            stats["hits"],
+            stats["misses"],
+        )
 
         return chunk_requests
 
@@ -701,10 +762,24 @@ class GFXMultiscaleImageVisual:
             if entry is None:
                 continue
             tile_key, slot = entry
-            self._block_cache_2d.write_tile(slot, data)
+            self._block_cache_2d.write_tile(slot, data, key=tile_key)
             self._block_cache_2d.tile_manager.commit(tile_key, slot)
 
+        n_resident = len(self._block_cache_2d.tile_manager.tilemap)
+
+        _GPU_LOGGER.info(
+            "gpu_flush  tiles_in_batch=%d  resident=%d",
+            len(batch),
+            n_resident,
+        )
+
         self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+
+        _GPU_LOGGER.info(
+            "lut_rebuilt  resident=%d  frame=%d",
+            n_resident,
+            self._frame_number,
+        )
 
     def cancel_pending_2d(self) -> None:
         """Release all in-flight 2D slots."""

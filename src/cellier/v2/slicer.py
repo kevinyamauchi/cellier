@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
+import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from cellier.v2.data.image._image_requests import ChunkRequest
+from cellier.v2.logging import _PERF_LOGGER, _SLICER_LOGGER
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -174,11 +178,12 @@ class AsyncSlicer:
         task = asyncio.ensure_future(self._run(requests, fetch_fn, callback, slice_id))
         self._tasks[slice_id] = task
 
-        if consumer_id is not None:
-            print(
-                f"  AsyncSlicer: submitted {len(requests)} requests "
-                f"(slice={slice_id}, consumer={consumer_id!r})"
-            )
+        _SLICER_LOGGER.info(
+            "task_submitted  requests=%d  slice_id=%s  consumer=%r",
+            len(requests),
+            slice_id,
+            consumer_id,
+        )
 
         return slice_id
 
@@ -238,8 +243,22 @@ class AsyncSlicer:
             requests[i : i + self._batch_size]
             for i in range(0, len(requests), self._batch_size)
         ]
+        n_batches = len(batches)
+
+        _SLICER_LOGGER.info(
+            "task_start  slice_id=%s  total_requests=%d  n_batches=%d",
+            slice_id,
+            len(requests),
+            n_batches,
+        )
+
+        _cancelled = False
+        batch_idx = 0
+        batch_times_ms: list[float] = []
+        t_fetch_start = time.perf_counter()
+
         try:
-            for batch in batches:
+            for batch_idx, batch in enumerate(batches):
                 # asyncio.gather issues all reads in the batch concurrently,
                 # allowing tensorstore to pipeline chunk fetches.
                 #
@@ -247,9 +266,46 @@ class AsyncSlicer:
                 # (see above) adds the missing _make_cancelled_error() method
                 # to QAsyncioTask, which is required by gather's internal
                 # _GatheringFuture._done_callback when child tasks are cancelled.
+                t_batch = time.perf_counter()
                 results: list[np.ndarray] = await asyncio.gather(
                     *[fetch_fn(req) for req in batch]
                 )
+                batch_ms = (time.perf_counter() - t_batch) * 1000
+                batch_times_ms.append(batch_ms)
+
+                # Per-batch fetch timing at DEBUG.
+                _PERF_LOGGER.debug(
+                    "fetch_batch  %d/%d  bricks=%d  elapsed=%.1fms",
+                    batch_idx + 1,
+                    n_batches,
+                    len(batch),
+                    batch_ms,
+                )
+
+                # Condensed batch summary at INFO.
+                if _SLICER_LOGGER.isEnabledFor(logging.INFO):
+                    scale_counts: dict[int, int] = {}
+                    for req in batch:
+                        scale_counts[req.scale_index] = (
+                            scale_counts.get(req.scale_index, 0) + 1
+                        )
+                    _SLICER_LOGGER.info(
+                        "batch_done  %d/%d  bricks=%d  scales=%s",
+                        batch_idx + 1,
+                        n_batches,
+                        len(batch),
+                        scale_counts,
+                    )
+
+                # Per-brick detail at DEBUG (guarded).
+                if _SLICER_LOGGER.isEnabledFor(logging.DEBUG):
+                    for req, data in zip(batch, results):
+                        _SLICER_LOGGER.debug(
+                            "  brick_received  id=%s  scale=%d  shape=%s",
+                            req.chunk_request_id,
+                            req.scale_index,
+                            data.shape,
+                        )
 
                 callback(list(zip(batch, results)))
                 # Yield to Qt: renderer flushes pending update_range calls
@@ -257,9 +313,70 @@ class AsyncSlicer:
                 await asyncio.sleep(0)
 
         except asyncio.CancelledError:
+            _cancelled = True
+            _SLICER_LOGGER.info(
+                "task_cancelled  slice_id=%s  batches_done=%d/%d",
+                slice_id,
+                batch_idx,
+                n_batches,
+            )
             raise  # mandatory -- marks the task as cancelled
 
         finally:
             # Always remove from the live-task dict, whether we completed
             # normally, were cancelled, or raised an unexpected exception.
             self._tasks.pop(slice_id, None)
+
+            # Emit fetch timing summary (both normal completion and
+            # cancellation — partial stats are still useful).
+            if batch_times_ms:
+                total_ms = (time.perf_counter() - t_fetch_start) * 1000
+                _log_fetch_summary(
+                    slice_id,
+                    len(requests),
+                    batch_times_ms,
+                    total_ms,
+                    cancelled=_cancelled,
+                )
+
+            if not _cancelled:
+                _SLICER_LOGGER.info(
+                    "task_complete  slice_id=%s  total_requests=%d",
+                    slice_id,
+                    len(requests),
+                )
+
+
+def _log_fetch_summary(
+    slice_id: UUID,
+    n_requests: int,
+    batch_times_ms: list[float],
+    total_ms: float,
+    *,
+    cancelled: bool,
+) -> None:
+    """Emit an INFO-level fetch timing summary on ``_PERF_LOGGER``."""
+    n = len(batch_times_ms)
+    mean = sum(batch_times_ms) / n
+    min_t = min(batch_times_ms)
+    max_t = max(batch_times_ms)
+    if n > 1:
+        variance = sum((t - mean) ** 2 for t in batch_times_ms) / (n - 1)
+        std = math.sqrt(variance)
+    else:
+        std = 0.0
+
+    status = "cancelled" if cancelled else "complete"
+    _PERF_LOGGER.info(
+        "fetch_summary  status=%s  slice_id=%s  bricks=%d  batches=%d  "
+        "total=%.0fms  per_batch=%.1f\u00b1%.1fms  min=%.1fms  max=%.1fms",
+        status,
+        slice_id,
+        n_requests,
+        n,
+        total_ms,
+        mean,
+        std,
+        min_t,
+        max_t,
+    )

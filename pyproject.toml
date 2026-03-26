@@ -68,11 +68,14 @@ dev = [
     "ruff",
 ]
 
+# optional rich-powered debug logging
+logging = ["rich>=13.0"]
+
 # dependencies for the example scripts
 examples = ["scikit-image"]
 
 # get all dependencies for development
-dev-all = ["cellier[dev,test,pyqt,examples]"]
+dev-all = ["cellier[dev,test,pyqt,examples,logging]"]
 
 [project.urls]
 homepage = "https://github.com/kevinyamauchi/cellier"

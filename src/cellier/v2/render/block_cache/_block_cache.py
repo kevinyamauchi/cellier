@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cellier.v2.logging import _GPU_LOGGER
 from cellier.v2.render.block_cache._cache_parameters_3d import (
     BlockCacheParameters3D,
     build_cache_texture_3d,
@@ -77,7 +78,9 @@ class BlockCache3D:
         """
         return self.tile_manager.stage(required_bricks, frame_number)
 
-    def write_brick(self, slot: TileSlot, data: np.ndarray) -> None:
+    def write_brick(
+        self, slot: TileSlot, data: np.ndarray, key: BlockKey3D | None = None
+    ) -> None:
         """Write a padded brick into the CPU array and mark dirty for GPU upload.
 
         The actual GPU transfer is deferred until the next
@@ -90,6 +93,8 @@ class BlockCache3D:
         data : np.ndarray
             Float32 array of shape ``(pbs, pbs, pbs)`` where
             ``pbs = block_size + 2 * overlap``.
+        key : BlockKey3D or None
+            Brick identity for logging.
         """
         commit_block_3d(
             cache_data=self.cache_data,
@@ -97,6 +102,12 @@ class BlockCache3D:
             grid_pos=slot.grid_pos,
             padded_block_size=self.info.padded_block_size,
             data=data,
+        )
+        _GPU_LOGGER.debug(
+            "brick_written  key=%s  slot=%d  grid_pos=%s",
+            key,
+            slot.index,
+            slot.grid_pos,
         )
 
     @property
