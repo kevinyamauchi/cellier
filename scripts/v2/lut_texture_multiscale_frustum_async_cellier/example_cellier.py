@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         gfx_visual = self._controller._render_manager._scenes[self._scene.id]._visuals[
             self._visual.id
         ]
-        tilemap_size = len(gfx_visual._block_cache.tile_manager.tilemap)
+        tilemap_size = len(gfx_visual._block_cache_3d.tile_manager.tilemap)
         print()
         print("cache  (planning phase)")
         print(f"  hits:           {stats.get('hits', 0)}")

@@ -39,10 +39,13 @@ class CanvasView:
     get_scene_fn : Callable[[UUID], gfx.Scene]
         Called each frame to retrieve the current scene.  Provided by
         ``RenderManager`` at construction time.
+    dim : str
+        Scene dimensionality: ``"2d"`` or ``"3d"``.  Controls which
+        camera type and interaction controller are used.
     parent : QWidget or None
         Parent widget for the underlying ``QRenderWidget``.
     fov : float
-        Vertical field of view in degrees.
+        Vertical field of view in degrees (3D perspective only).
     depth_range : tuple[float, float]
         Near and far clip distances ``(near, far)``.
     """
@@ -52,6 +55,7 @@ class CanvasView:
         canvas_id: UUID,
         scene_id: UUID,
         get_scene_fn: Callable[[UUID], gfx.Scene],
+        dim: str = "3d",
         parent: QWidget | None = None,
         fov: float = 70.0,
         depth_range: tuple[float, float] = (1.0, 8000.0),
@@ -61,16 +65,22 @@ class CanvasView:
         self._get_scene_fn = get_scene_fn
         self._applying_model_state: bool = False
         self._id: UUID = uuid4()
+        self._dim = dim
 
         self._canvas = QRenderWidget(parent=parent, update_mode="continuous")
         self._renderer = gfx.WgpuRenderer(self._canvas)
-        self._camera = gfx.PerspectiveCamera(fov, 16 / 9, depth_range=depth_range)
-        self._controller = gfx.OrbitController(
-            camera=self._camera, register_events=self._renderer
-        )
-        # future: self._renderer.add_event_handler(
-        #     self._on_controller_event, "pointer_move", "wheel"
-        # )
+
+        if dim == "2d":
+            self._camera = gfx.OrthographicCamera(maintain_aspect=True)
+            self._controller = gfx.PanZoomController(
+                camera=self._camera, register_events=self._renderer
+            )
+        else:
+            self._camera = gfx.PerspectiveCamera(fov, 16 / 9, depth_range=depth_range)
+            self._controller = gfx.OrbitController(
+                camera=self._camera, register_events=self._renderer
+            )
+
         self._canvas.request_draw(self._draw_frame)
 
     @property
@@ -95,8 +105,8 @@ class CanvasView:
     ) -> ReslicingRequest:
         """Snapshot the current camera state into a ReslicingRequest.
 
-        All array fields are copied.  ``screen_height_px`` is read from
-        the canvas at call time and baked into the returned request.
+        All array fields are copied.  Screen size is read from the canvas
+        at call time and baked into the returned request.
 
         Parameters
         ----------
@@ -110,12 +120,75 @@ class CanvasView:
         ReslicingRequest
             Fully populated snapshot with independent array copies.
         """
-        _, screen_h = self._canvas.get_logical_size()
+        screen_w, screen_h = self._canvas.get_logical_size()
+
+        if self._dim == "2d":
+            return self._capture_orthographic(
+                dims_state, target_visual_ids, screen_w, screen_h
+            )
+        return self._capture_perspective(
+            dims_state, target_visual_ids, screen_w, screen_h
+        )
+
+    def _capture_perspective(
+        self,
+        dims_state: DimsState,
+        target_visual_ids: frozenset[UUID] | None,
+        screen_w: float,
+        screen_h: float,
+    ) -> ReslicingRequest:
+        """Build a ReslicingRequest for a perspective camera."""
         return ReslicingRequest(
+            camera_type="perspective",
             camera_pos=np.array(self._camera.world.position, dtype=np.float64),
             frustum_corners=np.asarray(self._camera.frustum, dtype=np.float64).copy(),
             fov_y_rad=float(np.radians(self._camera.fov)),
-            screen_height_px=float(screen_h),
+            screen_size_px=(float(screen_w), float(screen_h)),
+            world_extent=(0.0, 0.0),
+            dims_state=dims_state,
+            request_id=uuid4(),
+            scene_id=self._scene_id,
+            target_visual_ids=target_visual_ids,
+        )
+
+    def _capture_orthographic(
+        self,
+        dims_state: DimsState,
+        target_visual_ids: frozenset[UUID] | None,
+        screen_w: float,
+        screen_h: float,
+    ) -> ReslicingRequest:
+        """Build a ReslicingRequest for an orthographic camera.
+
+        Computes the actual visible world extent accounting for the
+        canvas aspect ratio.  The OrthographicCamera exposes ``width``
+        and ``height`` which define the *minimum* visible extent; the
+        actual extent is expanded in one dimension to match the canvas
+        aspect ratio.
+        """
+        cam = self._camera
+        vw = screen_w if screen_w > 0 else 800.0
+        vh = screen_h if screen_h > 0 else 600.0
+        canvas_aspect = vw / vh
+
+        cam_w = cam.width if cam.width > 0 else 1.0
+        cam_h = cam.height if cam.height > 0 else 1.0
+        cam_aspect = cam_w / cam_h
+
+        if canvas_aspect >= cam_aspect:
+            world_height = cam_h
+            world_width = cam_h * canvas_aspect
+        else:
+            world_width = cam_w
+            world_height = cam_w / canvas_aspect
+
+        return ReslicingRequest(
+            camera_type="orthographic",
+            camera_pos=np.array(cam.world.position, dtype=np.float64),
+            frustum_corners=np.zeros((2, 4, 3), dtype=np.float64),
+            fov_y_rad=0.0,
+            screen_size_px=(float(vw), float(vh)),
+            world_extent=(float(world_width), float(world_height)),
             dims_state=dims_state,
             request_id=uuid4(),
             scene_id=self._scene_id,
@@ -140,7 +213,10 @@ class CanvasView:
         scene : gfx.Scene
             The scene to fit the camera to.
         """
-        self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
+        if self._dim == "2d":
+            self._camera.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
+        else:
+            self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
 
     def request_draw(self) -> None:
         """Request a redraw of the canvas."""

@@ -182,6 +182,10 @@ class MultiscaleZarrDataStore(BaseDataStore):
         and copying the valid clamped region into the correct destination
         offset.
 
+        When ``request.z_slice`` is set, a 2D tile is read from a 3D store
+        by extracting a single z-plane.  The returned array has shape
+        ``(y_stop-y_start, x_stop-x_start)``.
+
         The ``await`` on ``store[...].read()`` suspends the coroutine and
         yields to the Qt event loop while tensorstore fetches the chunk(s)
         from disk.
@@ -195,10 +199,16 @@ class MultiscaleZarrDataStore(BaseDataStore):
         Returns
         -------
         out :
-            ``float32`` array of shape
-            ``(z_stop-z_start, y_stop-y_start, x_stop-x_start)``.
+            ``float32`` array.  Shape is ``(dz, dy, dx)`` for 3D requests
+            or ``(dy, dx)`` for 2D requests (when ``z_slice`` is set).
             Out-of-bounds regions are filled with zero.
         """
+        if request.z_slice is not None:
+            return await self._get_data_2d(request)
+        return await self._get_data_3d(request)
+
+    async def _get_data_3d(self, request: ChunkRequest) -> np.ndarray:
+        """Read a 3D padded brick."""
         store = self._ts_stores[request.scale_index]
 
         dz = request.z_stop - request.z_start
@@ -225,6 +235,50 @@ class MultiscaleZarrDataStore(BaseDataStore):
             )
             out[
                 dest_z0 : dest_z0 + (sz1 - sz0),
+                dest_y0 : dest_y0 + (sy1 - sy0),
+                dest_x0 : dest_x0 + (sx1 - sx0),
+            ] = region
+
+        return out
+
+    async def _get_data_2d(self, request: ChunkRequest) -> np.ndarray:
+        """Read a 2D padded tile (single z-plane from a 3D store)."""
+        store = self._ts_stores[request.scale_index]
+        ndim = len(store.domain.shape)
+
+        dy = request.y_stop - request.y_start
+        dx = request.x_stop - request.x_start
+        out = np.zeros((dy, dx), dtype=np.float32)
+
+        if ndim == 3:
+            sd, sh, sw = (int(d) for d in store.domain.shape)
+        elif ndim == 2:
+            sh, sw = (int(d) for d in store.domain.shape)
+        else:
+            raise ValueError(f"Unexpected store ndim={ndim}")
+
+        sy0 = max(request.y_start, 0)
+        sy1 = min(request.y_stop, sh)
+        sx0 = max(request.x_start, 0)
+        sx1 = min(request.x_stop, sw)
+
+        if sy1 > sy0 and sx1 > sx0:
+            dest_y0 = sy0 - request.y_start
+            dest_x0 = sx0 - request.x_start
+
+            if ndim == 3:
+                z_mid = request.z_slice
+                region = np.asarray(
+                    await store[z_mid, sy0:sy1, sx0:sx1].read(),
+                    dtype=np.float32,
+                )
+            else:
+                region = np.asarray(
+                    await store[sy0:sy1, sx0:sx1].read(),
+                    dtype=np.float32,
+                )
+
+            out[
                 dest_y0 : dest_y0 + (sy1 - sy0),
                 dest_x0 : dest_x0 + (sx1 - sx0),
             ] = region

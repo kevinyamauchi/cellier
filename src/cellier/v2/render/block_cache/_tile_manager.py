@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from cellier.v2.render.block_cache._cache_parameters import BlockCacheParameters3D
+    from cellier.v2.render.block_cache._cache_parameters_3d import (
+        BlockCacheParameters3D,
+    )
 
 
 @dataclass(frozen=True)

@@ -136,26 +136,31 @@ class SceneManager:
     ) -> dict[UUID, list[ChunkRequest]]:
         """Collect ChunkRequests from all (or targeted) registered visuals.
 
-        Per-visual render settings (LOD bias, force level, frustum cull) are
-        read from ``visual_configs`` at call time.  When a visual's ID is
-        absent from the dict, a default ``VisualRenderConfig()`` is used.
+        Dispatches to the 2D or 3D planning path based on scene
+        dimensionality.
 
         Parameters
         ----------
         request : ReslicingRequest
-            The reslicing request.  If ``request.target_visual_ids`` is not
-            ``None``, only visuals whose ID is in that set are processed.
+            The reslicing request.
         visual_configs : dict[UUID, VisualRenderConfig]
-            Per-visual render configuration.  Missing entries fall back to
-            ``VisualRenderConfig()`` defaults.
+            Per-visual render configuration.
 
         Returns
         -------
         dict[UUID, list[ChunkRequest]]
-            Mapping of ``visual_model_id`` to that visual's ChunkRequests,
-            ordered nearest-first within each list.  Visuals with no missing
-            bricks (all cached) are omitted from the dict.
+            Mapping of ``visual_model_id`` to that visual's ChunkRequests.
         """
+        if self._dim == "2d":
+            return self._build_slice_requests_2d(request, visual_configs)
+        return self._build_slice_requests_3d(request, visual_configs)
+
+    def _build_slice_requests_3d(
+        self,
+        request: ReslicingRequest,
+        visual_configs: dict[UUID, VisualRenderConfig],
+    ) -> dict[UUID, list[ChunkRequest]]:
+        """3D planning path using perspective camera and frustum culling."""
         result: dict[UUID, list[ChunkRequest]] = {}
         for visual_id, visual in self._visuals.items():
             if (
@@ -173,7 +178,7 @@ class SceneManager:
             )
 
             n_levels = visual._volume_geometry.n_levels
-            thresholds = self._compute_thresholds(request, n_levels, cfg.lod_bias)
+            thresholds = self._compute_thresholds_3d(request, n_levels, cfg.lod_bias)
 
             chunk_requests = visual.build_slice_request(
                 camera_pos=request.camera_pos,
@@ -186,10 +191,62 @@ class SceneManager:
 
         return result
 
-    def _compute_thresholds(
+    def _build_slice_requests_2d(
+        self,
+        request: ReslicingRequest,
+        visual_configs: dict[UUID, VisualRenderConfig],
+    ) -> dict[UUID, list[ChunkRequest]]:
+        """2D planning path using orthographic camera and viewport culling."""
+        result: dict[UUID, list[ChunkRequest]] = {}
+
+        # Extract z-slice from dims_state.
+        # For 2D scenes, slice_indices contains the z-slice index.
+        z_slice = (
+            request.dims_state.slice_indices[0]
+            if request.dims_state.slice_indices
+            else 0
+        )
+
+        world_width, world_height = request.world_extent
+        viewport_width_px, viewport_height_px = request.screen_size_px
+
+        # Compute viewport AABB from camera position and world extent.
+        cx = float(request.camera_pos[0])
+        cy = float(request.camera_pos[1])
+        half_w = world_width / 2.0
+        half_h = world_height / 2.0
+        view_min = np.array([cx - half_w, cy - half_h], dtype=np.float64)
+        view_max = np.array([cx + half_w, cy + half_h], dtype=np.float64)
+
+        for visual_id, visual in self._visuals.items():
+            if (
+                request.target_visual_ids is not None
+                and visual_id not in request.target_visual_ids
+            ):
+                continue
+
+            cfg = visual_configs.get(visual_id, VisualRenderConfig())
+
+            chunk_requests = visual.build_slice_request_2d(
+                camera_pos=request.camera_pos,
+                viewport_width_px=viewport_width_px,
+                world_width=world_width,
+                view_min=view_min if cfg.frustum_cull else None,
+                view_max=view_max if cfg.frustum_cull else None,
+                z_slice=z_slice,
+                lod_bias=cfg.lod_bias,
+                force_level=cfg.force_level,
+                use_culling=cfg.frustum_cull,
+            )
+            if chunk_requests:
+                result[visual_id] = chunk_requests
+
+        return result
+
+    def _compute_thresholds_3d(
         self, request: ReslicingRequest, n_levels: int, lod_bias: float
     ) -> list[float]:
-        """Compute LOD distance thresholds from camera parameters.
+        """Compute LOD distance thresholds from perspective camera parameters.
 
         Parameters
         ----------
@@ -205,9 +262,8 @@ class SceneManager:
         list[float]
             One threshold per level boundary (length ``n_levels - 1``).
         """
-        focal_half_height = (request.screen_height_px / 2.0) / np.tan(
-            request.fov_y_rad / 2.0
-        )
+        _, screen_height_px = request.screen_size_px
+        focal_half_height = (screen_height_px / 2.0) / np.tan(request.fov_y_rad / 2.0)
         return [
             (2 ** (k - 1)) * focal_half_height * lod_bias for k in range(1, n_levels)
         ]

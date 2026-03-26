@@ -79,7 +79,7 @@ class BlockCacheParameters3D:
         return (self.grid_side, self.grid_side, self.grid_side)
 
 
-def compute_block_cache_parameters(
+def compute_block_cache_parameters_3d(
     block_size: int,
     gpu_budget_bytes: int,
     overlap: int = 1,
@@ -113,7 +113,7 @@ def compute_block_cache_parameters(
     )
 
 
-def build_cache_texture(
+def build_cache_texture_3d(
     params: BlockCacheParameters3D,
 ) -> tuple[np.ndarray, gfx.Texture]:
     """Allocate the fixed-size cache texture, zeroed.
@@ -135,7 +135,7 @@ def build_cache_texture(
     return cache_data, cache_tex
 
 
-def commit_block(
+def commit_block_3d(
     cache_data: np.ndarray,
     cache_tex: gfx.Texture,
     grid_pos: tuple[int, int, int],

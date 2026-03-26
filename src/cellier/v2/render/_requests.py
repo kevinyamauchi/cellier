@@ -23,14 +23,20 @@ class ReslicingRequest(NamedTuple):
 
     Parameters
     ----------
+    camera_type : str
+        ``"perspective"`` or ``"orthographic"``.
     camera_pos : ndarray, shape (3,)
         World-space camera position, copy.
     frustum_corners : ndarray, shape (2, 4, 3)
-        World-space frustum corners, copy.
+        World-space frustum corners, copy.  For orthographic cameras this
+        is set to ``np.zeros((2, 4, 3))``.
     fov_y_rad : float
-        Vertical field of view in radians.
-    screen_height_px : float
-        Logical screen height in pixels, baked in at snapshot time.
+        Vertical field of view in radians.  ``0.0`` for orthographic.
+    screen_size_px : tuple[float, float]
+        Logical ``(width, height)`` in pixels, baked in at snapshot time.
+    world_extent : tuple[float, float]
+        Visible ``(width, height)`` in world units for orthographic cameras.
+        ``(0.0, 0.0)`` for perspective cameras.
     dims_state : DimsState
         Current dimension display state.
     request_id : UUID
@@ -43,10 +49,12 @@ class ReslicingRequest(NamedTuple):
         (data-updated case).
     """
 
+    camera_type: str
     camera_pos: np.ndarray
     frustum_corners: np.ndarray
     fov_y_rad: float
-    screen_height_px: float
+    screen_size_px: tuple[float, float]
+    world_extent: tuple[float, float]
     dims_state: DimsState
     request_id: UUID
     scene_id: UUID

@@ -410,7 +410,7 @@ class BlockVolumeAppV2(QMainWindow):
         )
         print(f"  chunks needed / cache size:  {n_needed} / {n_budget}{drop_flag}")
 
-        tilemap_size = len(self._visual._block_cache.tile_manager.tilemap)
+        tilemap_size = len(self._visual._block_cache_3d.tile_manager.tilemap)
         print()
         print("cache  (planning phase)")
         print(f"  hits:           {stats.get('hits', 0)}")
@@ -500,7 +500,7 @@ def main() -> None:
     )
 
     geo = visual._volume_geometry
-    cache_info = visual._block_cache.info
+    cache_info = visual._block_cache_3d.info
     print(
         f"Cache: {cache_info.grid_side}³ grid = "
         f"{cache_info.n_slots} slots "
