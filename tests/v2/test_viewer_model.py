@@ -3,7 +3,7 @@
 from cellier.v2.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import CoordinateSystem, DimsManager
+from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
@@ -34,8 +34,10 @@ def _build_viewer(small_zarr_store):
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
     dims = DimsManager(
         coordinate_system=cs,
-        displayed_axes=(0, 1, 2),
-        slice_indices=(),
+        selection=AxisAlignedSelection(
+            displayed_axes=(0, 1, 2),
+            slice_indices={},
+        ),
     )
     camera = PerspectiveCamera(
         fov=70.0,

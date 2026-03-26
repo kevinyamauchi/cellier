@@ -53,6 +53,7 @@ from cellier.v2.render.shaders._block_volume import (
 )
 
 if TYPE_CHECKING:
+    from cellier.v2._state import AxisAlignedSelectionState, DimsState
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
@@ -85,8 +86,10 @@ class VolumeGeometry:
 
     Parameters
     ----------
-    level_shapes : list[tuple[int, int, int]]
-        Volume shape ``(D, H, W)`` at each scale level, finest first.
+    level_shapes : list[tuple[int, ...]]
+        Displayed-axis shape at each scale level, finest first.
+        For 3D rendering this is ``(D, H, W)``; for 2D it is ``(H, W)``.
+        The caller extracts the displayed dimensions before passing.
     downscale_factors : list[int]
         Downscale factor for each level relative to the original data,
         e.g. ``[1, 2, 4]``.  Must have the same length as
@@ -97,7 +100,7 @@ class VolumeGeometry:
 
     def __init__(
         self,
-        level_shapes: list[tuple[int, int, int]],
+        level_shapes: list[tuple[int, ...]],
         downscale_factors: list[int],
         block_size: int,
     ) -> None:
@@ -110,7 +113,7 @@ class VolumeGeometry:
     def from_cellier_model(
         cls,
         model: MultiscaleImageVisual,
-        level_shapes: list[tuple[int, int, int]],
+        level_shapes: list[tuple[int, ...]],
         block_size: int,
     ) -> VolumeGeometry:
         """Build a ``VolumeGeometry`` from a ``MultiscaleImageVisual`` model.
@@ -119,9 +122,8 @@ class VolumeGeometry:
         ----------
         model : MultiscaleImageVisual
             The visual model.  Only ``downscale_factors`` is read.
-        level_shapes : list[tuple[int, int, int]]
-            Volume shape ``(D, H, W)`` per level, finest first.  Must be
-            obtained from the data store by the caller.
+        level_shapes : list[tuple[int, ...]]
+            Displayed-axis shape per level, finest first.
         block_size : int
             Rendering brick side length in voxels.
 
@@ -135,7 +137,7 @@ class VolumeGeometry:
             block_size=block_size,
         )
 
-    def _rebuild(self, level_shapes: list[tuple[int, int, int]]) -> None:
+    def _rebuild(self, level_shapes: list[tuple[int, ...]]) -> None:
         self.level_shapes = list(level_shapes)
         self.layouts = [
             BlockLayout3D(volume_shape=shape, block_size=self.block_size)
@@ -144,7 +146,7 @@ class VolumeGeometry:
         self.base_layout = self.layouts[0]
         self._level_grids = build_level_grids(self.base_layout, self.n_levels)
 
-    def update(self, level_shapes: list[tuple[int, int, int]]) -> None:
+    def update(self, level_shapes: list[tuple[int, ...]]) -> None:
         """Rebuild from new level shapes after a DataStoreMutated event."""
         self._rebuild(level_shapes)
 
@@ -161,9 +163,9 @@ class ImageGeometry2D:
 
     Parameters
     ----------
-    level_shapes : list[tuple[int, int, int]]
-        Volume shape ``(D, H, W)`` at each scale level, finest first.
-        The 2D image shape is ``(H, W)`` from each level.
+    level_shapes : list[tuple[int, int]]
+        Image shape ``(H, W)`` at each scale level, finest first.
+        The caller extracts the two displayed dimensions before passing.
     block_size : int
         Tile side length in pixels.
     n_levels : int
@@ -172,7 +174,7 @@ class ImageGeometry2D:
 
     def __init__(
         self,
-        level_shapes: list[tuple[int, int, int]],
+        level_shapes: list[tuple[int, int]],
         block_size: int,
         n_levels: int,
     ) -> None:
@@ -182,10 +184,19 @@ class ImageGeometry2D:
 
         # Build 2D base layout from finest level (H, W).
         self.base_layout = BlockLayout2D.from_shape(
-            shape=(level_shapes[0][1], level_shapes[0][2]),
+            shape=(level_shapes[0][0], level_shapes[0][1]),
             block_size=block_size,
         )
         self._level_grids = build_tile_grids_2d(self.base_layout, n_levels)
+
+    def update(self, level_shapes: list[tuple[int, int]]) -> None:
+        """Rebuild from new level shapes after displayed axes change."""
+        self.level_shapes = list(level_shapes)
+        self.base_layout = BlockLayout2D.from_shape(
+            shape=(level_shapes[0][0], level_shapes[0][1]),
+            block_size=self.block_size,
+        )
+        self._level_grids = build_tile_grids_2d(self.base_layout, self.n_levels)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +219,28 @@ def _brick_key_to_padded_coords(
     y0 = key.gy * block_size - overlap
     x0 = key.gx * block_size - overlap
     return z0, y0, x0, z0 + padded, y0 + padded, x0 + padded
+
+
+def _build_axis_selections(
+    sel: AxisAlignedSelectionState,
+    ndim: int,
+    display_coords: list[tuple[int, int]],
+    scale: int,
+) -> tuple[int | tuple[int, int], ...]:
+    """Map brick/tile window coords and slice indices onto the full nD axis list.
+
+    ``display_coords`` are in the order of ``sel.displayed_axes``.
+    Non-displayed axes get their slice index divided by ``scale``
+    (coarser levels correspond to smaller indices).
+    """
+    display_pos = {ax: i for i, ax in enumerate(sel.displayed_axes)}
+    result: list[int | tuple[int, int]] = []
+    for data_axis in range(ndim):
+        if data_axis in display_pos:
+            result.append(display_coords[display_pos[data_axis]])
+        else:
+            result.append(sel.slice_indices[data_axis] // scale)
+    return tuple(result)
 
 
 def _block_key_2d_to_padded_coords(
@@ -262,7 +295,8 @@ class GFXMultiscaleImageVisual:
     def __init__(
         self,
         visual_model_id: UUID,
-        volume_geometry: VolumeGeometry,
+        volume_geometry: VolumeGeometry | None,
+        image_geometry_2d: ImageGeometry2D | None,
         render_modes: set[str],
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
@@ -273,52 +307,58 @@ class GFXMultiscaleImageVisual:
         self.visual_model_id = visual_model_id
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
+        self._image_geometry_2d = image_geometry_2d
+        self._gpu_budget_bytes = gpu_budget_bytes
         self._frame_number = 0
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
         self._pending_slot_map_2d: dict[UUID, tuple[BlockKey2D, TileSlot2D]] = {}
         self._last_plan_stats: dict = {}
 
-        # ── 3D GPU resources ───────────────────────────────────────────
-        cache_parameters_3d = compute_block_cache_parameters_3d(
-            block_size=volume_geometry.block_size,
-            gpu_budget_bytes=gpu_budget_bytes,
-        )
-        self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
-        self._lut_manager_3d = LutIndirectionManager3D(
-            base_layout=volume_geometry.base_layout,
-            n_levels=volume_geometry.n_levels,
-        )
-        self._lut_params_buffer_3d = build_lut_params_buffer_3d(
-            volume_geometry.base_layout,
-            cache_parameters_3d,
-            proxy_voxels_per_brick=volume_geometry.block_size,
-        )
-        self._block_scales_buffer_3d = build_block_scales_buffer_3d(
-            volume_geometry.downscale_factors
-        )
+        # ── 3D GPU resources (only when volume_geometry is provided) ───
+        self._block_cache_3d: BlockCache3D | None = None
+        self._lut_manager_3d: LutIndirectionManager3D | None = None
+        self._lut_params_buffer_3d = None
+        self._block_scales_buffer_3d = None
+        if volume_geometry is not None:
+            cache_parameters_3d = compute_block_cache_parameters_3d(
+                block_size=volume_geometry.block_size,
+                gpu_budget_bytes=gpu_budget_bytes,
+            )
+            self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
+            self._lut_manager_3d = LutIndirectionManager3D(
+                base_layout=volume_geometry.base_layout,
+                n_levels=volume_geometry.n_levels,
+            )
+            self._lut_params_buffer_3d = build_lut_params_buffer_3d(
+                volume_geometry.base_layout,
+                cache_parameters_3d,
+                proxy_voxels_per_brick=volume_geometry.block_size,
+            )
+            self._block_scales_buffer_3d = build_block_scales_buffer_3d(
+                volume_geometry.downscale_factors
+            )
 
-        # ── 2D GPU resources ───────────────────────────────────────────
-        cache_parameters_2d = compute_block_cache_parameters_2d(
-            gpu_budget_bytes=gpu_budget_bytes, block_size=volume_geometry.block_size
-        )
-        self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
-
-        self._image_geometry_2d = ImageGeometry2D(
-            level_shapes=volume_geometry.level_shapes,
-            block_size=volume_geometry.block_size,
-            n_levels=volume_geometry.n_levels,
-        )
-
-        self._lut_manager_2d = LutIndirectionManager2D(
-            base_layout=self._image_geometry_2d.base_layout,
-            n_levels=volume_geometry.n_levels,
-        )
-        self._lut_params_buffer_2d = build_lut_params_buffer_2d(
-            self._image_geometry_2d.base_layout, cache_parameters_2d
-        )
-        self._block_scales_buffer_2d = build_block_scales_buffer_2d(
-            volume_geometry.n_levels
-        )
+        # ── 2D GPU resources (only when image_geometry_2d is provided) ─
+        self._block_cache_2d: BlockCache2D | None = None
+        self._lut_manager_2d: LutIndirectionManager2D | None = None
+        self._lut_params_buffer_2d = None
+        self._block_scales_buffer_2d = None
+        if image_geometry_2d is not None:
+            cache_parameters_2d = compute_block_cache_parameters_2d(
+                gpu_budget_bytes=gpu_budget_bytes,
+                block_size=image_geometry_2d.block_size,
+            )
+            self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
+            self._lut_manager_2d = LutIndirectionManager2D(
+                base_layout=image_geometry_2d.base_layout,
+                n_levels=image_geometry_2d.n_levels,
+            )
+            self._lut_params_buffer_2d = build_lut_params_buffer_2d(
+                image_geometry_2d.base_layout, cache_parameters_2d
+            )
+            self._block_scales_buffer_2d = build_block_scales_buffer_2d(
+                image_geometry_2d.n_levels
+            )
 
         if colormap is None:
             colormap = gfx.cm.viridis
@@ -327,7 +367,7 @@ class GFXMultiscaleImageVisual:
         self.node_3d: gfx.Volume | None = None
         self.material_3d: VolumeBlockMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
-        if "3d" in render_modes:
+        if "3d" in render_modes and volume_geometry is not None:
             self.node_3d, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
@@ -339,7 +379,7 @@ class GFXMultiscaleImageVisual:
         self.node_2d: gfx.Image | None = None
         self.material_2d: ImageBlockMaterial | None = None
         self._proxy_tex_2d: gfx.Texture | None = None
-        if "2d" in render_modes:
+        if "2d" in render_modes and image_geometry_2d is not None:
             self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
                 colormap=colormap, clim=clim, interpolation=interpolation
             )
@@ -348,7 +388,8 @@ class GFXMultiscaleImageVisual:
     def from_cellier_model(
         cls,
         model: MultiscaleImageVisual,
-        level_shapes: list[tuple[int, int, int]],
+        level_shapes: list[tuple[int, ...]],
+        displayed_axes: tuple[int, ...],
         render_modes: set[str],
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
@@ -361,8 +402,10 @@ class GFXMultiscaleImageVisual:
         ----------
         model : MultiscaleImageVisual
             Source visual model.
-        level_shapes : list[tuple[int, int, int]]
-            Volume shape ``(D, H, W)`` per level, finest first.
+        level_shapes : list[tuple[int, ...]]
+            Full nD shape per level, finest first.
+        displayed_axes : tuple[int, ...]
+            Which axes are displayed (from dims.selection.displayed_axes).
         render_modes : set[str]
             Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
             ``{"2d", "3d"}``.
@@ -379,15 +422,35 @@ class GFXMultiscaleImageVisual:
         -------
         GFXMultiscaleImageVisual
         """
-        volume_geometry = VolumeGeometry.from_cellier_model(
-            model, level_shapes, block_size
-        )
+        # Extract the displayed-axis shapes.
+        displayed_level_shapes = [
+            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
+        ]
+
+        # Build 3D geometry only when 3D rendering is requested.
+        volume_geometry: VolumeGeometry | None = None
+        if "3d" in render_modes and len(displayed_axes) == 3:
+            volume_geometry = VolumeGeometry.from_cellier_model(
+                model, displayed_level_shapes, block_size
+            )
+
+        # Build 2D geometry only when 2D rendering is requested.
+        image_geometry_2d: ImageGeometry2D | None = None
+        if "2d" in render_modes and len(displayed_axes) == 2:
+            level_shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
+            image_geometry_2d = ImageGeometry2D(
+                level_shapes=level_shapes_2d,
+                block_size=block_size,
+                n_levels=len(level_shapes),
+            )
+
         colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
 
         return cls(
             visual_model_id=model.id,
             volume_geometry=volume_geometry,
+            image_geometry_2d=image_geometry_2d,
             render_modes=render_modes,
             colormap=colormap,
             clim=clim,
@@ -396,6 +459,123 @@ class GFXMultiscaleImageVisual:
             gpu_budget_bytes=gpu_budget_bytes,
         )
 
+    # ── Properties ─────────────────────────────────────────────────────
+
+    @property
+    def n_levels(self) -> int:
+        """Number of LOD levels."""
+        if self._volume_geometry is not None:
+            return self._volume_geometry.n_levels
+        if self._image_geometry_2d is not None:
+            return self._image_geometry_2d.n_levels
+        raise RuntimeError("No geometry available")
+
+    # ── Geometry rebuild ─────────────────────────────────────────────
+
+    def rebuild_geometry(
+        self,
+        level_shapes: list[tuple[int, ...]],
+        displayed_axes: tuple[int, ...],
+    ) -> tuple[gfx.WorldObject | None, gfx.WorldObject | None]:
+        """Rebuild geometry and GPU resources after a displayed_axes change.
+
+        Returns ``(old_node, new_node)`` for the active rendering mode so
+        the caller can swap the node in the scene graph.
+
+        Parameters
+        ----------
+        level_shapes : list[tuple[int, ...]]
+            Full nD shape per level from the data store.
+        displayed_axes : tuple[int, ...]
+            The new set of displayed axes.
+
+        Returns
+        -------
+        tuple[old_node, new_node]
+            The previous and replacement pygfx nodes (may be ``None``).
+        """
+        displayed_level_shapes = [
+            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
+        ]
+
+        old_node: gfx.WorldObject | None = None
+        new_node: gfx.WorldObject | None = None
+
+        if "3d" in self.render_modes and len(displayed_axes) == 3:
+            old_node = self.node_3d
+            if self._volume_geometry is not None:
+                self._volume_geometry.update(displayed_level_shapes)
+                self._rebuild_3d_resources()
+                new_node = self.node_3d
+
+        if "2d" in self.render_modes and len(displayed_axes) == 2:
+            old_node = self.node_2d
+            shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
+            if self._image_geometry_2d is not None:
+                self._image_geometry_2d.update(shapes_2d)
+                self._rebuild_2d_resources()
+                new_node = self.node_2d
+
+        return old_node, new_node
+
+    def _rebuild_3d_resources(self) -> None:
+        """Rebuild 3D GPU resources after geometry update."""
+        geo = self._volume_geometry
+        # Clear cache
+        self._block_cache_3d.tile_manager.release_all_in_flight()
+        # Rebuild LUT manager
+        self._lut_manager_3d = LutIndirectionManager3D(
+            base_layout=geo.base_layout,
+            n_levels=geo.n_levels,
+        )
+        # Rebuild param buffers
+        self._lut_params_buffer_3d = build_lut_params_buffer_3d(
+            geo.base_layout,
+            self._block_cache_3d.info,
+            proxy_voxels_per_brick=geo.block_size,
+        )
+        self._block_scales_buffer_3d = build_block_scales_buffer_3d(
+            geo.downscale_factors
+        )
+        # Rebuild node preserving current appearance
+        if self.node_3d is not None:
+            colormap = self.material_3d.map
+            clim = self.material_3d.clim
+            threshold = self.material_3d.threshold
+            interpolation = self.material_3d.interpolation
+            self.node_3d, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+                colormap=colormap,
+                clim=clim,
+                threshold=threshold,
+                interpolation=interpolation,
+            )
+        self._pending_slot_map = {}
+
+    def _rebuild_2d_resources(self) -> None:
+        """Rebuild 2D GPU resources after geometry update."""
+        geo2d = self._image_geometry_2d
+        # Clear cache
+        self._block_cache_2d.tile_manager.release_all_in_flight()
+        # Rebuild LUT manager
+        self._lut_manager_2d = LutIndirectionManager2D(
+            base_layout=geo2d.base_layout,
+            n_levels=geo2d.n_levels,
+        )
+        # Rebuild param buffers
+        self._lut_params_buffer_2d = build_lut_params_buffer_2d(
+            geo2d.base_layout, self._block_cache_2d.info
+        )
+        self._block_scales_buffer_2d = build_block_scales_buffer_2d(geo2d.n_levels)
+        # Rebuild node preserving current appearance
+        if self.node_2d is not None:
+            colormap = self.material_2d.map
+            clim = self.material_2d.clim
+            interpolation = self.material_2d.interpolation
+            self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
+                colormap=colormap, clim=clim, interpolation=interpolation
+            )
+        self._pending_slot_map_2d = {}
+
     # ── 3D SliceCoordinator interface ──────────────────────────────────
 
     def build_slice_request(
@@ -403,6 +583,7 @@ class GFXMultiscaleImageVisual:
         camera_pos: np.ndarray,
         frustum_planes: np.ndarray | None,
         thresholds: list[float] | None,
+        dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
         """Run the synchronous 3D planning phase and return ChunkRequests.
@@ -474,16 +655,20 @@ class GFXMultiscaleImageVisual:
             z0, y0, x0, z1, y1, x1 = _brick_key_to_padded_coords(
                 brick_key, geo.block_size, self._block_cache_3d.info.overlap
             )
+            scale = 2 ** (brick_key.level - 1)
+            display_coords = [(z0, z1), (y0, y1), (x0, x1)]
+            if dims_state is not None:
+                ndim = len(dims_state.axis_labels)
+                axis_selections = _build_axis_selections(
+                    dims_state.selection, ndim, display_coords, scale
+                )
+            else:
+                axis_selections = tuple(display_coords)
             req = ChunkRequest(
                 chunk_request_id=chunk_id,
                 slice_request_id=slice_id,
                 scale_index=brick_key.level - 1,
-                z_start=z0,
-                y_start=y0,
-                x_start=x0,
-                z_stop=z1,
-                y_stop=y1,
-                x_stop=x1,
+                axis_selections=axis_selections,
             )
             chunk_requests.append(req)
             self._pending_slot_map[chunk_id] = (brick_key, slot)
@@ -583,7 +768,7 @@ class GFXMultiscaleImageVisual:
         world_width: float,
         view_min: np.ndarray | None,
         view_max: np.ndarray | None,
-        z_slice: int,
+        dims_state: DimsState,
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
@@ -605,8 +790,8 @@ class GFXMultiscaleImageVisual:
             Viewport AABB minimum ``(x, y)``.  ``None`` disables culling.
         view_max : ndarray, shape (2,) or None
             Viewport AABB maximum ``(x, y)``.  ``None`` disables culling.
-        z_slice : int
-            Z-slice index at the finest scale level.
+        dims_state : DimsState
+            Current dimension display state.
         lod_bias : float
             Multiplicative LOD bias.
         force_level : int or None
@@ -678,26 +863,23 @@ class GFXMultiscaleImageVisual:
 
         overlap = self._block_cache_2d.info.overlap
 
+        ndim = len(dims_state.axis_labels)
+        sel = dims_state.selection
+
         for tile_key, slot in fill_plan:
             chunk_id = uuid4()
             y0, x0, y1, x1 = _block_key_2d_to_padded_coords(
                 tile_key, block_size, overlap
             )
-            # Compute z-slice at this scale level.
             scale = 2 ** (tile_key.level - 1)
-            z_slice_at_level = z_slice // scale
+            display_coords = [(y0, y1), (x0, x1)]
+            axis_selections = _build_axis_selections(sel, ndim, display_coords, scale)
 
             req = ChunkRequest(
                 chunk_request_id=chunk_id,
                 slice_request_id=slice_id,
                 scale_index=tile_key.level - 1,
-                z_start=0,
-                y_start=y0,
-                x_start=x0,
-                z_stop=0,
-                y_stop=y1,
-                x_stop=x1,
-                z_slice=z_slice_at_level,
+                axis_selections=axis_selections,
             )
             chunk_requests.append(req)
             self._pending_slot_map_2d[chunk_id] = (tile_key, slot)
@@ -888,7 +1070,7 @@ class GFXMultiscaleImageVisual:
         geometry = gfx.Geometry(grid=proxy_tex)
         image = gfx.Image(geometry, material)
 
-        bs = self._volume_geometry.block_size
+        bs = self._image_geometry_2d.block_size
         image.local.scale = (bs, bs, 1.0)
         image.local.position = (bs * 0.5, bs * 0.5, 0)
 

@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
         self._z_slice = z_slice
 
         # Set initial slice index on the scene's dims.
-        self._scene.dims.slice_indices = (self._z_slice,)
+        self._scene.dims.selection.slice_indices = {0: self._z_slice}
 
         self._visual = self._controller.add_image(
             data=data_store,
@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
         self._z_slice = value
         # Update the scene's dims — this is what SceneManager reads
         # when building slice requests.
-        self._scene.dims.slice_indices = (value,)
+        self._scene.dims.selection.slice_indices = {0: value}
         # Clear the 2D tile cache so all tiles are re-fetched at the
         # new Z slice.
         gfx_visual = self._get_gfx_visual()

@@ -129,7 +129,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
     n_levels :
         Number of scale levels (length of ``scale_names``).
     level_shapes :
-        List of ``(depth, height, width)`` tuples, one per level.
+        List of shape tuples, one per level.
     """
 
     # ── Public pydantic fields ──────────────────────────────────────────
@@ -165,30 +165,18 @@ class MultiscaleZarrDataStore(BaseDataStore):
         return len(self._ts_stores)
 
     @property
-    def level_shapes(self) -> list[tuple[int, int, int]]:
-        """``(depth, height, width)`` for each scale level, finest first."""
-        return [
-            tuple(int(d) for d in store.domain.shape)  # type: ignore[return-value]
-            for store in self._ts_stores
-        ]
+    def level_shapes(self) -> list[tuple[int, ...]]:
+        """Shape for each scale level, finest first."""
+        return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
 
     # ── Async data access ───────────────────────────────────────────────
 
     async def get_data(self, request: ChunkRequest) -> np.ndarray:
         """Read a single padded brick, returning a zero-padded float32 array.
 
-        Boundary bricks (where the padded region extends outside the store)
-        are handled by allocating a zeroed output of the full requested size
-        and copying the valid clamped region into the correct destination
-        offset.
-
-        When ``request.z_slice`` is set, a 2D tile is read from a 3D store
-        by extracting a single z-plane.  The returned array has shape
-        ``(y_stop-y_start, x_stop-x_start)``.
-
-        The ``await`` on ``store[...].read()`` suspends the coroutine and
-        yields to the Qt event loop while tensorstore fetches the chunk(s)
-        from disk.
+        Interprets ``request.axis_selections`` generically: displayed axes
+        (tuple ranges) become slice dimensions in the output; sliced axes
+        (int values) become point selections.
 
         Parameters
         ----------
@@ -199,88 +187,53 @@ class MultiscaleZarrDataStore(BaseDataStore):
         Returns
         -------
         out :
-            ``float32`` array.  Shape is ``(dz, dy, dx)`` for 3D requests
-            or ``(dy, dx)`` for 2D requests (when ``z_slice`` is set).
-            Out-of-bounds regions are filled with zero.
+            ``float32`` array.  Shape has one dimension per displayed axis
+            (those with tuple selections).  Out-of-bounds regions are
+            filled with zero.
         """
-        if request.z_slice is not None:
-            return await self._get_data_2d(request)
-        return await self._get_data_3d(request)
+        return await self._get_data_and(request)
 
-    async def _get_data_3d(self, request: ChunkRequest) -> np.ndarray:
-        """Read a 3D padded brick."""
+    async def _get_data_and(self, request: ChunkRequest) -> np.ndarray:
+        """Read a padded brick using generic nD axis_selections."""
         store = self._ts_stores[request.scale_index]
+        store_shape = tuple(int(d) for d in store.domain.shape)
 
-        dz = request.z_stop - request.z_start
-        dy = request.y_stop - request.y_start
-        dx = request.x_stop - request.x_start
-        out = np.zeros((dz, dy, dx), dtype=np.float32)
+        # Output shape: one dimension per displayed (tuple) axis.
+        out_shape = tuple(
+            stop - start
+            for sel in request.axis_selections
+            if isinstance(sel, tuple)
+            for start, stop in [sel]
+        )
+        out = np.zeros(out_shape, dtype=np.float32)
 
-        sd, sh, sw = (int(d) for d in store.domain.shape)
-        sz0 = max(request.z_start, 0)
-        sz1 = min(request.z_stop, sd)
-        sy0 = max(request.y_start, 0)
-        sy1 = min(request.y_stop, sh)
-        sx0 = max(request.x_start, 0)
-        sx1 = min(request.x_stop, sw)
+        # Build the clamped store index and track destination offsets.
+        store_idx: list[int | slice] = []
+        dest_starts: list[int] = []
+        valid = True
 
-        if sz1 > sz0 and sy1 > sy0 and sx1 > sx0:
-            dest_z0 = sz0 - request.z_start
-            dest_y0 = sy0 - request.y_start
-            dest_x0 = sx0 - request.x_start
+        for axis_i, sel in enumerate(request.axis_selections):
+            size = store_shape[axis_i]
+            if isinstance(sel, int):
+                # Point selection: clamp to valid range.
+                store_idx.append(max(0, min(sel, size - 1)))
+            else:
+                start, stop = sel
+                c_start = max(start, 0)
+                c_stop = min(stop, size)
+                if c_stop <= c_start:
+                    valid = False
+                    break
+                store_idx.append(slice(c_start, c_stop))
+                dest_starts.append(c_start - start)
 
+        if valid:
             region = np.asarray(
-                await store[sz0:sz1, sy0:sy1, sx0:sx1].read(),
+                await store[tuple(store_idx)].read(),
                 dtype=np.float32,
             )
-            out[
-                dest_z0 : dest_z0 + (sz1 - sz0),
-                dest_y0 : dest_y0 + (sy1 - sy0),
-                dest_x0 : dest_x0 + (sx1 - sx0),
-            ] = region
-
-        return out
-
-    async def _get_data_2d(self, request: ChunkRequest) -> np.ndarray:
-        """Read a 2D padded tile (single z-plane from a 3D store)."""
-        store = self._ts_stores[request.scale_index]
-        ndim = len(store.domain.shape)
-
-        dy = request.y_stop - request.y_start
-        dx = request.x_stop - request.x_start
-        out = np.zeros((dy, dx), dtype=np.float32)
-
-        if ndim == 3:
-            sd, sh, sw = (int(d) for d in store.domain.shape)
-        elif ndim == 2:
-            sh, sw = (int(d) for d in store.domain.shape)
-        else:
-            raise ValueError(f"Unexpected store ndim={ndim}")
-
-        sy0 = max(request.y_start, 0)
-        sy1 = min(request.y_stop, sh)
-        sx0 = max(request.x_start, 0)
-        sx1 = min(request.x_stop, sw)
-
-        if sy1 > sy0 and sx1 > sx0:
-            dest_y0 = sy0 - request.y_start
-            dest_x0 = sx0 - request.x_start
-
-            if ndim == 3:
-                z_mid = request.z_slice
-                region = np.asarray(
-                    await store[z_mid, sy0:sy1, sx0:sx1].read(),
-                    dtype=np.float32,
-                )
-            else:
-                region = np.asarray(
-                    await store[sy0:sy1, sx0:sx1].read(),
-                    dtype=np.float32,
-                )
-
-            out[
-                dest_y0 : dest_y0 + (sy1 - sy0),
-                dest_x0 : dest_x0 + (sx1 - sx0),
-            ] = region
+            # Compute the destination slice in out for each displayed axis.
+            dest_idx = tuple(slice(d, d + s) for d, s in zip(dest_starts, region.shape))
+            out[dest_idx] = region
 
         return out

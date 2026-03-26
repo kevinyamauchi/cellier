@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from cellier.v2._state import AxisAlignedSelectionState
 from cellier.v2.data.image import MultiscaleZarrDataStore
 from cellier.v2.render import DimsState, RenderManager
 from cellier.v2.render._frustum import frustum_planes_from_corners
@@ -277,7 +278,12 @@ class BlockVolumeAppV2(QMainWindow):
         config.force_level = self._force_level
         config.frustum_cull = self._frustum_cull_cb.isChecked()
 
-        dims_state = DimsState(displayed_axes=(0, 1, 2), slice_indices=())
+        dims_state = DimsState(
+            axis_labels=("z", "y", "x"),
+            selection=AxisAlignedSelectionState(
+                displayed_axes=(0, 1, 2), slice_indices={}
+            ),
+        )
         self._render_manager.trigger_update(dims_state)
 
         visual = self._visual

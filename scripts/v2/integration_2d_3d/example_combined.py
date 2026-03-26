@@ -253,7 +253,7 @@ class CombinedApp(QMainWindow):
         self._scene_2d = self._controller.add_scene(
             dim="2d", coordinate_system=cs, name="scene_2d"
         )
-        self._scene_2d.dims.slice_indices = (z_depth // 2,)
+        self._scene_2d.dims.selection.slice_indices = {0: z_depth // 2}
 
         self._visual_2d = self._controller.add_image(
             data=data_store,
@@ -364,7 +364,7 @@ class CombinedApp(QMainWindow):
 
         self._z_slice_sb = QSpinBox()
         self._z_slice_sb.setRange(0, self._z_max)
-        self._z_slice_sb.setValue(self._scene_2d.dims.slice_indices[0])
+        self._z_slice_sb.setValue(self._scene_2d.dims.selection.slice_indices[0])
         self._z_slice_sb.valueChanged.connect(self._on_z_slice_changed)
         pl.addWidget(self._z_slice_sb)
         self._widget_2d.append(self._z_slice_sb)
@@ -493,7 +493,7 @@ class CombinedApp(QMainWindow):
         self._force_level = button.property("force_level")
 
     def _on_z_slice_changed(self, value: int) -> None:
-        self._scene_2d.dims.slice_indices = (value,)
+        self._scene_2d.dims.selection.slice_indices = {0: value}
         # All cached tiles are from the old z-plane — clear and re-fetch.
         gfx_visual = self._get_gfx_visual_2d()
         gfx_visual._block_cache_2d.tile_manager.clear()

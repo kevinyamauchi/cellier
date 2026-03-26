@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
-from cellier.v2._state import CameraState, DimsState
 from cellier.v2.events import (
     AppearanceChangedEvent,
     CameraChangedEvent,
@@ -29,7 +28,11 @@ from cellier.v2.scene.cameras import (
     PerspectiveCamera,
 )
 from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import CoordinateSystem, DimsManager
+from cellier.v2.scene.dims import (
+    AxisAlignedSelection,
+    CoordinateSystem,
+    DimsManager,
+)
 from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import MultiscaleImageVisual
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
     from psygnal import EmissionInfo
     from PySide6.QtWidgets import QWidget
 
+    from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.visuals._image import ImageAppearance
 
@@ -174,19 +178,23 @@ class CellierController:
         Scene
             The live model object.  Use ``scene.id`` in subsequent calls.
         """
+        ndim = len(coordinate_system.axis_labels)
         if dim == "3d":
-            displayed_axes = (0, 1, 2)
-            slice_indices: tuple[int, ...] = ()
+            displayed_axes = tuple(range(ndim))
+            slice_indices_dict: dict[int, int] = {}
         elif dim == "2d":
-            displayed_axes = (0, 1)
-            slice_indices = (0,)
+            # Display the last two axes; slice all others at 0.
+            displayed_axes = tuple(range(ndim - 2, ndim))
+            slice_indices_dict = {i: 0 for i in range(ndim - 2)}
         else:
             raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
 
         dims = DimsManager(
             coordinate_system=coordinate_system,
-            displayed_axes=displayed_axes,
-            slice_indices=slice_indices,
+            selection=AxisAlignedSelection(
+                displayed_axes=displayed_axes,
+                slice_indices=slice_indices_dict,
+            ),
         )
         scene = Scene(name=name, dims=dims)
         self._model.scenes[scene.id] = scene
@@ -267,7 +275,7 @@ class CellierController:
             self._model.data.stores[data.id] = data
 
         scene = self._model.scenes[scene_id]
-        dim = scene.dims.displayed_axes  # (0,1,2) → 3d, (0,1) → 2d
+        displayed_axes = scene.dims.selection.displayed_axes
 
         downscale_factors = [2**i for i in range(data.n_levels)]
 
@@ -280,12 +288,13 @@ class CellierController:
 
         scene.visuals.append(visual_model)
 
-        render_modes = {"3d"} if len(dim) == 3 else {"2d"}
+        render_modes = {"3d"} if len(displayed_axes) == 3 else {"2d"}
 
         level_shapes = list(data.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
+            displayed_axes=displayed_axes,
             render_modes=render_modes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
@@ -358,11 +367,13 @@ class CellierController:
         scene = self._model.scenes[scene_id]
         scene.visuals.append(visual_model)
 
-        render_modes = {"3d"} if len(scene.dims.displayed_axes) == 3 else {"2d"}
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = {"3d"} if len(displayed_axes) == 3 else {"2d"}
         level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
+            displayed_axes=displayed_axes,
             render_modes=render_modes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
@@ -408,7 +419,9 @@ class CellierController:
         # Infer dimensionality from the scene if not specified.
         if available_dims is None:
             scene = self._model.scenes[scene_id]
-            available_dims = "3d" if len(scene.dims.displayed_axes) == 3 else "2d"
+            available_dims = (
+                "3d" if len(scene.dims.selection.displayed_axes) == 3 else "2d"
+            )
 
         camera_model = PerspectiveCamera(
             fov=fov,
@@ -487,11 +500,7 @@ class CellierController:
 
     def _dims_state_for_scene(self, scene_id: UUID) -> DimsState:
         """Derive a DimsState from the scene's DimsManager."""
-        dims = self._model.scenes[scene_id].dims
-        return DimsState(
-            displayed_axes=dims.displayed_axes,
-            slice_indices=dims.slice_indices,
-        )
+        return self._model.scenes[scene_id].dims.to_state()
 
     # ------------------------------------------------------------------
     # psygnal bridges
@@ -499,21 +508,21 @@ class CellierController:
 
     def _wire_dims_model(self, scene: Scene) -> None:
         """Subscribe to all field changes on a scene's DimsManager."""
-        self._dims_cache[scene.id] = scene.dims.displayed_axes
+        self._dims_cache[scene.id] = scene.dims.selection.displayed_axes
         scene.dims.events.connect(self._make_dims_handler(scene.id))
 
     def _make_dims_handler(self, scene_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a scene's DimsManager."""
 
         def _on_dims_psygnal(info: EmissionInfo) -> None:
-            dims = self._model.scenes[scene_id].dims
-            new_state = DimsState(
-                displayed_axes=dims.displayed_axes,
-                slice_indices=dims.slice_indices,
-            )
+            new_state = self._model.scenes[scene_id].dims.to_state()
             prev_axes = self._dims_cache[scene_id]
-            displayed_axes_changed = prev_axes != new_state.displayed_axes
-            self._dims_cache[scene_id] = new_state.displayed_axes
+            displayed_axes_changed = prev_axes != new_state.selection.displayed_axes
+            self._dims_cache[scene_id] = new_state.selection.displayed_axes
+            if displayed_axes_changed:
+                self._rebuild_visuals_geometry(
+                    scene_id, new_state.selection.displayed_axes
+                )
             self._event_bus.emit(
                 DimsChangedEvent(
                     source_id=self._id,
@@ -524,6 +533,28 @@ class CellierController:
             )
 
         return _on_dims_psygnal
+
+    def _rebuild_visuals_geometry(
+        self, scene_id: UUID, displayed_axes: tuple[int, ...]
+    ) -> None:
+        """Rebuild geometry for all visuals in a scene after displayed_axes change."""
+        scene = self._model.scenes[scene_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+
+        for visual_model in scene.visuals:
+            data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+            level_shapes = list(data_store.level_shapes)
+            gfx_visual = scene_manager.get_visual(visual_model.id)
+
+            old_node, new_node = gfx_visual.rebuild_geometry(
+                level_shapes, displayed_axes
+            )
+
+            # Swap node in the pygfx scene graph.
+            if old_node is not None:
+                scene_manager.scene.remove(old_node)
+            if new_node is not None:
+                scene_manager.scene.add(new_node)
 
     def _wire_appearance(self, visual: MultiscaleImageVisual) -> None:
         """Subscribe to all field changes on a visual's ImageAppearance."""
