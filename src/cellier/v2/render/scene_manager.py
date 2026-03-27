@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pygfx as gfx
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
     from cellier.v2.data.image import ChunkRequest
     from cellier.v2.render._requests import ReslicingRequest
-    from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 
 
 class SceneManager:
@@ -43,7 +42,7 @@ class SceneManager:
         self._scene_id = scene_id
         self._dim = dim
         self._scene = gfx.Scene()
-        self._visuals: dict[UUID, GFXMultiscaleImageVisual] = {}
+        self._visuals: dict[UUID, Any] = {}
 
     @property
     def scene_id(self) -> UUID:
@@ -65,14 +64,14 @@ class SceneManager:
         """IDs of all registered visuals."""
         return list(self._visuals.keys())
 
-    def add_visual(self, visual: GFXMultiscaleImageVisual) -> None:
+    def add_visual(self, visual: Any) -> None:
         """Register a visual and add its node to the scene graph.
 
         Adds ``node_3d`` if ``dim == "3d"``, ``node_2d`` if ``dim == "2d"``.
 
         Parameters
         ----------
-        visual : GFXMultiscaleImageVisual
+        visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
             The visual to register.
 
         Raises
@@ -110,7 +109,7 @@ class SceneManager:
         elif self._dim == "2d" and visual.node_2d is not None:
             self._scene.remove(visual.node_2d)
 
-    def get_visual(self, visual_id: UUID) -> GFXMultiscaleImageVisual:
+    def get_visual(self, visual_id: UUID) -> Any:
         """Return the registered visual for ``visual_id``.
 
         Parameters
@@ -120,7 +119,7 @@ class SceneManager:
 
         Returns
         -------
-        GFXMultiscaleImageVisual
+        GFXMultiscaleImageVisual | GFXImageMemoryVisual
 
         Raises
         ------

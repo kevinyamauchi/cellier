@@ -6,8 +6,9 @@ from pydantic import Field
 from typing_extensions import Annotated
 
 from cellier.v2.visuals._image import MultiscaleImageVisual
+from cellier.v2.visuals._image_memory import ImageVisual
 
 VisualType = Annotated[
-    Union[MultiscaleImageVisual,],  # extend as new visual types are added
+    Union[MultiscaleImageVisual, ImageVisual],
     Field(discriminator="visual_type"),
 ]

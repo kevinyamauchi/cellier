@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
@@ -16,9 +16,8 @@ if TYPE_CHECKING:
     import pygfx as gfx
     from PySide6.QtWidgets import QWidget
 
-    from cellier.v2.data.image import MultiscaleZarrDataStore
+    from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.render._requests import DimsState
-    from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 
 
 class RenderManager:
@@ -37,7 +36,7 @@ class RenderManager:
         self._canvases: dict[UUID, CanvasView] = {}
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
-        self._data_stores: dict[UUID, MultiscaleZarrDataStore] = {}
+        self._data_stores: dict[UUID, BaseDataStore] = {}
         self._slicer = AsyncSlicer(batch_size=slicer_batch_size)
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
@@ -112,8 +111,8 @@ class RenderManager:
     def add_visual(
         self,
         scene_id: UUID,
-        visual: GFXMultiscaleImageVisual,
-        data_store: MultiscaleZarrDataStore,
+        visual: Any,
+        data_store: BaseDataStore,
     ) -> None:
         """Register a visual with a scene and its associated data store.
 
@@ -121,9 +120,9 @@ class RenderManager:
         ----------
         scene_id : UUID
             ID of the scene to add the visual to.
-        visual : GFXMultiscaleImageVisual
+        visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
             The render-layer visual object.
-        data_store : MultiscaleZarrDataStore
+        data_store : BaseDataStore
             The data store that will serve chunk data for this visual.
         """
         self._scenes[scene_id].add_visual(visual)
