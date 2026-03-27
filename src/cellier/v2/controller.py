@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, overload
 from uuid import UUID, uuid4
 
 import numpy as np
 
+from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.events import (
     AppearanceChangedEvent,
     CameraChangedEvent,
@@ -22,6 +23,7 @@ from cellier.v2.logging import _CAMERA_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 from cellier.v2.scene.cameras import (
     OrbitCameraController,
     OrthographicCamera,
@@ -36,6 +38,7 @@ from cellier.v2.scene.dims import (
 from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import MultiscaleImageVisual
+from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
 
 if TYPE_CHECKING:
     import pathlib
@@ -228,49 +231,166 @@ class CellierController:
     # Visual management
     # ------------------------------------------------------------------
 
+    @overload
+    def add_image(
+        self,
+        data: ImageMemoryStore,
+        scene_id: UUID,
+        appearance: ImageMemoryAppearance,
+        name: str = ...,
+    ) -> ImageVisual: ...
+
+    @overload
     def add_image(
         self,
         data: BaseDataStore,
         scene_id: UUID,
         appearance: ImageAppearance,
-        name: str,
+        name: str = ...,
+        block_size: int = ...,
+        gpu_budget_bytes: int = ...,
+        threshold: float = ...,
+        interpolation: str = ...,
+    ) -> MultiscaleImageVisual: ...
+
+    def add_image(
+        self,
+        data,
+        scene_id: UUID,
+        appearance,
+        name: str = "image",
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
         threshold: float = 0.2,
         interpolation: str = "linear",
-    ) -> MultiscaleImageVisual:
-        """Add a multiscale image visual to a scene.
+    ) -> MultiscaleImageVisual | ImageVisual:
+        """Add an image visual to a scene.
 
-        Registers the data store (if not already registered), creates the
-        MultiscaleImageVisual model, builds the GFXMultiscaleImageVisual
-        render object, and wires everything together atomically.
+        Dispatches to the appropriate rendering path based on the type of
+        ``data``:
+
+        - ``ImageMemoryStore`` → ``GFXImageMemoryVisual`` backed by
+          ``gfx.Image`` (2D) or ``gfx.Volume`` (3D). No brick cache; the
+          full slice is uploaded on every reslice.
+        - ``MultiscaleZarrDataStore`` → ``GFXMultiscaleImageVisual`` backed
+          by a brick cache + LUT indirection system. Supports LOD, frustum
+          culling, and out-of-core streaming.
 
         Parameters
         ----------
-        data : BaseDataStore
-            A MultiscaleZarrDataStore (or any BaseDataStore subclass that
-            exposes ``level_shapes`` and ``n_levels``).
+        data : ImageMemoryStore | MultiscaleZarrDataStore
+            The data source.
         scene_id : UUID
             ID of an existing scene (returned by ``add_scene``).
-        appearance : ImageAppearance
-            Appearance parameters for the visual.
+        appearance : ImageMemoryAppearance | ImageAppearance
+            Appearance parameters. Must match the type of ``data``.
         name : str
-            Human-readable name for the visual.
+            Human-readable label for the visual. Default ``"image"``.
         block_size : int
-            Brick side length in voxels.  Default 32.
+            Brick side length in voxels. Only used for multiscale path.
+            Default 32.
         gpu_budget_bytes : int
-            GPU memory budget for the brick cache.  Default 1 GiB.
+            GPU memory budget for the brick cache. Only used for multiscale
+            path. Default 1 GiB.
         threshold : float
-            Isosurface threshold for 3D raycast rendering.  Default 0.2.
+            Isosurface threshold for 3D raycast rendering. Only used for
+            multiscale path. Default 0.2.
         interpolation : str
-            Sampler filter ``"linear"`` or ``"nearest"``.  Default ``"linear"``.
+            Sampler filter ``"linear"`` or ``"nearest"``. Only used for
+            multiscale path. Default ``"linear"``.
 
         Returns
         -------
+        ImageVisual
+            When ``data`` is an ``ImageMemoryStore``.
         MultiscaleImageVisual
-            The live model object.  Mutate ``visual.appearance`` fields
-            directly; they are read at the next ``reslice_*`` call.
+            When ``data`` is a ``MultiscaleZarrDataStore``.
         """
+        if isinstance(data, ImageMemoryStore):
+            return self._add_image_memory(data, scene_id, appearance, name)
+        else:
+            return self._add_image_multiscale(
+                data,
+                scene_id,
+                appearance,
+                name,
+                block_size,
+                gpu_budget_bytes,
+                threshold,
+                interpolation,
+            )
+
+    def _add_image_memory(
+        self,
+        data: ImageMemoryStore,
+        scene_id: UUID,
+        appearance: ImageMemoryAppearance,
+        name: str,
+    ) -> ImageVisual:
+        """Add an in-memory image visual to a scene."""
+        # ── 1. Register the data store if needed ────────────────────────
+        if data.id not in self._model.data.stores:
+            self._model.data.stores[data.id] = data
+
+        # ── 2. Determine render mode from scene dimensionality ──────────
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_mode = "3d" if len(displayed_axes) == 3 else "2d"
+
+        # ── 3. Build model-layer objects ────────────────────────────────
+        visual_model = ImageVisual(
+            name=name,
+            data_store_id=str(data.id),
+            appearance=appearance,
+        )
+        scene.visuals.append(visual_model)
+
+        # ── 4. Build render-layer object ────────────────────────────────
+        gfx_visual = GFXImageMemoryVisual(
+            visual_model=visual_model,
+            data_store=data,
+            render_mode=render_mode,
+        )
+
+        # ── 5. Register with RenderManager and controller maps ──────────
+        self._render_manager.add_visual(scene_id, gfx_visual, data)
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        # ── 6. Wire appearance bridge and EventBus subscriptions ────────
+        self._wire_appearance(visual_model)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_image_multiscale(
+        self,
+        data: BaseDataStore,
+        scene_id: UUID,
+        appearance: ImageAppearance,
+        name: str,
+        block_size: int,
+        gpu_budget_bytes: int,
+        threshold: float,
+        interpolation: str,
+    ) -> MultiscaleImageVisual:
+        """Add a multiscale image visual to a scene."""
         if data.id not in self._model.data.stores:
             self._model.data.stores[data.id] = data
 
@@ -543,9 +663,14 @@ class CellierController:
 
         for visual_model in scene.visuals:
             data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
-            level_shapes = list(data_store.level_shapes)
             gfx_visual = scene_manager.get_visual(visual_model.id)
 
+            # Only multiscale visuals support geometry rebuilding on
+            # displayed_axes change; in-memory visuals are static.
+            if not hasattr(gfx_visual, "rebuild_geometry"):
+                continue
+
+            level_shapes = list(data_store.level_shapes)
             old_node, new_node = gfx_visual.rebuild_geometry(
                 level_shapes, displayed_axes
             )
@@ -556,8 +681,8 @@ class CellierController:
             if new_node is not None:
                 scene_manager.scene.add(new_node)
 
-    def _wire_appearance(self, visual: MultiscaleImageVisual) -> None:
-        """Subscribe to all field changes on a visual's ImageAppearance."""
+    def _wire_appearance(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
+        """Subscribe to all field changes on a visual's appearance model."""
         visual.appearance.events.connect(self._make_appearance_handler(visual.id))
 
     def _make_appearance_handler(self, visual_id: UUID) -> Callable:
