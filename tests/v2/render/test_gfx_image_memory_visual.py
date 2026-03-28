@@ -159,6 +159,163 @@ def test_5d_dims_state_2d_scene(mock_gfx):
     assert req.axis_selections == (0, 1, 5, (0, 20), (0, 30))
 
 
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_scaled_transform_halves_slice_index_2d(mock_gfx):
+    """With scale=(2,2,2), world z=10 should map to data z=5."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store(shape=(10, 20, 30))
+    model = _make_visual_model(store)
+    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+
+    dims = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2),
+            slice_indices={0: 10},  # world z=10
+        ),
+    )
+    requests = visual.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=800.0,
+        world_width=30.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=dims,
+    )
+    req = requests[0]
+    # world z=10, scale=2 → data z=5
+    assert req.axis_selections[0] == 5
+    assert req.axis_selections[1] == (0, 20)
+    assert req.axis_selections[2] == (0, 30)
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_non_spatial_axis_not_transformed_3d(mock_gfx):
+    """4D store, 3D scene: non-spatial axis (t) is NOT transformed."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store(shape=(8, 10, 20, 30))
+    model = _make_visual_model(store)
+    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    visual = GFXImageMemoryVisual(model, store, render_mode="3d", transform=t)
+
+    dims = DimsState(
+        axis_labels=("t", "z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2, 3),
+            slice_indices={0: 6},  # t=6, non-spatial
+        ),
+    )
+    requests = visual.build_slice_request(
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
+        thresholds=None,
+        dims_state=dims,
+    )
+    req = requests[0]
+    # t is non-spatial (outside 3D transform) → stays at 6
+    assert req.axis_selections[0] == 6
+    assert req.axis_selections[1] == (0, 10)
+    assert req.axis_selections[2] == (0, 20)
+    assert req.axis_selections[3] == (0, 30)
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
+    """4D store, 2D scene: spatial z-axis IS transformed by scale."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store(shape=(8, 10, 20, 30))
+    model = _make_visual_model(store)
+    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+
+    dims = DimsState(
+        axis_labels=("t", "z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(2, 3),
+            slice_indices={0: 3, 1: 8},  # t=3 (non-spatial), z=8 (spatial)
+        ),
+    )
+    requests = visual.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=800.0,
+        world_width=30.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=dims,
+    )
+    req = requests[0]
+    # t=3 non-spatial → stays at 3
+    assert req.axis_selections[0] == 3
+    # z=8 spatial, scale=2 → data z=4
+    assert req.axis_selections[1] == 4
+    assert req.axis_selections[2] == (0, 20)
+    assert req.axis_selections[3] == (0, 30)
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_identity_transform_preserves_slice_index(mock_gfx):
+    """Identity transform should not alter slice indices."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+
+    store = _make_store(shape=(10, 20, 30))
+    model = _make_visual_model(store)
+    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+
+    dims = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2),
+            slice_indices={0: 7},
+        ),
+    )
+    requests = visual.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=800.0,
+        world_width=30.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=dims,
+    )
+    assert requests[0].axis_selections[0] == 7
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_slice_index_clamped_to_store_bounds(mock_gfx):
+    """Transformed slice index should be clamped to valid range."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store(shape=(10, 20, 30))
+    model = _make_visual_model(store)
+    # scale=0.5 means world z=5 → data z=10, which is out of bounds (max 9)
+    t = AffineTransform.from_scale((0.5, 0.5, 0.5))
+    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+
+    dims = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2),
+            slice_indices={0: 5},  # world z=5, data z=10 → clamped to 9
+        ),
+    )
+    requests = visual.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=800.0,
+        world_width=30.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=dims,
+    )
+    assert requests[0].axis_selections[0] == 9  # clamped
+
+
 # ---------------------------------------------------------------------------
 # Tests: commit (on_data_ready / on_data_ready_2d)
 # ---------------------------------------------------------------------------
@@ -273,7 +430,9 @@ def test_on_transform_changed_updates_node_and_field(mock_gfx):
     visual.on_transform_changed(event)
 
     assert visual._transform is new_t
-    np.testing.assert_array_equal(visual.node_2d.local.matrix, new_t.matrix)
+    # 2D node receives the sub-matrix for the last 2 spatial axes.
+    expected_2d = np.diag([3.0, 3.0, 1.0, 1.0]).astype(np.float32)
+    np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")

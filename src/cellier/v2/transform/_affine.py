@@ -84,12 +84,15 @@ class AffineTransform(BaseTransform):
     # ── Forward / inverse coordinate transforms ───────────────────────
 
     def map_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
-        """Apply the forward transform to coordinates.
+        """Apply the forward (data → world) transform to coordinates.
+
+        Coordinates are in data-axis order matching the numpy array shape
+        convention (e.g. ``(axis0, axis1, axis2)``).
 
         Parameters
         ----------
         coordinates : np.ndarray
-            ``(n, 3)`` or ``(n, 4)`` array of points.
+            ``(n, 3)`` or ``(n, 4)`` array of points in data-axis order.
 
         Returns
         -------
@@ -99,12 +102,15 @@ class AffineTransform(BaseTransform):
         return np.dot(_to_vec4(coordinates), self.matrix.T)[:, :3]
 
     def imap_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
-        """Apply the inverse transform to coordinates.
+        """Apply the inverse (world → data) transform to coordinates.
+
+        Coordinates are in data-axis order matching the numpy array shape
+        convention (e.g. ``(axis0, axis1, axis2)``).
 
         Parameters
         ----------
         coordinates : np.ndarray
-            ``(n, 3)`` or ``(n, 4)`` array of points.
+            ``(n, 3)`` or ``(n, 4)`` array of points in data-axis order.
 
         Returns
         -------
@@ -185,7 +191,7 @@ class AffineTransform(BaseTransform):
         Parameters
         ----------
         scale : tuple[float, float, float]
-            Scale factors for ``(x, y, z)``.
+            Scale factors in data-axis order ``(axis0, axis1, axis2)``.
 
         Returns
         -------
@@ -204,9 +210,9 @@ class AffineTransform(BaseTransform):
         Parameters
         ----------
         scale : tuple[float, float, float]
-            Scale factors for ``(x, y, z)`` dimensions.
+            Scale factors in data-axis order ``(axis0, axis1, axis2)``.
         translation : tuple[float, float, float]
-            Translation values for ``(x, y, z)`` dimensions.
+            Translation in data-axis order ``(axis0, axis1, axis2)``.
             Default is ``(0, 0, 0)``.
 
         Returns
@@ -229,7 +235,7 @@ class AffineTransform(BaseTransform):
         Parameters
         ----------
         translation : tuple[float, float, float]
-            Translation values for ``(x, y, z)`` dimensions.
+            Translation in data-axis order ``(axis0, axis1, axis2)``.
 
         Returns
         -------

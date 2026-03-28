@@ -7,10 +7,10 @@ from uuid import UUID, uuid4
 import numpy as np
 import pygfx as gfx
 
+from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image._image_requests import ChunkRequest
 
 if TYPE_CHECKING:
-    from cellier.v2._state import DimsState
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
@@ -29,6 +29,83 @@ if TYPE_CHECKING:
 def _make_colormap(color_map) -> gfx.TextureMap:
     """Convert a cmap Colormap to a pygfx TextureMap via cmap's pygfx bridge."""
     return color_map.to_pygfx(N=256)
+
+
+def _matrix_for_2d_node(matrix: np.ndarray, ndim: int) -> np.ndarray:
+    """Extract a 2-D sub-matrix from the full data-axis-order transform.
+
+    The 4x4 transform matrix has 3 spatial axes (rows/cols 0-2).  For a
+    2-D display the last 2 spatial axes are relevant.  pygfx Image reverses
+    its 2 texture axes so ``matrix[0,0]`` controls the first displayed axis
+    and ``matrix[1,1]`` the second.  This function maps the last 2 spatial
+    rows/columns into positions 0 and 1 of a new 4x4 matrix.
+    """
+    # The 3D transform always occupies rows/cols 0-2 of the 4x4 matrix.
+    # The last 2 spatial axes are indices 1 and 2 (for y, x in z/y/x order).
+    src = (1, 2)
+    m = np.eye(4, dtype=np.float32)
+    for out_i, si in enumerate(src):
+        for out_j, sj in enumerate(src):
+            m[out_i, out_j] = matrix[si, sj]
+        m[out_i, 3] = matrix[si, 3]
+    return m
+
+
+def _transform_slice_indices(
+    slice_indices: dict[int, int],
+    ndim: int,
+    transform: AffineTransform,
+    store_shape: tuple[int, ...],
+) -> dict[int, int]:
+    """Map world-space slice positions to data-space voxel indices.
+
+    The transform is defined in data-axis order (axis 0, axis 1, axis 2)
+    matching the numpy array shape convention.  Only the last 3 data axes
+    are considered spatial; earlier axes (e.g. time, channel) pass through
+    unchanged.
+
+    Parameters
+    ----------
+    slice_indices : dict[int, int]
+        Axis → world-space slice position.
+    ndim : int
+        Number of data dimensions.
+    transform : AffineTransform
+        Data-to-world transform (its inverse maps world → data).
+    store_shape : tuple[int, ...]
+        Shape of the data store, used for clamping.
+
+    Returns
+    -------
+    dict[int, int]
+        Axis → data-space voxel index.
+    """
+    if not slice_indices:
+        return slice_indices
+
+    # The transform operates on the last 3 data axes.
+    # Non-spatial axes (index < ndim - 3) pass through unchanged.
+    spatial_offset = ndim - 3  # axes >= this are spatial
+
+    world_pt = np.zeros(3, dtype=np.float64)
+    for data_axis, world_pos in slice_indices.items():
+        spatial_idx = data_axis - spatial_offset
+        if 0 <= spatial_idx < 3:
+            world_pt[spatial_idx] = float(world_pos)
+
+    data_pt = transform.imap_coordinates(world_pt.reshape(1, -1)).flatten()
+
+    result: dict[int, int] = {}
+    for data_axis in slice_indices:
+        spatial_idx = data_axis - spatial_offset
+        if 0 <= spatial_idx < 3:
+            raw = float(data_pt[spatial_idx])
+        else:
+            raw = float(slice_indices[data_axis])
+        idx = int(round(raw))
+        idx = max(0, min(idx, store_shape[data_axis] - 1))
+        result[data_axis] = idx
+    return result
 
 
 def _build_axis_selections(
@@ -148,7 +225,9 @@ class GFXImageMemoryVisual:
         if self.node_3d is not None:
             self.node_3d.local.matrix = self._transform.matrix
         if self.node_2d is not None:
-            self.node_2d.local.matrix = self._transform.matrix
+            self.node_2d.local.matrix = _matrix_for_2d_node(
+                self._transform.matrix, self._data_store.ndim
+            )
 
     # ------------------------------------------------------------------
     # Properties
@@ -217,7 +296,24 @@ class GFXImageMemoryVisual:
         list[ChunkRequest]
             Always contains exactly one element.
         """
-        axis_selections = _build_axis_selections(dims_state, self._data_store.shape)
+        # Transform slice indices from world space to data space.
+        ndim = len(dims_state.axis_labels)
+        transformed_indices = _transform_slice_indices(
+            dims_state.selection.slice_indices,
+            ndim,
+            self._transform,
+            self._data_store.shape,
+        )
+        transformed_dims = DimsState(
+            axis_labels=dims_state.axis_labels,
+            selection=AxisAlignedSelectionState(
+                displayed_axes=dims_state.selection.displayed_axes,
+                slice_indices=transformed_indices,
+            ),
+        )
+        axis_selections = _build_axis_selections(
+            transformed_dims, self._data_store.shape
+        )
         return [
             ChunkRequest(
                 chunk_request_id=uuid4(),
@@ -266,7 +362,24 @@ class GFXImageMemoryVisual:
                 (0, self._data_store.shape[ax]) for ax in range(ndim)
             )
         else:
-            axis_selections = _build_axis_selections(dims_state, self._data_store.shape)
+            # Transform slice indices from world space to data space.
+            ndim = len(dims_state.axis_labels)
+            transformed_indices = _transform_slice_indices(
+                dims_state.selection.slice_indices,
+                ndim,
+                self._transform,
+                self._data_store.shape,
+            )
+            transformed_dims = DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
+            )
+            axis_selections = _build_axis_selections(
+                transformed_dims, self._data_store.shape
+            )
 
         return [
             ChunkRequest(
@@ -341,7 +454,9 @@ class GFXImageMemoryVisual:
         if self.node_3d is not None:
             self.node_3d.local.matrix = matrix
         if self.node_2d is not None:
-            self.node_2d.local.matrix = matrix
+            self.node_2d.local.matrix = _matrix_for_2d_node(
+                matrix, self._data_store.ndim
+            )
 
     # ------------------------------------------------------------------
     # Appearance and visibility event handlers

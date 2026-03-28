@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import numpy as np
 import pygfx as gfx
 
+from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image import ChunkRequest
 from cellier.v2.logging import _GPU_LOGGER, _PERF_LOGGER
 from cellier.v2.render._frustum import (
@@ -54,9 +55,12 @@ from cellier.v2.render.shaders._block_volume import (
     build_block_scales_buffer_3d,
     build_lut_params_buffer_3d,
 )
+from cellier.v2.render.visuals._image_memory import (
+    _matrix_for_2d_node,
+    _transform_slice_indices,
+)
 
 if TYPE_CHECKING:
-    from cellier.v2._state import AxisAlignedSelectionState, DimsState
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
@@ -319,6 +323,14 @@ class GFXMultiscaleImageVisual:
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
         self._image_geometry_2d = image_geometry_2d
+        # ndim of the original data (needed for 2D matrix extraction).
+        if volume_geometry is not None:
+            self._ndim = len(volume_geometry.level_shapes[0])
+        elif image_geometry_2d is not None:
+            # 2D geometry stores 2D shapes; the full ndim is at least 2.
+            self._ndim = len(image_geometry_2d.level_shapes[0])
+        else:
+            self._ndim = 3
         self._gpu_budget_bytes = gpu_budget_bytes
         self._frame_number = 0
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
@@ -403,7 +415,9 @@ class GFXMultiscaleImageVisual:
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
-            self.node_2d.local.matrix = self._transform.matrix
+            self.node_2d.local.matrix = _matrix_for_2d_node(
+                self._transform.matrix, self._ndim
+            )
 
     @classmethod
     def from_cellier_model(
@@ -602,7 +616,9 @@ class GFXMultiscaleImageVisual:
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
-            self.node_2d.local.matrix = self._transform.matrix
+            self.node_2d.local.matrix = _matrix_for_2d_node(
+                self._transform.matrix, self._ndim
+            )
         self._pending_slot_map_2d = {}
 
     # ── 3D SliceCoordinator interface ──────────────────────────────────
@@ -656,6 +672,23 @@ class GFXMultiscaleImageVisual:
             frustum_planes = frustum_planes_from_corners(corners_data)
         else:
             frustum_planes = None
+
+        # Transform slice indices from world space to data space.
+        if dims_state is not None and dims_state.selection.slice_indices:
+            ndim = len(dims_state.axis_labels)
+            transformed_indices = _transform_slice_indices(
+                dims_state.selection.slice_indices,
+                ndim,
+                self._transform,
+                geo.level_shapes[0],
+            )
+            dims_state = DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
+            )
 
         # 1. LOAD selection
         t0 = time.perf_counter()
@@ -905,6 +938,23 @@ class GFXMultiscaleImageVisual:
             view_min = None
             view_max = None
 
+        # Transform slice indices from world space to data space.
+        if dims_state.selection.slice_indices:
+            ndim = len(dims_state.axis_labels)
+            transformed_indices = _transform_slice_indices(
+                dims_state.selection.slice_indices,
+                ndim,
+                self._transform,
+                geo2d.level_shapes[0],
+            )
+            dims_state = DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
+            )
+
         # 1. LOD selection
         t0 = time.perf_counter()
         tile_arr = select_lod_2d(
@@ -1072,7 +1122,7 @@ class GFXMultiscaleImageVisual:
         if self.node_3d is not None:
             self.node_3d.local.matrix = matrix
         if self.node_2d is not None:
-            self.node_2d.local.matrix = matrix
+            self.node_2d.local.matrix = _matrix_for_2d_node(matrix, self._ndim)
 
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         """Apply GPU-only appearance changes."""
