@@ -14,8 +14,10 @@ if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
+        TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
+    from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image_memory import ImageVisual
 
 
@@ -93,6 +95,7 @@ class GFXImageMemoryVisual:
         visual_model: ImageVisual,
         data_store: ImageMemoryStore,
         render_mode: str,
+        transform: AffineTransform | None = None,
     ) -> None:
         if render_mode not in ("2d", "3d"):
             raise ValueError(f"render_mode must be '2d' or '3d', got {render_mode!r}")
@@ -100,6 +103,13 @@ class GFXImageMemoryVisual:
         self.visual_model_id: UUID = visual_model.id
         self._render_mode = render_mode
         self._data_store = data_store
+
+        # Store the data-to-world transform.
+        if transform is None:
+            from cellier.v2.transform import AffineTransform as _AT
+
+            transform = _AT.identity()
+        self._transform: AffineTransform = transform
 
         appearance = visual_model.appearance
         colormap = _make_colormap(appearance.color_map)
@@ -134,6 +144,12 @@ class GFXImageMemoryVisual:
             )
             self.node_2d = None
 
+        # Apply transform to the active node.
+        if self.node_3d is not None:
+            self.node_3d.local.matrix = self._transform.matrix
+        if self.node_2d is not None:
+            self.node_2d.local.matrix = self._transform.matrix
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -159,11 +175,11 @@ class GFXImageMemoryVisual:
 
     def build_slice_request_2d(
         self,
-        camera_pos: np.ndarray,
+        camera_pos_world: np.ndarray,
         viewport_width_px: float,
         world_width: float,
-        view_min: np.ndarray | None,
-        view_max: np.ndarray | None,
+        view_min_world: np.ndarray | None,
+        view_max_world: np.ndarray | None,
         dims_state: DimsState,
         lod_bias: float = 1.0,
         force_level: int | None = None,
@@ -176,15 +192,15 @@ class GFXImageMemoryVisual:
 
         Parameters
         ----------
-        camera_pos : np.ndarray
+        camera_pos_world : np.ndarray
             Unused. Accepted for interface compatibility.
         viewport_width_px : float
             Unused. Accepted for interface compatibility.
         world_width : float
             Unused. Accepted for interface compatibility.
-        view_min : np.ndarray or None
+        view_min_world : np.ndarray or None
             Unused. Accepted for interface compatibility.
-        view_max : np.ndarray or None
+        view_max_world : np.ndarray or None
             Unused. Accepted for interface compatibility.
         dims_state : DimsState
             Current dimension state. Determines which axes are displayed
@@ -213,8 +229,8 @@ class GFXImageMemoryVisual:
 
     def build_slice_request(
         self,
-        camera_pos: np.ndarray,
-        frustum_planes: np.ndarray | None,
+        camera_pos_world: np.ndarray,
+        frustum_corners_world: np.ndarray | None,
         thresholds: list[float] | None,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
@@ -226,9 +242,9 @@ class GFXImageMemoryVisual:
 
         Parameters
         ----------
-        camera_pos : np.ndarray
+        camera_pos_world : np.ndarray
             Unused. Accepted for interface compatibility.
-        frustum_planes : np.ndarray or None
+        frustum_corners_world : np.ndarray or None
             Unused. Accepted for interface compatibility.
         thresholds : list[float] or None
             Unused. Accepted for interface compatibility.
@@ -307,6 +323,25 @@ class GFXImageMemoryVisual:
         data_wgpu = np.ascontiguousarray(data.T[:, :, np.newaxis])
         tex = gfx.Texture(data_wgpu, dim=2, format="1xf4")
         self.node_2d.geometry = gfx.Geometry(grid=tex)
+
+    # ------------------------------------------------------------------
+    # Transform event handler
+    # ------------------------------------------------------------------
+
+    def on_transform_changed(self, event: TransformChangedEvent) -> None:
+        """Update stored transform and pygfx node matrix.
+
+        Parameters
+        ----------
+        event : TransformChangedEvent
+            Carries the new ``AffineTransform``.
+        """
+        self._transform = event.transform
+        matrix = event.transform.matrix
+        if self.node_3d is not None:
+            self.node_3d.local.matrix = matrix
+        if self.node_2d is not None:
+            self.node_2d.local.matrix = matrix
 
     # ------------------------------------------------------------------
     # Appearance and visibility event handlers

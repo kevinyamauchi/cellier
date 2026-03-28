@@ -8,13 +8,15 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+import numpy as np
 import pytest
 
 from cellier.v2._state import CameraState
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
-from cellier.v2.events._events import CameraChangedEvent
+from cellier.v2.events._events import CameraChangedEvent, TransformChangedEvent
 from cellier.v2.scene.dims import CoordinateSystem
+from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 
@@ -524,3 +526,57 @@ async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_
     ids = reslice_calls[0]["target_visual_ids"]
     assert visual.id in ids
     assert non_reslice.id not in ids
+
+
+# ---------------------------------------------------------------------------
+# Transform wiring tests
+# ---------------------------------------------------------------------------
+
+
+def test_wire_transform_emits_event(small_zarr_store):
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    store = MultiscaleZarrDataStore(
+        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
+    )
+    visual = controller.add_image(
+        data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
+    )
+
+    fired = []
+    controller._event_bus.subscribe(
+        TransformChangedEvent, fired.append, entity_id=visual.id
+    )
+
+    new_t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    visual.transform = new_t
+
+    assert len(fired) == 1
+    assert fired[0].visual_id == visual.id
+    assert fired[0].scene_id == scene.id
+    np.testing.assert_array_equal(fired[0].transform.matrix, new_t.matrix)
+
+
+def test_transform_change_triggers_reslice(small_zarr_store):
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    store = MultiscaleZarrDataStore(
+        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
+    )
+    visual = controller.add_image(
+        data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
+    )
+
+    reslice_calls = []
+
+    def _capture(scene_id, dims_state, visual_configs=None, target_visual_ids=None):
+        reslice_calls.append(scene_id)
+
+    controller._render_manager.reslice_scene = _capture
+
+    visual.transform = AffineTransform.from_translation((10.0, 0.0, 0.0))
+
+    assert len(reslice_calls) == 1
+    assert reslice_calls[0] == scene.id

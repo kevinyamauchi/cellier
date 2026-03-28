@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pygfx as gfx
 
-from cellier.v2.render._frustum import frustum_planes_from_corners
 from cellier.v2.render._scene_config import VisualRenderConfig
 
 if TYPE_CHECKING:
@@ -170,18 +169,16 @@ class SceneManager:
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
 
-            frustum_planes = (
-                frustum_planes_from_corners(request.frustum_corners)
-                if cfg.frustum_cull
-                else None
+            frustum_corners_world = (
+                request.frustum_corners if cfg.frustum_cull else None
             )
 
             n_levels = visual.n_levels
             thresholds = self._compute_thresholds_3d(request, n_levels, cfg.lod_bias)
 
             chunk_requests = visual.build_slice_request(
-                camera_pos=request.camera_pos,
-                frustum_planes=frustum_planes,
+                camera_pos_world=request.camera_pos,
+                frustum_corners_world=frustum_corners_world,
                 thresholds=thresholds,
                 dims_state=request.dims_state,
                 force_level=cfg.force_level,
@@ -220,11 +217,11 @@ class SceneManager:
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
 
             chunk_requests = visual.build_slice_request_2d(
-                camera_pos=request.camera_pos,
+                camera_pos_world=request.camera_pos,
                 viewport_width_px=viewport_width_px,
                 world_width=world_width,
-                view_min=view_min if cfg.frustum_cull else None,
-                view_max=view_max if cfg.frustum_cull else None,
+                view_min_world=view_min if cfg.frustum_cull else None,
+                view_max_world=view_max if cfg.frustum_cull else None,
                 dims_state=request.dims_state,
                 lod_bias=cfg.lod_bias,
                 force_level=cfg.force_level,

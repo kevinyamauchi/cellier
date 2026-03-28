@@ -13,6 +13,6 @@ __all__ = [
     "RenderManager",
     "ReslicingRequest",
     "SceneManager",
-    "VisualRenderConfig",
     "SliceCoordinator",
+    "VisualRenderConfig",
 ]

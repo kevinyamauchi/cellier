@@ -11,7 +11,10 @@ import pygfx as gfx
 
 from cellier.v2.data.image import ChunkRequest
 from cellier.v2.logging import _GPU_LOGGER, _PERF_LOGGER
-from cellier.v2.render._frustum import bricks_in_frustum_arr
+from cellier.v2.render._frustum import (
+    bricks_in_frustum_arr,
+    frustum_planes_from_corners,
+)
 from cellier.v2.render._level_of_detail import (
     arr_to_brick_keys,
     build_level_grids,
@@ -58,6 +61,7 @@ if TYPE_CHECKING:
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
         DataStoreMetadataChangedEvent,
+        TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
     from cellier.v2.render.block_cache._tile_manager_2d import (
@@ -66,6 +70,7 @@ if TYPE_CHECKING:
     from cellier.v2.render.block_cache._tile_manager_2d import (
         TileSlot as TileSlot2D,
     )
+    from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import MultiscaleImageVisual
 
 # Importing this module registers VolumeBlockShader with pygfx via the
@@ -303,8 +308,14 @@ class GFXMultiscaleImageVisual:
         threshold: float = 0.5,
         interpolation: str = "linear",
         gpu_budget_bytes: int = 1 * 1024**3,
+        transform: AffineTransform | None = None,
     ) -> None:
         self.visual_model_id = visual_model_id
+        if transform is None:
+            from cellier.v2.transform import AffineTransform as _AT
+
+            transform = _AT.identity()
+        self._transform: AffineTransform = transform
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
         self._image_geometry_2d = image_geometry_2d
@@ -364,25 +375,35 @@ class GFXMultiscaleImageVisual:
             colormap = gfx.cm.viridis
 
         # ── 3D node ─────────────────────────────────────────────────────
-        self.node_3d: gfx.Volume | None = None
+        self.node_3d: gfx.Group | None = None
+        self._inner_node_3d: gfx.Volume | None = None
         self.material_3d: VolumeBlockMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
         if "3d" in render_modes and volume_geometry is not None:
-            self.node_3d, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
                 interpolation=interpolation,
             )
+            self._inner_node_3d = inner
+            self.node_3d = gfx.Group()
+            self.node_3d.add(inner)
+            self.node_3d.local.matrix = self._transform.matrix
 
         # ── 2D node ─────────────────────────────────────────────────────
-        self.node_2d: gfx.Image | None = None
+        self.node_2d: gfx.Group | None = None
+        self._inner_node_2d: gfx.Image | None = None
         self.material_2d: ImageBlockMaterial | None = None
         self._proxy_tex_2d: gfx.Texture | None = None
         if "2d" in render_modes and image_geometry_2d is not None:
-            self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
+            inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
                 colormap=colormap, clim=clim, interpolation=interpolation
             )
+            self._inner_node_2d = inner
+            self.node_2d = gfx.Group()
+            self.node_2d.add(inner)
+            self.node_2d.local.matrix = self._transform.matrix
 
     @classmethod
     def from_cellier_model(
@@ -543,12 +564,16 @@ class GFXMultiscaleImageVisual:
             clim = self.material_3d.clim
             threshold = self.material_3d.threshold
             interpolation = self.material_3d.interpolation
-            self.node_3d, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
                 interpolation=interpolation,
             )
+            self._inner_node_3d = inner
+            self.node_3d = gfx.Group()
+            self.node_3d.add(inner)
+            self.node_3d.local.matrix = self._transform.matrix
         self._pending_slot_map = {}
 
     def _rebuild_2d_resources(self) -> None:
@@ -571,29 +596,66 @@ class GFXMultiscaleImageVisual:
             colormap = self.material_2d.map
             clim = self.material_2d.clim
             interpolation = self.material_2d.interpolation
-            self.node_2d, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
+            inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
                 colormap=colormap, clim=clim, interpolation=interpolation
             )
+            self._inner_node_2d = inner
+            self.node_2d = gfx.Group()
+            self.node_2d.add(inner)
+            self.node_2d.local.matrix = self._transform.matrix
         self._pending_slot_map_2d = {}
 
     # ── 3D SliceCoordinator interface ──────────────────────────────────
 
     def build_slice_request(
         self,
-        camera_pos: np.ndarray,
-        frustum_planes: np.ndarray | None,
+        camera_pos_world: np.ndarray,
+        frustum_corners_world: np.ndarray | None,
         thresholds: list[float] | None,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
         """Run the synchronous 3D planning phase and return ChunkRequests.
 
+        World-space inputs are transformed to data space before planning.
+
         Pipeline: LOAD select -> distance sort -> optional frustum cull ->
         budget cap -> stage() -> build ``ChunkRequest`` objects.
+
+        Parameters
+        ----------
+        camera_pos_world : np.ndarray
+            Camera position in world coordinates.
+        frustum_corners_world : np.ndarray or None
+            Frustum corner points in world coordinates. ``None`` disables
+            frustum culling.
+        thresholds : list[float] or None
+            LOD distance thresholds.
+        dims_state : DimsState or None
+            Current dimension state.
+        force_level : int or None
+            Override LOD level.
+
+        Returns
+        -------
+        list[ChunkRequest]
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
         geo = self._volume_geometry
+
+        # Transform world-space inputs to data space.
+        camera_pos = self._transform.imap_coordinates(
+            camera_pos_world.reshape(1, -1)
+        ).flatten()
+
+        if frustum_corners_world is not None:
+            corners_data = self._transform.imap_coordinates(
+                frustum_corners_world.reshape(-1, 3)
+            ).reshape(frustum_corners_world.shape)
+            frustum_planes = frustum_planes_from_corners(corners_data)
+        else:
+            frustum_planes = None
 
         # 1. LOAD selection
         t0 = time.perf_counter()
@@ -763,11 +825,11 @@ class GFXMultiscaleImageVisual:
 
     def build_slice_request_2d(
         self,
-        camera_pos: np.ndarray,
+        camera_pos_world: np.ndarray,
         viewport_width_px: float,
         world_width: float,
-        view_min: np.ndarray | None,
-        view_max: np.ndarray | None,
+        view_min_world: np.ndarray | None,
+        view_max_world: np.ndarray | None,
         dims_state: DimsState,
         lod_bias: float = 1.0,
         force_level: int | None = None,
@@ -775,21 +837,25 @@ class GFXMultiscaleImageVisual:
     ) -> list[ChunkRequest]:
         """Run the synchronous 2D planning phase and return ChunkRequests.
 
+        World-space inputs are transformed to data space before planning.
+
         Pipeline: LOD select -> distance sort -> optional viewport cull ->
         budget cap -> stage() -> build ``ChunkRequest`` objects.
 
         Parameters
         ----------
-        camera_pos : ndarray, shape (3,)
+        camera_pos_world : ndarray, shape (3,)
             Camera world-space position ``(x, y, z)``.
         viewport_width_px : float
             Viewport width in logical pixels.
         world_width : float
             Visible world width in world units.
-        view_min : ndarray, shape (2,) or None
-            Viewport AABB minimum ``(x, y)``.  ``None`` disables culling.
-        view_max : ndarray, shape (2,) or None
-            Viewport AABB maximum ``(x, y)``.  ``None`` disables culling.
+        view_min_world : ndarray, shape (2,) or None
+            Viewport AABB minimum ``(x, y)`` in world space.
+            ``None`` disables culling.
+        view_max_world : ndarray, shape (2,) or None
+            Viewport AABB maximum ``(x, y)`` in world space.
+            ``None`` disables culling.
         dims_state : DimsState
             Current dimension display state.
         lod_bias : float
@@ -809,6 +875,35 @@ class GFXMultiscaleImageVisual:
         geo2d = self._image_geometry_2d
         block_size = geo2d.block_size
         n_levels = geo2d.n_levels
+
+        # Transform world-space camera position to data space.
+        camera_pos = self._transform.imap_coordinates(
+            camera_pos_world.reshape(1, -1)
+        ).flatten()
+
+        # Transform viewport AABB to data space via corners.
+        if use_culling and view_min_world is not None and view_max_world is not None:
+            cx = float(camera_pos_world[0])
+            cy = float(camera_pos_world[1])
+            half_w = world_width / 2.0
+            # Estimate world_height from aspect ratio if available,
+            # but the AABB is derived from passed bounds.
+            half_h = (float(view_max_world[1]) - float(view_min_world[1])) / 2.0
+            corners_world = np.array(
+                [
+                    [cx - half_w, cy - half_h, 0.0],
+                    [cx + half_w, cy - half_h, 0.0],
+                    [cx + half_w, cy + half_h, 0.0],
+                    [cx - half_w, cy + half_h, 0.0],
+                ],
+                dtype=np.float32,
+            )
+            corners_data = self._transform.imap_coordinates(corners_world)
+            view_min = corners_data[:, :2].min(axis=0)
+            view_max = corners_data[:, :2].max(axis=0)
+        else:
+            view_min = None
+            view_max = None
 
         # 1. LOD selection
         t0 = time.perf_counter()
@@ -969,6 +1064,15 @@ class GFXMultiscaleImageVisual:
         self._pending_slot_map_2d = {}
 
     # ── EventBus handler methods ─────────────────────────────────────────
+
+    def on_transform_changed(self, event: TransformChangedEvent) -> None:
+        """Update stored transform and pygfx node matrix."""
+        self._transform = event.transform
+        matrix = event.transform.matrix
+        if self.node_3d is not None:
+            self.node_3d.local.matrix = matrix
+        if self.node_2d is not None:
+            self.node_2d.local.matrix = matrix
 
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         """Apply GPU-only appearance changes."""

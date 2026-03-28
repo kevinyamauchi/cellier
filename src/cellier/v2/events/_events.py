@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from cellier.v2._state import CameraState, DimsState
+    from cellier.v2.transform import AffineTransform
 
 
 class DimsChangedEvent(NamedTuple):
@@ -90,6 +91,15 @@ class SceneAddedEvent(NamedTuple):
     scene_id: UUID
 
 
+class TransformChangedEvent(NamedTuple):
+    """Fired when a visual's data-to-world transform is replaced."""
+
+    source_id: UUID
+    scene_id: UUID
+    visual_id: UUID
+    transform: AffineTransform
+
+
 class SceneRemovedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
@@ -108,6 +118,7 @@ CellierEventTypes = (
     | FrameRenderedEvent
     | VisualAddedEvent
     | VisualRemovedEvent
+    | TransformChangedEvent
     | SceneAddedEvent
     | SceneRemovedEvent
 )

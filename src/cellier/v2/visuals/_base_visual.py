@@ -5,6 +5,8 @@ from uuid import uuid4
 from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, Field
 
+from cellier.v2.transform import AffineTransform
+
 
 class BaseAppearance(EventedModel):
     """Base model for all materials.
@@ -37,6 +39,9 @@ class BaseVisual(EventedModel):
         Default value is True.
     name : str
         The name of the data store.
+    transform : AffineTransform
+        The data-to-world affine transform.
+        Default is identity.
 
     Attributes
     ----------
@@ -47,6 +52,7 @@ class BaseVisual(EventedModel):
     name: str
     appearance: BaseAppearance
     pick_write: bool = True
+    transform: AffineTransform = Field(default_factory=AffineTransform.identity)
 
     requires_camera_reslice: bool = Field(default=False, frozen=True)
 

@@ -70,11 +70,11 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
 
     dims = _make_dims_state_2d()
     requests = visual.build_slice_request_2d(
-        camera_pos=np.zeros(3),
+        camera_pos_world=np.zeros(3),
         viewport_width_px=800.0,
         world_width=30.0,
-        view_min=None,
-        view_max=None,
+        view_min_world=None,
+        view_max_world=None,
         dims_state=dims,
     )
 
@@ -102,8 +102,8 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
-        camera_pos=np.zeros(3),
-        frustum_planes=None,
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
         thresholds=None,
         dims_state=dims,
     )
@@ -123,8 +123,8 @@ def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
     visual = GFXImageMemoryVisual(model, store, render_mode="3d")
 
     requests = visual.build_slice_request(
-        camera_pos=np.zeros(3),
-        frustum_planes=None,
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
         thresholds=None,
         dims_state=None,
     )
@@ -148,11 +148,11 @@ def test_5d_dims_state_2d_scene(mock_gfx):
         ),
     )
     requests = visual.build_slice_request_2d(
-        camera_pos=np.zeros(3),
+        camera_pos_world=np.zeros(3),
         viewport_width_px=800.0,
         world_width=30.0,
-        view_min=None,
-        view_max=None,
+        view_min_world=None,
+        view_max_world=None,
         dims_state=dims,
     )
     req = requests[0]
@@ -233,3 +233,64 @@ def test_on_data_ready_noop_on_empty_batch(mock_gfx):
     # Should not raise
     visual.on_data_ready([])
     visual.on_data_ready_2d([])
+
+
+# ---------------------------------------------------------------------------
+# Tests: transform
+# ---------------------------------------------------------------------------
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_node_matrix_set_on_construction(mock_gfx):
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store()
+    model = _make_visual_model(store)
+    t = AffineTransform.from_translation((10.0, 20.0, 30.0))
+    visual = GFXImageMemoryVisual(model, store, render_mode="3d", transform=t)
+
+    np.testing.assert_array_equal(visual.node_3d.local.matrix, t.matrix)
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_on_transform_changed_updates_node_and_field(mock_gfx):
+    from cellier.v2.events._events import TransformChangedEvent
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.transform import AffineTransform
+
+    store = _make_store()
+    model = _make_visual_model(store)
+    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+
+    new_t = AffineTransform.from_scale((3.0, 3.0, 3.0))
+    event = TransformChangedEvent(
+        source_id=uuid4(),
+        scene_id=uuid4(),
+        visual_id=model.id,
+        transform=new_t,
+    )
+    visual.on_transform_changed(event)
+
+    assert visual._transform is new_t
+    np.testing.assert_array_equal(visual.node_2d.local.matrix, new_t.matrix)
+
+
+@patch("cellier.v2.render.visuals._image_memory.gfx")
+def test_identity_transform_is_noop_3d(mock_gfx):
+    """Identity transform should produce the same result as no transform."""
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+
+    store = _make_store(shape=(10, 20, 30))
+    model = _make_visual_model(store)
+    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+
+    dims = _make_dims_state_3d()
+    requests = visual.build_slice_request(
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
+        thresholds=None,
+        dims_state=dims,
+    )
+    assert len(requests) == 1
+    assert requests[0].axis_selections == ((0, 10), (0, 20), (0, 30))
