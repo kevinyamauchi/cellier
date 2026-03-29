@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -31,77 +31,72 @@ def _make_colormap(color_map) -> gfx.TextureMap:
     return color_map.to_pygfx(N=256)
 
 
-def _matrix_for_2d_node(matrix: np.ndarray, ndim: int) -> np.ndarray:
-    """Extract a 2-D sub-matrix from the full data-axis-order transform.
+def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
+    """Embed a 2-D or 3-D AffineTransform into a pygfx-compatible 4x4 matrix.
 
-    The 4x4 transform matrix has 3 spatial axes (rows/cols 0-2).  For a
-    2-D display the last 2 spatial axes are relevant.  pygfx Image reverses
-    its 2 texture axes so ``matrix[0,0]`` controls the first displayed axis
-    and ``matrix[1,1]`` the second.  This function maps the last 2 spatial
-    rows/columns into positions 0 and 1 of a new 4x4 matrix.
+    pygfx always requires a 4x4 matrix for ``node.local.matrix``.  This
+    function places the transform's spatial block and translation into the
+    correct positions of a 4x4 identity matrix.
+
+    Parameters
+    ----------
+    transform : AffineTransform
+        A transform with ``ndim`` in {1, 2, 3}.
+
+    Returns
+    -------
+    np.ndarray
+        A ``(4, 4)`` float32 matrix.
     """
-    # The 3D transform always occupies rows/cols 0-2 of the 4x4 matrix.
-    # The last 2 spatial axes are indices 1 and 2 (for y, x in z/y/x order).
-    src = (1, 2)
+    nd = transform.ndim
+    if nd == 3:
+        return transform.matrix
     m = np.eye(4, dtype=np.float32)
-    for out_i, si in enumerate(src):
-        for out_j, sj in enumerate(src):
-            m[out_i, out_j] = matrix[si, sj]
-        m[out_i, 3] = matrix[si, 3]
+    m[:nd, :nd] = transform.matrix[:nd, :nd]
+    for i in range(nd):
+        m[i, 3] = transform.matrix[i, nd]
     return m
 
 
 def _transform_slice_indices(
     slice_indices: dict[int, int],
-    ndim: int,
     transform: AffineTransform,
     store_shape: tuple[int, ...],
 ) -> dict[int, int]:
     """Map world-space slice positions to data-space voxel indices.
 
-    The transform is defined in data-axis order (axis 0, axis 1, axis 2)
-    matching the numpy array shape convention.  Only the last 3 data axes
-    are considered spatial; earlier axes (e.g. time, channel) pass through
-    unchanged.
+    The transform is N-dimensional and covers every data axis.  Each
+    world-space slice position is placed into an N-D point, the inverse
+    transform is applied, and the result is rounded and clamped to valid
+    voxel indices.
 
     Parameters
     ----------
     slice_indices : dict[int, int]
-        Axis → world-space slice position.
-    ndim : int
-        Number of data dimensions.
+        Axis -> world-space slice position.
     transform : AffineTransform
-        Data-to-world transform (its inverse maps world → data).
+        N-D data-to-world transform (its inverse maps world -> data).
     store_shape : tuple[int, ...]
         Shape of the data store, used for clamping.
 
     Returns
     -------
     dict[int, int]
-        Axis → data-space voxel index.
+        Axis -> data-space voxel index.
     """
     if not slice_indices:
         return slice_indices
 
-    # The transform operates on the last 3 data axes.
-    # Non-spatial axes (index < ndim - 3) pass through unchanged.
-    spatial_offset = ndim - 3  # axes >= this are spatial
-
-    world_pt = np.zeros(3, dtype=np.float64)
+    ndim = transform.ndim
+    world_pt = np.zeros(ndim, dtype=np.float64)
     for data_axis, world_pos in slice_indices.items():
-        spatial_idx = data_axis - spatial_offset
-        if 0 <= spatial_idx < 3:
-            world_pt[spatial_idx] = float(world_pos)
+        world_pt[data_axis] = float(world_pos)
 
     data_pt = transform.imap_coordinates(world_pt.reshape(1, -1)).flatten()
 
     result: dict[int, int] = {}
     for data_axis in slice_indices:
-        spatial_idx = data_axis - spatial_offset
-        if 0 <= spatial_idx < 3:
-            raw = float(data_pt[spatial_idx])
-        else:
-            raw = float(slice_indices[data_axis])
+        raw = float(data_pt[data_axis])
         idx = int(round(raw))
         idx = max(0, min(idx, store_shape[data_axis] - 1))
         result[data_axis] = idx
@@ -114,7 +109,7 @@ def _build_axis_selections(
 ) -> tuple[int | tuple[int, int], ...]:
     """Build axis_selections for a ChunkRequest from a DimsState.
 
-    Displayed axes receive ``(0, store_shape[axis])`` — the full extent.
+    Displayed axes receive ``(0, store_shape[axis])`` -- the full extent.
     Sliced axes receive their integer slice index.
 
     Parameters
@@ -148,8 +143,8 @@ def _build_axis_selections(
 class GFXImageMemoryVisual:
     """Render-layer visual for one ``ImageVisual`` backed by ``ImageMemoryStore``.
 
-    Owns a single pygfx node — either ``gfx.Image`` (render_mode=="2d") or
-    ``gfx.Volume`` (render_mode=="3d") — and a placeholder 1x1 or 2x2x2
+    Owns a single pygfx node -- either ``gfx.Image`` (render_mode=="2d") or
+    ``gfx.Volume`` (render_mode=="3d") -- and a placeholder 1x1 or 2x2x2
     texture that is replaced on the first ``on_data_ready[_2d]`` call.
 
     There is no brick cache, no LUT indirection, and no LOD selection. Every
@@ -181,12 +176,17 @@ class GFXImageMemoryVisual:
         self._render_mode = render_mode
         self._data_store = data_store
 
-        # Store the data-to-world transform.
+        # Store the data-to-world transform, auto-promoting if needed.
         if transform is None:
             from cellier.v2.transform import AffineTransform as _AT
 
-            transform = _AT.identity()
+            transform = _AT.identity(ndim=data_store.ndim)
+        elif transform.ndim < data_store.ndim:
+            transform = transform.expand_dims(data_store.ndim)
         self._transform: AffineTransform = transform
+
+        # Track displayed axes for lazy node matrix updates (Option C).
+        self._last_displayed_axes: tuple[int, ...] | None = None
 
         appearance = visual_model.appearance
         colormap = _make_colormap(appearance.color_map)
@@ -221,13 +221,8 @@ class GFXImageMemoryVisual:
             )
             self.node_2d = None
 
-        # Apply transform to the active node.
-        if self.node_3d is not None:
-            self.node_3d.local.matrix = self._transform.matrix
-        if self.node_2d is not None:
-            self.node_2d.local.matrix = _matrix_for_2d_node(
-                self._transform.matrix, self._data_store.ndim
-            )
+        # Node matrix is set lazily on first build_slice_request when we
+        # know the displayed axes.  Identity is fine as a placeholder.
 
     # ------------------------------------------------------------------
     # Properties
@@ -235,7 +230,7 @@ class GFXImageMemoryVisual:
 
     @property
     def n_levels(self) -> int:
-        """Always 1 — single-resolution in-memory store."""
+        """Always 1 -- single-resolution in-memory store."""
         return 1
 
     # ------------------------------------------------------------------
@@ -243,13 +238,31 @@ class GFXImageMemoryVisual:
     # ------------------------------------------------------------------
 
     def cancel_pending(self) -> None:
-        """No-op — in-memory visuals have no reserved GPU brick slots."""
+        """No-op -- in-memory visuals have no reserved GPU brick slots."""
 
     def cancel_pending_2d(self) -> None:
-        """No-op — in-memory visuals have no reserved GPU brick slots."""
+        """No-op -- in-memory visuals have no reserved GPU brick slots."""
 
     # ------------------------------------------------------------------
-    # Planning — build ChunkRequests (synchronous, < 1 ms)
+    # Node matrix update (Option C -- lazy, displayed-axes-aware)
+    # ------------------------------------------------------------------
+
+    def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Recompute and apply the pygfx node matrix for *displayed_axes*.
+
+        Called from ``build_slice_request*`` when displayed axes change,
+        and from ``on_transform_changed`` when the transform is updated.
+        """
+        self._last_displayed_axes = displayed_axes
+        sub = self._transform.set_slice(displayed_axes)
+        m = _pygfx_matrix(sub)
+        if self.node_3d is not None:
+            self.node_3d.local.matrix = m
+        if self.node_2d is not None:
+            self.node_2d.local.matrix = m
+
+    # ------------------------------------------------------------------
+    # Planning -- build ChunkRequests (synchronous, < 1 ms)
     # ------------------------------------------------------------------
 
     def build_slice_request_2d(
@@ -296,11 +309,13 @@ class GFXImageMemoryVisual:
         list[ChunkRequest]
             Always contains exactly one element.
         """
+        displayed = dims_state.selection.displayed_axes
+        if displayed != self._last_displayed_axes:
+            self._update_node_matrix(displayed)
+
         # Transform slice indices from world space to data space.
-        ndim = len(dims_state.axis_labels)
         transformed_indices = _transform_slice_indices(
             dims_state.selection.slice_indices,
-            ndim,
             self._transform,
             self._data_store.shape,
         )
@@ -362,11 +377,13 @@ class GFXImageMemoryVisual:
                 (0, self._data_store.shape[ax]) for ax in range(ndim)
             )
         else:
+            displayed = dims_state.selection.displayed_axes
+            if displayed != self._last_displayed_axes:
+                self._update_node_matrix(displayed)
+
             # Transform slice indices from world space to data space.
-            ndim = len(dims_state.axis_labels)
             transformed_indices = _transform_slice_indices(
                 dims_state.selection.slice_indices,
-                ndim,
                 self._transform,
                 self._data_store.shape,
             )
@@ -391,7 +408,7 @@ class GFXImageMemoryVisual:
         ]
 
     # ------------------------------------------------------------------
-    # Commit — receive data from AsyncSlicer and upload to GPU
+    # Commit -- receive data from AsyncSlicer and upload to GPU
     # ------------------------------------------------------------------
 
     def on_data_ready(self, batch: list[tuple[ChunkRequest, np.ndarray]]) -> None:
@@ -411,7 +428,7 @@ class GFXImageMemoryVisual:
 
         _request, data = batch[0]
 
-        # pygfx Volume expects (W, H, D) — transpose from numpy (D, H, W).
+        # pygfx Volume expects (W, H, D) -- transpose from numpy (D, H, W).
         data_wgpu = np.ascontiguousarray(data.T)
         tex = gfx.Texture(data_wgpu, dim=3, format="1xf4")
         self.node_3d.geometry = gfx.Geometry(grid=tex)
@@ -432,7 +449,7 @@ class GFXImageMemoryVisual:
 
         _request, data = batch[0]
 
-        # pygfx Image expects (W, H, 1) — transpose H↔W and add channel dim.
+        # pygfx Image expects (W, H, 1) -- transpose H<->W and add channel dim.
         data_wgpu = np.ascontiguousarray(data.T[:, :, np.newaxis])
         tex = gfx.Texture(data_wgpu, dim=2, format="1xf4")
         self.node_2d.geometry = gfx.Geometry(grid=tex)
@@ -450,13 +467,8 @@ class GFXImageMemoryVisual:
             Carries the new ``AffineTransform``.
         """
         self._transform = event.transform
-        matrix = event.transform.matrix
-        if self.node_3d is not None:
-            self.node_3d.local.matrix = matrix
-        if self.node_2d is not None:
-            self.node_2d.local.matrix = _matrix_for_2d_node(
-                matrix, self._data_store.ndim
-            )
+        if self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
 
     # ------------------------------------------------------------------
     # Appearance and visibility event handlers

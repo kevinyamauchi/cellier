@@ -23,12 +23,12 @@ class BaseTransform(BaseModel, ABC):
         Parameters
         ----------
         coordinates : np.ndarray
-            ``(n, 3)`` or ``(n, 4)`` array of points.
+            ``(n, ndim)`` or ``(n, ndim+1)`` array of points.
 
         Returns
         -------
         np.ndarray
-            ``(n, 3)`` transformed coordinates.
+            ``(n, ndim)`` transformed coordinates.
         """
         raise NotImplementedError
 
@@ -39,12 +39,12 @@ class BaseTransform(BaseModel, ABC):
         Parameters
         ----------
         coordinates : np.ndarray
-            ``(n, 3)`` or ``(n, 4)`` array of points.
+            ``(n, ndim)`` or ``(n, ndim+1)`` array of points.
 
         Returns
         -------
         np.ndarray
-            ``(n, 3)`` transformed coordinates.
+            ``(n, ndim)`` transformed coordinates.
         """
         raise NotImplementedError
 

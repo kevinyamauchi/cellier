@@ -56,7 +56,7 @@ from cellier.v2.render.shaders._block_volume import (
     build_lut_params_buffer_3d,
 )
 from cellier.v2.render.visuals._image_memory import (
-    _matrix_for_2d_node,
+    _pygfx_matrix,
     _transform_slice_indices,
 )
 
@@ -315,22 +315,25 @@ class GFXMultiscaleImageVisual:
         transform: AffineTransform | None = None,
     ) -> None:
         self.visual_model_id = visual_model_id
+        # ndim of the original data.
+        if volume_geometry is not None:
+            self._ndim = len(volume_geometry.level_shapes[0])
+        elif image_geometry_2d is not None:
+            self._ndim = len(image_geometry_2d.level_shapes[0])
+        else:
+            self._ndim = 3
         if transform is None:
             from cellier.v2.transform import AffineTransform as _AT
 
-            transform = _AT.identity()
+            transform = _AT.identity(ndim=self._ndim)
+        elif transform.ndim < self._ndim:
+            transform = transform.expand_dims(self._ndim)
         self._transform: AffineTransform = transform
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
         self._image_geometry_2d = image_geometry_2d
-        # ndim of the original data (needed for 2D matrix extraction).
-        if volume_geometry is not None:
-            self._ndim = len(volume_geometry.level_shapes[0])
-        elif image_geometry_2d is not None:
-            # 2D geometry stores 2D shapes; the full ndim is at least 2.
-            self._ndim = len(image_geometry_2d.level_shapes[0])
-        else:
-            self._ndim = 3
+        # Track displayed axes for lazy node matrix updates (Option C).
+        self._last_displayed_axes: tuple[int, ...] | None = None
         self._gpu_budget_bytes = gpu_budget_bytes
         self._frame_number = 0
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
@@ -401,7 +404,7 @@ class GFXMultiscaleImageVisual:
             self._inner_node_3d = inner
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
-            self.node_3d.local.matrix = self._transform.matrix
+            # Node matrix set lazily on first build_slice_request.
 
         # ── 2D node ─────────────────────────────────────────────────────
         self.node_2d: gfx.Group | None = None
@@ -415,9 +418,7 @@ class GFXMultiscaleImageVisual:
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
-            self.node_2d.local.matrix = _matrix_for_2d_node(
-                self._transform.matrix, self._ndim
-            )
+            # Node matrix set lazily on first build_slice_request_2d.
 
     @classmethod
     def from_cellier_model(
@@ -587,7 +588,8 @@ class GFXMultiscaleImageVisual:
             self._inner_node_3d = inner
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
-            self.node_3d.local.matrix = self._transform.matrix
+            if self._last_displayed_axes is not None:
+                self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map = {}
 
     def _rebuild_2d_resources(self) -> None:
@@ -616,10 +618,21 @@ class GFXMultiscaleImageVisual:
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
-            self.node_2d.local.matrix = _matrix_for_2d_node(
-                self._transform.matrix, self._ndim
-            )
+            if self._last_displayed_axes is not None:
+                self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map_2d = {}
+
+    # ── Node matrix update (Option C -- lazy, displayed-axes-aware) ──
+
+    def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Recompute and apply the pygfx node matrix for *displayed_axes*."""
+        self._last_displayed_axes = displayed_axes
+        sub = self._transform.set_slice(displayed_axes)
+        m = _pygfx_matrix(sub)
+        if self.node_3d is not None:
+            self.node_3d.local.matrix = m
+        if self.node_2d is not None:
+            self.node_2d.local.matrix = m
 
     # ── 3D SliceCoordinator interface ──────────────────────────────────
 
@@ -660,13 +673,21 @@ class GFXMultiscaleImageVisual:
         self._frame_number += 1
         geo = self._volume_geometry
 
-        # Transform world-space inputs to data space.
-        camera_pos = self._transform.imap_coordinates(
-            camera_pos_world.reshape(1, -1)
-        ).flatten()
+        # Lazy node matrix update when displayed axes change.
+        if dims_state is not None:
+            displayed = dims_state.selection.displayed_axes
+            if displayed != self._last_displayed_axes:
+                self._update_node_matrix(displayed)
+
+        # Camera / frustum are always 3D from pygfx -- use the 3D
+        # sub-transform (last 3 displayed axes) for inverse mapping.
+        sub_3d = self._transform.set_slice(
+            self._last_displayed_axes or tuple(range(self._ndim))[-3:]
+        )
+        camera_pos = sub_3d.imap_coordinates(camera_pos_world.reshape(1, -1)).flatten()
 
         if frustum_corners_world is not None:
-            corners_data = self._transform.imap_coordinates(
+            corners_data = sub_3d.imap_coordinates(
                 frustum_corners_world.reshape(-1, 3)
             ).reshape(frustum_corners_world.shape)
             frustum_planes = frustum_planes_from_corners(corners_data)
@@ -675,10 +696,8 @@ class GFXMultiscaleImageVisual:
 
         # Transform slice indices from world space to data space.
         if dims_state is not None and dims_state.selection.slice_indices:
-            ndim = len(dims_state.axis_labels)
             transformed_indices = _transform_slice_indices(
                 dims_state.selection.slice_indices,
-                ndim,
                 self._transform,
                 geo.level_shapes[0],
             )
@@ -909,41 +928,48 @@ class GFXMultiscaleImageVisual:
         block_size = geo2d.block_size
         n_levels = geo2d.n_levels
 
-        # Transform world-space camera position to data space.
-        camera_pos = self._transform.imap_coordinates(
-            camera_pos_world.reshape(1, -1)
+        # Lazy node matrix update when displayed axes change.
+        displayed = dims_state.selection.displayed_axes
+        if displayed != self._last_displayed_axes:
+            self._update_node_matrix(displayed)
+
+        # Camera / viewport are 2D from pygfx -- use the 2D
+        # sub-transform for inverse mapping.
+        sub_2d = self._transform.set_slice(displayed)
+        camera_pos_2d = sub_2d.imap_coordinates(
+            camera_pos_world[:2].reshape(1, -1)
         ).flatten()
+        # Pad to 3D for compatibility with downstream code.
+        camera_pos = np.array(
+            [camera_pos_2d[0], camera_pos_2d[1], 0.0], dtype=np.float32
+        )
 
         # Transform viewport AABB to data space via corners.
         if use_culling and view_min_world is not None and view_max_world is not None:
             cx = float(camera_pos_world[0])
             cy = float(camera_pos_world[1])
             half_w = world_width / 2.0
-            # Estimate world_height from aspect ratio if available,
-            # but the AABB is derived from passed bounds.
             half_h = (float(view_max_world[1]) - float(view_min_world[1])) / 2.0
-            corners_world = np.array(
+            corners_world_2d = np.array(
                 [
-                    [cx - half_w, cy - half_h, 0.0],
-                    [cx + half_w, cy - half_h, 0.0],
-                    [cx + half_w, cy + half_h, 0.0],
-                    [cx - half_w, cy + half_h, 0.0],
+                    [cx - half_w, cy - half_h],
+                    [cx + half_w, cy - half_h],
+                    [cx + half_w, cy + half_h],
+                    [cx - half_w, cy + half_h],
                 ],
                 dtype=np.float32,
             )
-            corners_data = self._transform.imap_coordinates(corners_world)
-            view_min = corners_data[:, :2].min(axis=0)
-            view_max = corners_data[:, :2].max(axis=0)
+            corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)
+            view_min = corners_data_2d.min(axis=0)
+            view_max = corners_data_2d.max(axis=0)
         else:
             view_min = None
             view_max = None
 
         # Transform slice indices from world space to data space.
         if dims_state.selection.slice_indices:
-            ndim = len(dims_state.axis_labels)
             transformed_indices = _transform_slice_indices(
                 dims_state.selection.slice_indices,
-                ndim,
                 self._transform,
                 geo2d.level_shapes[0],
             )
@@ -1118,11 +1144,8 @@ class GFXMultiscaleImageVisual:
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
         """Update stored transform and pygfx node matrix."""
         self._transform = event.transform
-        matrix = event.transform.matrix
-        if self.node_3d is not None:
-            self.node_3d.local.matrix = matrix
-        if self.node_2d is not None:
-            self.node_2d.local.matrix = _matrix_for_2d_node(matrix, self._ndim)
+        if self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
 
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         """Apply GPU-only appearance changes."""

@@ -398,20 +398,41 @@ def test_on_data_ready_noop_on_empty_batch(mock_gfx):
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
-def test_node_matrix_set_on_construction(mock_gfx):
+def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
+    """Node matrix is set on first build_slice_request, not construction."""
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
     from cellier.v2.transform import AffineTransform
 
     store = _make_store()
     model = _make_visual_model(store)
-    t = AffineTransform.from_translation((10.0, 20.0, 30.0))
+    t = AffineTransform.from_scale((4.0, 2.0, 3.0))
     visual = GFXImageMemoryVisual(model, store, render_mode="3d", transform=t)
 
+    # Before any slice request, _last_displayed_axes is None.
+    assert visual._last_displayed_axes is None
+
+    # Trigger a slice request with displayed axes (0, 1, 2).
+    dims = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(0, 1, 2),
+            slice_indices={},
+        ),
+    )
+    visual.build_slice_request(
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
+        thresholds=None,
+        dims_state=dims,
+    )
+    assert visual._last_displayed_axes == (0, 1, 2)
+    # set_slice((0,1,2)) from a 3D transform returns the full matrix.
     np.testing.assert_array_equal(visual.node_3d.local.matrix, t.matrix)
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
-def test_on_transform_changed_updates_node_and_field(mock_gfx):
+def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
+    """Transform change updates node matrix if displayed axes are known."""
     from cellier.v2.events._events import TransformChangedEvent
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
     from cellier.v2.transform import AffineTransform
@@ -420,7 +441,25 @@ def test_on_transform_changed_updates_node_and_field(mock_gfx):
     model = _make_visual_model(store)
     visual = GFXImageMemoryVisual(model, store, render_mode="2d")
 
-    new_t = AffineTransform.from_scale((3.0, 3.0, 3.0))
+    # First, trigger a slice to establish displayed axes.
+    dims = DimsState(
+        axis_labels=("z", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(1, 2),
+            slice_indices={0: 5},
+        ),
+    )
+    visual.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=800.0,
+        world_width=30.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=dims,
+    )
+
+    # Now change the transform.
+    new_t = AffineTransform.from_scale((3.0, 5.0, 7.0))
     event = TransformChangedEvent(
         source_id=uuid4(),
         scene_id=uuid4(),
@@ -430,8 +469,8 @@ def test_on_transform_changed_updates_node_and_field(mock_gfx):
     visual.on_transform_changed(event)
 
     assert visual._transform is new_t
-    # 2D node receives the sub-matrix for the last 2 spatial axes.
-    expected_2d = np.diag([3.0, 3.0, 1.0, 1.0]).astype(np.float32)
+    # 2D node receives set_slice((1, 2)) -> diag(5, 7) -> padded to 4x4.
+    expected_2d = np.diag([5.0, 7.0, 1.0, 1.0]).astype(np.float32)
     np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)
 
 
