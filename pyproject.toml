@@ -173,3 +173,4 @@ lod = "lod"
 ser = "ser"
 # nd = number of dimensions abbreviation (used as local variable)
 nd = "nd"
+dims = "dims"
