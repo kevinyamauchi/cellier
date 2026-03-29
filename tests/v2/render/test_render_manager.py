@@ -6,7 +6,7 @@ pygfx visuals and the AsyncSlicer.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -192,11 +192,7 @@ def test_scene_manager_build_slice_requests_all_visuals() -> None:
     sm.add_visual(v2)
 
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        result = sm.build_slice_requests(req, {})
+    result = sm.build_slice_requests(req, {})
 
     assert v1.visual_model_id in result
     assert v2.visual_model_id not in result
@@ -226,11 +222,7 @@ def test_scene_manager_build_slice_requests_target_filtering() -> None:
         scene_id=scene_id,
         target_visual_ids=frozenset({v1.visual_model_id}),
     )
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        result = sm.build_slice_requests(req, {})
+    result = sm.build_slice_requests(req, {})
 
     assert v1.visual_model_id in result
     assert v2.visual_model_id not in result
@@ -293,11 +285,7 @@ def _make_coordinator_with_scene(
 def test_slice_coordinator_submit_once_no_prior_task() -> None:
     coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        coordinator.submit(req, {})
+    coordinator.submit(req, {})
 
     assert len(stub_slicer.submitted) == 1
     assert len(stub_slicer.cancelled) == 0
@@ -307,12 +295,8 @@ def test_slice_coordinator_second_submit_cancels_first() -> None:
     """Second submit must cancel the first task and then submit a new one."""
     coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
 
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     assert len(stub_slicer.submitted) == 2
     assert len(stub_slicer.cancelled) == 1
@@ -323,11 +307,7 @@ def test_slice_coordinator_cancel_visual_releases_pending() -> None:
     coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
     visual = visuals[0]
 
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     visual.cancel_pending.reset_mock()
     coordinator.cancel_visual(scene_id, visual.visual_model_id)
@@ -341,11 +321,7 @@ def test_slice_coordinator_cancel_visual_only_affects_one() -> None:
     )
     v1, v2 = visuals
 
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     n_cancelled_before = len(stub_slicer.cancelled)
     coordinator.cancel_visual(scene_id, v1.visual_model_id)
@@ -358,11 +334,7 @@ def test_slice_coordinator_cancel_scene_cancels_all() -> None:
     coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene(
         n_visuals=2
     )
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
 
     coordinator.cancel_scene(scene_id)
     assert len(coordinator._active_slice_ids) == 0
@@ -503,13 +475,9 @@ def test_force_level_forwarded_to_visual() -> None:
     sm.add_visual(visual)
 
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        sm.build_slice_requests(
-            req, {visual.visual_model_id: VisualRenderConfig(force_level=2)}
-        )
+    sm.build_slice_requests(
+        req, {visual.visual_model_id: VisualRenderConfig(force_level=2)}
+    )
 
     _, kwargs = visual.build_slice_request.call_args
     assert kwargs.get("force_level") == 2
@@ -524,18 +492,14 @@ def test_force_level_none_forwarded_to_visual() -> None:
     sm.add_visual(visual)
 
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ):
-        sm.build_slice_requests(req, {})
+    sm.build_slice_requests(req, {})
 
     _, kwargs = visual.build_slice_request.call_args
     assert kwargs.get("force_level") is None
 
 
-def test_frustum_cull_false_passes_none_planes() -> None:
-    """frustum_cull=False must pass None for frustum_planes, skipping the call."""
+def test_frustum_cull_false_passes_none_corners() -> None:
+    """frustum_cull=False must pass None for frustum_corners_world."""
     scene_id = uuid4()
     sm = SceneManager(scene_id=scene_id, dim="3d")
     visual = _make_mock_visual()
@@ -543,35 +507,26 @@ def test_frustum_cull_false_passes_none_planes() -> None:
     sm.add_visual(visual)
 
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=np.zeros((6, 4)),
-    ) as mock_frustum:
-        sm.build_slice_requests(
-            req, {visual.visual_model_id: VisualRenderConfig(frustum_cull=False)}
-        )
+    sm.build_slice_requests(
+        req, {visual.visual_model_id: VisualRenderConfig(frustum_cull=False)}
+    )
 
-    mock_frustum.assert_not_called()
     _, kwargs = visual.build_slice_request.call_args
-    assert kwargs.get("frustum_planes") is None
+    assert kwargs.get("frustum_corners_world") is None
 
 
-def test_frustum_cull_true_passes_planes() -> None:
-    """frustum_cull=True (default) must compute and pass frustum planes."""
+def test_frustum_cull_true_passes_corners() -> None:
+    """frustum_cull=True (default) must pass frustum corners to the visual."""
     scene_id = uuid4()
     sm = SceneManager(scene_id=scene_id, dim="3d")
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
     sm.add_visual(visual)
 
-    fake_planes = np.ones((6, 4))
     req = _make_reslicing_request(scene_id=scene_id)
-    with patch(
-        "cellier.v2.render.scene_manager.frustum_planes_from_corners",
-        return_value=fake_planes,
-    ) as mock_frustum:
-        sm.build_slice_requests(req, {})
+    sm.build_slice_requests(req, {})
 
-    mock_frustum.assert_called_once()
     _, kwargs = visual.build_slice_request.call_args
-    assert kwargs.get("frustum_planes") is fake_planes
+    np.testing.assert_array_equal(
+        kwargs.get("frustum_corners_world"), req.frustum_corners
+    )

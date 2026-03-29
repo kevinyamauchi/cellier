@@ -125,6 +125,7 @@ ignore = [
 # Pydantic v2 models require these imports at runtime for field type resolution
 "src/cellier/v2/scene/*.py" = ["TCH001", "TCH003"]
 "src/cellier/v2/viewer_model.py" = ["TCH001", "TCH003"]
+"src/cellier/v2/visuals/_base_visual.py" = ["TCH001", "TCH003"]
 
 # https://docs.astral.sh/ruff/formatter/
 [tool.ruff.format]
@@ -170,3 +171,6 @@ ignore = [
 lod = "lod"
 # ser = serialization abbreviation (pydantic_core API uses _ser_schema suffixes)
 ser = "ser"
+# nd = number of dimensions abbreviation (used as local variable)
+nd = "nd"
+dims = "dims"

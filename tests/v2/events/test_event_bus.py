@@ -149,3 +149,9 @@ def test_subscriber_exception_propagates_after_others_run():
         bus.emit(_make_dims_event())
 
     assert order == ["raises", "second"]
+
+
+def test_transform_changed_event_in_catalogue():
+    from cellier.v2.events._events import CellierEventTypes, TransformChangedEvent
+
+    assert TransformChangedEvent in CellierEventTypes.__args__

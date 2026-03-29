@@ -19,6 +19,7 @@ from cellier.v2.events._events import (
     ResliceStartedEvent,
     SceneAddedEvent,
     SceneRemovedEvent,
+    TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
@@ -38,6 +39,7 @@ _ENTITY_FIELD: dict[type, str] = {
     FrameRenderedEvent: "canvas_id",
     VisualAddedEvent: "scene_id",
     VisualRemovedEvent: "scene_id",
+    TransformChangedEvent: "visual_id",
     SceneAddedEvent: "scene_id",
     SceneRemovedEvent: "scene_id",
 }

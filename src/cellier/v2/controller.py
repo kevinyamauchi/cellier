@@ -16,6 +16,7 @@ from cellier.v2.events import (
     EventBus,
     SceneAddedEvent,
     SubscriptionHandle,
+    TransformChangedEvent,
     VisualAddedEvent,
     VisualVisibilityChangedEvent,
 )
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import ImageAppearance
 
 
@@ -356,8 +358,9 @@ class CellierController:
         self._render_manager.add_visual(scene_id, gfx_visual, data)
         self._visual_to_scene[visual_model.id] = scene_id
 
-        # ── 6. Wire appearance bridge and EventBus subscriptions ────────
+        # ── 6. Wire appearance/transform bridges and EventBus subscriptions
         self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
@@ -367,6 +370,12 @@ class CellierController:
         self._event_bus.subscribe(
             VisualVisibilityChangedEvent,
             gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -425,6 +434,7 @@ class CellierController:
         self._render_manager.add_visual(scene_id, gfx_visual, data)
         self._visual_to_scene[visual_model.id] = scene_id
         self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
@@ -434,6 +444,12 @@ class CellierController:
         self._event_bus.subscribe(
             VisualVisibilityChangedEvent,
             gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -680,6 +696,30 @@ class CellierController:
                 scene_manager.scene.remove(old_node)
             if new_node is not None:
                 scene_manager.scene.add(new_node)
+
+    def _wire_transform(
+        self, visual: MultiscaleImageVisual | ImageVisual, scene_id: UUID
+    ) -> None:
+        """Subscribe to transform field changes on a visual model."""
+        visual.events.transform.connect(
+            self._make_transform_handler(visual.id, scene_id)
+        )
+
+    def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
+        """Return a handler that emits TransformChangedEvent and triggers reslice."""
+
+        def _on_transform(new_transform: AffineTransform) -> None:
+            self._event_bus.emit(
+                TransformChangedEvent(
+                    source_id=self._id,
+                    scene_id=scene_id,
+                    visual_id=visual_id,
+                    transform=new_transform,
+                )
+            )
+            self.reslice_scene(scene_id)
+
+        return _on_transform
 
     def _wire_appearance(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
