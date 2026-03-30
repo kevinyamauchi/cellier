@@ -90,6 +90,8 @@ def frustum_planes_from_corners(corners: np.ndarray) -> np.ndarray:
 def compute_brick_aabb_corners(
     brick_key: BlockKey3D,
     block_size: int,
+    level_scale_arr_shader: np.ndarray | None = None,
+    level_translation_arr_shader: np.ndarray | None = None,
 ) -> np.ndarray:
     """Return the 8 world-space AABB corners for a brick.
 
@@ -99,12 +101,31 @@ def compute_brick_aabb_corners(
         Grid address of the brick (level, gz, gy, gx).
     block_size : int
         Brick side length in voxels at level 1.
+    level_scale_arr_shader : ndarray, shape (n_levels, 3) or None
+        Per-level scale in shader order ``(x=W, y=H, z=D)``.
+    level_translation_arr_shader : ndarray, shape (n_levels, 3) or None
+        Per-level translation in shader order.
 
     Returns
     -------
     corners : ndarray, shape (8, 3)
     """
-    scale = 2 ** (brick_key.level - 1)
+    k = brick_key.level - 1
+    if level_scale_arr_shader is not None and level_translation_arr_shader is not None:
+        sv = level_scale_arr_shader[k]  # (sx, sy, sz) = (W, H, D)
+        tv = level_translation_arr_shader[k]
+        block_world = block_size * sv  # (3,) per-axis
+        min_corner = np.array(
+            [
+                brick_key.gx * block_world[0] + tv[0],  # x = W
+                brick_key.gy * block_world[1] + tv[1],  # y = H
+                brick_key.gz * block_world[2] + tv[2],  # z = D
+            ],
+            dtype=np.float64,
+        )
+        return min_corner + CORNER_OFFSETS * block_world  # (8, 3)
+
+    scale = 2**k
     block_world = float(block_size * scale)
     min_corner = np.array(
         [
@@ -126,6 +147,8 @@ def bricks_in_frustum_arr(
     arr: np.ndarray,
     block_size: int,
     frustum_planes: np.ndarray,
+    level_scale_arr_shader: np.ndarray | None = None,
+    level_translation_arr_shader: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Conservative AABB frustum test over a brick array.
 
@@ -139,6 +162,10 @@ def bricks_in_frustum_arr(
         Level-1 brick side length in voxels.
     frustum_planes : ndarray, shape (6, 4)
         Inward-pointing half-space planes.
+    level_scale_arr_shader : ndarray, shape (n_levels, 3) or None
+        Per-level scale in shader order ``(x=W, y=H, z=D)``.
+    level_translation_arr_shader : ndarray, shape (n_levels, 3) or None
+        Per-level translation in shader order.
 
     Returns
     -------
@@ -149,7 +176,11 @@ def bricks_in_frustum_arr(
     """
     M = len(arr)
     if M == 0:
-        return arr, {"build_corners_ms": 0.0, "einsum_ms": 0.0, "mask_ms": 0.0}
+        return arr, {
+            "build_corners_ms": 0.0,
+            "einsum_ms": 0.0,
+            "mask_ms": 0.0,
+        }
 
     levels = arr[:, 0]
     gz_c = arr[:, 1]
@@ -157,22 +188,44 @@ def bricks_in_frustum_arr(
     gx_c = arr[:, 3]
 
     t0 = time.perf_counter()
-    scales = np.left_shift(1, (levels - 1)).astype(np.float64)
-    bw = float(block_size) * scales
-    brick_mins = np.stack(
-        [
-            gx_c.astype(np.float64) * bw,
-            gy_c.astype(np.float64) * bw,
-            gz_c.astype(np.float64) * bw,
-        ],
-        axis=1,
-    )  # (M, 3)
 
-    # (M, 8, 3) via broadcasting
-    all_corners = (
-        brick_mins[:, np.newaxis, :]
-        + CORNER_OFFSETS[np.newaxis, :, :] * bw[:, np.newaxis, np.newaxis]
-    )
+    if level_scale_arr_shader is not None and level_translation_arr_shader is not None:
+        levels_idx = levels - 1  # 0-indexed
+        # (M, 3) per-axis brick widths in shader order (W, H, D).
+        bw = block_size * level_scale_arr_shader[levels_idx]
+        tv = level_translation_arr_shader[levels_idx]  # (M, 3)
+
+        brick_mins = np.stack(
+            [
+                gx_c.astype(np.float64) * bw[:, 0] + tv[:, 0],
+                gy_c.astype(np.float64) * bw[:, 1] + tv[:, 1],
+                gz_c.astype(np.float64) * bw[:, 2] + tv[:, 2],
+            ],
+            axis=1,
+        )  # (M, 3)
+
+        # (M, 8, 3) — per-axis brick widths broadcast over corners.
+        all_corners = (
+            brick_mins[:, np.newaxis, :]
+            + CORNER_OFFSETS[np.newaxis, :, :] * bw[:, np.newaxis, :]
+        )
+    else:
+        scales = np.left_shift(1, (levels - 1)).astype(np.float64)
+        bw = float(block_size) * scales
+        brick_mins = np.stack(
+            [
+                gx_c.astype(np.float64) * bw,
+                gy_c.astype(np.float64) * bw,
+                gz_c.astype(np.float64) * bw,
+            ],
+            axis=1,
+        )  # (M, 3)
+
+        all_corners = (
+            brick_mins[:, np.newaxis, :]
+            + CORNER_OFFSETS[np.newaxis, :, :] * bw[:, np.newaxis, np.newaxis]
+        )
+
     build_corners_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()

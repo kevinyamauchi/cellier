@@ -99,16 +99,24 @@ MAX_LEVELS = 10
 BLOCK_SCALES_DTYPE = np.dtype([(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)])
 
 
-def build_block_scales_buffer_2d(n_levels: int) -> Buffer:
+def build_block_scales_buffer_2d(
+    level_scale_vecs_data: list[np.ndarray] | None = None,
+    n_levels: int | None = None,
+) -> Buffer:
     """Build the block-scales uniform buffer.
 
     Level 0 is reserved (all zeros -- renders black).
-    Level k (1-indexed, 1 = finest) gets ``sj = 1 / 2^(k-1)``.
+    Level k (1-indexed, 1 = finest) gets ``1 / scale_factor`` per axis.
+
+    Input vectors are in data-axis order ``(sy, sx)``; shader
+    fields ``[0], [1]`` are ``(x=W, y=H)`` so the assignment reverses.
 
     Parameters
     ----------
-    n_levels : int
-        Number of LOD levels (e.g. 3).
+    level_scale_vecs_data : list[np.ndarray] or None
+        Per-level scale vectors in 2D data order ``(sy, sx)``.
+    n_levels : int or None
+        Fallback: number of LOD levels for power-of-2 scales.
 
     Returns
     -------
@@ -117,11 +125,20 @@ def build_block_scales_buffer_2d(n_levels: int) -> Buffer:
     """
     data = np.zeros((), dtype=BLOCK_SCALES_DTYPE)
 
-    for k in range(1, min(n_levels + 1, MAX_LEVELS)):
-        s = 1.0 / (2 ** (k - 1))
-        data[f"scale_{k}"][0] = s  # x
-        data[f"scale_{k}"][1] = s  # y
-        data[f"scale_{k}"][2] = 0.0  # unused z
-        # [3] stays 0.0
+    if level_scale_vecs_data is not None:
+        n = len(level_scale_vecs_data)
+        for k in range(1, min(n + 1, MAX_LEVELS)):
+            sv = level_scale_vecs_data[k - 1]  # data order: [sy, sx]
+            # shader x = W = data axis 1 (sx)
+            data[f"scale_{k}"][0] = 1.0 / float(sv[1])
+            # shader y = H = data axis 0 (sy)
+            data[f"scale_{k}"][1] = 1.0 / float(sv[0])
+            data[f"scale_{k}"][2] = 0.0  # unused z
+    elif n_levels is not None:
+        for k in range(1, min(n_levels + 1, MAX_LEVELS)):
+            s = 1.0 / (2 ** (k - 1))
+            data[f"scale_{k}"][0] = s  # x
+            data[f"scale_{k}"][1] = s  # y
+            data[f"scale_{k}"][2] = 0.0  # unused z
 
     return Buffer(data, force_contiguous=True)

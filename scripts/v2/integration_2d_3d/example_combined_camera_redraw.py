@@ -577,9 +577,11 @@ def main() -> None:
         _setup_debug_logging(args.debug_log)
 
     print("Opening tensorstore stores via MultiscaleZarrDataStore ...")
-    data_store = MultiscaleZarrDataStore(
+    data_store = MultiscaleZarrDataStore.from_scale_and_translation(
         zarr_path=str(args.zarr_path),
         scale_names=ZARR_SCALE_NAMES,
+        level_scales=[(1, 1, 1), (2, 2, 2), (4, 4, 4)],
+        level_translations=[(0, 0, 0), (0.5, 0.5, 0.5), (1.5, 1.5, 1.5)],
     )
     print(f"  {data_store.n_levels} levels opened.")
     for i, shape in enumerate(data_store.level_shapes):

@@ -45,15 +45,18 @@ CORNER_OFFSETS = np.array(
 def build_level_grids(
     base_layout: BlockLayout3D,
     n_levels: int,
+    level_shapes: list[tuple[int, ...]] | None = None,
+    scale_vecs_shader: list[np.ndarray] | None = None,
+    translation_vecs_shader: list[np.ndarray] | None = None,
 ) -> list[dict]:
     """Precompute static per-level coarse grid arrays.  Called once at startup.
 
     For level k (1-indexed):
 
-    - The coarse grid has dims ``ceil(gd / 2^(k-1))`` per axis.
-    - Every coarse brick in that grid is enumerated and its world-space
-      centre is computed.
-    - These arrays never change — camera position does not affect them.
+    - The coarse grid dims are computed from ``level_shapes`` (actual
+      voxel counts per level) instead of a power-of-2 assumption.
+    - World-space brick centres incorporate per-axis scale and
+      translation from the level transforms.
 
     Parameters
     ----------
@@ -61,6 +64,13 @@ def build_level_grids(
         Layout of the finest (level 1) resolution.
     n_levels : int
         Total number of LOD levels.
+    level_shapes : list[tuple[int, ...]] or None
+        ``(D, H, W)`` shape per level (data order).  When ``None``,
+        falls back to power-of-2 derivation from ``base_layout``.
+    scale_vecs_shader : list[np.ndarray] or None
+        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
+    translation_vecs_shader : list[np.ndarray] or None
+        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
 
     Returns
     -------
@@ -77,10 +87,20 @@ def build_level_grids(
 
     grids = []
     for level in range(1, n_levels + 1):
-        scale = 1 << (level - 1)  # 2^(level-1)
-        cgd = (gd + scale - 1) // scale  # ceil division
-        cgh = (gh + scale - 1) // scale
-        cgw = (gw + scale - 1) // scale
+        k = level - 1  # 0-indexed
+
+        # Coarse grid dimensions from actual level shapes.
+        if level_shapes is not None:
+            # data order: (D=axis0, H=axis1, W=axis2)
+            d_k, h_k, w_k = level_shapes[k]
+            cgd = (d_k + bs - 1) // bs  # z grid dim
+            cgh = (h_k + bs - 1) // bs  # y grid dim
+            cgw = (w_k + bs - 1) // bs  # x grid dim
+        else:
+            scale = 1 << k
+            cgd = (gd + scale - 1) // scale
+            cgh = (gh + scale - 1) // scale
+            cgw = (gw + scale - 1) // scale
 
         gz_c, gy_c, gx_c = np.meshgrid(
             np.arange(cgd, dtype=np.int32),
@@ -95,11 +115,22 @@ def build_level_grids(
         lvl_col = np.full(len(gz_c), level, dtype=np.int32)
         arr = np.stack([lvl_col, gz_c, gy_c, gx_c], axis=1)  # (M_k, 4)
 
-        bw = float(bs * scale)
         centres = np.empty((len(gz_c), 3), dtype=np.float64)
-        centres[:, 0] = (gx_c + 0.5) * bw  # x = W axis
-        centres[:, 1] = (gy_c + 0.5) * bw  # y = H axis
-        centres[:, 2] = (gz_c + 0.5) * bw  # z = D axis
+        if scale_vecs_shader is not None and translation_vecs_shader is not None:
+            sv = scale_vecs_shader[k]  # (sx, sy, sz) = (W, H, D)
+            tv = translation_vecs_shader[k]  # (tx, ty, tz)
+            bw_x = float(bs * sv[0])  # W axis
+            bw_y = float(bs * sv[1])  # H axis
+            bw_z = float(bs * sv[2])  # D axis
+            centres[:, 0] = (gx_c + 0.5) * bw_x + tv[0]  # x = W
+            centres[:, 1] = (gy_c + 0.5) * bw_y + tv[1]  # y = H
+            centres[:, 2] = (gz_c + 0.5) * bw_z + tv[2]  # z = D
+        else:
+            scale = 1 << k
+            bw = float(bs * scale)
+            centres[:, 0] = (gx_c + 0.5) * bw  # x = W axis
+            centres[:, 1] = (gy_c + 0.5) * bw  # y = H axis
+            centres[:, 2] = (gz_c + 0.5) * bw  # z = D axis
 
         grids.append({"arr": arr, "centres": centres})
 

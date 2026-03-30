@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 import numpy as np
 import pygfx as gfx
 
-from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image import ChunkRequest
 from cellier.v2.logging import _GPU_LOGGER, _PERF_LOGGER
 from cellier.v2.render._frustum import (
@@ -57,10 +56,11 @@ from cellier.v2.render.shaders._block_volume import (
 )
 from cellier.v2.render.visuals._image_memory import (
     _pygfx_matrix,
-    _transform_slice_indices,
 )
+from cellier.v2.transform import AffineTransform
 
 if TYPE_CHECKING:
+    from cellier.v2._state import AxisAlignedSelectionState, DimsState
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
@@ -74,12 +74,47 @@ if TYPE_CHECKING:
     from cellier.v2.render.block_cache._tile_manager_2d import (
         TileSlot as TileSlot2D,
     )
-    from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import MultiscaleImageVisual
 
 # Importing this module registers VolumeBlockShader with pygfx via the
 # @register_wgpu_render_function decorator.
 import cellier.v2.render.shaders._block_volume as _shader_reg  # noqa: F401
+
+# ---------------------------------------------------------------------------
+# Transform helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_scale_and_translation(
+    level_transforms: list[AffineTransform],
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Extract per-axis scale and translation vectors from level transforms.
+
+    Vectors are returned in data-axis order ``(axis0, axis1, ...) =
+    (z, y, x)``, matching the ``AffineTransform`` matrix convention.
+    Callers that feed these into world-space geometry functions must
+    convert to shader order ``(x, y, z)`` first.
+
+    Parameters
+    ----------
+    level_transforms : list[AffineTransform]
+        Per-level transforms mapping level-k voxel coords to level-0.
+
+    Returns
+    -------
+    scale_vecs : list[np.ndarray]
+        ``(ndim,)`` per level — diagonal of the spatial block.
+    translation_vecs : list[np.ndarray]
+        ``(ndim,)`` per level — translation column.
+    """
+    scale_vecs: list[np.ndarray] = []
+    translation_vecs: list[np.ndarray] = []
+    for t in level_transforms:
+        nd = t.ndim
+        scale_vecs.append(np.diag(t.matrix[:nd, :nd]).copy())
+        translation_vecs.append(t.matrix[:nd, nd].copy())
+    return scale_vecs, translation_vecs
+
 
 # ---------------------------------------------------------------------------
 # VolumeGeometry
@@ -99,10 +134,9 @@ class VolumeGeometry:
         Displayed-axis shape at each scale level, finest first.
         For 3D rendering this is ``(D, H, W)``; for 2D it is ``(H, W)``.
         The caller extracts the displayed dimensions before passing.
-    downscale_factors : list[int]
-        Downscale factor for each level relative to the original data,
-        e.g. ``[1, 2, 4]``.  Must have the same length as
-        ``level_shapes``.
+    level_transforms : list[AffineTransform]
+        Per-level transforms mapping level-k voxel coords to level-0.
+        ``level_transforms[0]`` must be the identity.
     block_size : int
         Rendering brick side length in voxels.
     """
@@ -110,41 +144,32 @@ class VolumeGeometry:
     def __init__(
         self,
         level_shapes: list[tuple[int, ...]],
-        downscale_factors: list[int],
+        level_transforms: list[AffineTransform],
         block_size: int,
     ) -> None:
-        self.downscale_factors = list(downscale_factors)
+        self.level_transforms = list(level_transforms)
         self.block_size = block_size
         self.n_levels = len(level_shapes)
+
+        ndim = level_transforms[0].ndim
+        assert np.allclose(
+            level_transforms[0].matrix, np.eye(ndim + 1)
+        ), "level_transforms[0] must be the identity"
+
+        # Data-axis order (z, y, x).
+        sv_data, tv_data = _extract_scale_and_translation(level_transforms)
+        self._scale_vecs_data = sv_data
+        self._translation_vecs_data = tv_data
+
+        # Shader/pygfx order (x=W, y=H, z=D).
+        self._scale_vecs_shader = [sv[[2, 1, 0]] for sv in sv_data]
+        self._translation_vecs_shader = [tv[[2, 1, 0]] for tv in tv_data]
+
+        # (n_levels, 3) arrays for vectorised hot-path lookups.
+        self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
+        self._translation_arr_shader = np.stack(self._translation_vecs_shader, axis=0)
+
         self._rebuild(level_shapes)
-
-    @classmethod
-    def from_cellier_model(
-        cls,
-        model: MultiscaleImageVisual,
-        level_shapes: list[tuple[int, ...]],
-        block_size: int,
-    ) -> VolumeGeometry:
-        """Build a ``VolumeGeometry`` from a ``MultiscaleImageVisual`` model.
-
-        Parameters
-        ----------
-        model : MultiscaleImageVisual
-            The visual model.  Only ``downscale_factors`` is read.
-        level_shapes : list[tuple[int, ...]]
-            Displayed-axis shape per level, finest first.
-        block_size : int
-            Rendering brick side length in voxels.
-
-        Returns
-        -------
-        VolumeGeometry
-        """
-        return cls(
-            level_shapes=level_shapes,
-            downscale_factors=model.downscale_factors,
-            block_size=block_size,
-        )
 
     def _rebuild(self, level_shapes: list[tuple[int, ...]]) -> None:
         self.level_shapes = list(level_shapes)
@@ -153,7 +178,13 @@ class VolumeGeometry:
             for shape in level_shapes
         ]
         self.base_layout = self.layouts[0]
-        self._level_grids = build_level_grids(self.base_layout, self.n_levels)
+        self._level_grids = build_level_grids(
+            self.base_layout,
+            self.n_levels,
+            level_shapes=self.level_shapes,
+            scale_vecs_shader=self._scale_vecs_shader,
+            translation_vecs_shader=self._translation_vecs_shader,
+        )
 
     def update(self, level_shapes: list[tuple[int, ...]]) -> None:
         """Rebuild from new level shapes after a DataStoreMutated event."""
@@ -179,6 +210,9 @@ class ImageGeometry2D:
         Tile side length in pixels.
     n_levels : int
         Number of LOD levels.
+    level_transforms : list[AffineTransform]
+        Per-level transforms mapping level-k voxel coords to level-0
+        in the 2D displayed-axis sub-space.
     """
 
     def __init__(
@@ -186,17 +220,46 @@ class ImageGeometry2D:
         level_shapes: list[tuple[int, int]],
         block_size: int,
         n_levels: int,
+        level_transforms: list[AffineTransform] | None = None,
     ) -> None:
         self.block_size = block_size
         self.n_levels = n_levels
         self.level_shapes = list(level_shapes)
+
+        # Build 2D transforms if not provided (fallback to identity).
+        if level_transforms is None:
+            level_transforms = [
+                AffineTransform.identity(ndim=2) for _ in range(n_levels)
+            ]
+        self.level_transforms = list(level_transforms)
+
+        # Data-axis order (H, W).
+        sv_data, tv_data = _extract_scale_and_translation(self.level_transforms)
+        self._scale_vecs_data = sv_data
+        self._translation_vecs_data = tv_data
+
+        # Shader order (x=W, y=H) — 2D reversal: sv[[1, 0]].
+        self._scale_vecs_shader = [sv[[1, 0]] for sv in sv_data]
+        self._translation_vecs_shader = [tv[[1, 0]] for tv in tv_data]
+
+        self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
+        self._translation_arr_shader = np.stack(self._translation_vecs_shader, axis=0)
+
+        # Scalar LOD factor per level (geometric mean of per-axis scales).
+        self._level_scale_factors = [float(np.sqrt(np.prod(sv))) for sv in sv_data]
 
         # Build 2D base layout from finest level (H, W).
         self.base_layout = BlockLayout2D.from_shape(
             shape=(level_shapes[0][0], level_shapes[0][1]),
             block_size=block_size,
         )
-        self._level_grids = build_tile_grids_2d(self.base_layout, n_levels)
+        self._level_grids = build_tile_grids_2d(
+            self.base_layout,
+            n_levels,
+            level_shapes=self.level_shapes,
+            scale_vecs_shader=self._scale_vecs_shader,
+            translation_vecs_shader=self._translation_vecs_shader,
+        )
 
     def update(self, level_shapes: list[tuple[int, int]]) -> None:
         """Rebuild from new level shapes after displayed axes change."""
@@ -205,7 +268,13 @@ class ImageGeometry2D:
             shape=(level_shapes[0][0], level_shapes[0][1]),
             block_size=self.block_size,
         )
-        self._level_grids = build_tile_grids_2d(self.base_layout, self.n_levels)
+        self._level_grids = build_tile_grids_2d(
+            self.base_layout,
+            self.n_levels,
+            level_shapes=self.level_shapes,
+            scale_vecs_shader=self._scale_vecs_shader,
+            translation_vecs_shader=self._translation_vecs_shader,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -234,21 +303,47 @@ def _build_axis_selections(
     sel: AxisAlignedSelectionState,
     ndim: int,
     display_coords: list[tuple[int, int]],
-    scale: int,
+    level_shape: tuple[int, ...],
+    world_to_level_k: AffineTransform,
 ) -> tuple[int | tuple[int, int], ...]:
     """Map brick/tile window coords and slice indices onto the full nD axis list.
 
     ``display_coords`` are in the order of ``sel.displayed_axes``.
-    Non-displayed axes get their slice index divided by ``scale``
-    (coarser levels correspond to smaller indices).
+    Non-displayed axes use ``world_to_level_k.map_coordinates`` to
+    map slice indices from world space to level-k voxel space.
+
+    Parameters
+    ----------
+    sel : AxisAlignedSelectionState
+        Current selection state.
+    ndim : int
+        Number of data dimensions.
+    display_coords : list[tuple[int, int]]
+        Padded coordinate ranges for displayed axes.
+    level_shape : tuple[int, ...]
+        Shape of the data at this level.
+    world_to_level_k : AffineTransform
+        Composed world→level-k transform (data-axis order).
     """
     display_pos = {ax: i for i, ax in enumerate(sel.displayed_axes)}
+
+    # Build N-D world-space point from slice indices.
+    world_pt = np.zeros(ndim, dtype=np.float64)
+    for ax, idx in sel.slice_indices.items():
+        world_pt[ax] = float(idx)
+
+    # Map to level-k voxel coords in one call.
+    level_k_pt = world_to_level_k.map_coordinates(world_pt.reshape(1, -1)).flatten()
+
     result: list[int | tuple[int, int]] = []
     for data_axis in range(ndim):
         if data_axis in display_pos:
             result.append(display_coords[display_pos[data_axis]])
         else:
-            result.append(sel.slice_indices[data_axis] // scale)
+            raw = float(level_k_pt[data_axis])
+            clamped = int(round(raw))
+            clamped = max(0, min(clamped, level_shape[data_axis] - 1))
+            result.append(clamped)
     return tuple(result)
 
 
@@ -313,25 +408,54 @@ class GFXMultiscaleImageVisual:
         interpolation: str = "linear",
         gpu_budget_bytes: int = 1 * 1024**3,
         transform: AffineTransform | None = None,
+        full_level_transforms: list[AffineTransform] | None = None,
+        full_level_shapes: list[tuple[int, ...]] | None = None,
     ) -> None:
         self.visual_model_id = visual_model_id
-        # ndim of the original data.
-        if volume_geometry is not None:
+
+        # ndim of the original data (not the displayed subspace).
+        if full_level_shapes is not None:
+            self._ndim = len(full_level_shapes[0])
+        elif volume_geometry is not None:
             self._ndim = len(volume_geometry.level_shapes[0])
         elif image_geometry_2d is not None:
             self._ndim = len(image_geometry_2d.level_shapes[0])
         else:
             self._ndim = 3
-        if transform is None:
-            from cellier.v2.transform import AffineTransform as _AT
 
-            transform = _AT.identity(ndim=self._ndim)
+        if transform is None:
+            transform = AffineTransform.identity(ndim=self._ndim)
         elif transform.ndim < self._ndim:
             transform = transform.expand_dims(self._ndim)
         self._transform: AffineTransform = transform
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
         self._image_geometry_2d = image_geometry_2d
+
+        # Full-ndim level transforms for composed world→level-k mapping.
+        # These are always in the original data dimensionality, separate
+        # from the displayed-subspace transforms on the geometry objects.
+        if full_level_transforms is not None:
+            self._level_transforms = list(full_level_transforms)
+        elif volume_geometry is not None:
+            self._level_transforms = volume_geometry.level_transforms
+        elif image_geometry_2d is not None:
+            self._level_transforms = image_geometry_2d.level_transforms
+        else:
+            self._level_transforms = []
+
+        # Full-ndim level shapes for _build_axis_selections (clamping
+        # non-displayed slice indices against the correct dimension).
+        if full_level_shapes is not None:
+            self._full_level_shapes = list(full_level_shapes)
+        elif volume_geometry is not None:
+            self._full_level_shapes = list(volume_geometry.level_shapes)
+        elif image_geometry_2d is not None:
+            self._full_level_shapes = list(image_geometry_2d.level_shapes)
+        else:
+            self._full_level_shapes = []
+
+        self._world_to_level_transforms = self._build_world_to_level_transforms()
         # Track displayed axes for lazy node matrix updates (Option C).
         self._last_displayed_axes: tuple[int, ...] | None = None
         self._gpu_budget_bytes = gpu_budget_bytes
@@ -361,7 +485,7 @@ class GFXMultiscaleImageVisual:
                 proxy_voxels_per_brick=volume_geometry.block_size,
             )
             self._block_scales_buffer_3d = build_block_scales_buffer_3d(
-                volume_geometry.downscale_factors
+                volume_geometry._scale_vecs_data
             )
 
         # ── 2D GPU resources (only when image_geometry_2d is provided) ─
@@ -383,7 +507,7 @@ class GFXMultiscaleImageVisual:
                 image_geometry_2d.base_layout, cache_parameters_2d
             )
             self._block_scales_buffer_2d = build_block_scales_buffer_2d(
-                image_geometry_2d.n_levels
+                level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
             )
 
         if colormap is None:
@@ -463,11 +587,18 @@ class GFXMultiscaleImageVisual:
             tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
         ]
 
+        # Extract displayed-subspace transforms for geometry objects.
+        displayed_transforms = [
+            t.set_slice(displayed_axes) for t in model.level_transforms
+        ]
+
         # Build 3D geometry only when 3D rendering is requested.
         volume_geometry: VolumeGeometry | None = None
         if "3d" in render_modes and len(displayed_axes) == 3:
-            volume_geometry = VolumeGeometry.from_cellier_model(
-                model, displayed_level_shapes, block_size
+            volume_geometry = VolumeGeometry(
+                level_shapes=displayed_level_shapes,
+                level_transforms=displayed_transforms,
+                block_size=block_size,
             )
 
         # Build 2D geometry only when 2D rendering is requested.
@@ -478,6 +609,7 @@ class GFXMultiscaleImageVisual:
                 level_shapes=level_shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
+                level_transforms=displayed_transforms,
             )
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
@@ -493,6 +625,9 @@ class GFXMultiscaleImageVisual:
             threshold=threshold,
             interpolation=interpolation,
             gpu_budget_bytes=gpu_budget_bytes,
+            transform=model.transform,
+            full_level_transforms=list(model.level_transforms),
+            full_level_shapes=list(level_shapes),
         )
 
     # ── Properties ─────────────────────────────────────────────────────
@@ -530,6 +665,9 @@ class GFXMultiscaleImageVisual:
         tuple[old_node, new_node]
             The previous and replacement pygfx nodes (may be ``None``).
         """
+        # Update full-ndim shapes (data fetching).
+        self._full_level_shapes = list(level_shapes)
+
         displayed_level_shapes = [
             tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
         ]
@@ -571,7 +709,7 @@ class GFXMultiscaleImageVisual:
             proxy_voxels_per_brick=geo.block_size,
         )
         self._block_scales_buffer_3d = build_block_scales_buffer_3d(
-            geo.downscale_factors
+            geo._scale_vecs_data
         )
         # Rebuild node preserving current appearance
         if self.node_3d is not None:
@@ -606,7 +744,9 @@ class GFXMultiscaleImageVisual:
         self._lut_params_buffer_2d = build_lut_params_buffer_2d(
             geo2d.base_layout, self._block_cache_2d.info
         )
-        self._block_scales_buffer_2d = build_block_scales_buffer_2d(geo2d.n_levels)
+        self._block_scales_buffer_2d = build_block_scales_buffer_2d(
+            level_scale_vecs_data=geo2d._scale_vecs_data,
+        )
         # Rebuild node preserving current appearance
         if self.node_2d is not None:
             colormap = self.material_2d.map
@@ -633,6 +773,30 @@ class GFXMultiscaleImageVisual:
             self.node_3d.local.matrix = m
         if self.node_2d is not None:
             self.node_2d.local.matrix = m
+
+    # ── Composed world→level-k transforms ───────────────────────────────
+
+    def _build_world_to_level_transforms(
+        self,
+    ) -> list[AffineTransform]:
+        """Precompute composed world→level-k transforms.
+
+        All transforms operate in data-axis order (z, y, x).
+        ``map_coordinates`` on a world-space point gives the level-k
+        voxel index.
+
+        Composition: ``inv_level @ inv_visual`` so that
+        ``map_coordinates(world_pt)`` applies inv_visual first
+        (world → level-0), then inv_level (level-0 → level-k).
+        """
+        inv_visual = AffineTransform(matrix=self._transform.inverse_matrix)
+        result: list[AffineTransform] = []
+        for lt in self._level_transforms:
+            inv_level = AffineTransform(matrix=lt.inverse_matrix)
+            # world → level-0 → level-k
+            composed = inv_level @ inv_visual
+            result.append(composed)
+        return result
 
     # ── 3D SliceCoordinator interface ──────────────────────────────────
 
@@ -694,21 +858,8 @@ class GFXMultiscaleImageVisual:
         else:
             frustum_planes = None
 
-        # Transform slice indices from world space to data space.
-        if dims_state is not None and dims_state.selection.slice_indices:
-            transformed_indices = _transform_slice_indices(
-                dims_state.selection.slice_indices,
-                self._transform,
-                geo.level_shapes[0],
-            )
-            dims_state = DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            )
-
+        # Slice indices are mapped per-level via composed transforms
+        # (world → level-k) inside _build_axis_selections.
         # 1. LOAD selection
         t0 = time.perf_counter()
         if force_level is not None:
@@ -739,7 +890,11 @@ class GFXMultiscaleImageVisual:
         if frustum_planes is not None:
             t0 = time.perf_counter()
             brick_arr, cull_timings = bricks_in_frustum_arr(
-                brick_arr, geo.block_size, frustum_planes
+                brick_arr,
+                geo.block_size,
+                frustum_planes,
+                level_scale_arr_shader=geo._scale_arr_shader,
+                level_translation_arr_shader=geo._translation_arr_shader,
             )
             frustum_cull_ms = (time.perf_counter() - t0) * 1000
             n_culled = n_total - len(brick_arr)
@@ -769,12 +924,16 @@ class GFXMultiscaleImageVisual:
             z0, y0, x0, z1, y1, x1 = _brick_key_to_padded_coords(
                 brick_key, geo.block_size, self._block_cache_3d.info.overlap
             )
-            scale = 2 ** (brick_key.level - 1)
+            level_index = brick_key.level - 1
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
                 axis_selections = _build_axis_selections(
-                    dims_state.selection, ndim, display_coords, scale
+                    dims_state.selection,
+                    ndim,
+                    display_coords,
+                    level_shape=self._full_level_shapes[level_index],
+                    world_to_level_k=self._world_to_level_transforms[level_index],
                 )
             else:
                 axis_selections = tuple(display_coords)
@@ -966,20 +1125,7 @@ class GFXMultiscaleImageVisual:
             view_min = None
             view_max = None
 
-        # Transform slice indices from world space to data space.
-        if dims_state.selection.slice_indices:
-            transformed_indices = _transform_slice_indices(
-                dims_state.selection.slice_indices,
-                self._transform,
-                geo2d.level_shapes[0],
-            )
-            dims_state = DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            )
+        # Slice indices mapped per-level via composed transforms.
 
         # 1. LOD selection
         t0 = time.perf_counter()
@@ -990,12 +1136,19 @@ class GFXMultiscaleImageVisual:
             world_width=world_width,
             lod_bias=lod_bias,
             force_level=force_level,
+            level_scale_factors=geo2d._level_scale_factors,
         )
         lod_select_ms = (time.perf_counter() - t0) * 1000
 
         # 2. Distance sort
         t0 = time.perf_counter()
-        tile_arr = sort_tiles_by_distance_2d(tile_arr, camera_pos, block_size)
+        tile_arr = sort_tiles_by_distance_2d(
+            tile_arr,
+            camera_pos,
+            block_size,
+            level_scale_arr_shader=geo2d._scale_arr_shader,
+            level_translation_arr_shader=geo2d._translation_arr_shader,
+        )
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
         # Convert to dict
@@ -1008,7 +1161,12 @@ class GFXMultiscaleImageVisual:
         if use_culling and view_min is not None and view_max is not None:
             t0 = time.perf_counter()
             required, n_culled = viewport_cull_2d(
-                required, block_size, view_min, view_max
+                required,
+                block_size,
+                view_min,
+                view_max,
+                level_scale_arr_shader=geo2d._scale_arr_shader,
+                level_translation_arr_shader=geo2d._translation_arr_shader,
             )
             cull_ms = (time.perf_counter() - t0) * 1000
 
@@ -1042,9 +1200,15 @@ class GFXMultiscaleImageVisual:
             y0, x0, y1, x1 = _block_key_2d_to_padded_coords(
                 tile_key, block_size, overlap
             )
-            scale = 2 ** (tile_key.level - 1)
+            level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections(sel, ndim, display_coords, scale)
+            axis_selections = _build_axis_selections(
+                sel,
+                ndim,
+                display_coords,
+                level_shape=self._full_level_shapes[level_index],
+                world_to_level_k=self._world_to_level_transforms[level_index],
+            )
 
             req = ChunkRequest(
                 chunk_request_id=chunk_id,
@@ -1144,6 +1308,7 @@ class GFXMultiscaleImageVisual:
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
         """Update stored transform and pygfx node matrix."""
         self._transform = event.transform
+        self._world_to_level_transforms = self._build_world_to_level_transforms()
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
 

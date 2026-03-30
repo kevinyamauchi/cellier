@@ -35,6 +35,22 @@ def _make_appearance(**kwargs) -> ImageAppearance:
     return ImageAppearance(**defaults)
 
 
+def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
+    """Build a 2-level test store with standard power-of-2 transforms."""
+    defaults = {
+        "zarr_path": str(small_zarr_store),
+        "scale_names": ["s0", "s1"],
+        "level_transforms": [
+            AffineTransform.identity(ndim=3),
+            AffineTransform.from_scale_and_translation(
+                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
+            ),
+        ],
+    }
+    defaults.update(kwargs)
+    return MultiscaleZarrDataStore(**defaults)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -50,9 +66,7 @@ def test_add_scene_registers_in_model():
 
 def test_add_data_store_registers_in_model(small_zarr_store):
     controller = CellierController()
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     result = controller.add_data_store(store)
     assert result is store
     assert store.id in controller._model.data.stores
@@ -62,9 +76,7 @@ def test_add_image_populates_scene_and_render_layer(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     appearance = _make_appearance(lod_bias=1.0, force_level=None, frustum_cull=True)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=appearance, name="vol"
@@ -83,9 +95,7 @@ def test_add_image_auto_registers_data_store(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -107,9 +117,7 @@ def test_reslice_scene_reads_appearance_fields(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     appearance = _make_appearance(lod_bias=2.5, force_level=1, frustum_cull=False)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=appearance, name="vol"
@@ -135,9 +143,7 @@ def test_to_file_roundtrip(tmp_path, small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -218,9 +224,7 @@ def test_appearance_bridge_color_map(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -242,9 +246,7 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -265,9 +267,7 @@ def test_appearance_bridge_force_level(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -288,9 +288,7 @@ def test_appearance_bridge_visible(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -330,9 +328,7 @@ def test_visual_added_event_emitted(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
 
     events = []
     controller._event_bus.subscribe(VisualAddedEvent, events.append)
@@ -365,9 +361,7 @@ def test_unsubscribe_all_cleans_up(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -420,9 +414,7 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
     controller = CellierController(camera_settle_threshold_s=threshold_s)
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store,
         scene_id=scene.id,
@@ -537,9 +529,7 @@ def test_wire_transform_emits_event(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
@@ -562,9 +552,7 @@ def test_transform_change_triggers_reslice(small_zarr_store):
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
-    store = MultiscaleZarrDataStore(
-        zarr_path=str(small_zarr_store), scale_names=["s0", "s1"]
-    )
+    store = _make_store(small_zarr_store)
     visual = controller.add_image(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
