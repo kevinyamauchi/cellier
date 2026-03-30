@@ -22,9 +22,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import tensorstore as ts
-from pydantic import ConfigDict, PrivateAttr
+from pydantic import ConfigDict, PrivateAttr, model_validator
 
 from cellier.v2.data._base_data_store import BaseDataStore
+from cellier.v2.transform import AffineTransform
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_requests import ChunkRequest
@@ -120,6 +121,10 @@ class MultiscaleZarrDataStore(BaseDataStore):
     scale_names :
         Ordered list of subdirectory names, finest → coarsest,
         e.g. ``["s0", "s1", "s2"]``.
+    level_transforms :
+        Per-level affine transforms mapping level-k voxel coords to
+        level-0 voxel coords. ``level_transforms[0]`` must be the
+        identity. Length must match ``scale_names``.
     name :
         Human-readable name for the store (inherited from
         ``BaseDataStore``; defaults to ``"multiscale zarr data store"``).
@@ -136,6 +141,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
     store_type: Literal["multiscale_zarr"] = "multiscale_zarr"
     zarr_path: str
     scale_names: list[str]
+    level_transforms: list[AffineTransform]
     name: str = "multiscale zarr data store"
 
     # ── Private tensorstore handles (not serialised) ────────────────────
@@ -144,10 +150,23 @@ class MultiscaleZarrDataStore(BaseDataStore):
     # Allow non-pydantic types in private attrs.
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    # ── Validation ─────────────────────────────────────────────────────
+
+    @model_validator(mode="after")
+    def _validate_level_transforms(self) -> MultiscaleZarrDataStore:
+        """Check that level_transforms length matches scale_names."""
+        if len(self.level_transforms) != len(self.scale_names):
+            raise ValueError(
+                f"level_transforms has {len(self.level_transforms)} entries "
+                f"but scale_names has {len(self.scale_names)} entries; "
+                f"they must match."
+            )
+        return self
+
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     def model_post_init(self, __context: Any) -> None:
-        """Open all tensorstore handles synchronously after model init.
+        """Open all tensorstore handles.
 
         Called automatically by pydantic after ``__init__``.
         Must run before ``QtAsyncio.run()`` starts the event loop.
@@ -155,6 +174,51 @@ class MultiscaleZarrDataStore(BaseDataStore):
         self._ts_stores = _open_ts_stores(
             pathlib.Path(self.zarr_path),
             self.scale_names,
+        )
+
+    # ── Convenience constructor ─────────────────────────────────────────
+
+    @classmethod
+    def from_scale_and_translation(
+        cls,
+        *,
+        zarr_path: str,
+        scale_names: list[str],
+        level_scales: list[tuple[float, ...]],
+        level_translations: list[tuple[float, ...]],
+        name: str = "multiscale zarr data store",
+    ) -> MultiscaleZarrDataStore:
+        """Construct from per-level scale and translation vectors.
+
+        Parameters
+        ----------
+        zarr_path :
+            Path to the root directory of the multiscale zarr store.
+        scale_names :
+            Ordered list of subdirectory names, finest → coarsest.
+        level_scales :
+            Per-level scale vectors. ``level_scales[0]`` should be all 1s.
+        level_translations :
+            Per-level translation vectors. ``level_translations[0]``
+            should be all 0s.
+        name :
+            Human-readable name for the store.
+        """
+        if len(level_scales) != len(level_translations):
+            raise ValueError(
+                f"level_scales has {len(level_scales)} entries but "
+                f"level_translations has {len(level_translations)} entries; "
+                f"they must match."
+            )
+        transforms = [
+            AffineTransform.from_scale_and_translation(scale=sc, translation=tr)
+            for sc, tr in zip(level_scales, level_translations)
+        ]
+        return cls(
+            zarr_path=zarr_path,
+            scale_names=scale_names,
+            level_transforms=transforms,
+            name=name,
         )
 
     # ── Read-only properties ────────────────────────────────────────────

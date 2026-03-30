@@ -406,12 +406,10 @@ class CellierController:
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
 
-        downscale_factors = [2**i for i in range(data.n_levels)]
-
         visual_model = MultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
-            downscale_factors=downscale_factors,
+            level_transforms=data.level_transforms,
             appearance=appearance,
         )
 

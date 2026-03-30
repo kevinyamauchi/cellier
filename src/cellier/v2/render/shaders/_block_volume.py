@@ -267,17 +267,23 @@ MAX_LEVELS = 10
 BLOCK_SCALES_DTYPE = np.dtype([(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)])
 
 
-def build_block_scales_buffer_3d(downscale_factors: list[int]) -> Buffer:
+def build_block_scales_buffer_3d(
+    level_scale_vecs_data: list[np.ndarray],
+) -> Buffer:
     """Build the block-scales uniform buffer.
 
     Level 0 is reserved (all zeros — renders black/out-of-bounds).
-    Level k (1-indexed) gets ``s = 1 / downscale_factors[k-1]`` on
-    all three axes.
+    Level k (1-indexed) gets ``1 / scale_factor`` per axis.
+
+    Input vectors are in data-axis order ``(sz, sy, sx)``; shader
+    fields ``[0], [1], [2]`` are ``(x=W, y=H, z=D)`` so the
+    assignment reverses the index.
 
     Parameters
     ----------
-    downscale_factors : list[int]
-        Downscale factor per level, e.g. ``[1, 2, 4]``.
+    level_scale_vecs_data : list[np.ndarray]
+        Per-level scale vectors in data order, e.g.
+        ``[array([1,1,1]), array([2,2,2]), array([4,4,4])]``.
 
     Returns
     -------
@@ -286,12 +292,13 @@ def build_block_scales_buffer_3d(downscale_factors: list[int]) -> Buffer:
     """
     data = np.zeros((), dtype=BLOCK_SCALES_DTYPE)
 
-    for k, factor in enumerate(downscale_factors, start=1):
-        if k >= MAX_LEVELS:
-            break
-        s = 1.0 / float(factor)
-        data[f"scale_{k}"][0] = s  # x
-        data[f"scale_{k}"][1] = s  # y
-        data[f"scale_{k}"][2] = s  # z
+    for k in range(1, min(len(level_scale_vecs_data) + 1, MAX_LEVELS)):
+        sv = level_scale_vecs_data[k - 1]  # data order: [sz, sy, sx]
+        # shader x = W = data axis 2 (sx)
+        data[f"scale_{k}"][0] = 1.0 / float(sv[2])
+        # shader y = H = data axis 1 (sy)
+        data[f"scale_{k}"][1] = 1.0 / float(sv[1])
+        # shader z = D = data axis 0 (sz)
+        data[f"scale_{k}"][2] = 1.0 / float(sv[0])
 
     return Buffer(data, force_contiguous=True)

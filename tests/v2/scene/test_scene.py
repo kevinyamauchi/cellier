@@ -6,6 +6,7 @@ from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.v2.scene.canvas import Canvas
 from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
+from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 
 
@@ -20,7 +21,12 @@ def test_scene_roundtrip(tmp_path):
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(uuid.uuid4()),
-        downscale_factors=[1, 2],
+        level_transforms=[
+            AffineTransform.identity(ndim=3),
+            AffineTransform.from_scale_and_translation(
+                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
+            ),
+        ],
         appearance=ImageAppearance(color_map="viridis"),
     )
     camera = PerspectiveCamera(controller=OrbitCameraController())

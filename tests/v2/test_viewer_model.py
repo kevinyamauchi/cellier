@@ -5,6 +5,7 @@ from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.v2.scene.canvas import Canvas
 from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
+from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 
@@ -13,6 +14,12 @@ def _build_viewer(small_zarr_store):
     store = MultiscaleZarrDataStore(
         zarr_path=str(small_zarr_store),
         scale_names=["s0", "s1"],
+        level_transforms=[
+            AffineTransform.identity(ndim=3),
+            AffineTransform.from_scale_and_translation(
+                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
+            ),
+        ],
         name="test_volume",
     )
     data = DataManager(stores={store.id: store})
@@ -27,7 +34,12 @@ def _build_viewer(small_zarr_store):
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(store.id),
-        downscale_factors=[1, 2],
+        level_transforms=[
+            AffineTransform.identity(ndim=3),
+            AffineTransform.from_scale_and_translation(
+                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
+            ),
+        ],
         appearance=appearance,
     )
 

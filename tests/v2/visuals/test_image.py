@@ -11,6 +11,22 @@ from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 
 
+def _make_level_transforms_3d(factors):
+    """Build level transforms from integer downscale factors."""
+    transforms = []
+    for k, f in enumerate(factors):
+        s = float(f)
+        if k == 0:
+            transforms.append(AffineTransform.identity(ndim=3))
+        else:
+            transforms.append(
+                AffineTransform.from_scale_and_translation(
+                    (s, s, s), ((s - 1) / 2,) * 3
+                )
+            )
+    return transforms
+
+
 def test_image_appearance_roundtrip(tmp_path):
     # Non-default values including the new LOD/frustum fields
     original = ImageAppearance(
@@ -38,10 +54,11 @@ def test_image_appearance_roundtrip(tmp_path):
 
 def test_multiscale_image_visual_roundtrip(tmp_path):
     store_id = str(uuid.uuid4())
+    transforms = _make_level_transforms_3d([1, 2, 4])
     original = MultiscaleImageVisual(
         name="volume",
         data_store_id=store_id,
-        downscale_factors=[1, 2, 4],
+        level_transforms=transforms,
         appearance=ImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
@@ -54,6 +71,27 @@ def test_multiscale_image_visual_roundtrip(tmp_path):
     path.write_text(original.model_dump_json())
     deserialized = MultiscaleImageVisual.model_validate_json(path.read_text())
     assert original.model_dump_json() == deserialized.model_dump_json()
+
+
+def test_multiscale_image_visual_migration_from_downscale_factors():
+    v = MultiscaleImageVisual(
+        name="vol",
+        data_store_id="00000000-0000-0000-0000-000000000000",
+        downscale_factors=[1, 2, 4],
+        appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+    )
+    assert len(v.level_transforms) == 3
+    np.testing.assert_allclose(
+        v.level_transforms[0].matrix, np.eye(4, dtype=np.float32)
+    )
+    np.testing.assert_allclose(
+        np.diag(v.level_transforms[1].matrix[:3, :3]),
+        [2.0, 2.0, 2.0],
+    )
+    np.testing.assert_allclose(
+        v.level_transforms[1].matrix[:3, 3],
+        [0.5, 0.5, 0.5],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +112,7 @@ def test_multiscale_image_visual_requires_camera_reslice_true():
     v = MultiscaleImageVisual(
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
-        downscale_factors=[1, 2],
+        level_transforms=_make_level_transforms_3d([1, 2]),
         appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
     )
     assert v.requires_camera_reslice is True
@@ -84,7 +122,7 @@ def test_requires_camera_reslice_is_frozen():
     v = MultiscaleImageVisual(
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
-        downscale_factors=[1, 2],
+        level_transforms=_make_level_transforms_3d([1, 2]),
         appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
     )
     with pytest.raises((ValidationError, TypeError)):
@@ -116,7 +154,7 @@ def test_visual_roundtrip_with_non_identity_transform():
     v = MultiscaleImageVisual(
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
-        downscale_factors=[1, 2],
+        level_transforms=_make_level_transforms_3d([1, 2]),
         appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
         transform=t,
     )

@@ -1,10 +1,11 @@
 """Visuals for representing image data."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from cmap import Colormap
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
 
@@ -51,8 +52,9 @@ class MultiscaleImageVisual(BaseVisual):
         The name of the visual
     data_store_id : str
         The id of the data store to be visualized.
-    downscale_factors : list[int]
-        The downscale factors for each scale level of the labels.
+    level_transforms : list[AffineTransform]
+        Per-level transforms mapping level-k voxel coords to level-0
+        voxel coords.  ``level_transforms[0]`` is the identity.
     appearance : ImageAppearance
         The material to use for the labels visual.
     pick_write : bool
@@ -66,6 +68,33 @@ class MultiscaleImageVisual(BaseVisual):
 
     visual_type: Literal["multiscale_image"] = "multiscale_image"
     data_store_id: str
-    downscale_factors: list[int]
+    level_transforms: list[AffineTransform]
     appearance: ImageAppearance
     requires_camera_reslice: bool = Field(default=True, frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_downscale_factors(cls, data: Any) -> Any:
+        """Convert legacy ``downscale_factors`` to ``level_transforms``."""
+        if (
+            isinstance(data, dict)
+            and "downscale_factors" in data
+            and "level_transforms" not in data
+        ):
+            factors = data.pop("downscale_factors")
+            ndim = 3  # historical default
+            transforms: list[AffineTransform] = []
+            for k, f in enumerate(factors):
+                s = float(f)
+                if k == 0:
+                    transforms.append(AffineTransform.identity(ndim=ndim))
+                else:
+                    scale = tuple(s for _ in range(ndim))
+                    translation = tuple((s - 1) / 2 for _ in range(ndim))
+                    transforms.append(
+                        AffineTransform.from_scale_and_translation(
+                            scale=scale, translation=translation
+                        )
+                    )
+            data["level_transforms"] = transforms
+        return data
