@@ -553,7 +553,7 @@ class GFXMultiscaleImageVisual:
         render_modes: set[str],
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
-        threshold: float = 0.5,
+        threshold: float | None = None,
         interpolation: str = "linear",
     ) -> GFXMultiscaleImageVisual:
         """Build a ``GFXMultiscaleImageVisual`` from a ``MultiscaleImageVisual`` model.
@@ -573,8 +573,9 @@ class GFXMultiscaleImageVisual:
             Rendering brick side length in voxels.
         gpu_budget_bytes : int
             Maximum GPU memory for the brick cache.
-        threshold : float
-            Isosurface threshold for 3D raycast rendering.
+        threshold : float or None
+            Deprecated. Use ``model.appearance.iso_threshold`` instead.
+            When provided, overrides the appearance value.
         interpolation : str
             Sampler filter (``"linear"`` or ``"nearest"``).
 
@@ -614,6 +615,9 @@ class GFXMultiscaleImageVisual:
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
+        effective_threshold = (
+            threshold if threshold is not None else model.appearance.iso_threshold
+        )
 
         return cls(
             visual_model_id=model.id,
@@ -622,7 +626,7 @@ class GFXMultiscaleImageVisual:
             render_modes=render_modes,
             colormap=colormap,
             clim=clim,
-            threshold=threshold,
+            threshold=effective_threshold,
             interpolation=interpolation,
             gpu_budget_bytes=gpu_budget_bytes,
             transform=model.transform,
@@ -1332,6 +1336,9 @@ class GFXMultiscaleImageVisual:
                 self.material_3d.clim = event.new_value
             if self.material_2d is not None:
                 self.material_2d.clim = event.new_value
+        elif event.field_name == "iso_threshold":
+            if self.material_3d is not None:
+                self.material_3d.threshold = float(event.new_value)
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""

@@ -251,7 +251,7 @@ class CellierController:
         name: str = ...,
         block_size: int = ...,
         gpu_budget_bytes: int = ...,
-        threshold: float = ...,
+        threshold: float | None = ...,
         interpolation: str = ...,
     ) -> MultiscaleImageVisual: ...
 
@@ -263,7 +263,7 @@ class CellierController:
         name: str = "image",
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
-        threshold: float = 0.2,
+        threshold: float | None = None,
         interpolation: str = "linear",
     ) -> MultiscaleImageVisual | ImageVisual:
         """Add an image visual to a scene.
@@ -396,12 +396,16 @@ class CellierController:
         name: str,
         block_size: int,
         gpu_budget_bytes: int,
-        threshold: float,
+        threshold: float | None,
         interpolation: str,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene."""
         if data.id not in self._model.data.stores:
             self._model.data.stores[data.id] = data
+
+        # Write explicit threshold into appearance for backward compat.
+        if threshold is not None:
+            appearance.iso_threshold = threshold
 
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
@@ -425,7 +429,6 @@ class CellierController:
             render_modes=render_modes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
-            threshold=threshold,
             interpolation=interpolation,
         )
 
