@@ -35,8 +35,12 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
     """Embed a 2-D or 3-D AffineTransform into a pygfx-compatible 4x4 matrix.
 
     pygfx always requires a 4x4 matrix for ``node.local.matrix``.  This
-    function places the transform's spatial block and translation into the
-    correct positions of a 4x4 identity matrix.
+    function converts from data-axis order to pygfx/shader order and
+    places the transform into the correct positions of a 4x4 identity
+    matrix.
+
+    Data-axis order is ``(z, y, x)`` for 3D and ``(y, x)`` for 2D.
+    pygfx uses ``(x, y, z)`` order, so the spatial axes are reversed.
 
     Parameters
     ----------
@@ -49,12 +53,14 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
         A ``(4, 4)`` float32 matrix.
     """
     nd = transform.ndim
-    if nd == 3:
-        return transform.matrix
+    src = transform.matrix
+    # Reverse axis order: data (z, y, x) → pygfx (x, y, z).
+    swap = list(reversed(range(nd)))
     m = np.eye(4, dtype=np.float32)
-    m[:nd, :nd] = transform.matrix[:nd, :nd]
-    for i in range(nd):
-        m[i, 3] = transform.matrix[i, nd]
+    for dst_i, src_i in enumerate(swap):
+        for dst_j, src_j in enumerate(swap):
+            m[dst_i, dst_j] = src[src_i, src_j]
+        m[dst_i, 3] = src[src_i, nd]
     return m
 
 

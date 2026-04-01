@@ -32,6 +32,8 @@ class ImageAppearance(BaseAppearance):
     frustum_cull : bool
         When True, bricks outside the camera frustum are skipped during
         brick planning. Default is True.
+    iso_threshold : float
+        Isosurface threshold for 3D raycast rendering. Default is 0.2.
     """
 
     color_map: Colormap
@@ -39,6 +41,7 @@ class ImageAppearance(BaseAppearance):
     lod_bias: float = 1.0
     force_level: int | None = None
     frustum_cull: bool = True
+    iso_threshold: float = 0.2
 
 
 class MultiscaleImageVisual(BaseVisual):

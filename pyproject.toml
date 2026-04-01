@@ -45,6 +45,7 @@ dependencies = [
     "scipy>=1.15.2",
     "superqt>=0.7.2",
     "tensorstore>=0.1.74",
+    "yaozarrs>=0.2",
     "zarr",
 ]
 
@@ -52,6 +53,9 @@ dependencies = [
 # "extras" (e.g. for `pip install .[test]`)
 [project.optional-dependencies]
 # add dependencies used for testing here
+remote = [
+    "yaozarrs[io]>=0.2",   # adds fsspec for S3/GCS/HTTP metadata reading
+]
 pyside = ["PySide6"]
 pyqt = ["PyQt6"]
 test = [
@@ -136,7 +140,10 @@ skip-magic-trailing-comma = false  # default is false
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:'asyncio.AbstractEventLoopPolicy':DeprecationWarning",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
