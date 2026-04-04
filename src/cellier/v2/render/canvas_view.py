@@ -74,6 +74,7 @@ class CanvasView:
         self._dim = dim
         self._event_bus: EventBus | None = event_bus
         self._camera_dirty: bool = False
+        self._tick_visuals_fn: Callable[[], None] | None = None
 
         self._canvas = QRenderWidget(parent=parent, update_mode="continuous")
         self._renderer = gfx.WgpuRenderer(self._canvas)
@@ -313,6 +314,9 @@ class CanvasView:
                     camera_state=current_state,
                 )
             )
+
+        if self._tick_visuals_fn is not None:
+            self._tick_visuals_fn()
 
         scene = self._get_scene_fn(self._scene_id)
         self._renderer.render(scene, self._camera)
