@@ -134,12 +134,13 @@ fn sample_atlas_nearest(
 // ── Brick setup ───────────────────────────────────────────────────────────
 
 struct BrickInfo {
-    lut_entry: vec4<u32>,
-    lod_scale: vec3<f32>,
-    t_end:     f32,
-    num_steps: u32,
-    step_size: f32,
-    valid:     bool,
+    lut_entry:  vec4<u32>,
+    lod_scale:  vec3<f32>,
+    t_end:      f32,
+    num_steps:  u32,
+    step_size:  f32,
+    brick_max:  f32,
+    valid:      bool,
 };
 
 fn setup_brick(
@@ -185,6 +186,7 @@ fn setup_brick(
     // 4. LUT lookup.
     let lut_entry  = textureLoad(t_lut, safe_idx, 0);
     info.lut_entry = lut_entry;
+    info.brick_max = textureLoad(t_brick_max, safe_idx, 0).r;
     info.valid     = lut_entry.w > 0u;   // w==0 → not yet loaded
 
     // 5. If valid, compute step budget.
@@ -192,7 +194,8 @@ fn setup_brick(
         info.lod_scale = get_lod_scale(lut_entry.w);
         let brick_len       = max(info.t_end - t, 1e-6);
         let brick_world_len = length(brick_max_n - brick_min_n);
-        info.num_steps = max(1u, u32(STEPS_PER_BRICK * brick_len / brick_world_len));
+        let max_scale  = max(info.lod_scale.x, max(info.lod_scale.y, info.lod_scale.z));
+        info.num_steps = max(1u, u32((STEPS_PER_BRICK / max_scale) * brick_len / brick_world_len));
         info.step_size = brick_len / f32(info.num_steps);
     }
 
@@ -353,6 +356,14 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             prev_density = 0.0;
             continue;
         }
+
+        $$ if render_mode == 'mip'
+        // MIP early-out: skip bricks whose max can't beat our running maximum.
+        if (brick.brick_max <= max_density) {
+            t = brick.t_end + 0.0001;
+            continue;
+        }
+        $$ endif
 
         // Capture for post-loop bisection (ISO only, but always written).
         surface_lut_entry = brick.lut_entry;

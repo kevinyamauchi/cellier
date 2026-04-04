@@ -20,6 +20,9 @@ class LutIndirectionManager3D:
     finest-level grid and encodes ``(sx, sy, sz, level)`` — the cache
     slot where that brick (or its best coarser fallback) currently lives.
 
+    A companion ``brick_max_tex`` (R32Float, same grid dimensions) stores
+    the maximum intensity per brick for MIP early-out.
+
     Notes
     -----
     Channel assignments follow the axis convention:
@@ -53,6 +56,11 @@ class LutIndirectionManager3D:
         All zeros = out-of-bounds (level 0, renders the null color).
     lut_tex : gfx.Texture
         GPU RGBA8UI 3-D texture wrapping ``lut_data``.
+    brick_max_data : np.ndarray
+        CPU backing array, shape ``(gD, gH, gW)``, dtype float32.
+        Stores per-brick maximum intensity for MIP early-out.
+    brick_max_tex : gfx.Texture
+        GPU R32Float 3-D texture wrapping ``brick_max_data``.
     """
 
     def __init__(
@@ -65,6 +73,7 @@ class LutIndirectionManager3D:
         self._n_levels = n_levels
         self._level_scale_vecs_data = level_scale_vecs_data
         self.lut_data, self.lut_tex = build_lut_texture(base_layout)
+        self.brick_max_data, self.brick_max_tex = build_brick_max_texture(base_layout)
 
     # ------------------------------------------------------------------
     # GPU writes
@@ -91,6 +100,8 @@ class LutIndirectionManager3D:
             self._n_levels,
             self.lut_data,
             self.lut_tex,
+            self.brick_max_data,
+            self.brick_max_tex,
             level_scale_vecs_data=self._level_scale_vecs_data,
         )
 
@@ -125,12 +136,37 @@ def build_lut_texture(base_layout: BlockLayout3D) -> tuple[np.ndarray, gfx.Textu
     return lut_data, lut_tex
 
 
+def build_brick_max_texture(
+    base_layout: BlockLayout3D,
+) -> tuple[np.ndarray, gfx.Texture]:
+    """Allocate the per-brick max intensity texture (zeroed).
+
+    Parameters
+    ----------
+    base_layout : BlockLayout
+        Layout of the finest (level 1) resolution.
+
+    Returns
+    -------
+    brick_max_data : np.ndarray
+        Backing float32 array of shape ``(gD, gH, gW)``.
+    brick_max_tex : gfx.Texture
+        R32Float 3D texture.
+    """
+    gd, gh, gw = base_layout.grid_dims
+    brick_max_data = np.zeros((gd, gh, gw), dtype=np.float32)
+    brick_max_tex = gfx.Texture(brick_max_data, dim=3, format="r32float")
+    return brick_max_data, brick_max_tex
+
+
 def rebuild_lut(
     base_layout: BlockLayout3D,
     tile_manager: TileManager,
     n_levels: int,
     lut_data: np.ndarray,
     lut_tex: gfx.Texture,
+    brick_max_data: np.ndarray,
+    brick_max_tex: gfx.Texture,
     level_scale_vecs_data: list | None = None,
 ) -> None:
     """Rebuild the full LUT from the current tile manager state.
@@ -152,6 +188,10 @@ def rebuild_lut(
         Backing uint8 array ``(gD, gH, gW, 4)`` to overwrite.
     lut_tex : gfx.Texture
         The LUT texture to schedule for GPU upload.
+    brick_max_data : np.ndarray
+        Backing float32 array ``(gD, gH, gW)`` to overwrite.
+    brick_max_tex : gfx.Texture
+        The brick-max texture to schedule for GPU upload.
     level_scale_vecs_data : list of ndarray, optional
         Per-level scale vectors in data order ``(sz, sy, sx)``.  Entry ``k``
         is the downscale factor of level ``k+1`` (1-indexed) relative to
@@ -162,6 +202,7 @@ def rebuild_lut(
     gd, gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset everything to out-of-bounds (level 0 = black).
+    brick_max_data[:] = 0.0
 
     # Group resident bricks by level so we can iterate each level once.
     by_level: dict[int, list] = {}
@@ -197,5 +238,7 @@ def rebuild_lut(
             gx1 = min(gx0 + gx_scale, gw)
             # Single numpy slice assignment — fills the block at C speed.
             lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
+            brick_max_data[gz0:gz1, gy0:gy1, gx0:gx1] = slot.brick_max
 
     lut_tex.update_range((0, 0, 0), lut_tex.size)
+    brick_max_tex.update_range((0, 0, 0), brick_max_tex.size)

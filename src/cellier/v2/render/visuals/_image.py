@@ -1089,6 +1089,7 @@ class GFXMultiscaleImageVisual:
             if entry is None:
                 continue
             brick_key, slot = entry
+            slot.brick_max = float(data.max())
             self._block_cache_3d.write_brick(slot, data, key=brick_key)
             self._block_cache_3d.tile_manager.commit(brick_key, slot)
 
@@ -1503,6 +1504,7 @@ class GFXMultiscaleImageVisual:
         material = MultiscaleVolumeBrickMaterial(
             cache_texture=self._block_cache_3d.cache_tex,
             lut_texture=self._lut_manager_3d.lut_tex,
+            brick_max_texture=self._lut_manager_3d.brick_max_tex,
             vol_params_buffer=self._vol_params_buffer,
             block_scales_buffer=self._brick_scales_buffer,
             clim=clim,

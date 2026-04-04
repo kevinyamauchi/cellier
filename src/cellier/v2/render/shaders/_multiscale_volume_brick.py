@@ -265,6 +265,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         self,
         cache_texture: gfx.Texture,
         lut_texture: gfx.Texture,
+        brick_max_texture: gfx.Texture,
         vol_params_buffer: Buffer,
         block_scales_buffer: Buffer,
         clim: tuple[float, float] = (0.0, 1.0),
@@ -281,6 +282,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         )
         self.cache_texture = cache_texture
         self.lut_texture = lut_texture
+        self.brick_max_texture = brick_max_texture
         self.vol_params_buffer = vol_params_buffer
         self.block_scales_buffer = block_scales_buffer
         self.render_mode: str = "iso"
@@ -344,6 +346,12 @@ class MultiscaleVolumeBrickShader(BaseVolumeShader):
         # LUT texture.
         lut_view = GfxTextureView(material.lut_texture)
         bindings.append(Binding("t_lut", "texture/auto", lut_view, "FRAGMENT"))
+
+        # Per-brick max intensity texture (R32Float, same grid as LUT).
+        brick_max_view = GfxTextureView(material.brick_max_texture)
+        bindings.append(
+            Binding("t_brick_max", "texture/auto", brick_max_view, "FRAGMENT")
+        )
 
         # Uniform buffers.
         bindings.append(
