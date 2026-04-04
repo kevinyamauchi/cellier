@@ -324,6 +324,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     // MIP state
     var max_density: f32 = 0.0;
+    var max_pos = vec3<f32>(0.0);
 
     // LOD debug state (always declared; only used in lod_color mode)
     var lod_debug_color = vec3<f32>(0.0);
@@ -370,8 +371,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             let density = sample_atlas_nearest(voxel, brick.lut_entry, brick.lod_scale);
 
             $$ if render_mode == 'mip'
-            // MIP: track maximum intensity across the entire ray.
-            max_density = max(max_density, density);
+            // MIP: track maximum intensity and its position across the ray.
+            if (density > max_density) {
+                max_density = density;
+                max_pos     = pos;
+            }
             $$ else
             // ISO: detect threshold crossing.
             if (prev_density < iso_threshold && density >= iso_threshold) {
@@ -418,8 +422,23 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let mip_opacity = mip_color.a * u_material.opacity;
     do_alpha_test(mip_opacity);
 
+    let world_pos_m = u_wobject.world_transform * vec4<f32>(max_pos, 1.0);
+    let ndc_pos_m   = u_stdinfo.projection_transform
+                    * u_stdinfo.cam_transform
+                    * world_pos_m;
+
     out.color = vec4<f32>(mip_physical, mip_opacity);
-    out.depth = 0.0;
+    out.depth = ndc_pos_m.z / ndc_pos_m.w;
+
+    $$ if write_pick
+    let mip_pick_coord = (max_pos / norm_size) + vec3<f32>(0.5);
+    out.pick = (
+        pick_pack(u32(u_wobject.global_id), 20) +
+        pick_pack(u32(mip_pick_coord.x * 16383.0), 14) +
+        pick_pack(u32(mip_pick_coord.y * 16383.0), 14) +
+        pick_pack(u32(mip_pick_coord.z * 16383.0), 14)
+    );
+    $$ endif
 
     $$ else
     // ── ISO output ────────────────────────────────────────────────────
@@ -488,6 +507,16 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     out.color = vec4<f32>(lit_color, opacity);
     out.depth = ndc_pos_r.z / ndc_pos_r.w;
+
+    $$ if write_pick
+    let iso_pick_coord = (refined_pos / norm_size) + vec3<f32>(0.5);
+    out.pick = (
+        pick_pack(u32(u_wobject.global_id), 20) +
+        pick_pack(u32(iso_pick_coord.x * 16383.0), 14) +
+        pick_pack(u32(iso_pick_coord.y * 16383.0), 14) +
+        pick_pack(u32(iso_pick_coord.z * 16383.0), 14)
+    );
+    $$ endif
     $$ endif
     $$ endif
     $$ endif
