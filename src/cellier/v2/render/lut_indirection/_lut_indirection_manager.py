@@ -37,6 +37,13 @@ class LutIndirectionManager3D:
     n_levels : int
         Total number of level of detail levels.  Used by ``rebuild()`` for the
         coarse-to-fine fallback sweep.
+    level_scale_vecs_data : list of ndarray, optional
+        Per-level scale vectors in data order ``(sz, sy, sx)``.  Entry ``k``
+        is the downscale factor of level ``k`` relative to the finest level.
+        When provided, ``rebuild()`` uses the actual per-axis scales instead
+        of the uniform ``2^(level-1)`` assumption.  Required for datasets
+        where axes are downsampled at different rates (e.g. z-anisotropic
+        microscopy data where z is never downsampled).
 
     Attributes
     ----------
@@ -48,9 +55,15 @@ class LutIndirectionManager3D:
         GPU RGBA8UI 3-D texture wrapping ``lut_data``.
     """
 
-    def __init__(self, base_layout: BlockLayout3D, n_levels: int) -> None:
+    def __init__(
+        self,
+        base_layout: BlockLayout3D,
+        n_levels: int,
+        level_scale_vecs_data: list | None = None,
+    ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
+        self._level_scale_vecs_data = level_scale_vecs_data
         self.lut_data, self.lut_tex = build_lut_texture(base_layout)
 
     # ------------------------------------------------------------------
@@ -78,6 +91,7 @@ class LutIndirectionManager3D:
             self._n_levels,
             self.lut_data,
             self.lut_tex,
+            level_scale_vecs_data=self._level_scale_vecs_data,
         )
 
 
@@ -117,6 +131,7 @@ def rebuild_lut(
     n_levels: int,
     lut_data: np.ndarray,
     lut_tex: gfx.Texture,
+    level_scale_vecs_data: list | None = None,
 ) -> None:
     """Rebuild the full LUT from the current tile manager state.
 
@@ -137,6 +152,12 @@ def rebuild_lut(
         Backing uint8 array ``(gD, gH, gW, 4)`` to overwrite.
     lut_tex : gfx.Texture
         The LUT texture to schedule for GPU upload.
+    level_scale_vecs_data : list of ndarray, optional
+        Per-level scale vectors in data order ``(sz, sy, sx)``.  Entry ``k``
+        is the downscale factor of level ``k+1`` (1-indexed) relative to
+        the finest level.  When ``None``, falls back to the uniform
+        ``2^(level-1)`` assumption (correct for isotropic power-of-2
+        pyramids only).
     """
     gd, gh, gw = base_layout.grid_dims
 
@@ -152,16 +173,28 @@ def rebuild_lut(
     for level in range(n_levels, 0, -1):
         if level not in by_level:
             continue
-        scale = 2 ** (level - 1)
+        # Per-axis scale: how many finest-grid cells one level-k brick covers.
+        # Use actual scale vectors when available; fall back to uniform 2^(k-1)
+        # for backward compatibility with isotropic power-of-2 pyramids.
+        if level_scale_vecs_data is not None and (level - 1) < len(
+            level_scale_vecs_data
+        ):
+            sv = level_scale_vecs_data[level - 1]
+            gz_scale = max(1, int(round(float(sv[0]))))
+            gy_scale = max(1, int(round(float(sv[1]))))
+            gx_scale = max(1, int(round(float(sv[2]))))
+        else:
+            uniform = 2 ** (level - 1)
+            gz_scale = gy_scale = gx_scale = uniform
         for key, slot in by_level[level]:
             sz, sy, sx = slot.grid_pos
             # Base-grid slice covered by this coarse brick, clamped to grid.
-            gz0 = key.gz * scale
-            gz1 = min(gz0 + scale, gd)
-            gy0 = key.gy * scale
-            gy1 = min(gy0 + scale, gh)
-            gx0 = key.gx * scale
-            gx1 = min(gx0 + scale, gw)
+            gz0 = key.gz * gz_scale
+            gz1 = min(gz0 + gz_scale, gd)
+            gy0 = key.gy * gy_scale
+            gy1 = min(gy0 + gy_scale, gh)
+            gx0 = key.gx * gx_scale
+            gx1 = min(gx0 + gx_scale, gw)
             # Single numpy slice assignment — fills the block at C speed.
             lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
 

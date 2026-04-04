@@ -283,6 +283,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         self.lut_texture = lut_texture
         self.vol_params_buffer = vol_params_buffer
         self.block_scales_buffer = block_scales_buffer
+        self.render_mode: str = "iso"
         self._frame_index: int = 0
 
     def tick(self) -> None:
@@ -310,6 +311,8 @@ class MultiscaleVolumeBrickShader(BaseVolumeShader):
 
         # Template variable for debug visualisation modes.
         self["debug_mode"] = getattr(material, "debug_mode", "none")
+        # Template variable for render mode (iso / mip).
+        self["render_mode"] = getattr(material, "render_mode", "iso")
 
         bindings = [
             Binding("u_stdinfo", "buffer/uniform", shared.uniform_buffer),

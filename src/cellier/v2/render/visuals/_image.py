@@ -492,6 +492,7 @@ class GFXMultiscaleImageVisual:
             self._lut_manager_3d = LutIndirectionManager3D(
                 base_layout=volume_geometry.base_layout,
                 n_levels=volume_geometry.n_levels,
+                level_scale_vecs_data=volume_geometry._scale_vecs_data,
             )
             self._lut_params_buffer_3d = build_lut_params_buffer_3d(
                 volume_geometry.base_layout,
@@ -769,6 +770,7 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_3d = LutIndirectionManager3D(
             base_layout=geo.base_layout,
             n_levels=geo.n_levels,
+            level_scale_vecs_data=geo._scale_vecs_data,
         )
         # Rebuild param buffers
         self._lut_params_buffer_3d = build_lut_params_buffer_3d(
@@ -1412,6 +1414,9 @@ class GFXMultiscaleImageVisual:
         elif event.field_name == "iso_threshold":
             if self.material_3d is not None:
                 self.material_3d.threshold = float(event.new_value)
+        elif event.field_name == "render_mode":
+            if self.material_3d is not None:
+                self.material_3d.render_mode = event.new_value
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""

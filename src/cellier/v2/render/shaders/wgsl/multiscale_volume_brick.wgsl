@@ -305,29 +305,36 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     $$ else
     // ── Brick traversal ────────────────────────────────────────────────
+    // All state variables are declared unconditionally (Metal does not
+    // allow variable redefinition across template branches).
     let ray_origin    = near_pos;
     let ray_seed_base = ray_to_seed(ray_dir);
 
     var t             = t_start;
+
+    // ISO state
     var surface_found = false;
     var surface_pos:  vec3<f32>;
     var surface_density: f32 = 0.0;
     var prev_density: f32 = 0.0;
     var prev_t: f32 = t_start;
-
-    // Capture surface brick info for bisection (WGSL scope rule).
     var surface_lut_entry: vec4<u32>;
     var surface_lod_scale: vec3<f32>;
     var surface_step_size: f32 = 0.0;
 
-    $$ if debug_mode == 'lod_color'
-    // In lod_color mode, we just need the first valid brick's LOD.
+    // MIP state
+    var max_density: f32 = 0.0;
+
+    // LOD debug state (always declared; only used in lod_color mode)
     var lod_debug_color = vec3<f32>(0.0);
     var lod_debug_found = false;
-    $$ endif
 
     for (var brick_iter = 0u; brick_iter < MAX_BRICK_ITERS; brick_iter++) {
+        $$ if render_mode == 'mip'
+        if (t >= t_end) { break; }
+        $$ else
         if (t >= t_end || surface_found) { break; }
+        $$ endif
 
         let brick = setup_brick(ray_origin, ray_dir, inv_ray_dir,
                                 t, t_end, norm_size, dataset_size);
@@ -342,11 +349,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
         if (!brick.valid) {
             t = brick.t_end + 0.0001;
-            prev_density = 0.0;    // reset crossing state at unloaded gap
+            prev_density = 0.0;
             continue;
         }
 
-        // Capture for post-loop bisection.
+        // Capture for post-loop bisection (ISO only, but always written).
         surface_lut_entry = brick.lut_entry;
         surface_lod_scale = brick.lod_scale;
         surface_step_size = brick.step_size;
@@ -362,30 +369,60 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             let voxel   = norm_to_voxel(pos, norm_size, dataset_size);
             let density = sample_atlas_nearest(voxel, brick.lut_entry, brick.lod_scale);
 
-            // Isosurface: detect sign crossing.
+            $$ if render_mode == 'mip'
+            // MIP: track maximum intensity across the entire ray.
+            max_density = max(max_density, density);
+            $$ else
+            // ISO: detect threshold crossing.
             if (prev_density < iso_threshold && density >= iso_threshold) {
                 surface_found   = true;
                 surface_pos     = pos;
                 surface_density = density;
                 break;
             }
-
             prev_density = density;
             prev_t       = t_sample;
-            t_sample    += brick.step_size;
+            $$ endif
+
+            t_sample += brick.step_size;
         }
 
+        $$ if render_mode != 'mip'
         if (!surface_found) {
             t = brick.t_end + 0.0001;
         }
+        $$ else
+        t = brick.t_end + 0.0001;
+        $$ endif
     }
+
+    // ── Post-traversal output ─────────────────────────────────────────
 
     $$ if debug_mode == 'lod_color'
     if (!lod_debug_found) { discard; }
     out.color = vec4<f32>(lod_debug_color, 1.0);
     out.depth = 0.0;
 
+    $$ elif render_mode == 'mip'
+    // ── MIP output ────────────────────────────────────────────────────
+    if (max_density <= 0.0) { discard; }
+
+    let mip_value = vec4<f32>(max_density, 0.0, 0.0, 1.0);
+    let mip_color = sampled_value_to_color(mip_value);
+    $$ if colorspace == 'srgb'
+    let mip_physical = srgb2physical(mip_color.rgb);
     $$ else
+    let mip_physical = mip_color.rgb;
+    $$ endif
+
+    let mip_opacity = mip_color.a * u_material.opacity;
+    do_alpha_test(mip_opacity);
+
+    out.color = vec4<f32>(mip_physical, mip_opacity);
+    out.depth = 0.0;
+
+    $$ else
+    // ── ISO output ────────────────────────────────────────────────────
     if (!surface_found) { discard; }
 
     // ── Binary bisection refinement (4 iterations → 16× finer) ────────
