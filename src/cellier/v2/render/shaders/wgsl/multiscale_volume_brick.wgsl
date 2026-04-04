@@ -363,6 +363,13 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             t = brick.t_end + 0.0001;
             continue;
         }
+        $$ else
+        // ISO early-out: skip bricks that are entirely below the isosurface.
+        if (brick.brick_max < iso_threshold) {
+            t = brick.t_end + 0.0001;
+            prev_density = 0.0;
+            continue;
+        }
         $$ endif
 
         // Capture for post-loop bisection (ISO only, but always written).
