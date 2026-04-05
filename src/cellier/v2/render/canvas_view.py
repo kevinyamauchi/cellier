@@ -13,6 +13,7 @@ from cellier.v2._state import CameraState
 from cellier.v2.events._events import CameraChangedEvent
 from cellier.v2.logging import _CAMERA_LOGGER
 from cellier.v2.render._requests import DimsState, ReslicingRequest
+from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -89,6 +90,14 @@ class CanvasView:
             self._controller = gfx.OrbitController(
                 camera=self._camera, register_events=self._renderer
             )
+
+        self._accum_pass = TemporalAccumulationPass(alpha=0.1)
+        if dim == "2d":
+            self._accum_pass.enabled = False
+        self._renderer.effect_passes = (
+            self._accum_pass,
+            *self._renderer.effect_passes,
+        )
 
         self._last_camera_state: CameraState = self._capture_camera_state()
         self._canvas.request_draw(self._draw_frame)
@@ -294,6 +303,7 @@ class CanvasView:
         if current_state != self._last_camera_state and not self._applying_model_state:
             self._camera_dirty = True
             self._last_camera_state = current_state
+            self._accum_pass.reset()
             _CAMERA_LOGGER.debug(
                 "camera_changed  canvas=%s  scene=%s",
                 self._canvas_id,
