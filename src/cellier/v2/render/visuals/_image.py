@@ -487,6 +487,7 @@ class GFXMultiscaleImageVisual:
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
                 gpu_budget_bytes=gpu_budget_bytes,
+                overlap=3,
             )
             self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
             self._lut_manager_3d = LutIndirectionManager3D(

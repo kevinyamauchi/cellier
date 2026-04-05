@@ -130,6 +130,19 @@ class OmeBrickViewer:
         bias_layout.addWidget(self._lod_bias_spin)
         panel_layout.addWidget(bias_group)
 
+        # ── ISO threshold ─────────────────────────────────────────
+        thresh_group = QtWidgets.QGroupBox("ISO threshold")
+        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
+        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
+        self._threshold_spin = QtWidgets.QDoubleSpinBox()
+        self._threshold_spin.setRange(0.0, 65000.0)
+        self._threshold_spin.setSingleStep(0.01)
+        self._threshold_spin.setDecimals(3)
+        self._threshold_spin.setValue(self._visual_model.appearance.iso_threshold)
+        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
+        thresh_layout.addWidget(self._threshold_spin)
+        panel_layout.addWidget(thresh_group)
+
         self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
         self._status_label.setWordWrap(True)
         panel_layout.addWidget(self._status_label)
@@ -170,6 +183,10 @@ class OmeBrickViewer:
             self._visual_model.appearance.color_map = "viridis"
         else:
             self._visual_model.appearance.color_map = "grays"
+
+    def _on_threshold_changed(self, value: float):
+        self._visual_model.appearance.iso_threshold = value
+        print(f"[DEBUG] ISO threshold changed to {value}")
 
     def _on_clim_max_changed(self, value: float):
         self._visual_model.appearance.clim = (0.0, value)

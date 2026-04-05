@@ -332,9 +332,9 @@ class MultiscaleVolumeBrickShader(BaseVolumeShader):
             Binding("t_img", "texture/auto", proxy_view, _vertex_and_fragment)
         )
 
-        # Cache texture + sampler (nearest-neighbour).
+        # Cache texture + sampler (linear filtering for smooth boundary continuity).
         cache_view = GfxTextureView(material.cache_texture)
-        cache_sampler = GfxSampler("nearest", "clamp")
+        cache_sampler = GfxSampler("linear", "clamp")
         bindings.append(
             Binding("s_cache", "sampler/filtering", cache_sampler, "FRAGMENT")
         )
