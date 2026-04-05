@@ -928,8 +928,9 @@ class GFXMultiscaleImageVisual:
         sub_3d = self._transform.set_slice(
             self._last_displayed_axes or tuple(range(self._ndim))[-3:]
         )
-        camera_pos = sub_3d.imap_coordinates(camera_pos_world.reshape(1, -1)).flatten()
-
+        # LOD selection and distance sorting use camera_pos_world directly
+        # because level_grids["centres"] are precomputed in world XYZ space.
+        # The sub_3d inverse transform is only needed for the frustum corners.
         if frustum_corners_world is not None:
             corners_data = sub_3d.imap_coordinates(
                 frustum_corners_world.reshape(-1, 3)
@@ -950,15 +951,22 @@ class GFXMultiscaleImageVisual:
             brick_arr = select_levels_from_cache(
                 geo._level_grids,
                 geo.n_levels,
-                camera_pos,
+                camera_pos_world,
                 thresholds=thresholds,
                 base_layout=geo.base_layout,
             )
         lod_select_ms = (time.perf_counter() - t0) * 1000
 
-        # 2. Distance sort
+        # 2. Distance sort — use world XYZ camera position and per-level
+        # physical scale so brick centres match the precomputed level grids.
         t0 = time.perf_counter()
-        brick_arr = sort_arr_by_distance(brick_arr, camera_pos, geo.block_size)
+        brick_arr = sort_arr_by_distance(
+            brick_arr,
+            camera_pos_world,
+            geo.block_size,
+            scale_vecs_shader=geo._scale_arr_shader,
+            translation_vecs_shader=geo._translation_arr_shader,
+        )
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
         n_total = len(brick_arr)

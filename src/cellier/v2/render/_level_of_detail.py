@@ -269,20 +269,33 @@ def sort_arr_by_distance(
     arr: np.ndarray,
     camera_pos: np.ndarray,
     block_size: int,
+    scale_vecs_shader: np.ndarray | list[np.ndarray] | None = None,
+    translation_vecs_shader: np.ndarray | list[np.ndarray] | None = None,
 ) -> np.ndarray:
     """Sort brick rows nearest-to-camera first.
 
-    Centres are recomputed from the array columns — O(M) and faster
-    than an O(K * M_k) index-match against the full cached grid.
+    Brick centres are computed in world XYZ (shader) space using the
+    per-level scale and translation vectors so that anisotropic datasets
+    sort correctly.  ``camera_pos`` must be in the same world XYZ space.
+
+    Falls back to the isotropic power-of-2 approximation when
+    ``scale_vecs_shader`` / ``translation_vecs_shader`` are not supplied,
+    but that path does not handle anisotropic voxel spacing correctly.
 
     Parameters
     ----------
     arr : ndarray, shape (M, 4), dtype int32
-        The array of bricks to sort.
+        The array of bricks to sort — columns ``[level, gz, gy, gx]``.
     camera_pos : np.ndarray
-        The coordinates of the camera position.
+        Camera position in world XYZ (shader) space, shape ``(3,)``.
     block_size : int
-        The edge length of the blocks. Assumes isotropic.
+        Brick edge length in finest-level voxels.
+    scale_vecs_shader : list of ndarray, optional
+        Per-level scale vectors in shader order ``(sx, sy, sz)``.
+        Index 0 = level 1 (finest).
+    translation_vecs_shader : list of ndarray, optional
+        Per-level translation vectors in shader order ``(tx, ty, tz)``.
+        Index 0 = level 1 (finest).
 
     Returns
     -------
@@ -297,12 +310,31 @@ def sort_arr_by_distance(
     gy_c = arr[:, 2]
     gx_c = arr[:, 3]
 
-    scales = np.left_shift(1, (levels - 1)).astype(np.float64)
-    bw = float(block_size) * scales
+    cx = np.empty(len(arr), dtype=np.float64)
+    cy = np.empty(len(arr), dtype=np.float64)
+    cz = np.empty(len(arr), dtype=np.float64)
 
-    cx = (gx_c.astype(np.float64) + 0.5) * bw
-    cy = (gy_c.astype(np.float64) + 0.5) * bw
-    cz = (gz_c.astype(np.float64) + 0.5) * bw
+    if scale_vecs_shader is not None and translation_vecs_shader is not None:
+        # World-space centres using actual per-level physical scale/translation.
+        # Mirrors the formula in build_level_grids so centres match exactly.
+        for level in np.unique(levels):
+            mask = levels == level
+            k = int(level) - 1
+            sv = np.asarray(scale_vecs_shader[k], dtype=np.float64)
+            tv = np.asarray(translation_vecs_shader[k], dtype=np.float64)
+            bw_x = block_size * sv[0]
+            bw_y = block_size * sv[1]
+            bw_z = block_size * sv[2]
+            cx[mask] = (gx_c[mask].astype(np.float64) + 0.5) * bw_x + tv[0]
+            cy[mask] = (gy_c[mask].astype(np.float64) + 0.5) * bw_y + tv[1]
+            cz[mask] = (gz_c[mask].astype(np.float64) + 0.5) * bw_z + tv[2]
+    else:
+        # Fallback: isotropic power-of-2 approximation (ignores physical scale).
+        scales = np.left_shift(1, (levels - 1)).astype(np.float64)
+        bw = float(block_size) * scales
+        cx = (gx_c.astype(np.float64) + 0.5) * bw
+        cy = (gy_c.astype(np.float64) + 0.5) * bw
+        cz = (gz_c.astype(np.float64) + 0.5) * bw
 
     distances = np.sqrt((cx - cam[0]) ** 2 + (cy - cam[1]) ** 2 + (cz - cam[2]) ** 2)
     order = np.argsort(distances, kind="stable")
