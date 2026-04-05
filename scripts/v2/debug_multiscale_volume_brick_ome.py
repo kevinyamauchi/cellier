@@ -1,6 +1,6 @@
-"""3D brick-shader viewer for real OME-Zarr files.
+"""3D brick-shader viewer for real OME-Zarr files with 2D/3D toggle.
 
-Opens a 3D Qt viewer for any OME-Zarr multiscale volume using the
+Opens a Qt viewer for any OME-Zarr multiscale volume using the
 Kiln-style brick cache shader.  Physical scale and level transforms are
 read automatically from the OME metadata.
 
@@ -18,14 +18,18 @@ Remote stores are also supported::
 
 Controls
 --------
-- **Render mode** dropdown — switch between ISO (isosurface) and MIP
-  (Maximum Intensity Projection).  Colormap auto-switches to viridis
-  for MIP and grays for ISO.
-- **Clim max** spinner — adjust the upper contrast limit interactively.
-- **LOD bias** spinner — scale the screen-space LOD thresholds.
-- **Pipeline mode** radios — toggle between full LOD + frustum culling
-  and a flat "load all bricks at the coarsest level" mode.
-- **Reslice now** button — manually trigger a brick re-request.
+- **Toggle 2D / 3D** button — switch between a 2D Z-slice view and the
+  full 3D volume renderer.
+- **Reslice now** button — manually trigger a brick re-request for the
+  active view.
+- **Render mode** dropdown *(3D only)* — switch between ISO and MIP.
+  Colormap auto-switches to viridis for MIP and grays for ISO.
+- **Pipeline mode** radios *(3D only)* — toggle between full LOD +
+  frustum culling and a flat "load all bricks at the coarsest level" mode.
+- **ISO threshold** spinner *(3D only)* — adjust the isosurface threshold.
+- **Z slice** spinner *(2D only)* — select the displayed Z plane.
+- **Clim max** spinner — adjust the upper contrast limit (both views).
+- **LOD bias** spinner — scale the screen-space LOD thresholds (both views).
 """
 
 from __future__ import annotations
@@ -47,17 +51,25 @@ class OmeBrickViewer:
     def __init__(
         self,
         controller,
-        scene_id,
-        visual_model,
+        scene_3d_id,
+        visual_3d_model,
+        scene_2d,
+        visual_2d_model,
         n_levels: int,
+        z_depth: int,
         depth_range: tuple[float, float] = (1.0, 8000.0),
     ):
         from PySide6 import QtCore, QtWidgets
 
         self._controller = controller
-        self._scene_id = scene_id
-        self._visual_model = visual_model
+        self._scene_3d_id = scene_3d_id
+        self._scene_2d = scene_2d
+        self._scene_2d_id = scene_2d.id
+        self._visual_3d_model = visual_3d_model
+        self._visual_2d_model = visual_2d_model
         self._n_levels = n_levels
+        self._z_max = z_depth - 1
+        self._active_mode = "3d"
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
@@ -67,23 +79,44 @@ class OmeBrickViewer:
         self._window.setCentralWidget(central)
         root_layout = QtWidgets.QHBoxLayout(central)
 
-        canvas_widget = self._controller.add_canvas(
-            self._scene_id, depth_range=depth_range
-        )
-        root_layout.addWidget(canvas_widget, stretch=1)
+        # ── Canvas container (both canvases stacked, one visible) ─────
+        canvas_container = QtWidgets.QWidget()
+        canvas_layout = QtWidgets.QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
 
+        self._canvas_widget_3d = self._controller.add_canvas(
+            self._scene_3d_id, depth_range=depth_range
+        )
+        self._canvas_widget_2d = self._controller.add_canvas(self._scene_2d_id)
+        canvas_layout.addWidget(self._canvas_widget_3d)
+        canvas_layout.addWidget(self._canvas_widget_2d)
+        self._canvas_widget_2d.setVisible(False)
+        root_layout.addWidget(canvas_container, stretch=1)
+
+        # ── Side panel ────────────────────────────────────────────────
         panel = QtWidgets.QWidget()
         panel.setFixedWidth(270)
         panel_layout = QtWidgets.QVBoxLayout(panel)
         panel_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         root_layout.addWidget(panel)
 
-        # ── Reslice button ────────────────────────────────────────────
+        # Track 3D-only / 2D-only widgets for show/hide on toggle.
+        self._widget_3d: list = []
+        self._widget_2d: list = []
+
+        # ── Shared: toggle + reslice + mode label ─────────────────────
+        self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
+        self._toggle_btn.clicked.connect(self._on_toggle_clicked)
+        panel_layout.addWidget(self._toggle_btn)
+
         self._reslice_btn = QtWidgets.QPushButton("Reslice now")
         self._reslice_btn.clicked.connect(self._on_reslice_clicked)
         panel_layout.addWidget(self._reslice_btn)
 
-        # ── Pipeline mode ─────────────────────────────────────────────
+        self._mode_label = QtWidgets.QLabel("Mode: 3D")
+        panel_layout.addWidget(self._mode_label)
+
+        # ── 3D-only: pipeline mode ────────────────────────────────────
         mode_group = QtWidgets.QGroupBox("Pipeline mode")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
         self._lod_radio = QtWidgets.QRadioButton("LOD + frustum culling")
@@ -94,8 +127,9 @@ class OmeBrickViewer:
         mode_layout.addWidget(self._lod_radio)
         mode_layout.addWidget(self._flat_radio)
         panel_layout.addWidget(mode_group)
+        self._widget_3d.append(mode_group)
 
-        # ── Render mode ───────────────────────────────────────────────
+        # ── 3D-only: render mode ──────────────────────────────────────
         render_group = QtWidgets.QGroupBox("Render mode")
         render_layout = QtWidgets.QHBoxLayout(render_group)
         self._render_mode_combo = QtWidgets.QComboBox()
@@ -103,8 +137,36 @@ class OmeBrickViewer:
         self._render_mode_combo.currentTextChanged.connect(self._on_render_mode_changed)
         render_layout.addWidget(self._render_mode_combo)
         panel_layout.addWidget(render_group)
+        self._widget_3d.append(render_group)
 
-        # ── Contrast limits ───────────────────────────────────────────
+        # ── 3D-only: ISO threshold ────────────────────────────────────
+        thresh_group = QtWidgets.QGroupBox("ISO threshold")
+        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
+        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
+        self._threshold_spin = QtWidgets.QDoubleSpinBox()
+        self._threshold_spin.setRange(0.0, 65000.0)
+        self._threshold_spin.setSingleStep(0.01)
+        self._threshold_spin.setDecimals(3)
+        self._threshold_spin.setValue(self._visual_3d_model.appearance.iso_threshold)
+        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
+        thresh_layout.addWidget(self._threshold_spin)
+        panel_layout.addWidget(thresh_group)
+        self._widget_3d.append(thresh_group)
+
+        # ── 2D-only: Z slice ──────────────────────────────────────────
+        z_group = QtWidgets.QGroupBox("Z slice")
+        z_layout = QtWidgets.QHBoxLayout(z_group)
+        z_layout.addWidget(QtWidgets.QLabel("z"))
+        self._z_slice_spin = QtWidgets.QSpinBox()
+        self._z_slice_spin.setRange(0, self._z_max)
+        initial_z = scene_2d.dims.selection.slice_indices.get(0, self._z_max // 2)
+        self._z_slice_spin.setValue(initial_z)
+        self._z_slice_spin.valueChanged.connect(self._on_z_slice_changed)
+        z_layout.addWidget(self._z_slice_spin)
+        panel_layout.addWidget(z_group)
+        self._widget_2d.append(z_group)
+
+        # ── Shared: contrast limits ───────────────────────────────────
         clim_group = QtWidgets.QGroupBox("Contrast limits")
         clim_layout = QtWidgets.QHBoxLayout(clim_group)
         clim_layout.addWidget(QtWidgets.QLabel("clim max"))
@@ -117,7 +179,7 @@ class OmeBrickViewer:
         clim_layout.addWidget(self._clim_max_spin)
         panel_layout.addWidget(clim_group)
 
-        # ── LOD bias ──────────────────────────────────────────────────
+        # ── Shared: LOD bias ──────────────────────────────────────────
         bias_group = QtWidgets.QGroupBox("LOD bias")
         bias_layout = QtWidgets.QHBoxLayout(bias_group)
         bias_layout.addWidget(QtWidgets.QLabel("lod_bias"))
@@ -130,72 +192,104 @@ class OmeBrickViewer:
         bias_layout.addWidget(self._lod_bias_spin)
         panel_layout.addWidget(bias_group)
 
-        # ── ISO threshold ─────────────────────────────────────────
-        thresh_group = QtWidgets.QGroupBox("ISO threshold")
-        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
-        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
-        self._threshold_spin = QtWidgets.QDoubleSpinBox()
-        self._threshold_spin.setRange(0.0, 65000.0)
-        self._threshold_spin.setSingleStep(0.01)
-        self._threshold_spin.setDecimals(3)
-        self._threshold_spin.setValue(self._visual_model.appearance.iso_threshold)
-        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
-        thresh_layout.addWidget(self._threshold_spin)
-        panel_layout.addWidget(thresh_group)
-
         self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
         self._status_label.setWordWrap(True)
         panel_layout.addWidget(self._status_label)
         panel_layout.addStretch()
 
+        # Hide 2D-only widgets initially (start in 3D mode).
+        for w in self._widget_2d:
+            w.setVisible(False)
+
     @property
     def window(self):
         return self._window
 
-    def _on_reslice_clicked(self):
-        print("[DEBUG] Manual reslice triggered")
-        self._controller.reslice_scene(self._scene_id)
+    # ── Toggle ────────────────────────────────────────────────────────
 
-    def _on_pipeline_mode_toggle(self, lod_active: bool):
+    def _on_toggle_clicked(self) -> None:
+        coordinator = self._controller._render_manager._slice_coordinator
+        if self._active_mode == "3d":
+            coordinator.cancel_scene(self._scene_3d_id)
+            self._active_mode = "2d"
+            self._canvas_widget_3d.setVisible(False)
+            self._canvas_widget_2d.setVisible(True)
+            self._mode_label.setText("Mode: 2D")
+            for w in self._widget_3d:
+                w.setVisible(False)
+            for w in self._widget_2d:
+                w.setVisible(True)
+        else:
+            coordinator.cancel_scene(self._scene_2d_id)
+            self._active_mode = "3d"
+            self._canvas_widget_2d.setVisible(False)
+            self._canvas_widget_3d.setVisible(True)
+            self._mode_label.setText("Mode: 3D")
+            for w in self._widget_2d:
+                w.setVisible(False)
+            for w in self._widget_3d:
+                w.setVisible(True)
+
+    # ── Shared callbacks ──────────────────────────────────────────────
+
+    def _on_reslice_clicked(self) -> None:
+        print("[DEBUG] Manual reslice triggered")
+        active = self._scene_3d_id if self._active_mode == "3d" else self._scene_2d_id
+        self._controller.reslice_scene(active)
+
+    def _on_clim_max_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.clim = (0.0, value)
+        self._visual_2d_model.appearance.clim = (0.0, value)
+        print(f"[DEBUG] clim changed to (0.0, {value})")
+
+    def _on_lod_bias_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.lod_bias = value
+        self._visual_2d_model.appearance.lod_bias = value
+        print(f"[DEBUG] LOD bias changed to {value}")
+        active = self._scene_3d_id if self._active_mode == "3d" else self._scene_2d_id
+        self._controller.reslice_scene(active)
+
+    # ── 3D-only callbacks ─────────────────────────────────────────────
+
+    def _on_pipeline_mode_toggle(self, lod_active: bool) -> None:
         if lod_active:
-            self._visual_model.appearance.force_level = None
-            self._visual_model.appearance.frustum_cull = True
+            self._visual_3d_model.appearance.force_level = None
+            self._visual_3d_model.appearance.frustum_cull = True
             self._status_label.setText("Mode: LOD + frustum culling")
         else:
             coarsest = self._n_levels - 1
-            self._visual_model.appearance.force_level = coarsest
-            self._visual_model.appearance.frustum_cull = False
+            self._visual_3d_model.appearance.force_level = coarsest
+            self._visual_3d_model.appearance.frustum_cull = False
             self._status_label.setText(f"Mode: Level {coarsest} all bricks (flat)")
         print(
             f"[DEBUG] Pipeline mode changed: "
-            f"force_level={self._visual_model.appearance.force_level}, "
-            f"frustum_cull={self._visual_model.appearance.frustum_cull}"
+            f"force_level={self._visual_3d_model.appearance.force_level}, "
+            f"frustum_cull={self._visual_3d_model.appearance.frustum_cull}"
         )
-        self._controller.reslice_scene(self._scene_id)
+        self._controller.reslice_scene(self._scene_3d_id)
 
-    def _on_render_mode_changed(self, text: str):
-        mode = text.lower()  # "ISO" -> "iso", "MIP" -> "mip"
-        self._visual_model.appearance.render_mode = mode
+    def _on_render_mode_changed(self, text: str) -> None:
+        mode = text.lower()
+        self._visual_3d_model.appearance.render_mode = mode
         print(f"[DEBUG] Render mode changed to {mode}")
-
-        # Switch colormap: viridis for MIP, grays for ISO.
         if mode == "mip":
-            self._visual_model.appearance.color_map = "viridis"
+            self._visual_3d_model.appearance.color_map = "viridis"
         else:
-            self._visual_model.appearance.color_map = "grays"
+            self._visual_3d_model.appearance.color_map = "grays"
 
-    def _on_threshold_changed(self, value: float):
-        self._visual_model.appearance.iso_threshold = value
+    def _on_threshold_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.iso_threshold = value
         print(f"[DEBUG] ISO threshold changed to {value}")
 
-    def _on_clim_max_changed(self, value: float):
-        self._visual_model.appearance.clim = (0.0, value)
-        print(f"[DEBUG] clim changed to (0.0, {value})")
+    # ── 2D-only callbacks ─────────────────────────────────────────────
 
-    def _on_lod_bias_changed(self, value: float):
-        self._visual_model.appearance.lod_bias = value
-        print(f"[DEBUG] LOD bias changed to {value}")
-        self._controller.reslice_scene(self._scene_id)
+    def _on_z_slice_changed(self, value: int) -> None:
+        self._scene_2d.dims.selection.slice_indices = {0: value}
+        rm = self._controller._render_manager
+        gfx_visual = rm._scenes[self._scene_2d_id]._visuals[self._visual_2d_model.id]
+        gfx_visual._block_cache_2d.tile_manager.clear()
+        gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
+        self._controller.reslice_scene(self._scene_2d_id)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +341,6 @@ def _dtype_clim_max(dtype: np.dtype) -> float:
     """Return a sensible initial clim upper bound for the given dtype."""
     if np.issubdtype(dtype, np.integer):
         return float(np.iinfo(dtype).max)
-    # Float data: assume normalised [0, 1] unless proven otherwise.
     return 1.0
 
 
@@ -284,22 +377,12 @@ async def async_main(zarr_uri: str):
 
     print(f"\n  Level-0 physical scale (ZYX): {level_0_scale_zyx}")
 
-    # compute_normalized_size() expects spacing in shader order (x=W, y=H, z=D),
-    # which is the reverse of data ZYX.  Note: visual_model.transform is set in
-    # data ZYX order and _pygfx_matrix() handles that reversal separately — but
-    # voxel_spacing is consumed before any matrix conversion, so we must reverse
-    # it explicitly here.
     voxel_spacing_xyz = level_0_scale_zyx[::-1].copy()
 
     # ── Compute world extents for AABB and depth range ────────────────
     vox_shape_zyx = np.array(data_store.level_shapes[0], dtype=np.float64)
     world_extents_zyx = vox_shape_zyx * level_0_scale_zyx
     max_extent = float(world_extents_zyx.max())
-    # Depth range: near = max(1.0, max_extent * 0.0001) keeps the near plane
-    # tight to the camera without wasting depth buffer bits on the sub-voxel
-    # near zone.  Far = max_extent * 10 comfortably encloses the scene from
-    # any orbit angle.  Both values scale with the physical dataset size so
-    # the script works correctly for datasets of any scale.
     depth_range = (max(1.0, max_extent * 0.0001), max_extent * 10.0)
 
     print(f"  World extents (ZYX): {world_extents_zyx}")
@@ -308,38 +391,37 @@ async def async_main(zarr_uri: str):
         f"  Depth range:         near={depth_range[0]:.2f}  far={depth_range[1]:.0f}\n"
     )
 
-    # ── Controller and scene ──────────────────────────────────────────
+    # ── Controller ────────────────────────────────────────────────────
     controller = CellierController(
         widget_parent=None,
         camera_reslice_enabled=False,
     )
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
-    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
-    # ── Voxel-to-world transform from level-0 physical scale ──────────
-    # AffineTransform uses ZYX (data) axis order.
+    # ── Voxel-to-world transform ──────────────────────────────────────
     voxel_to_world = AffineTransform.from_scale_and_translation(
         scale=tuple(level_0_scale_zyx)
     )
 
     # ── Initial appearance ────────────────────────────────────────────
     initial_clim_max = _dtype_clim_max(data_store.dtype)
-    appearance = ImageAppearance(
-        color_map="grays",
-        clim=(0.0, initial_clim_max),
-        lod_bias=1.0,
-        force_level=None,
-        frustum_cull=True,
-        iso_threshold=0.2,
-        render_mode="iso",
-    )
+    _DEBUG_MODE = "none"
 
-    _DEBUG_MODE = "none"  # "ray_dir", "lod_color", or "normal_rgb"
+    # ── 3D scene ──────────────────────────────────────────────────────
+    scene_3d = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
-    visual_model = controller.add_image(
+    visual_3d_model = controller.add_image(
         data=data_store,
-        scene_id=scene.id,
-        appearance=appearance,
+        scene_id=scene_3d.id,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=None,
+            frustum_cull=True,
+            iso_threshold=0.2,
+            render_mode="iso",
+        ),
         name="volume",
         block_size=32,
         gpu_budget_bytes=2048 * 1024**2,
@@ -347,21 +429,38 @@ async def async_main(zarr_uri: str):
         use_brick_shader=True,
         voxel_spacing=voxel_spacing_xyz,
     )
-    visual_model.transform = voxel_to_world
+    visual_3d_model.transform = voxel_to_world
 
-    # ── Set debug mode on the material ───────────────────────────────
-    vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)
+    # ── 2D scene ──────────────────────────────────────────────────────
+    scene_2d = controller.add_scene(dim="2d", coordinate_system=cs, name="slice")
+    z_depth = data_store.level_shapes[0][0]
+    scene_2d.dims.selection.slice_indices = {0: z_depth // 2}
+
+    visual_2d_model = controller.add_image(
+        data=data_store,
+        scene_id=scene_2d.id,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=None,
+            frustum_cull=True,
+        ),
+        name="slice",
+        block_size=32,
+        gpu_budget_bytes=64 * 1024**2,
+    )
+    visual_2d_model.transform = voxel_to_world
+
+    # ── Set debug mode on the 3D material ────────────────────────────
+    vis = controller._render_manager._scenes[scene_3d.id].get_visual(visual_3d_model.id)
     vis.material_3d.debug_mode = _DEBUG_MODE
 
     # ── Pink AABB wireframe in world space ────────────────────────────
-    # world_extents_zyx are physical sizes; reorder to pygfx (x=W, y=H, z=D).
-    # The volume spans [0, wx] x [0, wy] x [0, wz] in world space.
-    # A fixed half-voxel border (-0.5, extent-0.5) is sufficient — no need
-    # to multiply by spacing since these are already world-space coordinates.
     wz, wy, wx = world_extents_zyx
     pad = 1.0
-    gfx_scene = controller._render_manager.get_scene(scene.id)
-    gfx_scene.add(
+    gfx_scene_3d = controller._render_manager.get_scene(scene_3d.id)
+    gfx_scene_3d.add(
         _make_box_wireframe(
             np.array([-0.5 - pad, -0.5 - pad, -0.5 - pad]),
             np.array([wx - 0.5 + pad, wy - 0.5 + pad, wz - 0.5 + pad]),
@@ -378,17 +477,19 @@ async def async_main(zarr_uri: str):
     # ── Show window ───────────────────────────────────────────────────
     viewer = OmeBrickViewer(
         controller,
-        scene.id,
-        visual_model,
+        scene_3d_id=scene_3d.id,
+        visual_3d_model=visual_3d_model,
+        scene_2d=scene_2d,
+        visual_2d_model=visual_2d_model,
         n_levels=data_store.n_levels,
+        z_depth=z_depth,
         depth_range=depth_range,
     )
-    # Set clim max spinner to match dtype-derived initial value.
     viewer._clim_max_spin.setValue(initial_clim_max)
     viewer.window.show()
 
-    # Initial reslice to kick off data loading.
-    controller.reslice_scene(scene.id)
+    # Initial reslice for the 3D scene (viewer starts in 3D mode).
+    controller.reslice_scene(scene_3d.id)
 
     # Wait for async data load, then print diagnostics and refit camera.
     await asyncio.sleep(2.0)
@@ -397,9 +498,8 @@ async def async_main(zarr_uri: str):
     print(f"  LUT max w        = {vis._lut_manager_3d.lut_data[:,:,:,3].max()}")
     print(f"  node_3d matrix   =\n{vis.node_3d.local.matrix}")
 
-    # Refit camera to the full scene.
-    canvas_view = next(iter(controller._render_manager._canvases.values()))
-    canvas_view.show_object(gfx_scene)
+    canvas_3d_view = controller._render_manager._find_canvas_for_scene(scene_3d.id)
+    canvas_3d_view.show_object(gfx_scene_3d)
     print("[DEBUG] Camera refit done. Use 'Reslice now' to reload bricks.")
 
     app = QtWidgets.QApplication.instance()
