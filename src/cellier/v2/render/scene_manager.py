@@ -19,27 +19,21 @@ if TYPE_CHECKING:
 class SceneManager:
     """Owns one pygfx ``gfx.Scene`` and the registry of visuals attached to it.
 
-    Dimensionality (``"2d"`` or ``"3d"``) is set at construction time and
-    determines which node from each visual is added to the scene graph and
-    how ``build_slice_requests()`` interprets the ``ReslicingRequest``.
+    Which node (2D or 3D) is active is determined at runtime from the
+    ``dims_state`` carried by each ``ReslicingRequest``, not fixed at
+    construction time.
 
     Parameters
     ----------
     scene_id : UUID
         Unique identifier for this scene.
-    dim : str
-        Dimensionality, either ``"2d"`` or ``"3d"``.
     """
 
     def __init__(
         self,
         scene_id: UUID,
-        dim: str,
     ) -> None:
-        if dim not in ("2d", "3d"):
-            raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
         self._scene_id = scene_id
-        self._dim = dim
         self._scene = gfx.Scene()
         self._visuals: dict[UUID, Any] = {}
 
@@ -47,11 +41,6 @@ class SceneManager:
     def scene_id(self) -> UUID:
         """Unique identifier for this scene."""
         return self._scene_id
-
-    @property
-    def dim(self) -> str:
-        """Dimensionality of this scene (``"2d"`` or ``"3d"``)."""
-        return self._dim
 
     @property
     def scene(self) -> gfx.Scene:
@@ -63,22 +52,26 @@ class SceneManager:
         """IDs of all registered visuals."""
         return list(self._visuals.keys())
 
-    def add_visual(self, visual: Any) -> None:
+    def add_visual(self, visual: Any, displayed_axes: tuple[int, ...]) -> None:
         """Register a visual and add its node to the scene graph.
 
-        Adds ``node_3d`` if ``dim == "3d"``, ``node_2d`` if ``dim == "2d"``.
+        Adds ``node_3d`` if ``len(displayed_axes) == 3``, ``node_2d``
+        otherwise.
 
         Parameters
         ----------
         visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
             The visual to register.
+        displayed_axes : tuple[int, ...]
+            Current displayed axes from the scene's dims selection.  Used to
+            determine which node to add to the scene graph.
 
         Raises
         ------
         ValueError
             If the visual does not have a node for this dimensionality.
         """
-        if self._dim == "3d":
+        if len(displayed_axes) == 3:
             if visual.node_3d is None:
                 raise ValueError(
                     f"Visual {visual.visual_model_id} has no 3D node. "
@@ -103,9 +96,9 @@ class SceneManager:
             ID of the visual to remove.
         """
         visual = self._visuals.pop(visual_id)
-        if self._dim == "3d" and visual.node_3d is not None:
+        if visual.node_3d is not None and visual.node_3d.parent is not None:
             self._scene.remove(visual.node_3d)
-        elif self._dim == "2d" and visual.node_2d is not None:
+        elif visual.node_2d is not None and visual.node_2d.parent is not None:
             self._scene.remove(visual.node_2d)
 
     def get_visual(self, visual_id: UUID) -> Any:
@@ -149,7 +142,7 @@ class SceneManager:
         dict[UUID, list[ChunkRequest]]
             Mapping of ``visual_model_id`` to that visual's ChunkRequests.
         """
-        if self._dim == "2d":
+        if len(request.dims_state.selection.displayed_axes) == 2:
             return self._build_slice_requests_2d(request, visual_configs)
         return self._build_slice_requests_3d(request, visual_configs)
 

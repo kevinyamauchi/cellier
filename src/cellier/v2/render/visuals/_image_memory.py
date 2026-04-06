@@ -163,23 +163,26 @@ class GFXImageMemoryVisual:
         Associated model-layer visual. Provides the initial appearance.
     data_store : ImageMemoryStore
         The backing data store. Used to query shape in planning methods.
-    render_mode : str
-        ``"2d"`` builds a ``gfx.Image`` node; ``"3d"`` builds a
-        ``gfx.Volume`` node.
+    render_modes : set[str]
+        Which nodes to build: ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
     """
 
     def __init__(
         self,
         visual_model: ImageVisual,
         data_store: ImageMemoryStore,
-        render_mode: str,
+        render_modes: set[str],
         transform: AffineTransform | None = None,
     ) -> None:
-        if render_mode not in ("2d", "3d"):
-            raise ValueError(f"render_mode must be '2d' or '3d', got {render_mode!r}")
+        invalid = render_modes - {"2d", "3d"}
+        if invalid or not render_modes:
+            raise ValueError(
+                f"render_modes must be a non-empty subset of {{'2d', '3d'}}, "
+                f"got {render_modes!r}"
+            )
 
         self.visual_model_id: UUID = visual_model.id
-        self._render_mode = render_mode
+        self.render_modes: set[str] = render_modes
         self._data_store = data_store
 
         # Store the data-to-world transform, auto-promoting if needed.
@@ -197,11 +200,14 @@ class GFXImageMemoryVisual:
         appearance = visual_model.appearance
         colormap = _make_colormap(appearance.color_map)
 
-        if render_mode == "2d":
+        self.node_2d: gfx.WorldObject | None = None
+        self.node_3d: gfx.WorldObject | None = None
+
+        if "2d" in render_modes:
             # Placeholder 1x1 texture -- replaced on first on_data_ready_2d.
             placeholder = np.zeros((1, 1, 1), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=2, format="1xf4")
-            self.node_2d: gfx.WorldObject | None = gfx.Image(
+            self.node_2d = gfx.Image(
                 gfx.Geometry(grid=tex),
                 gfx.ImageBasicMaterial(
                     clim=appearance.clim,
@@ -210,9 +216,8 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
-            self.node_3d: gfx.WorldObject | None = None
 
-        else:  # render_mode == "3d"
+        if "3d" in render_modes:
             # Placeholder 2x2x2 texture -- replaced on first on_data_ready.
             placeholder = np.zeros((2, 2, 2), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=3, format="1xf4")
@@ -225,7 +230,6 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
-            self.node_2d = None
 
         # Node matrix is set lazily on first build_slice_request when we
         # know the displayed axes.  Identity is fine as a placeholder.
@@ -491,17 +495,16 @@ class GFXImageMemoryVisual:
         event : AppearanceChangedEvent
             Carries ``field_name`` and ``new_value``.
         """
-        node = self.node_2d if self._render_mode == "2d" else self.node_3d
-        if node is None:
-            return
-        material = node.material
-
-        if event.field_name == "clim":
-            material.clim = event.new_value
-        elif event.field_name == "color_map":
-            material.map = _make_colormap(event.new_value)
-        elif event.field_name == "interpolation":
-            material.interpolation = event.new_value
+        for node in (self.node_2d, self.node_3d):
+            if node is None:
+                continue
+            material = node.material
+            if event.field_name == "clim":
+                material.clim = event.new_value
+            elif event.field_name == "color_map":
+                material.map = _make_colormap(event.new_value)
+            elif event.field_name == "interpolation":
+                material.interpolation = event.new_value
         # "visible" is handled by on_visibility_changed; ignore here.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
@@ -512,6 +515,6 @@ class GFXImageMemoryVisual:
         event : VisualVisibilityChangedEvent
             Carries ``visible`` bool.
         """
-        node = self.node_2d if self._render_mode == "2d" else self.node_3d
-        if node is not None:
-            node.visible = event.visible
+        for node in (self.node_2d, self.node_3d):
+            if node is not None:
+                node.visible = event.visible

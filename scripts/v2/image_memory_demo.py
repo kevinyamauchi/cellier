@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Demo: in-memory 3D image viewed as 2D slice and 3D volume.
+"""Demo: in-memory 3D image with toggleable 2D/3D view in a single scene.
 
 Run with:
     uv run python scripts/v2/image_memory_demo.py
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -32,120 +33,113 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # ── 1. Create data ──────────────────────────────────────────────────
-    volume = binary_blobs(length=128, volume_fraction=0.1, n_dim=3).astype(np.float32)
+    volume = binary_blobs(length=128, volume_fraction=0.03, n_dim=3).astype(np.float32)
     store = ImageMemoryStore(data=volume, name="demo_volume")
 
     # ── 2. Set up the controller ────────────────────────────────────────
     controller = CellierController()
 
-    # Coordinate system: 3 spatial axes
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
-    # 2D scene: displayed_axes=(1,2), slice_indices={0:0}
-    scene_2d = controller.add_scene(dim="2d", coordinate_system=cs, name="slice")
-    # 3D scene: displayed_axes=(0,1,2), slice_indices={}
-    scene_3d = controller.add_scene(dim="3d", coordinate_system=cs, name="volume")
-
-    appearance = ImageMemoryAppearance(
-        color_map="viridis",
-        clim=(0.0, 1.0),
+    # Single scene that supports both 2D and 3D rendering.
+    # Start in 3D; displayed_axes=(0,1,2).
+    scene = controller.add_scene(
+        dim="3d",
+        coordinate_system=cs,
+        name="volume",
+        render_modes={"2d", "3d"},
     )
 
-    # Add the same store to both scenes (store is registered only once)
-    visual_2d = controller.add_image(
+    appearance = ImageMemoryAppearance(color_map="viridis", clim=(0.0, 1.0))
+    visual = controller.add_image(
         data=store,
-        scene_id=scene_2d.id,
-        appearance=appearance,
-        name="slice_view",
-    )
-    visual_3d = controller.add_image(
-        data=store,
-        scene_id=scene_3d.id,
+        scene_id=scene.id,
         appearance=appearance,
         name="volume_view",
     )
 
-    # ── 3. Create canvases and z-slice control ─────────────────────────
+    # ── 3. Build UI ─────────────────────────────────────────────────────
     root = QWidget()
     outer_layout = QVBoxLayout(root)
     controller.set_widget_parent(root)
 
-    # Canvas row
-    canvas_row = QWidget()
-    canvas_layout = QHBoxLayout(canvas_row)
-    canvas_layout.setContentsMargins(0, 0, 0, 0)
+    canvas_widget = controller.add_canvas(scene_id=scene.id)
+    outer_layout.addWidget(canvas_widget)
 
-    widget_2d = controller.add_canvas(scene_id=scene_2d.id)
-    widget_3d = controller.add_canvas(scene_id=scene_3d.id)
-
-    canvas_layout.addWidget(widget_2d)
-    canvas_layout.addWidget(widget_3d)
-    outer_layout.addWidget(canvas_row)
-
-    # Z-slice spinbox
-    z_depth = store.shape[0]  # axis 0 = z
+    # Controls row
     controls = QWidget()
     ctrl_layout = QHBoxLayout(controls)
     ctrl_layout.setContentsMargins(0, 0, 0, 0)
-    ctrl_layout.addWidget(QLabel("Z slice:"))
 
+    z_depth = store.shape[0]
+    ctrl_layout.addWidget(QLabel("Z slice:"))
     z_spin = QSpinBox()
     z_spin.setRange(0, z_depth - 1)
-    z_spin.setValue(0)
+    z_spin.setValue(z_depth // 2)
     ctrl_layout.addWidget(z_spin)
     ctrl_layout.addStretch()
+
+    toggle_btn = QPushButton("Switch to 2D")
+    ctrl_layout.addWidget(toggle_btn)
     outer_layout.addWidget(controls)
 
+    root.resize(900, 700)
+    root.show()
+
+    # ── 4. Toggle logic ─────────────────────────────────────────────────
+    _current_dim = ["3d"]
+
+    def _toggle() -> None:
+        if _current_dim[0] == "3d":
+            _current_dim[0] = "2d"
+            toggle_btn.setText("Switch to 3D")
+            scene.dims.selection.slice_indices = {0: z_spin.value()}
+            scene.dims.selection.displayed_axes = (1, 2)
+        else:
+            _current_dim[0] = "3d"
+            toggle_btn.setText("Switch to 2D")
+            scene.dims.selection.displayed_axes = (0, 1, 2)
+
+        controller.reslice_scene(scene.id)
+
+    toggle_btn.clicked.connect(_toggle)
+
     def _on_z_changed(z: int) -> None:
-        scene_2d.dims.selection.slice_indices = {0: z}
-        controller.reslice_scene(scene_2d.id)
+        scene.dims.selection.slice_indices = {0: z}
+        if _current_dim[0] == "2d":
+            controller.reslice_scene(scene.id)
 
     z_spin.valueChanged.connect(_on_z_changed)
 
-    root.resize(1200, 700)
-    root.show()
+    # ── 5. Initial reslice + camera fit ────────────────────────────────
+    # Patch on_data_ready to fit the camera on the first delivery.
+    scene_mgr = controller._render_manager._scenes[scene.id]
+    gfx_vis = scene_mgr.get_visual(visual.id)
+    _camera_fitted: set[str] = set()
 
-    # ── 4. Initial reslice + camera fit ────────────────────────────────
-    # The async slicer needs a running event loop, so reslice is deferred
-    # with QTimer.singleShot(0, ...) until QtAsyncio.run() has started.
-    #
-    # look_at_visual computes the bounding box from the current node
-    # geometry, so it must run *after* data has been committed to the GPU
-    # (otherwise the placeholder texture gives a near-zero bounding box).
-    # We wrap the on_data_ready callbacks to trigger camera fit on the
-    # first delivery — event-driven, not time-based.
+    _orig_3d = gfx_vis.on_data_ready
 
-    visuals_loaded: set[str] = set()
+    def _patched_3d(batch):
+        _orig_3d(batch)
+        if "3d" not in _camera_fitted:
+            _camera_fitted.add("3d")
+            controller.look_at_visual(
+                visual.id, view_direction=(-1, -1, -1), up=(0, 0, 1)
+            )
 
-    def _wrap_callback(original, visual_id, label, view_dir, up):
-        def _wrapped(batch):
-            original(batch)
-            if label not in visuals_loaded:
-                visuals_loaded.add(label)
-                controller.look_at_visual(visual_id, view_direction=view_dir, up=up)
+    gfx_vis.on_data_ready = _patched_3d
 
-        return _wrapped
+    _orig_2d = gfx_vis.on_data_ready_2d
 
-    # Patch the render-layer visuals to fire camera fit on first data.
-    scene_mgr_2d = controller._render_manager._scenes[scene_2d.id]
-    gfx_vis_2d = scene_mgr_2d.get_visual(visual_2d.id)
-    gfx_vis_2d.on_data_ready_2d = _wrap_callback(
-        gfx_vis_2d.on_data_ready_2d,
-        visual_2d.id,
-        "2d",
-        view_dir=(0, 0, -1),
-        up=(0, 1, 0),
-    )
+    def _patched_2d(batch):
+        _orig_2d(batch)
+        if "2d" not in _camera_fitted:
+            _camera_fitted.add("2d")
+            controller.look_at_visual(
+                visual.id, view_direction=(0, 0, -1), up=(0, 1, 0)
+            )
 
-    scene_mgr_3d = controller._render_manager._scenes[scene_3d.id]
-    gfx_vis_3d = scene_mgr_3d.get_visual(visual_3d.id)
-    gfx_vis_3d.on_data_ready = _wrap_callback(
-        gfx_vis_3d.on_data_ready,
-        visual_3d.id,
-        "3d",
-        view_dir=(-1, -1, -1),
-        up=(0, 0, 1),
-    )
+    gfx_vis.on_data_ready_2d = _patched_2d
 
     QTimer.singleShot(0, controller.reslice_all)
 

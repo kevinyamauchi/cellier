@@ -83,22 +83,20 @@ class RenderManager:
         if not value:
             self._temporal_pass.reset()
 
-    def add_scene(self, scene_id: UUID, dim: str) -> SceneManager:
+    def add_scene(self, scene_id: UUID) -> SceneManager:
         """Create and register a new scene.
 
         Parameters
         ----------
         scene_id : UUID
             Unique identifier for the scene.
-        dim : str
-            Dimensionality, either ``"2d"`` or ``"3d"``.
 
         Returns
         -------
         SceneManager
             The newly created scene manager.
         """
-        scene_manager = SceneManager(scene_id=scene_id, dim=dim)
+        scene_manager = SceneManager(scene_id=scene_id)
         self._scenes[scene_id] = scene_manager
         return scene_manager
 
@@ -130,12 +128,6 @@ class RenderManager:
         CanvasView
             The newly created canvas view.
         """
-        # Auto-inject dim from the scene if not explicitly provided.
-        if "dim" not in canvas_view_kwargs:
-            scene_manager = self._scenes.get(scene_id)
-            if scene_manager is not None:
-                canvas_view_kwargs["dim"] = scene_manager.dim
-
         canvas_view = CanvasView(
             canvas_id=canvas_id,
             scene_id=scene_id,
@@ -154,6 +146,7 @@ class RenderManager:
         scene_id: UUID,
         visual: Any,
         data_store: BaseDataStore,
+        displayed_axes: tuple[int, ...],
     ) -> None:
         """Register a visual with a scene and its associated data store.
 
@@ -165,8 +158,11 @@ class RenderManager:
             The render-layer visual object.
         data_store : BaseDataStore
             The data store that will serve chunk data for this visual.
+        displayed_axes : tuple[int, ...]
+            Current displayed axes from the scene's dims selection.  Passed to
+            ``SceneManager.add_visual`` to select the initial node.
         """
-        self._scenes[scene_id].add_visual(visual)
+        self._scenes[scene_id].add_visual(visual, displayed_axes)
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
 

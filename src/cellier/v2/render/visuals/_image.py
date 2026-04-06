@@ -402,8 +402,10 @@ class GFXMultiscaleImageVisual:
         Isosurface threshold.
     interpolation : str
         Sampler filter (``"linear"`` or ``"nearest"``).
-    gpu_budget_bytes : int
-        Maximum GPU memory for the brick cache texture.
+    gpu_budget_bytes_3d : int
+        Maximum GPU memory for the 3D brick cache texture.
+    gpu_budget_bytes_2d : int
+        Maximum GPU memory for the 2D tile cache texture.
     """
 
     def __init__(
@@ -416,7 +418,8 @@ class GFXMultiscaleImageVisual:
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
         interpolation: str = "linear",
-        gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_3d: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
         transform: AffineTransform | None = None,
         full_level_transforms: list[AffineTransform] | None = None,
         full_level_shapes: list[tuple[int, ...]] | None = None,
@@ -470,7 +473,7 @@ class GFXMultiscaleImageVisual:
         self._world_to_level_transforms = self._build_world_to_level_transforms()
         # Track displayed axes for lazy node matrix updates (Option C).
         self._last_displayed_axes: tuple[int, ...] | None = None
-        self._gpu_budget_bytes = gpu_budget_bytes
+        self._gpu_budget_bytes = gpu_budget_bytes_3d
         self._frame_number = 0
         self._use_brick_shader = use_brick_shader
         self._voxel_spacing = voxel_spacing
@@ -486,7 +489,7 @@ class GFXMultiscaleImageVisual:
         if volume_geometry is not None:
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
-                gpu_budget_bytes=gpu_budget_bytes,
+                gpu_budget_bytes=gpu_budget_bytes_3d,
                 overlap=3,
             )
             self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
@@ -511,7 +514,7 @@ class GFXMultiscaleImageVisual:
         self._block_scales_buffer_2d = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
-                gpu_budget_bytes=gpu_budget_bytes,
+                gpu_budget_bytes=gpu_budget_bytes_2d,
                 block_size=image_geometry_2d.block_size,
             )
             self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
@@ -604,10 +607,10 @@ class GFXMultiscaleImageVisual:
         cls,
         model: MultiscaleImageVisual,
         level_shapes: list[tuple[int, ...]],
-        displayed_axes: tuple[int, ...],
         render_modes: set[str],
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
         threshold: float | None = None,
         interpolation: str = "linear",
         use_brick_shader: bool = False,
@@ -621,15 +624,17 @@ class GFXMultiscaleImageVisual:
             Source visual model.
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level, finest first.
-        displayed_axes : tuple[int, ...]
-            Which axes are displayed (from dims.selection.displayed_axes).
         render_modes : set[str]
             Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
-            ``{"2d", "3d"}``.
+            ``{"2d", "3d"}``.  When both are requested, 3D geometry is built
+            from the last three axes and 2D geometry from the last two axes.
         block_size : int
             Rendering brick side length in voxels.
         gpu_budget_bytes : int
-            Maximum GPU memory for the brick cache.
+            Maximum GPU memory for the 3D brick cache.
+        gpu_budget_bytes_2d : int
+            Maximum GPU memory for the 2D tile cache.  Defaults to 64 MiB,
+            which is sufficient for typical 2D slice viewing.
         threshold : float or None
             Deprecated. Use ``model.appearance.iso_threshold`` instead.
             When provided, overrides the appearance value.
@@ -647,34 +652,32 @@ class GFXMultiscaleImageVisual:
         -------
         GFXMultiscaleImageVisual
         """
-        # Extract the displayed-axis shapes.
-        displayed_level_shapes = [
-            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
-        ]
+        ndim = len(level_shapes[0])
+        axes_3d = tuple(range(ndim - 3, ndim))
+        axes_2d = tuple(range(ndim - 2, ndim))
 
-        # Extract displayed-subspace transforms for geometry objects.
-        displayed_transforms = [
-            t.set_slice(displayed_axes) for t in model.level_transforms
-        ]
-
-        # Build 3D geometry only when 3D rendering is requested.
+        # Build 3D geometry when 3D rendering is requested.
         volume_geometry: VolumeGeometry | None = None
-        if "3d" in render_modes and len(displayed_axes) == 3:
+        if "3d" in render_modes:
+            shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
+            transforms_3d = [t.set_slice(axes_3d) for t in model.level_transforms]
             volume_geometry = VolumeGeometry(
-                level_shapes=displayed_level_shapes,
-                level_transforms=displayed_transforms,
+                level_shapes=shapes_3d,
+                level_transforms=transforms_3d,
                 block_size=block_size,
             )
 
-        # Build 2D geometry only when 2D rendering is requested.
+        # Build 2D geometry when 2D rendering is requested.
         image_geometry_2d: ImageGeometry2D | None = None
-        if "2d" in render_modes and len(displayed_axes) == 2:
-            level_shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
+        if "2d" in render_modes:
+            shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
+            transforms_2d = [t.set_slice(axes_2d) for t in model.level_transforms]
+            level_shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
             image_geometry_2d = ImageGeometry2D(
                 level_shapes=level_shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
-                level_transforms=displayed_transforms,
+                level_transforms=transforms_2d,
             )
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
@@ -692,7 +695,8 @@ class GFXMultiscaleImageVisual:
             clim=clim,
             threshold=effective_threshold,
             interpolation=interpolation,
-            gpu_budget_bytes=gpu_budget_bytes,
+            gpu_budget_bytes_3d=gpu_budget_bytes,
+            gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             transform=model.transform,
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
@@ -720,27 +724,27 @@ class GFXMultiscaleImageVisual:
     ) -> tuple[gfx.WorldObject | None, gfx.WorldObject | None]:
         """Rebuild geometry and GPU resources after a displayed_axes change.
 
-        Returns ``(old_node, new_node)`` for the active rendering mode so
-        the caller can swap the node in the scene graph.
+        Returns ``(old_node, new_node)`` for the active node so the caller
+        can swap it in the scene graph.  Derives the 3D and 2D axis subsets
+        from ``ndim`` (last-three and last-two axes respectively).
 
         Parameters
         ----------
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level from the data store.
         displayed_axes : tuple[int, ...]
-            The new set of displayed axes.
+            The new set of displayed axes.  Used only to determine which
+            node (2D or 3D) is the currently active one to swap.
 
         Returns
         -------
         tuple[old_node, new_node]
             The previous and replacement pygfx nodes (may be ``None``).
         """
-        # Update full-ndim shapes (data fetching).
         self._full_level_shapes = list(level_shapes)
-
-        displayed_level_shapes = [
-            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
-        ]
+        ndim = len(level_shapes[0])
+        axes_3d = tuple(range(ndim - 3, ndim))
+        axes_2d = tuple(range(ndim - 2, ndim))
 
         old_node: gfx.WorldObject | None = None
         new_node: gfx.WorldObject | None = None
@@ -748,16 +752,20 @@ class GFXMultiscaleImageVisual:
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
             if self._volume_geometry is not None:
-                self._volume_geometry.update(displayed_level_shapes)
-                self._rebuild_3d_resources()
+                shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
+                if shapes_3d != self._volume_geometry.level_shapes:
+                    self._volume_geometry.update(shapes_3d)
+                    self._rebuild_3d_resources()
                 new_node = self.node_3d
 
         if "2d" in self.render_modes and len(displayed_axes) == 2:
             old_node = self.node_2d
-            shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
             if self._image_geometry_2d is not None:
-                self._image_geometry_2d.update(shapes_2d)
-                self._rebuild_2d_resources()
+                shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
+                shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
+                if shapes_2d != self._image_geometry_2d.level_shapes:
+                    self._image_geometry_2d.update(shapes_2d)
+                    self._rebuild_2d_resources()
                 new_node = self.node_2d
 
         return old_node, new_node
@@ -1161,6 +1169,8 @@ class GFXMultiscaleImageVisual:
 
     def cancel_pending(self) -> None:
         """Release all in-flight 3D slots."""
+        if self._block_cache_3d is None:
+            return
         self._block_cache_3d.tile_manager.release_all_in_flight()
         self._pending_slot_map = {}
 
@@ -1432,6 +1442,8 @@ class GFXMultiscaleImageVisual:
 
     def cancel_pending_2d(self) -> None:
         """Release all in-flight 2D slots."""
+        if self._block_cache_2d is None:
+            return
         self._block_cache_2d.tile_manager.release_all_in_flight()
         self._pending_slot_map_2d = {}
 
