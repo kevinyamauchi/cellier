@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
+from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
@@ -31,22 +33,55 @@ class RenderManager:
     registered via the ``add_*`` methods.
     """
 
-    def __init__(
-        self, slicer_batch_size: int = 8, slicer_render_every: int = 1
-    ) -> None:
+    def __init__(self, config: RenderManagerConfig | None = None) -> None:
+        if config is None:
+            config = RenderManagerConfig()
+        self._config = config
         self._scenes: dict[UUID, SceneManager] = {}
         self._canvases: dict[UUID, CanvasView] = {}
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
         self._slicer = AsyncSlicer(
-            batch_size=slicer_batch_size, render_every=slicer_render_every
+            batch_size=config.slicing.batch_size,
+            render_every=config.slicing.render_every,
         )
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
             slicer=self._slicer,
             data_stores=self._data_stores,
         )
+        self._temporal_pass = TemporalAccumulationPass(alpha=config.temporal.alpha)
+
+    @property
+    def config(self) -> RenderManagerConfig:
+        """Current rendering performance configuration.
+
+        Reflects live state: mutations via ``temporal_alpha`` and
+        ``temporal_enabled`` setters are visible here immediately.
+        """
+        return self._config
+
+    @property
+    def temporal_alpha(self) -> float:
+        """EMA floor weight for temporal accumulation."""
+        return self._config.temporal.alpha
+
+    @temporal_alpha.setter
+    def temporal_alpha(self, value: float) -> None:
+        self._config.temporal.alpha = value
+        self._temporal_pass.alpha = value
+
+    @property
+    def temporal_enabled(self) -> bool:
+        """Whether the temporal accumulation pass is active."""
+        return self._config.temporal.enabled
+
+    @temporal_enabled.setter
+    def temporal_enabled(self, value: bool) -> None:
+        self._config.temporal.enabled = value
+        if not value:
+            self._temporal_pass.reset()
 
     def add_scene(self, scene_id: UUID, dim: str) -> SceneManager:
         """Create and register a new scene.

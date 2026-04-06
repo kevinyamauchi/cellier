@@ -35,13 +35,13 @@ import zarr
 # Synthetic dataset
 # ---------------------------------------------------------------------------
 
-DATASET_PATH = "cellier_brick_blobs_small.ome.zarr"
+DATASET_PATH = "cellier_brick_blobs.ome.zarr"
 
-SHAPE_ZYX = (500, 2000, 2000)  # voxel counts at level 0
+SHAPE_ZYX = (200, 400, 400)  # voxel counts at level 0
 SPACING_ZYX = (2.0, 1.0, 1.0)  # physical voxel size (um)
-N_LEVELS = 3
-N_BLOBS = 10000
-BLOB_RADIUS_UM = 2.0
+N_LEVELS = 4
+N_BLOBS = 40
+BLOB_RADIUS_UM = 15.0
 CHUNK_ZYX = (64, 64, 64)
 
 
@@ -191,34 +191,12 @@ class BlobViewer:
         mode_group = QtWidgets.QGroupBox("Pipeline mode")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
         self._lod_radio = QtWidgets.QRadioButton("LOD + frustum culling")
-        self._flat_radio = QtWidgets.QRadioButton("Level 3 all bricks (flat)")
-        self._lod_radio.setChecked(True)  # matches initial force_level=1
+        self._flat_radio = QtWidgets.QRadioButton("Level 1 all bricks (flat)")
+        self._flat_radio.setChecked(True)  # matches initial force_level=1
         self._lod_radio.toggled.connect(self._on_mode_toggle)
         mode_layout.addWidget(self._lod_radio)
         mode_layout.addWidget(self._flat_radio)
         panel_layout.addWidget(mode_group)
-
-        # ── Render mode ───────────────────────────────────────────────
-        render_group = QtWidgets.QGroupBox("Render mode")
-        render_layout = QtWidgets.QHBoxLayout(render_group)
-        self._render_mode_combo = QtWidgets.QComboBox()
-        self._render_mode_combo.addItems(["ISO", "MIP"])
-        self._render_mode_combo.currentTextChanged.connect(self._on_render_mode_changed)
-        render_layout.addWidget(self._render_mode_combo)
-        panel_layout.addWidget(render_group)
-
-        # ── Contrast limits ───────────────────────────────────────────
-        clim_group = QtWidgets.QGroupBox("Contrast limits")
-        clim_layout = QtWidgets.QHBoxLayout(clim_group)
-        clim_layout.addWidget(QtWidgets.QLabel("clim max"))
-        self._clim_max_spin = QtWidgets.QDoubleSpinBox()
-        self._clim_max_spin.setRange(0.01, 10.0)
-        self._clim_max_spin.setSingleStep(0.05)
-        self._clim_max_spin.setDecimals(3)
-        self._clim_max_spin.setValue(1.0)
-        self._clim_max_spin.valueChanged.connect(self._on_clim_max_changed)
-        clim_layout.addWidget(self._clim_max_spin)
-        panel_layout.addWidget(clim_group)
 
         # ── LOD bias ──────────────────────────────────────────────────
         bias_group = QtWidgets.QGroupBox("LOD bias")
@@ -232,6 +210,19 @@ class BlobViewer:
         self._lod_bias_spin.valueChanged.connect(self._on_lod_bias_changed)
         bias_layout.addWidget(self._lod_bias_spin)
         panel_layout.addWidget(bias_group)
+
+        # ── ISO threshold ─────────────────────────────────────────
+        thresh_group = QtWidgets.QGroupBox("ISO threshold")
+        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
+        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
+        self._threshold_spin = QtWidgets.QDoubleSpinBox()
+        self._threshold_spin.setRange(0.0, 1.0)
+        self._threshold_spin.setSingleStep(0.01)
+        self._threshold_spin.setDecimals(3)
+        self._threshold_spin.setValue(self._visual_model.appearance.iso_threshold)
+        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
+        thresh_layout.addWidget(self._threshold_spin)
+        panel_layout.addWidget(thresh_group)
 
         self._status_label = QtWidgets.QLabel("Mode: Level 1 all bricks (flat)")
         self._status_label.setWordWrap(True)
@@ -252,29 +243,18 @@ class BlobViewer:
             self._visual_model.appearance.frustum_cull = True
             self._status_label.setText("Mode: LOD + frustum culling")
         else:
-            self._visual_model.appearance.force_level = 3
+            self._visual_model.appearance.force_level = 1
             self._visual_model.appearance.frustum_cull = False
-            self._status_label.setText("Mode: Level 3 all bricks (flat)")
+            self._status_label.setText("Mode: Level 1 all bricks (flat)")
         print(
             f"[DEBUG] Mode changed: force_level={self._visual_model.appearance.force_level}, "
             f"frustum_cull={self._visual_model.appearance.frustum_cull}"
         )
         self._controller.reslice_scene(self._scene_id)
 
-    def _on_render_mode_changed(self, text: str):
-        mode = text.lower()  # "ISO" -> "iso", "MIP" -> "mip"
-        self._visual_model.appearance.render_mode = mode
-        print(f"[DEBUG] Render mode changed to {mode}")
-
-        # Switch colormap: viridis for MIP, grays for ISO.
-        if mode == "mip":
-            self._visual_model.appearance.color_map = "viridis"
-        else:
-            self._visual_model.appearance.color_map = "grays"
-
-    def _on_clim_max_changed(self, value: float):
-        self._visual_model.appearance.clim = (0.0, value)
-        print(f"[DEBUG] clim changed to (0.0, {value})")
+    def _on_threshold_changed(self, value: float):
+        self._visual_model.appearance.iso_threshold = value
+        print(f"[DEBUG] ISO threshold changed to {value}")
 
     def _on_lod_bias_changed(self, value: float):
         self._visual_model.appearance.lod_bias = value
@@ -321,17 +301,13 @@ async def async_main():
         level_scales=level_scales,
         level_translations=level_translations,
     )
-    # store = OMEZarrImageDataStore.from_path(
-    #     zarr_path=str(DATASET_PATH),
-    #     name="ome dataset"
-    # )
 
     appearance = ImageAppearance(
         color_map="grays",
         clim=(0.0, 1.0),
         lod_bias=1.0,
-        force_level=None,
-        frustum_cull=True,
+        force_level=1,  # force a single level to simplify debugging
+        frustum_cull=False,  # disable culling to ensure bricks load
         iso_threshold=0.2,
     )
     # Activate ray_dir debug mode on the material to verify the box is visible.
@@ -349,7 +325,7 @@ async def async_main():
         appearance=appearance,
         name="blobs",
         block_size=32,
-        gpu_budget_bytes=2048 * 1024**2,
+        gpu_budget_bytes=512 * 1024**2,
         threshold=0.2,
         use_brick_shader=True,
         voxel_spacing=voxel_spacing,
@@ -474,13 +450,13 @@ if __name__ == "__main__":
         create_dataset(DATASET_PATH)
         sys.exit(0)
 
-    # if not DATASET_PATH.exists():
-    #     print(
-    #         f"Dataset not found at {DATASET_PATH}\n"
-    #         "Run with --make-files first to generate it.",
-    #         file=sys.stderr,
-    #     )
-    #     sys.exit(1)
+    if not DATASET_PATH.exists():
+        print(
+            f"Dataset not found at {DATASET_PATH}\n"
+            "Run with --make-files first to generate it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     import PySide6.QtAsyncio as QtAsyncio
     from PySide6.QtWidgets import QApplication

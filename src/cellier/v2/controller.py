@@ -49,14 +49,13 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.render._config import RenderManagerConfig
     from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import ImageAppearance
 
 
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
-
-DEFAULT_CAMERA_SETTLE_THRESHOLD_S: float = 0.3
 
 
 class CellierController:
@@ -68,17 +67,11 @@ class CellierController:
     def __init__(
         self,
         widget_parent: QWidget | None = None,
-        slicer_batch_size: int = 8,
-        slicer_render_every: int = 1,
-        camera_settle_threshold_s: float = DEFAULT_CAMERA_SETTLE_THRESHOLD_S,
-        camera_reslice_enabled: bool = True,
+        render_config: RenderManagerConfig | None = None,
     ) -> None:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
-        self._render_manager = RenderManager(
-            slicer_batch_size=slicer_batch_size,
-            slicer_render_every=slicer_render_every,
-        )
+        self._render_manager = RenderManager(config=render_config)
         # Reverse map: visual_model_id → scene_id (model layer mirror of render layer)
         self._visual_to_scene: dict[UUID, UUID] = {}
         # Reverse map: canvas_id → scene_id
@@ -93,8 +86,6 @@ class CellierController:
         # Handles for externally-registered callbacks
         self._external_handles: list[SubscriptionHandle] = []
         # Camera settle
-        self._camera_settle_threshold_s: float = camera_settle_threshold_s
-        self._camera_reslice_enabled: bool = camera_reslice_enabled
         self._settle_tasks: dict[UUID, asyncio.Task] = {}
         self._event_bus.subscribe(
             CameraChangedEvent,
@@ -194,7 +185,7 @@ class CellierController:
         elif dim == "2d":
             # Display the last two axes; slice all others at 0.
             displayed_axes = tuple(range(ndim - 2, ndim))
-            slice_indices_dict = {i: 0 for i in range(ndim - 2)}
+            slice_indices_dict = dict.fromkeys(range(ndim - 2), 0)
         else:
             raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
 
@@ -805,22 +796,31 @@ class CellierController:
     @property
     def camera_reslice_enabled(self) -> bool:
         """Whether camera movement triggers automatic reslicing."""
-        return self._camera_reslice_enabled
+        return self._render_manager.config.camera.reslice_enabled
 
     @camera_reslice_enabled.setter
     def camera_reslice_enabled(self, value: bool) -> None:
-        self._camera_reslice_enabled = value
+        self._render_manager.config.camera.reslice_enabled = value
         if not value:
             for task in self._settle_tasks.values():
                 if not task.done():
                     task.cancel()
             self._settle_tasks.clear()
 
+    @property
+    def camera_settle_threshold_s(self) -> float:
+        """Debounce delay before reslice after camera movement."""
+        return self._render_manager.config.camera.settle_threshold_s
+
+    @camera_settle_threshold_s.setter
+    def camera_settle_threshold_s(self, value: float) -> None:
+        self._render_manager.config.camera.settle_threshold_s = value
+
     def _on_camera_changed(self, event: CameraChangedEvent) -> None:
         """Synchronous bus handler — updates camera model and schedules settle task."""
         self._update_camera_model(event.scene_id, event.camera_state)
 
-        if not self._camera_reslice_enabled:
+        if not self._render_manager.config.camera.reslice_enabled:
             return
 
         canvas_id = event.source_id
@@ -837,7 +837,7 @@ class CellierController:
             "settle_schedule  canvas=%s  scene=%s  threshold=%.3fs",
             canvas_id,
             event.scene_id,
-            self._camera_settle_threshold_s,
+            self._render_manager.config.camera.settle_threshold_s,
         )
         self._settle_tasks[canvas_id] = asyncio.create_task(
             self._settle_after(canvas_id, event.scene_id)
@@ -872,7 +872,7 @@ class CellierController:
     async def _settle_after(self, canvas_id: UUID, scene_id: UUID) -> None:
         """Wait for the settle threshold, then reslice camera-sensitive visuals."""
         try:
-            await asyncio.sleep(self._camera_settle_threshold_s)
+            await asyncio.sleep(self._render_manager.config.camera.settle_threshold_s)
         except asyncio.CancelledError:
             raise
 

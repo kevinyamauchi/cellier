@@ -354,6 +354,11 @@ async def async_main(zarr_uri: str):
 
     from cellier.v2.controller import CellierController
     from cellier.v2.data.image import OMEZarrImageDataStore
+    from cellier.v2.render._config import (
+        CameraConfig,
+        RenderManagerConfig,
+        SlicingConfig,
+    )
     from cellier.v2.scene.dims import CoordinateSystem
     from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import ImageAppearance
@@ -394,9 +399,10 @@ async def async_main(zarr_uri: str):
     # ── Controller ────────────────────────────────────────────────────
     controller = CellierController(
         widget_parent=None,
-        camera_reslice_enabled=False,
-        slicer_batch_size=32,
-        slicer_render_every=4,
+        render_config=RenderManagerConfig(
+            slicing=SlicingConfig(batch_size=32, render_every=4),
+            camera=CameraConfig(reslice_enabled=False),
+        ),
     )
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
@@ -497,7 +503,7 @@ async def async_main(zarr_uri: str):
     await asyncio.sleep(2.0)
     print("[DEBUG] After initial reslice:")
     print(f"  cache n_resident = {vis._block_cache_3d.n_resident}")
-    print(f"  LUT max w        = {vis._lut_manager_3d.lut_data[:,:,:,3].max()}")
+    print(f"  LUT max w        = {vis._lut_manager_3d.lut_data[:, :, :, 3].max()}")
     print(f"  node_3d matrix   =\n{vis.node_3d.local.matrix}")
 
     canvas_3d_view = controller._render_manager._find_canvas_for_scene(scene_3d.id)

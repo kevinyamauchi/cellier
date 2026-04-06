@@ -15,6 +15,7 @@ from cellier.v2._state import CameraState
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
 from cellier.v2.events._events import CameraChangedEvent, TransformChangedEvent
+from cellier.v2.render._config import CameraConfig, RenderManagerConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
@@ -411,7 +412,11 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
 
     Returns (controller, scene, visual, canvas_id, reslice_calls).
     """
-    controller = CellierController(camera_settle_threshold_s=threshold_s)
+    controller = CellierController(
+        render_config=RenderManagerConfig(
+            camera=CameraConfig(settle_threshold_s=threshold_s)
+        )
+    )
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
