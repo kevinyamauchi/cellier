@@ -237,6 +237,57 @@ fn setup_brick(
 }
 
 
+// ── MIP brick lookup ──────────────────────────────────────────────────────
+
+// Like setup_brick() but receives t_end and the brick index from the DDA
+// caller instead of computing them via intersect_box() / floor(). Eliminates
+// both the per-brick slab test and the float boundary ambiguity.
+fn lookup_brick_mip(
+    t_entry:      f32,
+    t_end_dda:    f32,
+    entry_idx:    vec3<i32>,  // DDA-maintained brick index (no float floor needed)
+    norm_size:    vec3<f32>,
+    dataset_size: vec3<f32>,
+) -> BrickInfo {
+    var info: BrickInfo;
+
+    let block_size = vec3<f32>(u_vol_params.block_size_x,
+                               u_vol_params.block_size_y,
+                               u_vol_params.block_size_z);
+    let lut_size_i = vec3<i32>(i32(u_vol_params.lut_size_x),
+                               i32(u_vol_params.lut_size_y),
+                               i32(u_vol_params.lut_size_z));
+
+    // 1. Brick index from DDA state — exact, no float boundary ambiguity.
+    let safe_idx  = clamp(entry_idx, vec3<i32>(0), lut_size_i - vec3<i32>(1));
+
+    // 2. t_end is supplied by the DDA — no slab test needed.
+    info.t_end = t_end_dda;
+
+    // 3. LUT and brick_max lookups (identical to setup_brick).
+    let lut_entry  = textureLoad(t_lut, safe_idx, 0);
+    info.lut_entry = lut_entry;
+    info.brick_max = textureLoad(t_brick_max, safe_idx, 0).r;
+    info.valid     = lut_entry.w > 0u;
+
+    // 4. Step budget (identical to setup_brick, using DDA-derived brick length).
+    if (info.valid) {
+        info.lod_scale = get_lod_scale(lut_entry.w);
+        let brick_len       = max(info.t_end - t_entry, 1e-6);
+        // brick_world_len: diagonal of one brick in normalized space.
+        // Since voxel→norm is a uniform linear scale, this is constant for
+        // all bricks — no AABB reconstruction needed.
+        let brick_norm_size = norm_size * block_size / dataset_size;
+        let brick_world_len = length(brick_norm_size);
+        let max_scale       = max(info.lod_scale.x, max(info.lod_scale.y, info.lod_scale.z));
+        info.num_steps      = max(1u, u32((STEPS_PER_BRICK / max_scale) * brick_len / brick_world_len));
+        info.step_size      = brick_len / f32(info.num_steps);
+    }
+
+    return info;
+}
+
+
 // ── Vertex shader ─────────────────────────────────────────────────────────
 
 struct VertexInput {
@@ -377,15 +428,63 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var lod_debug_color = vec3<f32>(0.0);
     var lod_debug_found = false;
 
+    $$ if render_mode == 'mip'
+    // ── DDA state for MIP brick traversal ─────────────────────────────────
+    // Brick sizes are uniform in normalized space (the voxel→norm transform
+    // is a linear scale), so all grid crossings can be precomputed once.
+    let block_size_v = vec3<f32>(u_vol_params.block_size_x,
+                                  u_vol_params.block_size_y,
+                                  u_vol_params.block_size_z);
+    let brick_norm   = norm_size * block_size_v / dataset_size;
+    let dda_step_v   = vec3<i32>(select(-1, 1, safe_dir.x >= 0.0),
+                                  select(-1, 1, safe_dir.y >= 0.0),
+                                  select(-1, 1, safe_dir.z >= 0.0));
+    let t_delta      = abs(brick_norm / safe_dir);
+    let vol_origin_n = -norm_size * 0.5;
+    let start_pos_n  = ray_origin + ray_dir * t_start;
+    let lut_size_f   = vec3<f32>(f32(u_vol_params.lut_size_x),
+                                  f32(u_vol_params.lut_size_y),
+                                  f32(u_vol_params.lut_size_z));
+    var dda_idx      = clamp(
+        vec3<i32>(floor((start_pos_n - vol_origin_n) / brick_norm)),
+        vec3<i32>(0),
+        vec3<i32>(lut_size_f) - vec3<i32>(1)
+    );
+    // For each axis, t at which the ray first exits the starting brick.
+    // Positive step → forward face at (idx+1)*brick_norm; negative → idx*brick_norm.
+    let face_idx  = vec3<f32>(dda_idx) + select(vec3<f32>(0.0), vec3<f32>(1.0),
+                                                 dda_step_v > vec3<i32>(0));
+    // dda_t_max holds absolute t-values along the ray (same space as t_start/t_end).
+    // (face - start_pos_n) / dir gives the t-offset from t_start, so add t_start.
+    var dda_t_max = t_start + (vol_origin_n + face_idx * brick_norm - start_pos_n) / safe_dir;
+    $$ endif
+
     for (var brick_iter = 0u; brick_iter < MAX_BRICK_ITERS; brick_iter++) {
         $$ if render_mode == 'mip'
         if (t >= t_end) { break; }
+
+        // ── DDA advance ────────────────────────────────────────────────────
+        // Find which axis the ray exits through first, step the DDA, then
+        // look up the brick. This replaces the intersect_box() call inside
+        // setup_brick() with three comparisons and one add per brick.
+        let cross_x    = dda_t_max.x <= dda_t_max.y && dda_t_max.x <= dda_t_max.z;
+        let cross_y    = !cross_x && dda_t_max.y <= dda_t_max.z;
+        let cross_axis = select(select(2u, 1u, cross_y), 0u, cross_x);
+        let dda_t_exit = min(dda_t_max[cross_axis], t_end);
+        let t_entry    = t;
+        let entry_idx  = dda_idx;   // save CURRENT brick index before stepping
+        t              = dda_t_max[cross_axis];
+        dda_t_max[cross_axis] += t_delta[cross_axis];
+        dda_idx[cross_axis]   += dda_step_v[cross_axis];
+        dda_idx = clamp(dda_idx, vec3<i32>(0), vec3<i32>(lut_size_f) - vec3<i32>(1));
+
+        let brick = lookup_brick_mip(t_entry, dda_t_exit, entry_idx, norm_size, dataset_size);
         $$ else
         if (t >= t_end || surface_found) { break; }
-        $$ endif
 
         let brick = setup_brick(ray_origin, ray_dir, inv_ray_dir,
                                 t, t_end, norm_size, dataset_size);
+        $$ endif
 
         $$ if debug_mode == 'lod_color'
         if (brick.valid && !lod_debug_found) {
@@ -395,22 +494,25 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         }
         $$ endif
 
+        $$ if render_mode != 'mip'
         // Fix 2: record where this brick begins for cross-brick bisection.
         brick_boundary_t = t;
+        $$ endif
 
         if (!brick.valid) {
+            $$ if render_mode == 'mip'
+            continue;   // DDA already advanced t; just skip to next brick.
+            $$ else
             t = brick.t_end + 0.0001;
             prev_density = 0.0;
             t_sample_carry = t;   // Fix 1: reset carry after skip.
             continue;
+            $$ endif
         }
 
         $$ if render_mode == 'mip'
         // MIP early-out: skip bricks whose max can't beat our running maximum.
-        if (brick.brick_max <= max_density) {
-            t = brick.t_end + 0.0001;
-            continue;
-        }
+        if (brick.brick_max <= max_density) { continue; }
         $$ else
         // ISO early-out: skip bricks that are entirely below the isosurface.
         if (brick.brick_max < iso_threshold) {
@@ -429,7 +531,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ if render_mode == 'mip'
         // MIP: per-brick stochastic jitter (boundary continuity not needed).
         let jitter   = rand(ray_seed_base + brick_iter + frame_index) * brick.step_size;
-        var t_sample = t + jitter;
+        var t_sample = t_entry + jitter;
         $$ else
         // ISO Fix 1: continuous sampling — resume from where the last brick left off.
         // On the very first valid brick, apply the one-time ray jitter.
@@ -440,7 +542,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ endif
 
         for (var i = 0u; i < brick.num_steps; i++) {
+            $$ if render_mode == 'mip'
+            if (t_sample > dda_t_exit) { break; }
+            $$ else
             if (t_sample > brick.t_end) { break; }
+            $$ endif
 
             let pos     = ray_origin + ray_dir * t_sample;
             let voxel   = norm_to_voxel(pos, norm_size, dataset_size);
@@ -478,9 +584,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             // Sampling continuity is handled by t_sample_carry, not t.
             t = brick.t_end + 0.0001;
         }
-        $$ else
-        t = brick.t_end + 0.0001;
         $$ endif
+        // MIP: t already advanced by DDA at the top of this iteration.
     }
 
     // ── Post-traversal output ─────────────────────────────────────────

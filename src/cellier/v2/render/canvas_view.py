@@ -91,7 +91,7 @@ class CanvasView:
                 camera=self._camera, register_events=self._renderer
             )
 
-        self._accum_pass = TemporalAccumulationPass(alpha=0.1)
+        self._accum_pass = TemporalAccumulationPass(alpha=0.2)
         if dim == "2d":
             self._accum_pass.enabled = False
         self._renderer.effect_passes = (
