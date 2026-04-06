@@ -2,6 +2,7 @@
 
 from cellier.v2.render._requests import DimsState, ReslicingRequest
 from cellier.v2.render._scene_config import VisualRenderConfig
+from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.scene_manager import SceneManager
@@ -14,5 +15,6 @@ __all__ = [
     "ReslicingRequest",
     "SceneManager",
     "SliceCoordinator",
+    "TemporalAccumulationPass",
     "VisualRenderConfig",
 ]

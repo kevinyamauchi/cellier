@@ -77,6 +77,7 @@ class TileSlot:
     index: int
     grid_pos: tuple[int, int, int]
     timestamp: int = 0
+    brick_max: float = 0.0
 
 
 class TileManager:

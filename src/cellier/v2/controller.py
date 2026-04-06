@@ -69,12 +69,16 @@ class CellierController:
         self,
         widget_parent: QWidget | None = None,
         slicer_batch_size: int = 8,
+        slicer_render_every: int = 1,
         camera_settle_threshold_s: float = DEFAULT_CAMERA_SETTLE_THRESHOLD_S,
         camera_reslice_enabled: bool = True,
     ) -> None:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
-        self._render_manager = RenderManager(slicer_batch_size=slicer_batch_size)
+        self._render_manager = RenderManager(
+            slicer_batch_size=slicer_batch_size,
+            slicer_render_every=slicer_render_every,
+        )
         # Reverse map: visual_model_id → scene_id (model layer mirror of render layer)
         self._visual_to_scene: dict[UUID, UUID] = {}
         # Reverse map: canvas_id → scene_id
@@ -253,6 +257,8 @@ class CellierController:
         gpu_budget_bytes: int = ...,
         threshold: float | None = ...,
         interpolation: str = ...,
+        use_brick_shader: bool = ...,
+        voxel_spacing: ... = ...,
     ) -> MultiscaleImageVisual: ...
 
     def add_image(
@@ -265,6 +271,8 @@ class CellierController:
         gpu_budget_bytes: int = 1 * 1024**3,
         threshold: float | None = None,
         interpolation: str = "linear",
+        use_brick_shader: bool = False,
+        voxel_spacing=None,
     ) -> MultiscaleImageVisual | ImageVisual:
         """Add an image visual to a scene.
 
@@ -300,6 +308,11 @@ class CellierController:
         interpolation : str
             Sampler filter ``"linear"`` or ``"nearest"``. Only used for
             multiscale path. Default ``"linear"``.
+        use_brick_shader: bool
+            If True, use the experimental brick shader.
+            Default is False.
+        voxel_spacing: tuple[float, ...] | None
+            The spacing of the voxels in world coordinates.
 
         Returns
         -------
@@ -320,6 +333,8 @@ class CellierController:
                 gpu_budget_bytes,
                 threshold,
                 interpolation,
+                use_brick_shader=use_brick_shader,
+                voxel_spacing=voxel_spacing,
             )
 
     def _add_image_memory(
@@ -398,6 +413,8 @@ class CellierController:
         gpu_budget_bytes: int,
         threshold: float | None,
         interpolation: str,
+        use_brick_shader: bool = False,
+        voxel_spacing=None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene."""
         if data.id not in self._model.data.stores:
@@ -430,6 +447,8 @@ class CellierController:
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
             interpolation=interpolation,
+            use_brick_shader=use_brick_shader,
+            voxel_spacing=voxel_spacing,
         )
 
         self._render_manager.add_visual(scene_id, gfx_visual, data)

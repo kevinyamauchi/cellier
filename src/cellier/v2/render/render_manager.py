@@ -31,13 +31,17 @@ class RenderManager:
     registered via the ``add_*`` methods.
     """
 
-    def __init__(self, slicer_batch_size: int = 8) -> None:
+    def __init__(
+        self, slicer_batch_size: int = 8, slicer_render_every: int = 1
+    ) -> None:
         self._scenes: dict[UUID, SceneManager] = {}
         self._canvases: dict[UUID, CanvasView] = {}
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
-        self._slicer = AsyncSlicer(batch_size=slicer_batch_size)
+        self._slicer = AsyncSlicer(
+            batch_size=slicer_batch_size, render_every=slicer_render_every
+        )
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
             slicer=self._slicer,
@@ -104,6 +108,8 @@ class RenderManager:
             parent=parent,
             **canvas_view_kwargs,
         )
+        # Wire up per-frame tick for visuals (e.g. jitter seed advance).
+        canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
         self._canvases[canvas_id] = canvas_view
         self._canvas_to_scene[canvas_id] = scene_id
         return canvas_view
@@ -128,6 +134,20 @@ class RenderManager:
         self._scenes[scene_id].add_visual(visual)
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
+
+    def _make_tick_fn(self, scene_id: UUID):
+        """Return a callable that ticks all visuals in *scene_id*."""
+
+        def _tick():
+            sm = self._scenes.get(scene_id)
+            if sm is None:
+                return
+            for vid in sm.visual_ids:
+                vis = sm.get_visual(vid)
+                if hasattr(vis, "tick"):
+                    vis.tick()
+
+        return _tick
 
     def get_scene(self, scene_id: UUID) -> gfx.Scene:
         """Return the pygfx Scene for ``scene_id``.

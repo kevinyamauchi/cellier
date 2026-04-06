@@ -54,7 +54,7 @@ dependencies = [
 [project.optional-dependencies]
 # add dependencies used for testing here
 remote = [
-    "yaozarrs[io]>=0.2",   # adds fsspec for S3/GCS/HTTP metadata reading
+    "yaozarrs[io]>=0.2",   # includes fsspec for S3/GCS/HTTP metadata reading
 ]
 pyside = ["PySide6"]
 pyqt = ["PyQt6"]

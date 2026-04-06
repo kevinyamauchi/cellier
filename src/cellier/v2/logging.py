@@ -40,8 +40,9 @@ _HANDLER_TAG = "_cellier_debug"
 def enable_debug_logging(
     categories: tuple[str, ...] = _ALL_CATEGORIES,
     use_rich: bool = True,
+    level: int = logging.DEBUG,
 ) -> None:
-    """Activate DEBUG-level logging for the requested categories.
+    """Activate logging for the requested categories.
 
     Parameters
     ----------
@@ -51,14 +52,18 @@ def enable_debug_logging(
         If ``True`` (default), attempt to use ``rich.logging.RichHandler``
         for colored output.  Falls back to a plain ``StreamHandler`` if
         Rich is not installed.
+    level :
+        Minimum log level to emit.  Defaults to ``logging.DEBUG``.
+        Pass ``logging.INFO`` to suppress per-frame debug details and
+        see only coarser events (reslice summaries, LUT rebuilds, etc.).
     """
     parent_logger = logging.getLogger("cellier.render")
 
-    # Set DEBUG on each requested category logger.
+    # Set the requested level on each category logger.
     for cat in categories:
         logger = _CATEGORY_MAP.get(cat)
         if logger is not None:
-            logger.setLevel(logging.DEBUG)
+            logger.setLevel(level)
 
     # Attach a handler to the parent logger (once only).
     if any(getattr(h, _HANDLER_TAG, False) for h in parent_logger.handlers):
@@ -81,10 +86,10 @@ def enable_debug_logging(
             logging.Formatter("%(asctime)s  %(name)s  %(message)s", datefmt="%H:%M:%S")
         )
 
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(level)
     setattr(handler, _HANDLER_TAG, True)
     parent_logger.addHandler(handler)
-    parent_logger.setLevel(logging.DEBUG)
+    parent_logger.setLevel(level)
 
     print(
         f"[cellier] debug logging enabled: categories={set(categories)}",

@@ -34,6 +34,9 @@ class ImageAppearance(BaseAppearance):
         brick planning. Default is True.
     iso_threshold : float
         Isosurface threshold for 3D raycast rendering. Default is 0.2.
+    render_mode : Literal["iso", "mip"]
+        Volume rendering mode.  ``"iso"`` for isosurface rendering,
+        ``"mip"`` for Maximum Intensity Projection.  Default is ``"iso"``.
     """
 
     color_map: Colormap
@@ -42,6 +45,7 @@ class ImageAppearance(BaseAppearance):
     force_level: int | None = None
     frustum_cull: bool = True
     iso_threshold: float = 0.2
+    render_mode: Literal["iso", "mip"] = "iso"
 
 
 class MultiscaleImageVisual(BaseVisual):

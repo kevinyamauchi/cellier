@@ -116,10 +116,17 @@ class AsyncSlicer:
         Higher -> fewer render interruptions and faster total load.
         Lower -> more frequent visual feedback.  Default 8 is a good
         balance for local NVMe / SSD storage.
+    render_every :
+        Yield to Qt (triggering a render) only every this many batches.
+        The final batch always triggers a render regardless.
+        Default 1 renders after every batch.  Set higher (e.g. 4) to
+        reduce intermediate render overhead at the cost of less frequent
+        visual feedback during loading.
     """
 
-    def __init__(self, batch_size: int = 8) -> None:
+    def __init__(self, batch_size: int = 8, render_every: int = 1) -> None:
         self._batch_size = batch_size
+        self._render_every = max(1, render_every)
         # Maps slice_request_id -> running asyncio.Task.
         self._tasks: dict[UUID, asyncio.Task] = {}
 
@@ -308,9 +315,12 @@ class AsyncSlicer:
                         )
 
                 callback(list(zip(batch, results)))
-                # Yield to Qt: renderer flushes pending update_range calls
-                # and redraws with all bricks committed so far.
-                await asyncio.sleep(0)
+                # Yield to Qt every render_every batches so the renderer can
+                # flush pending GPU uploads and redraw.  Always yield on the
+                # final batch so the completed state is always visible.
+                is_last_batch = batch_idx == n_batches - 1
+                if is_last_batch or (batch_idx + 1) % self._render_every == 0:
+                    await asyncio.sleep(0)
 
         except asyncio.CancelledError:
             _cancelled = True

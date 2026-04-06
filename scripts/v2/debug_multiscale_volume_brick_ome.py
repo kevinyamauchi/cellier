@@ -1,0 +1,553 @@
+"""3D brick-shader viewer for real OME-Zarr files with 2D/3D toggle.
+
+Opens a Qt viewer for any OME-Zarr multiscale volume using the
+Kiln-style brick cache shader.  Physical scale and level transforms are
+read automatically from the OME metadata.
+
+Usage
+-----
+Launch the viewer::
+
+    uv run scripts/v2/debug_multiscale_volume_brick_ome.py \\
+        --zarr-file-path /path/to/my.ome.zarr
+
+Remote stores are also supported::
+
+    uv run scripts/v2/debug_multiscale_volume_brick_ome.py \\
+        --zarr-file-path s3://my-bucket/my.ome.zarr
+
+Controls
+--------
+- **Toggle 2D / 3D** button — switch between a 2D Z-slice view and the
+  full 3D volume renderer.
+- **Reslice now** button — manually trigger a brick re-request for the
+  active view.
+- **Render mode** dropdown *(3D only)* — switch between ISO and MIP.
+  Colormap auto-switches to viridis for MIP and grays for ISO.
+- **Pipeline mode** radios *(3D only)* — toggle between full LOD +
+  frustum culling and a flat "load all bricks at the coarsest level" mode.
+- **ISO threshold** spinner *(3D only)* — adjust the isosurface threshold.
+- **Z slice** spinner *(2D only)* — select the displayed Z plane.
+- **Clim max** spinner — adjust the upper contrast limit (both views).
+- **LOD bias** spinner — scale the screen-space LOD thresholds (both views).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Qt viewer
+# ---------------------------------------------------------------------------
+
+
+class OmeBrickViewer:
+    """Main window for the OME-Zarr brick validation viewer."""
+
+    def __init__(
+        self,
+        controller,
+        scene_3d_id,
+        visual_3d_model,
+        scene_2d,
+        visual_2d_model,
+        n_levels: int,
+        z_depth: int,
+        depth_range: tuple[float, float] = (1.0, 8000.0),
+    ):
+        from PySide6 import QtCore, QtWidgets
+
+        self._controller = controller
+        self._scene_3d_id = scene_3d_id
+        self._scene_2d = scene_2d
+        self._scene_2d_id = scene_2d.id
+        self._visual_3d_model = visual_3d_model
+        self._visual_2d_model = visual_2d_model
+        self._n_levels = n_levels
+        self._z_max = z_depth - 1
+        self._active_mode = "3d"
+
+        self._window = QtWidgets.QMainWindow()
+        self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
+        self._window.resize(1200, 750)
+
+        central = QtWidgets.QWidget()
+        self._window.setCentralWidget(central)
+        root_layout = QtWidgets.QHBoxLayout(central)
+
+        # ── Canvas container (both canvases stacked, one visible) ─────
+        canvas_container = QtWidgets.QWidget()
+        canvas_layout = QtWidgets.QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._canvas_widget_3d = self._controller.add_canvas(
+            self._scene_3d_id, depth_range=depth_range
+        )
+        self._canvas_widget_2d = self._controller.add_canvas(self._scene_2d_id)
+        canvas_layout.addWidget(self._canvas_widget_3d)
+        canvas_layout.addWidget(self._canvas_widget_2d)
+        self._canvas_widget_2d.setVisible(False)
+        root_layout.addWidget(canvas_container, stretch=1)
+
+        # ── Side panel ────────────────────────────────────────────────
+        panel = QtWidgets.QWidget()
+        panel.setFixedWidth(270)
+        panel_layout = QtWidgets.QVBoxLayout(panel)
+        panel_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        root_layout.addWidget(panel)
+
+        # Track 3D-only / 2D-only widgets for show/hide on toggle.
+        self._widget_3d: list = []
+        self._widget_2d: list = []
+
+        # ── Shared: toggle + reslice + mode label ─────────────────────
+        self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
+        self._toggle_btn.clicked.connect(self._on_toggle_clicked)
+        panel_layout.addWidget(self._toggle_btn)
+
+        self._reslice_btn = QtWidgets.QPushButton("Reslice now")
+        self._reslice_btn.clicked.connect(self._on_reslice_clicked)
+        panel_layout.addWidget(self._reslice_btn)
+
+        self._mode_label = QtWidgets.QLabel("Mode: 3D")
+        panel_layout.addWidget(self._mode_label)
+
+        # ── 3D-only: pipeline mode ────────────────────────────────────
+        mode_group = QtWidgets.QGroupBox("Pipeline mode")
+        mode_layout = QtWidgets.QVBoxLayout(mode_group)
+        self._lod_radio = QtWidgets.QRadioButton("LOD + frustum culling")
+        coarsest = n_levels - 1
+        self._flat_radio = QtWidgets.QRadioButton(f"Level {coarsest} all bricks (flat)")
+        self._lod_radio.setChecked(True)
+        self._lod_radio.toggled.connect(self._on_pipeline_mode_toggle)
+        mode_layout.addWidget(self._lod_radio)
+        mode_layout.addWidget(self._flat_radio)
+        panel_layout.addWidget(mode_group)
+        self._widget_3d.append(mode_group)
+
+        # ── 3D-only: render mode ──────────────────────────────────────
+        render_group = QtWidgets.QGroupBox("Render mode")
+        render_layout = QtWidgets.QHBoxLayout(render_group)
+        self._render_mode_combo = QtWidgets.QComboBox()
+        self._render_mode_combo.addItems(["ISO", "MIP"])
+        self._render_mode_combo.currentTextChanged.connect(self._on_render_mode_changed)
+        render_layout.addWidget(self._render_mode_combo)
+        panel_layout.addWidget(render_group)
+        self._widget_3d.append(render_group)
+
+        # ── 3D-only: ISO threshold ────────────────────────────────────
+        thresh_group = QtWidgets.QGroupBox("ISO threshold")
+        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
+        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
+        self._threshold_spin = QtWidgets.QDoubleSpinBox()
+        self._threshold_spin.setRange(0.0, 65000.0)
+        self._threshold_spin.setSingleStep(0.01)
+        self._threshold_spin.setDecimals(3)
+        self._threshold_spin.setValue(self._visual_3d_model.appearance.iso_threshold)
+        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
+        thresh_layout.addWidget(self._threshold_spin)
+        panel_layout.addWidget(thresh_group)
+        self._widget_3d.append(thresh_group)
+
+        # ── 2D-only: Z slice ──────────────────────────────────────────
+        z_group = QtWidgets.QGroupBox("Z slice")
+        z_layout = QtWidgets.QHBoxLayout(z_group)
+        z_layout.addWidget(QtWidgets.QLabel("z"))
+        self._z_slice_spin = QtWidgets.QSpinBox()
+        self._z_slice_spin.setRange(0, self._z_max)
+        initial_z = scene_2d.dims.selection.slice_indices.get(0, self._z_max // 2)
+        self._z_slice_spin.setValue(initial_z)
+        self._z_slice_spin.valueChanged.connect(self._on_z_slice_changed)
+        z_layout.addWidget(self._z_slice_spin)
+        panel_layout.addWidget(z_group)
+        self._widget_2d.append(z_group)
+
+        # ── Shared: contrast limits ───────────────────────────────────
+        clim_group = QtWidgets.QGroupBox("Contrast limits")
+        clim_layout = QtWidgets.QHBoxLayout(clim_group)
+        clim_layout.addWidget(QtWidgets.QLabel("clim max"))
+        self._clim_max_spin = QtWidgets.QDoubleSpinBox()
+        self._clim_max_spin.setRange(0.01, 65000)
+        self._clim_max_spin.setSingleStep(0.05)
+        self._clim_max_spin.setDecimals(3)
+        self._clim_max_spin.setValue(1.0)
+        self._clim_max_spin.valueChanged.connect(self._on_clim_max_changed)
+        clim_layout.addWidget(self._clim_max_spin)
+        panel_layout.addWidget(clim_group)
+
+        # ── Shared: LOD bias ──────────────────────────────────────────
+        bias_group = QtWidgets.QGroupBox("LOD bias")
+        bias_layout = QtWidgets.QHBoxLayout(bias_group)
+        bias_layout.addWidget(QtWidgets.QLabel("lod_bias"))
+        self._lod_bias_spin = QtWidgets.QDoubleSpinBox()
+        self._lod_bias_spin.setRange(0.1, 10.0)
+        self._lod_bias_spin.setSingleStep(0.1)
+        self._lod_bias_spin.setDecimals(2)
+        self._lod_bias_spin.setValue(1.0)
+        self._lod_bias_spin.valueChanged.connect(self._on_lod_bias_changed)
+        bias_layout.addWidget(self._lod_bias_spin)
+        panel_layout.addWidget(bias_group)
+
+        self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
+        self._status_label.setWordWrap(True)
+        panel_layout.addWidget(self._status_label)
+        panel_layout.addStretch()
+
+        # Hide 2D-only widgets initially (start in 3D mode).
+        for w in self._widget_2d:
+            w.setVisible(False)
+
+    @property
+    def window(self):
+        return self._window
+
+    # ── Toggle ────────────────────────────────────────────────────────
+
+    def _on_toggle_clicked(self) -> None:
+        coordinator = self._controller._render_manager._slice_coordinator
+        if self._active_mode == "3d":
+            coordinator.cancel_scene(self._scene_3d_id)
+            self._active_mode = "2d"
+            self._canvas_widget_3d.setVisible(False)
+            self._canvas_widget_2d.setVisible(True)
+            self._mode_label.setText("Mode: 2D")
+            for w in self._widget_3d:
+                w.setVisible(False)
+            for w in self._widget_2d:
+                w.setVisible(True)
+        else:
+            coordinator.cancel_scene(self._scene_2d_id)
+            self._active_mode = "3d"
+            self._canvas_widget_2d.setVisible(False)
+            self._canvas_widget_3d.setVisible(True)
+            self._mode_label.setText("Mode: 3D")
+            for w in self._widget_2d:
+                w.setVisible(False)
+            for w in self._widget_3d:
+                w.setVisible(True)
+
+    # ── Shared callbacks ──────────────────────────────────────────────
+
+    def _on_reslice_clicked(self) -> None:
+        print("[DEBUG] Manual reslice triggered")
+        active = self._scene_3d_id if self._active_mode == "3d" else self._scene_2d_id
+        self._controller.reslice_scene(active)
+
+    def _on_clim_max_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.clim = (0.0, value)
+        self._visual_2d_model.appearance.clim = (0.0, value)
+        print(f"[DEBUG] clim changed to (0.0, {value})")
+
+    def _on_lod_bias_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.lod_bias = value
+        self._visual_2d_model.appearance.lod_bias = value
+        print(f"[DEBUG] LOD bias changed to {value}")
+        active = self._scene_3d_id if self._active_mode == "3d" else self._scene_2d_id
+        self._controller.reslice_scene(active)
+
+    # ── 3D-only callbacks ─────────────────────────────────────────────
+
+    def _on_pipeline_mode_toggle(self, lod_active: bool) -> None:
+        if lod_active:
+            self._visual_3d_model.appearance.force_level = None
+            self._visual_3d_model.appearance.frustum_cull = True
+            self._status_label.setText("Mode: LOD + frustum culling")
+        else:
+            coarsest = self._n_levels - 1
+            self._visual_3d_model.appearance.force_level = coarsest
+            self._visual_3d_model.appearance.frustum_cull = False
+            self._status_label.setText(f"Mode: Level {coarsest} all bricks (flat)")
+        print(
+            f"[DEBUG] Pipeline mode changed: "
+            f"force_level={self._visual_3d_model.appearance.force_level}, "
+            f"frustum_cull={self._visual_3d_model.appearance.frustum_cull}"
+        )
+        self._controller.reslice_scene(self._scene_3d_id)
+
+    def _on_render_mode_changed(self, text: str) -> None:
+        mode = text.lower()
+        self._visual_3d_model.appearance.render_mode = mode
+        print(f"[DEBUG] Render mode changed to {mode}")
+        if mode == "mip":
+            self._visual_3d_model.appearance.color_map = "viridis"
+        else:
+            self._visual_3d_model.appearance.color_map = "grays"
+
+    def _on_threshold_changed(self, value: float) -> None:
+        self._visual_3d_model.appearance.iso_threshold = value
+        print(f"[DEBUG] ISO threshold changed to {value}")
+
+    # ── 2D-only callbacks ─────────────────────────────────────────────
+
+    def _on_z_slice_changed(self, value: int) -> None:
+        self._scene_2d.dims.selection.slice_indices = {0: value}
+        rm = self._controller._render_manager
+        gfx_visual = rm._scenes[self._scene_2d_id]._visuals[self._visual_2d_model.id]
+        gfx_visual._block_cache_2d.tile_manager.clear()
+        gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
+        self._controller.reslice_scene(self._scene_2d_id)
+
+
+# ---------------------------------------------------------------------------
+# Scene helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_box_wireframe(box_min, box_max, color):
+    import pygfx as gfx
+
+    x0, y0, z0 = box_min
+    x1, y1, z1 = box_max
+    positions = np.array(
+        [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+            [x0, y1, z1],
+            [x0, y0, z1],
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x1, y1, z0],
+            [x1, y1, z1],
+            [x0, y1, z0],
+            [x0, y1, z1],
+        ],
+        dtype=np.float32,
+    )
+    return gfx.Line(
+        gfx.Geometry(positions=positions),
+        gfx.LineSegmentMaterial(color=color, thickness=2.0),
+    )
+
+
+def _dtype_clim_max(dtype: np.dtype) -> float:
+    """Return a sensible initial clim upper bound for the given dtype."""
+    if np.issubdtype(dtype, np.integer):
+        return float(np.iinfo(dtype).max)
+    return 1.0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+async def async_main(zarr_uri: str):
+    from PySide6 import QtWidgets
+
+    from cellier.v2.controller import CellierController
+    from cellier.v2.data.image import OMEZarrImageDataStore
+    from cellier.v2.scene.dims import CoordinateSystem
+    from cellier.v2.transform import AffineTransform
+    from cellier.v2.visuals._image import ImageAppearance
+
+    # ── Open the OME-Zarr store ───────────────────────────────────────
+    print(f"Opening OME-Zarr store: {zarr_uri}")
+    data_store = OMEZarrImageDataStore.from_path(zarr_uri)
+    print(f"  {data_store.n_levels} levels found.")
+    for i, shape in enumerate(data_store.level_shapes):
+        print(f"  Level {i}: shape={shape}")
+    print(f"  Axes:  {data_store.axis_names}")
+    print(f"  Units: {data_store.axis_units}")
+
+    # ── Extract level-0 physical scale from OME metadata (ZYX order) ─
+    import yaozarrs
+
+    group = yaozarrs.open_group(data_store.zarr_path)
+    ome_image = group.ome_metadata()
+    ms = ome_image.multiscales[data_store.multiscale_index]
+    level_0_scale_zyx = np.array(ms.datasets[0].scale_transform.scale, dtype=np.float64)
+
+    print(f"\n  Level-0 physical scale (ZYX): {level_0_scale_zyx}")
+
+    voxel_spacing_xyz = level_0_scale_zyx[::-1].copy()
+
+    # ── Compute world extents for AABB and depth range ────────────────
+    vox_shape_zyx = np.array(data_store.level_shapes[0], dtype=np.float64)
+    world_extents_zyx = vox_shape_zyx * level_0_scale_zyx
+    max_extent = float(world_extents_zyx.max())
+    depth_range = (max(1.0, max_extent * 0.0001), max_extent * 10.0)
+
+    print(f"  World extents (ZYX): {world_extents_zyx}")
+    print(f"  Max extent:          {max_extent:.3f}")
+    print(
+        f"  Depth range:         near={depth_range[0]:.2f}  far={depth_range[1]:.0f}\n"
+    )
+
+    # ── Controller ────────────────────────────────────────────────────
+    controller = CellierController(
+        widget_parent=None,
+        camera_reslice_enabled=False,
+        slicer_batch_size=32,
+        slicer_render_every=4,
+    )
+    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+
+    # ── Voxel-to-world transform ──────────────────────────────────────
+    voxel_to_world = AffineTransform.from_scale_and_translation(
+        scale=tuple(level_0_scale_zyx)
+    )
+
+    # ── Initial appearance ────────────────────────────────────────────
+    initial_clim_max = _dtype_clim_max(data_store.dtype)
+    _DEBUG_MODE = "none"
+
+    # ── 3D scene ──────────────────────────────────────────────────────
+    scene_3d = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+
+    visual_3d_model = controller.add_image(
+        data=data_store,
+        scene_id=scene_3d.id,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=None,
+            frustum_cull=True,
+            iso_threshold=0.2,
+            render_mode="iso",
+        ),
+        name="volume",
+        block_size=32,
+        gpu_budget_bytes=4096 * 1024**2,
+        threshold=0.2,
+        use_brick_shader=True,
+        voxel_spacing=voxel_spacing_xyz,
+    )
+    visual_3d_model.transform = voxel_to_world
+
+    # ── 2D scene ──────────────────────────────────────────────────────
+    scene_2d = controller.add_scene(dim="2d", coordinate_system=cs, name="slice")
+    z_depth = data_store.level_shapes[0][0]
+    scene_2d.dims.selection.slice_indices = {0: z_depth // 2}
+
+    visual_2d_model = controller.add_image(
+        data=data_store,
+        scene_id=scene_2d.id,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=None,
+            frustum_cull=True,
+        ),
+        name="slice",
+        block_size=32,
+        gpu_budget_bytes=64 * 1024**2,
+    )
+    visual_2d_model.transform = voxel_to_world
+
+    # ── Set debug mode on the 3D material ────────────────────────────
+    vis = controller._render_manager._scenes[scene_3d.id].get_visual(visual_3d_model.id)
+    vis.material_3d.debug_mode = _DEBUG_MODE
+
+    # ── Pink AABB wireframe in world space ────────────────────────────
+    wz, wy, wx = world_extents_zyx
+    pad = 1.0
+    gfx_scene_3d = controller._render_manager.get_scene(scene_3d.id)
+    gfx_scene_3d.add(
+        _make_box_wireframe(
+            np.array([-0.5 - pad, -0.5 - pad, -0.5 - pad]),
+            np.array([wx - 0.5 + pad, wy - 0.5 + pad, wz - 0.5 + pad]),
+            "#ff00ff",
+        )
+    )
+
+    # ── Print diagnostics ─────────────────────────────────────────────
+    print(f"[DEBUG] debug_mode     = {_DEBUG_MODE}")
+    print(f"[DEBUG] norm_size      = {vis._norm_size}")
+    print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
+    print(f"[DEBUG] node_3d matrix (before reslice) =\n{vis.node_3d.local.matrix}")
+
+    # ── Show window ───────────────────────────────────────────────────
+    viewer = OmeBrickViewer(
+        controller,
+        scene_3d_id=scene_3d.id,
+        visual_3d_model=visual_3d_model,
+        scene_2d=scene_2d,
+        visual_2d_model=visual_2d_model,
+        n_levels=data_store.n_levels,
+        z_depth=z_depth,
+        depth_range=depth_range,
+    )
+    viewer._clim_max_spin.setValue(initial_clim_max)
+    viewer.window.show()
+
+    # Initial reslice for the 3D scene (viewer starts in 3D mode).
+    controller.reslice_scene(scene_3d.id)
+
+    # Wait for async data load, then print diagnostics and refit camera.
+    await asyncio.sleep(2.0)
+    print("[DEBUG] After initial reslice:")
+    print(f"  cache n_resident = {vis._block_cache_3d.n_resident}")
+    print(f"  LUT max w        = {vis._lut_manager_3d.lut_data[:,:,:,3].max()}")
+    print(f"  node_3d matrix   =\n{vis.node_3d.local.matrix}")
+
+    canvas_3d_view = controller._render_manager._find_canvas_for_scene(scene_3d.id)
+    canvas_3d_view.show_object(gfx_scene_3d)
+    print("[DEBUG] Camera refit done. Use 'Reslice now' to reload bricks.")
+
+    app = QtWidgets.QApplication.instance()
+    close_event = asyncio.Event()
+    app.aboutToQuit.connect(close_event.set)
+    await close_event.wait()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--zarr-file-path",
+        required=True,
+        metavar="PATH",
+        help=(
+            "Path or URI to the OME-Zarr store "
+            "(local path, file://, s3://, gs://, https://)."
+        ),
+    )
+    args = parser.parse_args()
+
+    zarr_input = args.zarr_file_path
+
+    # Resolve local paths to an absolute file:// URI.
+    if "://" not in zarr_input:
+        local = Path(zarr_input)
+        if not local.exists():
+            print(
+                f"Error: OME-Zarr store not found at '{local}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        zarr_uri = f"file://{local.resolve()}"
+    else:
+        zarr_uri = zarr_input
+
+    import logging
+
+    import PySide6.QtAsyncio as QtAsyncio
+    from PySide6.QtWidgets import QApplication
+
+    from cellier.v2.logging import enable_debug_logging
+
+    enable_debug_logging(categories=("perf"), level=logging.WARN)
+
+    app = QApplication([sys.argv[0]])
+    QtAsyncio.run(async_main(zarr_uri), handle_sigint=True)
