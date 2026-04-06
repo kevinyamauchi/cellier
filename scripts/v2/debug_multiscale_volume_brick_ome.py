@@ -424,7 +424,7 @@ async def async_main(zarr_uri: str):
         ),
         name="volume",
         block_size=32,
-        gpu_budget_bytes=2048 * 1024**2,
+        gpu_budget_bytes=4096 * 1024**2,
         threshold=0.2,
         use_brick_shader=True,
         voxel_spacing=voxel_spacing_xyz,
@@ -538,8 +538,14 @@ if __name__ == "__main__":
     else:
         zarr_uri = zarr_input
 
+    import logging
+
     import PySide6.QtAsyncio as QtAsyncio
     from PySide6.QtWidgets import QApplication
+
+    from cellier.v2.logging import enable_debug_logging
+
+    enable_debug_logging(categories=("perf"), level=logging.INFO)
 
     app = QApplication([sys.argv[0]])
     QtAsyncio.run(async_main(zarr_uri), handle_sigint=True)

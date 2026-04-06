@@ -928,13 +928,22 @@ class GFXMultiscaleImageVisual:
         sub_3d = self._transform.set_slice(
             self._last_displayed_axes or tuple(range(self._ndim))[-3:]
         )
-        # LOD selection and distance sorting use camera_pos_world directly
-        # because level_grids["centres"] are precomputed in world XYZ space.
-        # The sub_3d inverse transform is only needed for the frustum corners.
+        # level_grids["centres"], bricks_in_frustum_arr, and sort_arr_by_distance
+        # all work in shader order (x=W, y=H, z=D) level-0 voxel space.
+        # sub_3d (AffineTransform) operates in data-axis order (z,y,x), whereas
+        # pygfx world coords are in (x,y,z). Reverse axes before imap and back
+        # after to land in the correct (x,y,z) voxel space.
+        cam_zyx = camera_pos_world[[2, 1, 0]]
+        cam_data_zyx = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()
+        camera_pos_data = cam_data_zyx[[2, 1, 0]]  # back to shader (x,y,z)
+
         if frustum_corners_world is not None:
-            corners_data = sub_3d.imap_coordinates(
-                frustum_corners_world.reshape(-1, 3)
-            ).reshape(frustum_corners_world.shape)
+            corners_flat = frustum_corners_world.reshape(-1, 3)
+            corners_flat_zyx = corners_flat[:, [2, 1, 0]]
+            corners_data_flat_zyx = sub_3d.imap_coordinates(corners_flat_zyx)
+            corners_data = corners_data_flat_zyx[:, [2, 1, 0]].reshape(
+                frustum_corners_world.shape
+            )
             frustum_planes = frustum_planes_from_corners(corners_data)
         else:
             frustum_planes = None
@@ -942,6 +951,12 @@ class GFXMultiscaleImageVisual:
         # Slice indices are mapped per-level via composed transforms
         # (world → level-k) inside _build_axis_selections.
         # 1. LOAD selection
+        _PERF_LOGGER.debug(
+            "[frame %d]  camera_pos_world_xyz=%s  camera_pos_voxel_xyz=%s",
+            self._frame_number,
+            np.round(camera_pos_world, 1).tolist(),
+            np.round(camera_pos_data, 1).tolist(),
+        )
         t0 = time.perf_counter()
         if force_level is not None:
             brick_arr = select_levels_arr_forced(
@@ -951,18 +966,31 @@ class GFXMultiscaleImageVisual:
             brick_arr = select_levels_from_cache(
                 geo._level_grids,
                 geo.n_levels,
-                camera_pos_world,
+                camera_pos_data,
                 thresholds=thresholds,
                 base_layout=geo.base_layout,
             )
         lod_select_ms = (time.perf_counter() - t0) * 1000
 
-        # 2. Distance sort — use world XYZ camera position and per-level
-        # physical scale so brick centres match the precomputed level grids.
+        # Log min/max brick-centre distances at the finest level for diagnosis.
+        finest_centres = geo._level_grids[0]["centres"]  # (M, 3) voxel space
+        if len(finest_centres):
+            cam = np.asarray(camera_pos_data, dtype=np.float64)
+            dists = np.sqrt(((finest_centres - cam) ** 2).sum(axis=1))
+            _PERF_LOGGER.debug(
+                "[frame %d]  brick_dist  min=%.1f  max=%.1f  median=%.1f"
+                "  (finest level, voxel space)",
+                self._frame_number,
+                dists.min(),
+                dists.max(),
+                float(np.median(dists)),
+            )
+
+        # 2. Distance sort — brick centres and camera are both in level-0 voxel space.
         t0 = time.perf_counter()
         brick_arr = sort_arr_by_distance(
             brick_arr,
-            camera_pos_world,
+            camera_pos_data,
             geo.block_size,
             scale_vecs_shader=geo._scale_arr_shader,
             translation_vecs_shader=geo._translation_arr_shader,
@@ -1084,6 +1112,21 @@ class GFXMultiscaleImageVisual:
             stats.get("n_culled", 0),
             stats["hits"],
             stats["misses"],
+        )
+
+        # Log per-level breakdown of what was requested this frame.
+        if len(brick_arr):
+            level_col = brick_arr[:, 0]
+            requested_by_level = {
+                int(lv): int((level_col == lv).sum()) for lv in np.unique(level_col)
+            }
+        else:
+            requested_by_level = {}
+        _PERF_LOGGER.debug(
+            "[frame %d]  requested_by_level=%s  thresholds=%s",
+            self._frame_number,
+            requested_by_level,
+            [f"{t:.1f}" for t in (thresholds or [])],
         )
 
         return chunk_requests
