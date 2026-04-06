@@ -69,12 +69,16 @@ class CellierController:
         self,
         widget_parent: QWidget | None = None,
         slicer_batch_size: int = 8,
+        slicer_render_every: int = 1,
         camera_settle_threshold_s: float = DEFAULT_CAMERA_SETTLE_THRESHOLD_S,
         camera_reslice_enabled: bool = True,
     ) -> None:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
-        self._render_manager = RenderManager(slicer_batch_size=slicer_batch_size)
+        self._render_manager = RenderManager(
+            slicer_batch_size=slicer_batch_size,
+            slicer_render_every=slicer_render_every,
+        )
         # Reverse map: visual_model_id → scene_id (model layer mirror of render layer)
         self._visual_to_scene: dict[UUID, UUID] = {}
         # Reverse map: canvas_id → scene_id
