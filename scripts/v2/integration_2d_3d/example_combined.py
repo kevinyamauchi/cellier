@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
 
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
+from cellier.v2.render._config import RenderManagerConfig, SlicingConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.visuals._image import ImageAppearance
 
@@ -243,7 +244,10 @@ class CombinedApp(QMainWindow):
         self._active_mode: str = "2d"
         self._frustum_line: gfx.Line | None = None
 
-        self._controller = CellierController(widget_parent=self, slicer_batch_size=128)
+        self._controller = CellierController(
+            widget_parent=self,
+            render_config=RenderManagerConfig(slicing=SlicingConfig(batch_size=128)),
+        )
         cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
         z_depth = data_store.level_shapes[0][0]

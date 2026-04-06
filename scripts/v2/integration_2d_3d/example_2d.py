@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
+from cellier.v2.render._config import RenderManagerConfig, SlicingConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.visuals import ImageAppearance
 
@@ -69,7 +70,10 @@ class MainWindow(QMainWindow):
         self._colormap_index: int = 0
 
         # Build the cellier scene with 2D dimensionality.
-        self._controller = CellierController(widget_parent=self, slicer_batch_size=32)
+        self._controller = CellierController(
+            widget_parent=self,
+            render_config=RenderManagerConfig(slicing=SlicingConfig(batch_size=32)),
+        )
         cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
         self._scene = self._controller.add_scene(
             dim="2d", coordinate_system=cs, name="main"
