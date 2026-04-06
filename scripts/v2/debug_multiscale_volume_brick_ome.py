@@ -395,6 +395,8 @@ async def async_main(zarr_uri: str):
     controller = CellierController(
         widget_parent=None,
         camera_reslice_enabled=False,
+        slicer_batch_size=32,
+        slicer_render_every=4,
     )
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
@@ -545,7 +547,7 @@ if __name__ == "__main__":
 
     from cellier.v2.logging import enable_debug_logging
 
-    enable_debug_logging(categories=("perf"), level=logging.INFO)
+    enable_debug_logging(categories=("perf"), level=logging.WARN)
 
     app = QApplication([sys.argv[0]])
     QtAsyncio.run(async_main(zarr_uri), handle_sigint=True)

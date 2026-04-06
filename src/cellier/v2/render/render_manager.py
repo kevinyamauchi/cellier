@@ -31,13 +31,17 @@ class RenderManager:
     registered via the ``add_*`` methods.
     """
 
-    def __init__(self, slicer_batch_size: int = 8) -> None:
+    def __init__(
+        self, slicer_batch_size: int = 8, slicer_render_every: int = 1
+    ) -> None:
         self._scenes: dict[UUID, SceneManager] = {}
         self._canvases: dict[UUID, CanvasView] = {}
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
-        self._slicer = AsyncSlicer(batch_size=slicer_batch_size)
+        self._slicer = AsyncSlicer(
+            batch_size=slicer_batch_size, render_every=slicer_render_every
+        )
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
             slicer=self._slicer,
