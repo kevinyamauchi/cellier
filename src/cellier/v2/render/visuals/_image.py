@@ -1501,6 +1501,20 @@ class GFXMultiscaleImageVisual:
         self._block_cache_2d.tile_manager.release_all_in_flight()
         self._pending_slot_map_2d = {}
 
+    def invalidate_2d_cache(self) -> None:
+        """Evict all committed 2D tiles and rebuild the LUT indirection table.
+
+        Call this when the slice position changes so that stale tiles from the
+        previous Z plane are not blended with newly loaded tiles.  This is a
+        lighter operation than ``_rebuild_2d_resources``, which also tears down
+        and recreates the GPU geometry; here only the tile occupancy state is
+        reset.
+        """
+        if self._block_cache_2d is None or self._lut_manager_2d is None:
+            return
+        self._block_cache_2d.tile_manager.clear()
+        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+
     # ── EventBus handler methods ─────────────────────────────────────────
 
     def on_transform_changed(self, event: TransformChangedEvent) -> None:

@@ -182,7 +182,7 @@ def test_dims_bridge_emits_event():
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 5}
     assert len(fired) == 1
-    assert fired[0].selection.slice_indices == {0: 5}
+    assert fired[0].dims_state.selection.slice_indices == {0: 5}
 
 
 def test_dims_bridge_displayed_axes_flag_true():
@@ -353,7 +353,7 @@ def test_on_dims_changed_callback():
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 7}
     assert len(fired) == 1
-    assert fired[0].selection.slice_indices == {0: 7}
+    assert fired[0].dims_state.selection.slice_indices == {0: 7}
 
 
 def test_unsubscribe_all_cleans_up(small_zarr_store):
