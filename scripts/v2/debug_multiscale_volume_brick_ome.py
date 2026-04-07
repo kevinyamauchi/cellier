@@ -36,115 +36,8 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from uuid import uuid4
 
 import numpy as np
-
-
-class DimsAxisSpinBox:
-    """Bidirectional spinbox wired to one axis of a scene's slice indices.
-
-    Composes a ``QSpinBox`` with cellier bus subscriptions so that changes
-    from the spinbox propagate to the model and changes from any other source
-    (buttons, programmatic mutations) propagate back to the spinbox.
-
-    The cellier-layer logic (UUID, subscription, echo filter, controller call)
-    is independent of Qt.  Two seams isolate the Qt-specific code:
-
-    - ``widget`` property — returns the ``QSpinBox``; swap this for a
-      different backend element (e.g. anywidget ``IntSlider``) when porting.
-    - ``_set_value`` — applies a value to the widget while suppressing its
-      change signal; replace ``blockSignals`` with the backend equivalent.
-
-    Parameters
-    ----------
-    controller :
-        The ``CellierController`` instance.
-    scene_id :
-        UUID of the scene whose slice indices this widget controls.
-    axis :
-        The axis index to control, e.g. ``0`` for Z in a ZYX volume.
-    min_val :
-        Minimum value for the spinbox range.
-    max_val :
-        Maximum value for the spinbox range.
-    initial_value :
-        Starting value.
-    parent :
-        Optional Qt parent widget.
-    """
-
-    def __init__(
-        self,
-        controller,
-        scene_id,
-        axis: int,
-        *,
-        min_val: int = 0,
-        max_val: int = 65535,
-        initial_value: int = 0,
-        parent=None,
-    ) -> None:
-        from PySide6.QtWidgets import QSpinBox
-
-        # ── Cellier layer ────────────────────────────────────────────────
-        self._id = uuid4()
-        self._controller = controller
-        self._scene_id = scene_id
-        self._axis = axis
-
-        # ── Qt seam 1: widget creation and signal wiring ─────────────────
-        self._spinbox = QSpinBox(parent=parent)
-        self._spinbox.setRange(min_val, max_val)
-        self._spinbox.setValue(initial_value)
-        self._spinbox.valueChanged.connect(self._on_widget_changed)
-
-        # Subscribe to model changes; use our own UUID as owner so that
-        # controller.unsubscribe_owner(self._id) cleans up on close.
-        controller.on_dims_changed(scene_id, self._on_dims_changed, owner_id=self._id)
-
-    # ── Public interface ─────────────────────────────────────────────────
-
-    @property
-    def widget(self):
-        """The Qt widget to insert into a layout.
-
-        Qt seam 1: replace with the backend element for other toolkits.
-        """
-        return self._spinbox
-
-    @property
-    def value(self) -> int:
-        """Current integer value shown in the spinbox."""
-        return self._spinbox.value()
-
-    def close(self) -> None:
-        """Unsubscribe from the bus.  Call from the parent window's closeEvent."""
-        self._controller.unsubscribe_owner(self._id)
-
-    # ── Cellier layer: model → widget ────────────────────────────────────
-
-    def _on_dims_changed(self, event) -> None:
-        if event.source_id == self._id:
-            return  # echo from our own spinbox move; ignore
-        value = event.dims_state.selection.slice_indices.get(self._axis)
-        if value is None:
-            return  # axis not sliced (e.g. 3D mode); nothing to update
-        self._set_value(value)
-
-    # ── Cellier layer: widget → model ────────────────────────────────────
-
-    def _on_widget_changed(self, value: int) -> None:
-        self._controller.update_slice_indices(
-            self._scene_id, {self._axis: value}, source_id=self._id
-        )
-
-    # ── Qt seam 2: push value without re-firing valueChanged ─────────────
-
-    def _set_value(self, value: int) -> None:
-        self._spinbox.blockSignals(True)
-        self._spinbox.setValue(value)
-        self._spinbox.blockSignals(False)
 
 
 class OmeBrickViewer:
@@ -155,7 +48,7 @@ class OmeBrickViewer:
         controller,
         scene,
         visual_model,
-        canvas_view,
+        canvas_widget: QtCanvasWidget,
         n_levels: int,
         z_depth: int,
     ):
@@ -164,7 +57,8 @@ class OmeBrickViewer:
         self._controller = controller
         self._scene = scene
         self._visual_model = visual_model
-        self._canvas_view = canvas_view
+        self._canvas_widget = canvas_widget
+        self._dims_sliders = canvas_widget.dims_sliders
         self._n_levels = n_levels
         self._z_max = z_depth - 1
         self._active_mode = "3d"
@@ -177,8 +71,8 @@ class OmeBrickViewer:
         self._window.setCentralWidget(central)
         root_layout = QtWidgets.QHBoxLayout(central)
 
-        # ── Canvas ────────────────────────────────────────────────────
-        root_layout.addWidget(canvas_view.widget, stretch=1)
+        # ── Canvas + dims sliders ─────────────────────────────────────
+        root_layout.addWidget(canvas_widget.widget, stretch=1)
 
         # ── Side panel ────────────────────────────────────────────────
         panel = QtWidgets.QWidget()
@@ -187,9 +81,8 @@ class OmeBrickViewer:
         panel_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         root_layout.addWidget(panel)
 
-        # Track 3D-only / 2D-only widgets for show/hide on toggle.
+        # Track 3D-only widgets for show/hide on toggle.
         self._widget_3d: list = []
-        self._widget_2d: list = []
 
         # ── Shared: toggle + reslice + mode label ─────────────────────
         self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
@@ -240,27 +133,10 @@ class OmeBrickViewer:
         panel_layout.addWidget(thresh_group)
         self._widget_3d.append(thresh_group)
 
-        # ── 2D-only: Z slice ──────────────────────────────────────────
-        z_group = QtWidgets.QGroupBox("Z slice")
-        z_layout = QtWidgets.QHBoxLayout(z_group)
-        z_layout.addWidget(QtWidgets.QLabel("z"))
-        initial_z = scene.dims.selection.slice_indices.get(0, z_depth // 2)
-        self._z_slice_widget = DimsAxisSpinBox(
-            controller,
-            scene.id,
-            axis=0,
-            min_val=0,
-            max_val=self._z_max,
-            initial_value=initial_z,
-        )
-        z_layout.addWidget(self._z_slice_widget.widget)
-        panel_layout.addWidget(z_group)
-
+        # ── Debug: force Z to 1000 (tests bidirectional dims sync) ──────
         self._z_slice_button = QtWidgets.QPushButton("Z slice: 1000")
         self._z_slice_button.clicked.connect(self._on_set_z_slice)
         panel_layout.addWidget(self._z_slice_button)
-
-        self._widget_2d.append(z_group)
 
         # ── Shared: contrast limits ───────────────────────────────────
         clim_group = QtWidgets.QGroupBox("Contrast limits")
@@ -310,10 +186,6 @@ class OmeBrickViewer:
         panel_layout.addWidget(self._status_label)
         panel_layout.addStretch()
 
-        # Hide 2D-only widgets initially (start in 3D mode).
-        for w in self._widget_2d:
-            w.setVisible(False)
-
     def _on_set_z_slice(self, event=None):
         self._scene.dims.selection.slice_indices = {0: 1000}
 
@@ -331,12 +203,12 @@ class OmeBrickViewer:
             self._mode_label.setText("Mode: 2D")
             # Set slice_indices before changing displayed_axes so the dims
             # state is consistent when the geometry-rebuild event fires.
-            self._scene.dims.selection.slice_indices = {0: self._z_slice_widget.value}
+            # Read the last Z value the slider stored (retained even while hidden).
+            current_z = self._dims_sliders.current_index().get(0, self._z_max // 2)
+            self._scene.dims.selection.slice_indices = {0: current_z}
             self._scene.dims.selection.displayed_axes = (1, 2)
             for w in self._widget_3d:
                 w.setVisible(False)
-            for w in self._widget_2d:
-                w.setVisible(True)
         else:
             coordinator.cancel_scene(self._scene.id)
             self._active_mode = "3d"
@@ -344,8 +216,6 @@ class OmeBrickViewer:
             # Clear slice_indices before changing displayed_axes.
             self._scene.dims.selection.slice_indices = {}
             self._scene.dims.selection.displayed_axes = (0, 1, 2)
-            for w in self._widget_2d:
-                w.setVisible(False)
             for w in self._widget_3d:
                 w.setVisible(True)
         self._controller.reslice_scene(self._scene.id)
@@ -428,6 +298,7 @@ async def async_main(zarr_uri: str):
 
     from cellier.v2.controller import CellierController
     from cellier.v2.data.image import OMEZarrImageDataStore
+    from cellier.v2.gui._scene import QtCanvasWidget
     from cellier.v2.render._config import (
         CameraConfig,
         RenderManagerConfig,
@@ -536,16 +407,24 @@ async def async_main(zarr_uri: str):
     print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
     print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
 
-    # ── Canvas ────────────────────────────────────────────────────────
-    canvas_widget = controller.add_canvas(scene.id, depth_range=depth_range)
+    # ── Canvas + dims sliders ─────────────────────────────────────────
+    controller.add_canvas(scene.id, depth_range=depth_range)
     canvas_view = controller._render_manager._find_canvas_for_scene(scene.id)
+
+    # Axis ranges derived from the finest level's voxel shape (ZYX order).
+    level0_shape = data_store.level_shapes[0]
+    axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
+
+    canvas_widget = QtCanvasWidget.from_scene_and_canvas(
+        controller, scene, canvas_view, axis_ranges=axis_ranges
+    )
 
     # ── Show window ───────────────────────────────────────────────────
     viewer = OmeBrickViewer(
         controller,
         scene=scene,
         visual_model=visual_model,
-        canvas_view=canvas_view,
+        canvas_widget=canvas_widget,
         n_levels=data_store.n_levels,
         z_depth=z_depth,
     )
@@ -558,6 +437,7 @@ async def async_main(zarr_uri: str):
     print("[DEBUG] Camera fitted. Use 'Reslice now' to reload bricks.")
 
     app = QtWidgets.QApplication.instance()
+    app.aboutToQuit.connect(canvas_widget.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()
