@@ -8,6 +8,7 @@ from typing import Callable
 from uuid import UUID, uuid4
 
 from cellier.v2.events._events import (
+    AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
     DataStoreContentsChangedEvent,
@@ -30,6 +31,7 @@ _ENTITY_FIELD: dict[type, str] = {
     DimsChangedEvent: "scene_id",
     CameraChangedEvent: "scene_id",
     AppearanceChangedEvent: "visual_id",
+    AABBChangedEvent: "visual_id",
     VisualVisibilityChangedEvent: "visual_id",
     DataStoreMetadataChangedEvent: "data_store_id",
     DataStoreContentsChangedEvent: "data_store_id",

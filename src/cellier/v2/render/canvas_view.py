@@ -77,19 +77,35 @@ class CanvasView:
         self._camera_dirty: bool = False
         self._tick_visuals_fn: Callable[[], None] | None = None
 
+        self._fov = fov
+        self._depth_range = depth_range
+
         self._canvas = QRenderWidget(parent=parent, update_mode="continuous")
         self._renderer = gfx.WgpuRenderer(self._canvas)
 
+        # Both camera/controller pairs are created upfront so toggling only
+        # requires enabling/disabling — no construction or destruction.
+        self._camera_3d = gfx.PerspectiveCamera(fov, 16 / 9, depth_range=depth_range)
+        self._controller_3d = gfx.OrbitController(
+            camera=self._camera_3d, register_events=self._renderer
+        )
+        self._camera_2d = gfx.OrthographicCamera(maintain_aspect=True)
+        self._controller_2d = gfx.PanZoomController(
+            camera=self._camera_2d, register_events=self._renderer
+        )
+
+        # Activate the initial dim; disable the other controller.
         if dim == "2d":
-            self._camera = gfx.OrthographicCamera(maintain_aspect=True)
-            self._controller = gfx.PanZoomController(
-                camera=self._camera, register_events=self._renderer
-            )
+            self._camera = self._camera_2d
+            self._controller = self._controller_2d
+            self._controller_3d.enabled = False
         else:
-            self._camera = gfx.PerspectiveCamera(fov, 16 / 9, depth_range=depth_range)
-            self._controller = gfx.OrbitController(
-                camera=self._camera, register_events=self._renderer
-            )
+            self._camera = self._camera_3d
+            self._controller = self._controller_3d
+            self._controller_2d.enabled = False
+
+        # Track which dims have been fitted to the scene.
+        self._fitted: set[str] = set()
 
         self._accum_pass = TemporalAccumulationPass(alpha=0.2)
         if dim == "2d":
@@ -225,7 +241,7 @@ class CanvasView:
         self._camera.depth_range = depth_range
 
     def show_object(self, scene: gfx.Scene) -> None:
-        """Fit the camera to the scene bounding box.
+        """Fit the camera to the scene bounding box and mark this dim as fitted.
 
         Parameters
         ----------
@@ -236,6 +252,7 @@ class CanvasView:
             self._camera.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
         else:
             self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
+        self._fitted.add(self._dim)
 
     def request_draw(self) -> None:
         """Request a redraw of the canvas."""
@@ -264,6 +281,42 @@ class CanvasView:
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
         self._event_bus = event_bus
+
+    def switch_dim(self, new_dim: str) -> bool:
+        """Switch the canvas between ``"2d"`` and ``"3d"`` rendering modes.
+
+        Disables the current controller and enables the one for ``new_dim``.
+        Camera pose is preserved across toggles.
+
+        Parameters
+        ----------
+        new_dim : str
+            ``"2d"`` or ``"3d"``.
+
+        Returns
+        -------
+        bool
+            ``True`` if this is the first time ``new_dim`` has been activated
+            on this canvas (caller should call ``show_object`` to fit the
+            camera).  ``False`` if the camera pose was already set by a
+            previous visit.
+        """
+        if new_dim == self._dim:
+            return False
+        self._controller.enabled = False
+        if new_dim == "2d":
+            self._camera = self._camera_2d
+            self._controller = self._controller_2d
+            self._accum_pass.enabled = False
+        else:
+            self._camera = self._camera_3d
+            self._controller = self._controller_3d
+            self._accum_pass.enabled = True
+        self._controller.enabled = True
+        self._dim = new_dim
+        self._last_camera_state = self._capture_camera_state()
+        first_visit = new_dim not in self._fitted
+        return first_visit
 
     def _capture_camera_state(self) -> CameraState:
         """Snapshot the current pygfx camera into a CameraState NamedTuple."""

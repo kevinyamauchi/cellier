@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable, overload
+from typing import TYPE_CHECKING, Callable, Literal, overload
 from uuid import UUID, uuid4
 
 import numpy as np
 
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.events import (
+    AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
     DimsChangedEvent,
@@ -83,6 +84,8 @@ class CellierController:
         self._event_bus: EventBus = EventBus()
         # Cache of last-known displayed_axes per scene for change detection
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
+        # render_modes registered per scene (determines which nodes visuals build)
+        self._scene_render_modes: dict[UUID, set[Literal["2d", "3d"]]] = {}
         # Handles for externally-registered callbacks
         self._external_handles: list[SubscriptionHandle] = []
         # Camera settle
@@ -161,17 +164,23 @@ class CellierController:
         dim: str,
         coordinate_system: CoordinateSystem,
         name: str,
+        render_modes: set[Literal["2d", "3d"]] | None = None,
     ) -> Scene:
         """Create and register a new empty scene.
 
         Parameters
         ----------
         dim : str
-            ``"2d"`` or ``"3d"``.
+            ``"2d"`` or ``"3d"``.  Sets the initial displayed axes.
         coordinate_system : CoordinateSystem
             World coordinate system for the scene.
         name : str
             Human-readable name.
+        render_modes : set of ``"2d"`` / ``"3d"`` or None
+            Which rendering modes visuals added to this scene should support.
+            Defaults to ``{dim}``.  Pass ``{"2d", "3d"}`` to build both 2D
+            and 3D nodes up front, enabling cheap toggling via
+            ``scene.dims.selection.displayed_axes``.
 
         Returns
         -------
@@ -189,6 +198,9 @@ class CellierController:
         else:
             raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
 
+        if render_modes is None:
+            render_modes = {dim}
+
         dims = DimsManager(
             coordinate_system=coordinate_system,
             selection=AxisAlignedSelection(
@@ -198,7 +210,8 @@ class CellierController:
         )
         scene = Scene(name=name, dims=dims)
         self._model.scenes[scene.id] = scene
-        self._render_manager.add_scene(scene.id, dim=dim)
+        self._scene_render_modes[scene.id] = render_modes
+        self._render_manager.add_scene(scene.id)
         self._scene_to_canvases[scene.id] = []
         self._wire_dims_model(scene)
         self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
@@ -246,6 +259,7 @@ class CellierController:
         name: str = ...,
         block_size: int = ...,
         gpu_budget_bytes: int = ...,
+        gpu_budget_bytes_2d: int = ...,
         threshold: float | None = ...,
         interpolation: str = ...,
         use_brick_shader: bool = ...,
@@ -260,6 +274,7 @@ class CellierController:
         name: str = "image",
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
         threshold: float | None = None,
         interpolation: str = "linear",
         use_brick_shader: bool = False,
@@ -291,8 +306,11 @@ class CellierController:
             Brick side length in voxels. Only used for multiscale path.
             Default 32.
         gpu_budget_bytes : int
-            GPU memory budget for the brick cache. Only used for multiscale
-            path. Default 1 GiB.
+            GPU memory budget for the 3D brick cache. Only used for
+            multiscale path. Default 1 GiB.
+        gpu_budget_bytes_2d : int
+            GPU memory budget for the 2D tile cache. Only used for
+            multiscale path. Default 64 MiB.
         threshold : float
             Isosurface threshold for 3D raycast rendering. Only used for
             multiscale path. Default 0.2.
@@ -322,6 +340,7 @@ class CellierController:
                 name,
                 block_size,
                 gpu_budget_bytes,
+                gpu_budget_bytes_2d,
                 threshold,
                 interpolation,
                 use_brick_shader=use_brick_shader,
@@ -340,10 +359,12 @@ class CellierController:
         if data.id not in self._model.data.stores:
             self._model.data.stores[data.id] = data
 
-        # ── 2. Determine render mode from scene dimensionality ──────────
+        # ── 2. Determine render modes from scene registration ───────────
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
-        render_mode = "3d" if len(displayed_axes) == 3 else "2d"
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
 
         # ── 3. Build model-layer objects ────────────────────────────────
         visual_model = ImageVisual(
@@ -357,19 +378,26 @@ class CellierController:
         gfx_visual = GFXImageMemoryVisual(
             visual_model=visual_model,
             data_store=data,
-            render_mode=render_mode,
+            render_modes=render_modes,
         )
 
         # ── 5. Register with RenderManager and controller maps ──────────
-        self._render_manager.add_visual(scene_id, gfx_visual, data)
+        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
         self._visual_to_scene[visual_model.id] = scene_id
 
         # ── 6. Wire appearance/transform bridges and EventBus subscriptions
         self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -402,6 +430,7 @@ class CellierController:
         name: str,
         block_size: int,
         gpu_budget_bytes: int,
+        gpu_budget_bytes_2d: int,
         threshold: float | None,
         interpolation: str,
         use_brick_shader: bool = False,
@@ -427,28 +456,38 @@ class CellierController:
 
         scene.visuals.append(visual_model)
 
-        render_modes = {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
 
         level_shapes = list(data.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
-            displayed_axes=displayed_axes,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
+            gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             interpolation=interpolation,
             use_brick_shader=use_brick_shader,
             voxel_spacing=voxel_spacing,
         )
 
-        self._render_manager.add_visual(scene_id, gfx_visual, data)
+        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
         self._visual_to_scene[visual_model.id] = scene_id
         self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -515,19 +554,23 @@ class CellierController:
         scene.visuals.append(visual_model)
 
         displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
         level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
-            displayed_axes=displayed_axes,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
             threshold=threshold,
             interpolation=interpolation,
         )
-        self._render_manager.add_visual(scene_id, gfx_visual, data_store)
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
         self._visual_to_scene[visual_model.id] = scene_id
         return visual_model
 
@@ -592,9 +635,6 @@ class CellierController:
         self._canvas_to_scene[canvas_id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_id)
 
-        gfx_scene = self._render_manager.get_scene(scene_id)
-        canvas_view.show_object(gfx_scene)
-
         return canvas_view.widget
 
     # ------------------------------------------------------------------
@@ -604,6 +644,24 @@ class CellierController:
     def get_scene(self, scene_id: UUID) -> Scene:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
+
+    def fit_camera(self, scene_id: UUID) -> None:
+        """Fit the camera to the current scene bounding box.
+
+        Safe to call immediately after ``add_image`` and transform assignment
+        — the node matrix is set at construction time so no chunk data needs
+        to be loaded first.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene whose camera should be fitted.
+        """
+        canvas = self._render_manager._find_canvas_for_scene(scene_id)
+        if canvas is None:
+            return
+        gfx_scene = self._render_manager.get_scene(scene_id)
+        canvas.show_object(gfx_scene)
 
     def get_scene_by_name(self, name: str) -> Scene:
         """Return the live Scene model for the given name.
@@ -670,6 +728,9 @@ class CellierController:
                 self._rebuild_visuals_geometry(
                     scene_id, new_state.selection.displayed_axes
                 )
+                self._switch_canvas_cameras(
+                    scene_id, new_state.selection.displayed_axes
+                )
             self._event_bus.emit(
                 DimsChangedEvent(
                     source_id=self._id,
@@ -692,21 +753,56 @@ class CellierController:
             data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
             gfx_visual = scene_manager.get_visual(visual_model.id)
 
-            # Only multiscale visuals support geometry rebuilding on
-            # displayed_axes change; in-memory visuals are static.
+            # In-memory visuals have both nodes pre-built; just swap them.
             if not hasattr(gfx_visual, "rebuild_geometry"):
+                nodes_in_scene = [
+                    n
+                    for n in (gfx_visual.node_3d, gfx_visual.node_2d)
+                    if n is not None and n.parent is not None
+                ]
+                new_node = (
+                    gfx_visual.node_3d
+                    if len(displayed_axes) == 3
+                    else gfx_visual.node_2d
+                )
+                for node in nodes_in_scene:
+                    scene_manager.scene.remove(node)
+                if new_node is not None:
+                    scene_manager.scene.add(new_node)
                 continue
 
-            level_shapes = list(data_store.level_shapes)
-            old_node, new_node = gfx_visual.rebuild_geometry(
-                level_shapes, displayed_axes
-            )
+            # Capture which nodes are currently in the scene before rebuild,
+            # since rebuild_geometry creates new node objects for the target
+            # mode and the old node references become stale.
+            nodes_in_scene = [
+                n
+                for n in (gfx_visual.node_3d, gfx_visual.node_2d)
+                if n is not None and n.parent is not None
+            ]
 
-            # Swap node in the pygfx scene graph.
-            if old_node is not None:
-                scene_manager.scene.remove(old_node)
+            level_shapes = list(data_store.level_shapes)
+            _, new_node = gfx_visual.rebuild_geometry(level_shapes, displayed_axes)
+
+            for node in nodes_in_scene:
+                scene_manager.scene.remove(node)
             if new_node is not None:
                 scene_manager.scene.add(new_node)
+
+    def _switch_canvas_cameras(
+        self, scene_id: UUID, displayed_axes: tuple[int, ...]
+    ) -> None:
+        """Switch cameras on all canvases attached to *scene_id*.
+
+        Calls ``show_object`` on canvases that are being activated for the
+        first time in the new dimensionality.
+        """
+        new_dim = "3d" if len(displayed_axes) == 3 else "2d"
+        gfx_scene = self._render_manager.get_scene(scene_id)
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            canvas_view = self._render_manager._canvases[canvas_id]
+            first_visit = canvas_view.switch_dim(new_dim)
+            if first_visit:
+                canvas_view.show_object(gfx_scene)
 
     def _wire_transform(
         self, visual: MultiscaleImageVisual | ImageVisual, scene_id: UUID
@@ -735,6 +831,27 @@ class CellierController:
     def _wire_appearance(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         visual.appearance.events.connect(self._make_appearance_handler(visual.id))
+
+    def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
+        """Subscribe to all field changes on a visual's aabb model."""
+        visual.aabb.events.connect(self._make_aabb_handler(visual.id))
+
+    def _make_aabb_handler(self, visual_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a visual's AABBParams."""
+
+        def _on_aabb_psygnal(info: EmissionInfo) -> None:
+            field_name: str = info.signal.name
+            new_value = info.args[0]
+            self._event_bus.emit(
+                AABBChangedEvent(
+                    source_id=self._id,
+                    visual_id=visual_id,
+                    field_name=field_name,
+                    new_value=new_value,
+                )
+            )
+
+        return _on_aabb_psygnal
 
     def _make_appearance_handler(self, visual_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a visual's ImageAppearance."""

@@ -62,7 +62,10 @@ from cellier.v2.render.shaders._multiscale_volume_brick import (
     compute_normalized_size,
 )
 from cellier.v2.render.visuals._image_memory import (
+    _box_wireframe_positions,
+    _make_aabb_line,
     _pygfx_matrix,
+    _rect_wireframe_positions,
 )
 from cellier.v2.transform import AffineTransform
 
@@ -71,6 +74,7 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import AxisAlignedSelectionState, DimsState
     from cellier.v2.events._events import (
+        AABBChangedEvent,
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
         DataStoreMetadataChangedEvent,
@@ -402,8 +406,10 @@ class GFXMultiscaleImageVisual:
         Isosurface threshold.
     interpolation : str
         Sampler filter (``"linear"`` or ``"nearest"``).
-    gpu_budget_bytes : int
-        Maximum GPU memory for the brick cache texture.
+    gpu_budget_bytes_3d : int
+        Maximum GPU memory for the 3D brick cache texture.
+    gpu_budget_bytes_2d : int
+        Maximum GPU memory for the 2D tile cache texture.
     """
 
     def __init__(
@@ -412,16 +418,21 @@ class GFXMultiscaleImageVisual:
         volume_geometry: VolumeGeometry | None,
         image_geometry_2d: ImageGeometry2D | None,
         render_modes: set[str],
+        displayed_axes: tuple[int, ...] | None = None,
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
         interpolation: str = "linear",
-        gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_3d: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
         transform: AffineTransform | None = None,
         full_level_transforms: list[AffineTransform] | None = None,
         full_level_shapes: list[tuple[int, ...]] | None = None,
         use_brick_shader: bool = False,
         voxel_spacing: np.ndarray | None = None,
+        aabb_enabled: bool = False,
+        aabb_color: str = "#ffffff",
+        aabb_line_width: float = 2.0,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -468,15 +479,25 @@ class GFXMultiscaleImageVisual:
             self._full_level_shapes = []
 
         self._world_to_level_transforms = self._build_world_to_level_transforms()
-        # Track displayed axes for lazy node matrix updates (Option C).
-        self._last_displayed_axes: tuple[int, ...] | None = None
-        self._gpu_budget_bytes = gpu_budget_bytes
+        # Track displayed axes for node matrix updates.
+        self._last_displayed_axes: tuple[int, ...] | None = displayed_axes
+        self._gpu_budget_bytes = gpu_budget_bytes_3d
         self._frame_number = 0
         self._use_brick_shader = use_brick_shader
         self._voxel_spacing = voxel_spacing
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
         self._pending_slot_map_2d: dict[UUID, tuple[BlockKey2D, TileSlot2D]] = {}
         self._last_plan_stats: dict = {}
+
+        # Data-ready flags: AABB visibility is suppressed until the first
+        # brick/tile batch arrives.
+        self._data_ready_3d: bool = False
+        self._data_ready_2d: bool = False
+
+        # Cache AABB params so on_aabb_changed can update them.
+        self._aabb_enabled: bool = aabb_enabled
+        self._aabb_color: str = aabb_color
+        self._aabb_line_width: float = aabb_line_width
 
         # ── 3D GPU resources (only when volume_geometry is provided) ───
         self._block_cache_3d: BlockCache3D | None = None
@@ -486,7 +507,7 @@ class GFXMultiscaleImageVisual:
         if volume_geometry is not None:
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
-                gpu_budget_bytes=gpu_budget_bytes,
+                gpu_budget_bytes=gpu_budget_bytes_3d,
                 overlap=3,
             )
             self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
@@ -511,7 +532,7 @@ class GFXMultiscaleImageVisual:
         self._block_scales_buffer_2d = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
-                gpu_budget_bytes=gpu_budget_bytes,
+                gpu_budget_bytes=gpu_budget_bytes_2d,
                 block_size=image_geometry_2d.block_size,
             )
             self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
@@ -566,6 +587,7 @@ class GFXMultiscaleImageVisual:
             None
         )
         self._proxy_tex_3d: gfx.Texture | None = None
+        self._aabb_line_3d: gfx.Line | None = None
         if "3d" in render_modes and volume_geometry is not None:
             if use_brick_shader:
                 inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node_brick(
@@ -583,6 +605,9 @@ class GFXMultiscaleImageVisual:
             self._inner_node_3d = inner
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
+            # Build AABB line with known geometry (geometry available at construction).
+            self._aabb_line_3d = self._build_aabb_line_3d()
+            self.node_3d.add(self._aabb_line_3d)
             # Node matrix set lazily on first build_slice_request.
 
         # ── 2D node ─────────────────────────────────────────────────────
@@ -590,6 +615,7 @@ class GFXMultiscaleImageVisual:
         self._inner_node_2d: gfx.Image | None = None
         self.material_2d: ImageBlockMaterial | None = None
         self._proxy_tex_2d: gfx.Texture | None = None
+        self._aabb_line_2d: gfx.Line | None = None
         if "2d" in render_modes and image_geometry_2d is not None:
             inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
                 colormap=colormap, clim=clim, interpolation=interpolation
@@ -597,6 +623,9 @@ class GFXMultiscaleImageVisual:
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
+            # Build AABB line with known geometry (geometry available at construction).
+            self._aabb_line_2d = self._build_aabb_line_2d()
+            self.node_2d.add(self._aabb_line_2d)
             # Node matrix set lazily on first build_slice_request_2d.
 
     @classmethod
@@ -604,10 +633,11 @@ class GFXMultiscaleImageVisual:
         cls,
         model: MultiscaleImageVisual,
         level_shapes: list[tuple[int, ...]],
-        displayed_axes: tuple[int, ...],
         render_modes: set[str],
+        displayed_axes: tuple[int, ...],
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
         threshold: float | None = None,
         interpolation: str = "linear",
         use_brick_shader: bool = False,
@@ -621,15 +651,20 @@ class GFXMultiscaleImageVisual:
             Source visual model.
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level, finest first.
-        displayed_axes : tuple[int, ...]
-            Which axes are displayed (from dims.selection.displayed_axes).
         render_modes : set[str]
-            Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
-            ``{"2d", "3d"}``.
+            Which nodes to build: ``{"3d"}``, ``{"2d"}``, or ``{"2d", "3d"}``.
+        displayed_axes : tuple[int, ...]
+            The axes currently displayed.  ``len == 3`` means the initial mode
+            is 3D; ``len == 2`` means 2D.  In dual-mode (``{"2d", "3d"}``),
+            when starting in 3D the 2D geometry is built from
+            ``displayed_axes[-2:]``.
         block_size : int
             Rendering brick side length in voxels.
         gpu_budget_bytes : int
-            Maximum GPU memory for the brick cache.
+            Maximum GPU memory for the 3D brick cache.
+        gpu_budget_bytes_2d : int
+            Maximum GPU memory for the 2D tile cache.  Defaults to 64 MiB,
+            which is sufficient for typical 2D slice viewing.
         threshold : float or None
             Deprecated. Use ``model.appearance.iso_threshold`` instead.
             When provided, overrides the appearance value.
@@ -647,34 +682,35 @@ class GFXMultiscaleImageVisual:
         -------
         GFXMultiscaleImageVisual
         """
-        # Extract the displayed-axis shapes.
-        displayed_level_shapes = [
-            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
-        ]
+        if len(displayed_axes) == 3:
+            axes_3d: tuple[int, ...] | None = displayed_axes
+            axes_2d: tuple[int, ...] = displayed_axes[-2:]
+        else:
+            axes_3d = None
+            axes_2d = displayed_axes
 
-        # Extract displayed-subspace transforms for geometry objects.
-        displayed_transforms = [
-            t.set_slice(displayed_axes) for t in model.level_transforms
-        ]
-
-        # Build 3D geometry only when 3D rendering is requested.
+        # Build 3D geometry when 3D rendering is requested and axes are available.
         volume_geometry: VolumeGeometry | None = None
-        if "3d" in render_modes and len(displayed_axes) == 3:
+        if "3d" in render_modes and axes_3d is not None:
+            shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
+            transforms_3d = [t.set_slice(axes_3d) for t in model.level_transforms]
             volume_geometry = VolumeGeometry(
-                level_shapes=displayed_level_shapes,
-                level_transforms=displayed_transforms,
+                level_shapes=shapes_3d,
+                level_transforms=transforms_3d,
                 block_size=block_size,
             )
 
-        # Build 2D geometry only when 2D rendering is requested.
+        # Build 2D geometry when 2D rendering is requested.
         image_geometry_2d: ImageGeometry2D | None = None
-        if "2d" in render_modes and len(displayed_axes) == 2:
-            level_shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
+        if "2d" in render_modes:
+            shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
+            transforms_2d = [t.set_slice(axes_2d) for t in model.level_transforms]
+            level_shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
             image_geometry_2d = ImageGeometry2D(
                 level_shapes=level_shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
-                level_transforms=displayed_transforms,
+                level_transforms=transforms_2d,
             )
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
@@ -688,11 +724,16 @@ class GFXMultiscaleImageVisual:
             volume_geometry=volume_geometry,
             image_geometry_2d=image_geometry_2d,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             colormap=colormap,
             clim=clim,
             threshold=effective_threshold,
             interpolation=interpolation,
-            gpu_budget_bytes=gpu_budget_bytes,
+            gpu_budget_bytes_3d=gpu_budget_bytes,
+            gpu_budget_bytes_2d=gpu_budget_bytes_2d,
+            aabb_enabled=model.aabb.enabled,
+            aabb_color=model.aabb.color,
+            aabb_line_width=model.aabb.line_width,
             transform=model.transform,
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
@@ -720,27 +761,26 @@ class GFXMultiscaleImageVisual:
     ) -> tuple[gfx.WorldObject | None, gfx.WorldObject | None]:
         """Rebuild geometry and GPU resources after a displayed_axes change.
 
-        Returns ``(old_node, new_node)`` for the active rendering mode so
-        the caller can swap the node in the scene graph.
+        Returns ``(old_node, new_node)`` for the active node so the caller
+        can swap it in the scene graph.  Derives the 3D and 2D axis subsets
+        from ``ndim`` (last-three and last-two axes respectively).
 
         Parameters
         ----------
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level from the data store.
         displayed_axes : tuple[int, ...]
-            The new set of displayed axes.
+            The new set of displayed axes.  ``len == 3`` rebuilds the 3D
+            geometry using exactly those axes; ``len == 2`` rebuilds the 2D
+            geometry.  Also determines which node is the active one to swap.
 
         Returns
         -------
         tuple[old_node, new_node]
             The previous and replacement pygfx nodes (may be ``None``).
         """
-        # Update full-ndim shapes (data fetching).
         self._full_level_shapes = list(level_shapes)
-
-        displayed_level_shapes = [
-            tuple(shape[ax] for ax in displayed_axes) for shape in level_shapes
-        ]
+        self._last_displayed_axes = displayed_axes
 
         old_node: gfx.WorldObject | None = None
         new_node: gfx.WorldObject | None = None
@@ -748,16 +788,24 @@ class GFXMultiscaleImageVisual:
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
             if self._volume_geometry is not None:
-                self._volume_geometry.update(displayed_level_shapes)
-                self._rebuild_3d_resources()
+                shapes_3d = [
+                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                ]
+                if shapes_3d != self._volume_geometry.level_shapes:
+                    self._volume_geometry.update(shapes_3d)
+                    self._rebuild_3d_resources()
                 new_node = self.node_3d
 
         if "2d" in self.render_modes and len(displayed_axes) == 2:
             old_node = self.node_2d
-            shapes_2d = [(s[0], s[1]) for s in displayed_level_shapes]
             if self._image_geometry_2d is not None:
-                self._image_geometry_2d.update(shapes_2d)
-                self._rebuild_2d_resources()
+                shapes_2d_full = [
+                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                ]
+                shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
+                if shapes_2d != self._image_geometry_2d.level_shapes:
+                    self._image_geometry_2d.update(shapes_2d)
+                    self._rebuild_2d_resources()
                 new_node = self.node_2d
 
         return old_node, new_node
@@ -788,15 +836,17 @@ class GFXMultiscaleImageVisual:
             clim = self.material_3d.clim
             threshold = self.material_3d.threshold
             interpolation = self.material_3d.interpolation
-            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(  # type: ignore[assignment]
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
                 interpolation=interpolation,
             )
             self._inner_node_3d = inner
+            self._aabb_line_3d = self._build_aabb_line_3d()
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
+            self.node_3d.add(self._aabb_line_3d)
             if self._last_displayed_axes is not None:
                 self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map = {}
@@ -827,8 +877,10 @@ class GFXMultiscaleImageVisual:
                 colormap=colormap, clim=clim, interpolation=interpolation
             )
             self._inner_node_2d = inner
+            self._aabb_line_2d = self._build_aabb_line_2d()
             self.node_2d = gfx.Group()
             self.node_2d.add(inner)
+            self.node_2d.add(self._aabb_line_2d)
             if self._last_displayed_axes is not None:
                 self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map_2d = {}
@@ -1159,8 +1211,15 @@ class GFXMultiscaleImageVisual:
             self._frame_number,
         )
 
+        # On first brick batch, reveal the AABB line if enabled.
+        if not self._data_ready_3d and self._aabb_line_3d is not None:
+            self._data_ready_3d = True
+            self._aabb_line_3d.visible = self._aabb_enabled
+
     def cancel_pending(self) -> None:
         """Release all in-flight 3D slots."""
+        if self._block_cache_3d is None:
+            return
         self._block_cache_3d.tile_manager.release_all_in_flight()
         self._pending_slot_map = {}
 
@@ -1430,8 +1489,15 @@ class GFXMultiscaleImageVisual:
             self._frame_number,
         )
 
+        # On first tile batch, reveal the AABB line if enabled.
+        if not self._data_ready_2d and self._aabb_line_2d is not None:
+            self._data_ready_2d = True
+            self._aabb_line_2d.visible = self._aabb_enabled
+
     def cancel_pending_2d(self) -> None:
         """Release all in-flight 2D slots."""
+        if self._block_cache_2d is None:
+            return
         self._block_cache_2d.tile_manager.release_all_in_flight()
         self._pending_slot_map_2d = {}
 
@@ -1478,6 +1544,35 @@ class GFXMultiscaleImageVisual:
         if self.node_2d is not None:
             self.node_2d.visible = event.visible
 
+    def on_aabb_changed(self, event: AABBChangedEvent) -> None:
+        """Apply an AABB parameter change.
+
+        ``enabled`` toggles AABB line visibility (guarded by data-ready
+        flags so the line cannot appear before the first brick/tile batch).
+        ``color`` updates the line material.
+
+        Parameters
+        ----------
+        event : AABBChangedEvent
+            Carries ``field_name`` and ``new_value``.
+        """
+        if event.field_name == "enabled":
+            self._aabb_enabled = event.new_value
+            if self._aabb_line_3d is not None:
+                self._aabb_line_3d.visible = event.new_value and self._data_ready_3d
+            if self._aabb_line_2d is not None:
+                self._aabb_line_2d.visible = event.new_value and self._data_ready_2d
+        elif event.field_name == "color":
+            self._aabb_color = event.new_value
+            for line in (self._aabb_line_3d, self._aabb_line_2d):
+                if line is not None:
+                    line.material.color = event.new_value
+        elif event.field_name == "line_width":
+            self._aabb_line_width = event.new_value
+            for line in (self._aabb_line_3d, self._aabb_line_2d):
+                if line is not None:
+                    line.material.thickness = event.new_value
+
     def on_data_store_contents_changed(
         self, event: DataStoreContentsChangedEvent
     ) -> None:
@@ -1500,6 +1595,41 @@ class GFXMultiscaleImageVisual:
             self.material_3d.tick()
 
     # ── Private helpers ─────────────────────────────────────────────────
+
+    def _build_aabb_line_3d(self) -> gfx.Line:
+        """Build the 3D AABB wireframe line for the current geometry.
+
+        For the brick-shader path the line is in normalized space
+        (matching the Group matrix).  For the standard block shader the
+        line is in data-voxel space.
+        """
+        if self._use_brick_shader and self._norm_size is not None:
+            half = self._norm_size / 2.0
+            positions = _box_wireframe_positions(-half, half)
+        elif self._volume_geometry is not None:
+            d, h, w = self._volume_geometry.level_shapes[0]
+            # pygfx voxel convention: voxel i center at i, edges at i±0.5.
+            # The inner Volume's local transform (scale=bs, offset=bs/2-0.5)
+            # maps data voxel n to Group-local n, so the extent is [-0.5, N-0.5].
+            positions = _box_wireframe_positions(
+                np.array([-0.5, -0.5, -0.5]),
+                np.array([w - 0.5, h - 0.5, d - 0.5]),
+            )
+        else:
+            positions = _box_wireframe_positions(np.zeros(3), np.ones(3))
+        return _make_aabb_line(positions, self._aabb_color, self._aabb_line_width)
+
+    def _build_aabb_line_2d(self) -> gfx.Line:
+        """Build the 2D AABB wireframe rect for the current geometry."""
+        if self._image_geometry_2d is not None:
+            h, w = self._image_geometry_2d.level_shapes[0]
+            positions = _rect_wireframe_positions(
+                np.array([0.0, 0.0]),
+                np.array([float(w), float(h)]),
+            )
+        else:
+            positions = _rect_wireframe_positions(np.zeros(2), np.ones(2))
+        return _make_aabb_line(positions, self._aabb_color, self._aabb_line_width)
 
     def _build_3d_node(
         self,

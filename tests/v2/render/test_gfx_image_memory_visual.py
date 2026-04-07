@@ -66,7 +66,7 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
 
     dims = _make_dims_state_2d()
     requests = visual.build_slice_request_2d(
@@ -98,7 +98,7 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
@@ -120,7 +120,7 @@ def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
 
     store = _make_store(shape=(5, 6, 7))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
@@ -138,7 +138,7 @@ def test_5d_dims_state_2d_scene(mock_gfx):
 
     store = _make_store(shape=(2, 3, 10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
 
     dims = DimsState(
         axis_labels=("t", "c", "z", "y", "x"),
@@ -168,7 +168,7 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
     t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
@@ -201,7 +201,7 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
     t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d", transform=t)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"}, transform=t)
 
     dims = DimsState(
         axis_labels=("t", "z", "y", "x"),
@@ -233,7 +233,7 @@ def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
     t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
 
     dims = DimsState(
         axis_labels=("t", "z", "y", "x"),
@@ -266,7 +266,7 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
@@ -296,7 +296,7 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
     model = _make_visual_model(store)
     # scale=0.5 means world z=5 → data z=10, which is out of bounds (max 9)
     t = AffineTransform.from_scale((0.5, 0.5, 0.5))
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d", transform=t)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
@@ -328,7 +328,7 @@ def test_on_data_ready_2d_transposes_correctly(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
 
     data = np.random.rand(20, 30).astype(np.float32)
     req = ChunkRequest(
@@ -357,7 +357,7 @@ def test_on_data_ready_3d_transposes_correctly(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
     data = np.random.rand(10, 20, 30).astype(np.float32)
     req = ChunkRequest(
@@ -385,7 +385,7 @@ def test_on_data_ready_noop_on_empty_batch(mock_gfx):
 
     store = _make_store()
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
     # Should not raise
     visual.on_data_ready([])
@@ -406,7 +406,7 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     store = _make_store()
     model = _make_visual_model(store)
     t = AffineTransform.from_scale((4.0, 2.0, 3.0))
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d", transform=t)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"}, transform=t)
 
     # Before any slice request, _last_displayed_axes is None.
     assert visual._last_displayed_axes is None
@@ -442,7 +442,7 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
 
     store = _make_store()
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="2d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
 
     # First, trigger a slice to establish displayed axes.
     dims = DimsState(
@@ -485,7 +485,7 @@ def test_identity_transform_is_noop_3d(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_mode="3d")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(

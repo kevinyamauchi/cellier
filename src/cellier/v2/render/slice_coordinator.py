@@ -76,7 +76,7 @@ class SliceCoordinator:
 
         requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 
-        is_2d = scene_manager.dim == "2d"
+        is_2d = len(request.dims_state.selection.displayed_axes) == 2
 
         for visual_id, chunk_requests in requests_by_visual.items():
             visual = scene_manager.get_visual(visual_id)
@@ -133,9 +133,9 @@ class SliceCoordinator:
         if scene is not None:
             try:
                 visual = scene.get_visual(visual_id)
-                if scene.dim == "2d":
+                if "2d" in visual.render_modes:
                     visual.cancel_pending_2d()
-                else:
+                if "3d" in visual.render_modes:
                     visual.cancel_pending()
             except KeyError:
                 pass

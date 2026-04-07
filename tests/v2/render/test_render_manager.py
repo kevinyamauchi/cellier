@@ -60,6 +60,7 @@ def _make_mock_visual(visual_id: UUID | None = None) -> MagicMock:
     visual.visual_model_id = visual_id or uuid4()
     visual.node_3d = MagicMock()
     visual.node_2d = None
+    visual.render_modes = {"3d"}
     visual._volume_geometry.n_levels = 3
     visual.build_slice_request.return_value = []
     return visual
@@ -160,14 +161,14 @@ def test_reslicing_request_with_target_visual_ids() -> None:
 
 def test_scene_manager_add_and_get_visual() -> None:
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     visual = _make_mock_visual()
-    sm.add_visual(visual)
+    sm.add_visual(visual, (0, 1, 2))
     assert sm.get_visual(visual.visual_model_id) is visual
 
 
 def test_scene_manager_get_visual_missing_raises() -> None:
-    sm = SceneManager(scene_id=uuid4(), dim="3d")
+    sm = SceneManager(scene_id=uuid4())
     with pytest.raises(KeyError):
         sm.get_visual(uuid4())
 
@@ -175,7 +176,7 @@ def test_scene_manager_get_visual_missing_raises() -> None:
 def test_scene_manager_build_slice_requests_all_visuals() -> None:
     """With target_visual_ids=None all visuals are processed."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
 
     chunk = ChunkRequest(
         chunk_request_id=uuid4(),
@@ -188,8 +189,8 @@ def test_scene_manager_build_slice_requests_all_visuals() -> None:
     v2 = _make_mock_visual()
     v2.build_slice_request.return_value = []
 
-    sm.add_visual(v1)
-    sm.add_visual(v2)
+    sm.add_visual(v1, (0, 1, 2))
+    sm.add_visual(v2, (0, 1, 2))
 
     req = _make_reslicing_request(scene_id=scene_id)
     result = sm.build_slice_requests(req, {})
@@ -202,7 +203,7 @@ def test_scene_manager_build_slice_requests_all_visuals() -> None:
 def test_scene_manager_build_slice_requests_target_filtering() -> None:
     """With target_visual_ids set, only targeted visuals are processed."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
 
     chunk = ChunkRequest(
         chunk_request_id=uuid4(),
@@ -215,8 +216,8 @@ def test_scene_manager_build_slice_requests_target_filtering() -> None:
     v2 = _make_mock_visual()
     v2.build_slice_request.return_value = [chunk]
 
-    sm.add_visual(v1)
-    sm.add_visual(v2)
+    sm.add_visual(v1, (0, 1, 2))
+    sm.add_visual(v2, (0, 1, 2))
 
     req = _make_reslicing_request(
         scene_id=scene_id,
@@ -231,11 +232,11 @@ def test_scene_manager_build_slice_requests_target_filtering() -> None:
 
 
 def test_scene_manager_visual_ids_property() -> None:
-    sm = SceneManager(scene_id=uuid4(), dim="3d")
+    sm = SceneManager(scene_id=uuid4())
     v1 = _make_mock_visual()
     v2 = _make_mock_visual()
-    sm.add_visual(v1)
-    sm.add_visual(v2)
+    sm.add_visual(v1, (0, 1, 2))
+    sm.add_visual(v2, (0, 1, 2))
     ids = sm.visual_ids
     assert v1.visual_model_id in ids
     assert v2.visual_model_id in ids
@@ -261,7 +262,7 @@ def _make_coordinator_with_scene(
         data_stores=data_stores,
     )
 
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     scenes[scene_id] = sm
 
     chunk = ChunkRequest(
@@ -275,7 +276,7 @@ def _make_coordinator_with_scene(
     for _ in range(n_visuals):
         v = _make_mock_visual()
         v.build_slice_request.return_value = [chunk]
-        sm.add_visual(v)
+        sm.add_visual(v, (0, 1, 2))
         data_stores[v.visual_model_id] = MagicMock()
         visuals.append(v)
 
@@ -386,7 +387,7 @@ def test_reslice_visual_only_targets_one_visual() -> None:
     scene_id = uuid4()
     canvas_id = uuid4()
 
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     rm._scenes[scene_id] = sm
 
     v1 = _make_mock_visual()
@@ -441,7 +442,7 @@ def test_visual_render_config_defaults() -> None:
 def test_lod_bias_scales_thresholds() -> None:
     """lod_bias=2.0 must double every threshold value."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     req = _make_reslicing_request(scene_id=scene_id, screen_size_px=(1200.0, 800.0))
     n_levels = 3
 
@@ -456,7 +457,7 @@ def test_lod_bias_scales_thresholds() -> None:
 def test_lod_bias_one_is_identity() -> None:
     """lod_bias=1.0 must leave thresholds unchanged."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     req = _make_reslicing_request(scene_id=scene_id)
     n_levels = 3
 
@@ -469,10 +470,10 @@ def test_lod_bias_one_is_identity() -> None:
 def test_force_level_forwarded_to_visual() -> None:
     """SceneManager must pass force_level from visual_configs to build_slice_request."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
-    sm.add_visual(visual)
+    sm.add_visual(visual, (0, 1, 2))
 
     req = _make_reslicing_request(scene_id=scene_id)
     sm.build_slice_requests(
@@ -486,10 +487,10 @@ def test_force_level_forwarded_to_visual() -> None:
 def test_force_level_none_forwarded_to_visual() -> None:
     """force_level=None (default) must also be forwarded."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
-    sm.add_visual(visual)
+    sm.add_visual(visual, (0, 1, 2))
 
     req = _make_reslicing_request(scene_id=scene_id)
     sm.build_slice_requests(req, {})
@@ -501,10 +502,10 @@ def test_force_level_none_forwarded_to_visual() -> None:
 def test_frustum_cull_false_passes_none_corners() -> None:
     """frustum_cull=False must pass None for frustum_corners_world."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
-    sm.add_visual(visual)
+    sm.add_visual(visual, (0, 1, 2))
 
     req = _make_reslicing_request(scene_id=scene_id)
     sm.build_slice_requests(
@@ -518,10 +519,10 @@ def test_frustum_cull_false_passes_none_corners() -> None:
 def test_frustum_cull_true_passes_corners() -> None:
     """frustum_cull=True (default) must pass frustum corners to the visual."""
     scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id, dim="3d")
+    sm = SceneManager(scene_id=scene_id)
     visual = _make_mock_visual()
     visual.build_slice_request.return_value = []
-    sm.add_visual(visual)
+    sm.add_visual(visual, (0, 1, 2))
 
     req = _make_reslicing_request(scene_id=scene_id)
     sm.build_slice_requests(req, {})

@@ -4,7 +4,7 @@ from typing import Literal
 from cmap import Colormap
 from pydantic import Field
 
-from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
 
 
 class ImageMemoryAppearance(BaseAppearance):
@@ -55,5 +55,6 @@ class ImageVisual(BaseVisual):
     visual_type: Literal["image_memory"] = "image_memory"
     data_store_id: str
     appearance: ImageMemoryAppearance
+    aabb: AABBParams = Field(default_factory=AABBParams)
 
     requires_camera_reslice: bool = Field(default=False, frozen=True)

@@ -6,7 +6,7 @@ from cmap import Colormap
 from pydantic import Field, model_validator
 
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
 
 
 class ImageAppearance(BaseAppearance):
@@ -77,6 +77,7 @@ class MultiscaleImageVisual(BaseVisual):
     data_store_id: str
     level_transforms: list[AffineTransform]
     appearance: ImageAppearance
+    aabb: AABBParams = Field(default_factory=AABBParams)
     requires_camera_reslice: bool = Field(default=True, frozen=True)
 
     @model_validator(mode="before")
