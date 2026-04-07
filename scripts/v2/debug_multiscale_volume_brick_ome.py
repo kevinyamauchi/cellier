@@ -176,7 +176,7 @@ class OmeBrickViewer:
         aabb_group = QtWidgets.QGroupBox("Bounding box")
         aabb_layout = QtWidgets.QVBoxLayout(aabb_group)
         self._aabb_check = QtWidgets.QCheckBox("Show bounding box")
-        self._aabb_check.setChecked(False)
+        self._aabb_check.setChecked(True)
         self._aabb_check.toggled.connect(self._on_aabb_toggled)
         aabb_layout.addWidget(self._aabb_check)
         lw_row = QtWidgets.QHBoxLayout()
@@ -418,16 +418,15 @@ async def async_main(zarr_uri: str):
     vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)
     vis.material_3d.debug_mode = _DEBUG_MODE
 
-    # ── AABB colour (enabling is done via the checkbox in the UI) ────────
+    # ── AABB colour and default visibility ───────────────────────────────
     visual_model.aabb.color = "#ff00ff"
-
-    gfx_scene = controller._render_manager.get_scene(scene.id)
+    visual_model.aabb.enabled = True
 
     # ── Print diagnostics ─────────────────────────────────────────────
     print(f"[DEBUG] debug_mode     = {_DEBUG_MODE}")
     print(f"[DEBUG] norm_size      = {vis._norm_size}")
     print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
-    print(f"[DEBUG] node_3d matrix (before reslice) =\n{vis.node_3d.local.matrix}")
+    print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
 
     # ── Canvas ────────────────────────────────────────────────────────
     canvas_widget = controller.add_canvas(scene.id, depth_range=depth_range)
@@ -445,18 +444,10 @@ async def async_main(zarr_uri: str):
     viewer._clim_max_spin.setValue(initial_clim_max)
     viewer.window.show()
 
-    # Initial reslice for the 3D scene.
+    # Fit camera from metadata-derived bounding box, then kick off first reslice.
+    controller.fit_camera(scene.id)
     controller.reslice_scene(scene.id)
-
-    # Wait for async data load, then print diagnostics and refit camera.
-    await asyncio.sleep(2.0)
-    print("[DEBUG] After initial reslice:")
-    print(f"  cache n_resident = {vis._block_cache_3d.n_resident}")
-    print(f"  LUT max w        = {vis._lut_manager_3d.lut_data[:, :, :, 3].max()}")
-    print(f"  node_3d matrix   =\n{vis.node_3d.local.matrix}")
-
-    canvas_view.show_object(gfx_scene)
-    print("[DEBUG] Camera refit done. Use 'Reslice now' to reload bricks.")
+    print("[DEBUG] Camera fitted. Use 'Reslice now' to reload bricks.")
 
     app = QtWidgets.QApplication.instance()
     close_event = asyncio.Event()

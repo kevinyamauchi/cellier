@@ -418,6 +418,7 @@ class GFXMultiscaleImageVisual:
         volume_geometry: VolumeGeometry | None,
         image_geometry_2d: ImageGeometry2D | None,
         render_modes: set[str],
+        displayed_axes: tuple[int, ...] | None = None,
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
@@ -478,8 +479,8 @@ class GFXMultiscaleImageVisual:
             self._full_level_shapes = []
 
         self._world_to_level_transforms = self._build_world_to_level_transforms()
-        # Track displayed axes for lazy node matrix updates (Option C).
-        self._last_displayed_axes: tuple[int, ...] | None = None
+        # Track displayed axes for node matrix updates.
+        self._last_displayed_axes: tuple[int, ...] | None = displayed_axes
         self._gpu_budget_bytes = gpu_budget_bytes_3d
         self._frame_number = 0
         self._use_brick_shader = use_brick_shader
@@ -633,6 +634,7 @@ class GFXMultiscaleImageVisual:
         model: MultiscaleImageVisual,
         level_shapes: list[tuple[int, ...]],
         render_modes: set[str],
+        displayed_axes: tuple[int, ...],
         block_size: int = 32,
         gpu_budget_bytes: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
@@ -650,9 +652,12 @@ class GFXMultiscaleImageVisual:
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level, finest first.
         render_modes : set[str]
-            Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
-            ``{"2d", "3d"}``.  When both are requested, 3D geometry is built
-            from the last three axes and 2D geometry from the last two axes.
+            Which nodes to build: ``{"3d"}``, ``{"2d"}``, or ``{"2d", "3d"}``.
+        displayed_axes : tuple[int, ...]
+            The axes currently displayed.  ``len == 3`` means the initial mode
+            is 3D; ``len == 2`` means 2D.  In dual-mode (``{"2d", "3d"}``),
+            when starting in 3D the 2D geometry is built from
+            ``displayed_axes[-2:]``.
         block_size : int
             Rendering brick side length in voxels.
         gpu_budget_bytes : int
@@ -677,13 +682,16 @@ class GFXMultiscaleImageVisual:
         -------
         GFXMultiscaleImageVisual
         """
-        ndim = len(level_shapes[0])
-        axes_3d = tuple(range(ndim - 3, ndim))
-        axes_2d = tuple(range(ndim - 2, ndim))
+        if len(displayed_axes) == 3:
+            axes_3d: tuple[int, ...] | None = displayed_axes
+            axes_2d: tuple[int, ...] = displayed_axes[-2:]
+        else:
+            axes_3d = None
+            axes_2d = displayed_axes
 
-        # Build 3D geometry when 3D rendering is requested.
+        # Build 3D geometry when 3D rendering is requested and axes are available.
         volume_geometry: VolumeGeometry | None = None
-        if "3d" in render_modes:
+        if "3d" in render_modes and axes_3d is not None:
             shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
             transforms_3d = [t.set_slice(axes_3d) for t in model.level_transforms]
             volume_geometry = VolumeGeometry(
@@ -716,6 +724,7 @@ class GFXMultiscaleImageVisual:
             volume_geometry=volume_geometry,
             image_geometry_2d=image_geometry_2d,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             colormap=colormap,
             clim=clim,
             threshold=effective_threshold,
@@ -761,8 +770,9 @@ class GFXMultiscaleImageVisual:
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level from the data store.
         displayed_axes : tuple[int, ...]
-            The new set of displayed axes.  Used only to determine which
-            node (2D or 3D) is the currently active one to swap.
+            The new set of displayed axes.  ``len == 3`` rebuilds the 3D
+            geometry using exactly those axes; ``len == 2`` rebuilds the 2D
+            geometry.  Also determines which node is the active one to swap.
 
         Returns
         -------
@@ -770,9 +780,7 @@ class GFXMultiscaleImageVisual:
             The previous and replacement pygfx nodes (may be ``None``).
         """
         self._full_level_shapes = list(level_shapes)
-        ndim = len(level_shapes[0])
-        axes_3d = tuple(range(ndim - 3, ndim))
-        axes_2d = tuple(range(ndim - 2, ndim))
+        self._last_displayed_axes = displayed_axes
 
         old_node: gfx.WorldObject | None = None
         new_node: gfx.WorldObject | None = None
@@ -780,7 +788,9 @@ class GFXMultiscaleImageVisual:
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
             if self._volume_geometry is not None:
-                shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
+                shapes_3d = [
+                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                ]
                 if shapes_3d != self._volume_geometry.level_shapes:
                     self._volume_geometry.update(shapes_3d)
                     self._rebuild_3d_resources()
@@ -789,7 +799,9 @@ class GFXMultiscaleImageVisual:
         if "2d" in self.render_modes and len(displayed_axes) == 2:
             old_node = self.node_2d
             if self._image_geometry_2d is not None:
-                shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
+                shapes_2d_full = [
+                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                ]
                 shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
                 if shapes_2d != self._image_geometry_2d.level_shapes:
                     self._image_geometry_2d.update(shapes_2d)

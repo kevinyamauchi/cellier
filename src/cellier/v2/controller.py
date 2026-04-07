@@ -465,6 +465,7 @@ class CellierController:
             model=visual_model,
             level_shapes=level_shapes,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
@@ -561,6 +562,7 @@ class CellierController:
             model=visual_model,
             level_shapes=level_shapes,
             render_modes=render_modes,
+            displayed_axes=displayed_axes,
             block_size=block_size,
             gpu_budget_bytes=gpu_budget_bytes,
             threshold=threshold,
@@ -633,9 +635,6 @@ class CellierController:
         self._canvas_to_scene[canvas_id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_id)
 
-        gfx_scene = self._render_manager.get_scene(scene_id)
-        canvas_view.show_object(gfx_scene)
-
         return canvas_view.widget
 
     # ------------------------------------------------------------------
@@ -645,6 +644,24 @@ class CellierController:
     def get_scene(self, scene_id: UUID) -> Scene:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
+
+    def fit_camera(self, scene_id: UUID) -> None:
+        """Fit the camera to the current scene bounding box.
+
+        Safe to call immediately after ``add_image`` and transform assignment
+        — the node matrix is set at construction time so no chunk data needs
+        to be loaded first.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene whose camera should be fitted.
+        """
+        canvas = self._render_manager._find_canvas_for_scene(scene_id)
+        if canvas is None:
+            return
+        gfx_scene = self._render_manager.get_scene(scene_id)
+        canvas.show_object(gfx_scene)
 
     def get_scene_by_name(self, name: str) -> Scene:
         """Return the live Scene model for the given name.
