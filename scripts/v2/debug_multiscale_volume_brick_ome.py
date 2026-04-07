@@ -172,6 +172,23 @@ class OmeBrickViewer:
         bias_layout.addWidget(self._lod_bias_spin)
         panel_layout.addWidget(bias_group)
 
+        # ── Shared: bounding box ──────────────────────────────────────
+        aabb_group = QtWidgets.QGroupBox("Bounding box")
+        aabb_layout = QtWidgets.QVBoxLayout(aabb_group)
+        self._aabb_check = QtWidgets.QCheckBox("Show bounding box")
+        self._aabb_check.setChecked(False)
+        self._aabb_check.toggled.connect(self._on_aabb_toggled)
+        aabb_layout.addWidget(self._aabb_check)
+        lw_row = QtWidgets.QHBoxLayout()
+        lw_row.addWidget(QtWidgets.QLabel("Line width (px):"))
+        self._aabb_lw_spin = QtWidgets.QSpinBox()
+        self._aabb_lw_spin.setRange(1, 20)
+        self._aabb_lw_spin.setValue(int(self._visual_model.aabb.line_width))
+        self._aabb_lw_spin.valueChanged.connect(self._on_aabb_line_width_changed)
+        lw_row.addWidget(self._aabb_lw_spin)
+        aabb_layout.addLayout(lw_row)
+        panel_layout.addWidget(aabb_group)
+
         self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
         self._status_label.setWordWrap(True)
         panel_layout.addWidget(self._status_label)
@@ -272,50 +289,18 @@ class OmeBrickViewer:
         gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
         self._controller.reslice_scene(self._scene.id)
 
+    # ── AABB callbacks ────────────────────────────────────────────────
+
+    def _on_aabb_toggled(self, checked: bool) -> None:
+        self._visual_model.aabb.enabled = checked
+
+    def _on_aabb_line_width_changed(self, value: int) -> None:
+        self._visual_model.aabb.line_width = float(value)
+
 
 # ---------------------------------------------------------------------------
 # Scene helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_box_wireframe(box_min, box_max, color):
-    import pygfx as gfx
-
-    x0, y0, z0 = box_min
-    x1, y1, z1 = box_max
-    positions = np.array(
-        [
-            [x0, y0, z0],
-            [x1, y0, z0],
-            [x1, y0, z0],
-            [x1, y1, z0],
-            [x1, y1, z0],
-            [x0, y1, z0],
-            [x0, y1, z0],
-            [x0, y0, z0],
-            [x0, y0, z1],
-            [x1, y0, z1],
-            [x1, y0, z1],
-            [x1, y1, z1],
-            [x1, y1, z1],
-            [x0, y1, z1],
-            [x0, y1, z1],
-            [x0, y0, z1],
-            [x0, y0, z0],
-            [x0, y0, z1],
-            [x1, y0, z0],
-            [x1, y0, z1],
-            [x1, y1, z0],
-            [x1, y1, z1],
-            [x0, y1, z0],
-            [x0, y1, z1],
-        ],
-        dtype=np.float32,
-    )
-    return gfx.Line(
-        gfx.Geometry(positions=positions),
-        gfx.LineSegmentMaterial(color=color, thickness=2.0),
-    )
 
 
 def _dtype_clim_max(dtype: np.dtype) -> float:
@@ -433,17 +418,10 @@ async def async_main(zarr_uri: str):
     vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)
     vis.material_3d.debug_mode = _DEBUG_MODE
 
-    # ── Pink AABB wireframe in world space ────────────────────────────
-    wz, wy, wx = world_extents_zyx
-    pad = 1.0
+    # ── AABB colour (enabling is done via the checkbox in the UI) ────────
+    visual_model.aabb.color = "#ff00ff"
+
     gfx_scene = controller._render_manager.get_scene(scene.id)
-    gfx_scene.add(
-        _make_box_wireframe(
-            np.array([-0.5 - pad, -0.5 - pad, -0.5 - pad]),
-            np.array([wx - 0.5 + pad, wy - 0.5 + pad, wz - 0.5 + pad]),
-            "#ff00ff",
-        )
-    )
 
     # ── Print diagnostics ─────────────────────────────────────────────
     print(f"[DEBUG] debug_mode     = {_DEBUG_MODE}")

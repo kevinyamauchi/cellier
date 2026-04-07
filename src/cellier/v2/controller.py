@@ -10,6 +10,7 @@ import numpy as np
 
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.events import (
+    AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
     DimsChangedEvent,
@@ -386,10 +387,17 @@ class CellierController:
 
         # ── 6. Wire appearance/transform bridges and EventBus subscriptions
         self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -468,10 +476,17 @@ class CellierController:
         self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
         self._visual_to_scene[visual_model.id] = scene_id
         self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -799,6 +814,27 @@ class CellierController:
     def _wire_appearance(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         visual.appearance.events.connect(self._make_appearance_handler(visual.id))
+
+    def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
+        """Subscribe to all field changes on a visual's aabb model."""
+        visual.aabb.events.connect(self._make_aabb_handler(visual.id))
+
+    def _make_aabb_handler(self, visual_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a visual's AABBParams."""
+
+        def _on_aabb_psygnal(info: EmissionInfo) -> None:
+            field_name: str = info.signal.name
+            new_value = info.args[0]
+            self._event_bus.emit(
+                AABBChangedEvent(
+                    source_id=self._id,
+                    visual_id=visual_id,
+                    field_name=field_name,
+                    new_value=new_value,
+                )
+            )
+
+        return _on_aabb_psygnal
 
     def _make_appearance_handler(self, visual_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a visual's ImageAppearance."""

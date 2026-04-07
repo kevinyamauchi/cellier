@@ -8,6 +8,24 @@ from pydantic import UUID4, AfterValidator, Field
 from cellier.v2.transform import AffineTransform
 
 
+class AABBParams(EventedModel):
+    """Parameters for an axis-aligned bounding box wireframe overlay.
+
+    Parameters
+    ----------
+    enabled : bool
+        If True, display the AABB wireframe. Default False.
+    color : str
+        Line color as a CSS color string. Default ``"#ffffff"``.
+    line_width : float
+        Line thickness in screen pixels. Default ``2.0``.
+    """
+
+    enabled: bool = False
+    color: str = "#ffffff"
+    line_width: float = 2.0
+
+
 class BaseAppearance(EventedModel):
     """Base model for all materials.
 

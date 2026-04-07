@@ -3,6 +3,7 @@
 from cellier.v2._state import CameraState, DimsState
 from cellier.v2.events._bus import EventBus, SubscriptionHandle
 from cellier.v2.events._events import (
+    AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
     CellierEventTypes,
@@ -22,6 +23,7 @@ from cellier.v2.events._events import (
 )
 
 __all__ = [
+    "AABBChangedEvent",
     "AppearanceChangedEvent",
     "CameraChangedEvent",
     "CameraState",

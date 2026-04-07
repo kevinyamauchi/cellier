@@ -14,6 +14,7 @@ import PySide6.QtAsyncio as QtAsyncio
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -57,6 +58,7 @@ def main() -> None:
         appearance=appearance,
         name="volume_view",
     )
+    visual.aabb.color = "#ff00ff"
 
     # ── 3. Build UI ─────────────────────────────────────────────────────
     root = QWidget()
@@ -78,6 +80,10 @@ def main() -> None:
     z_spin.setValue(z_depth // 2)
     ctrl_layout.addWidget(z_spin)
     ctrl_layout.addStretch()
+
+    aabb_check = QCheckBox("Show bounding box")
+    aabb_check.setChecked(False)
+    ctrl_layout.addWidget(aabb_check)
 
     toggle_btn = QPushButton("Switch to 2D")
     ctrl_layout.addWidget(toggle_btn)
@@ -110,6 +116,11 @@ def main() -> None:
             controller.reslice_scene(scene.id)
 
     z_spin.valueChanged.connect(_on_z_changed)
+
+    def _on_aabb_toggled(checked: bool) -> None:
+        visual.aabb.enabled = checked
+
+    aabb_check.toggled.connect(_on_aabb_toggled)
 
     # ── 5. Initial reslice + camera fit ────────────────────────────────
     # Patch on_data_ready to fit the camera on the first delivery.

@@ -13,6 +13,7 @@ from cellier.v2.data.image._image_requests import ChunkRequest
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.events._events import (
+        AABBChangedEvent,
         AppearanceChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
@@ -29,6 +30,75 @@ if TYPE_CHECKING:
 def _make_colormap(color_map) -> gfx.TextureMap:
     """Convert a cmap Colormap to a pygfx TextureMap via cmap's pygfx bridge."""
     return color_map.to_pygfx(N=256)
+
+
+def _box_wireframe_positions(box_min: np.ndarray, box_max: np.ndarray) -> np.ndarray:
+    """Return (24, 3) float32 positions for a 3D box wireframe (12 edges x 2 pts)."""
+    x0, y0, z0 = float(box_min[0]), float(box_min[1]), float(box_min[2])
+    x1, y1, z1 = float(box_max[0]), float(box_max[1]), float(box_max[2])
+    return np.array(
+        [
+            # bottom face
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z0],
+            # top face
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+            [x0, y1, z1],
+            [x0, y0, z1],
+            # verticals
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x1, y1, z0],
+            [x1, y1, z1],
+            [x0, y1, z0],
+            [x0, y1, z1],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _rect_wireframe_positions(box_min: np.ndarray, box_max: np.ndarray) -> np.ndarray:
+    """Return (8, 3) float32 positions for a 2D rect wireframe (4 edges x 2 pts)."""
+    x0, y0 = float(box_min[0]), float(box_min[1])
+    x1, y1 = float(box_max[0]), float(box_max[1])
+    return np.array(
+        [
+            [x0, y0, 0.0],
+            [x1, y0, 0.0],
+            [x1, y0, 0.0],
+            [x1, y1, 0.0],
+            [x1, y1, 0.0],
+            [x0, y1, 0.0],
+            [x0, y1, 0.0],
+            [x0, y0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _make_aabb_line(
+    positions: np.ndarray, color: str, line_width: float = 2.0
+) -> gfx.Line:
+    """Create a gfx.Line for an AABB wireframe (initially invisible)."""
+    line = gfx.Line(
+        gfx.Geometry(positions=positions),
+        gfx.LineSegmentMaterial(color=color, thickness=line_width),
+    )
+    line.visible = False
+    return line
 
 
 def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
@@ -197,17 +267,32 @@ class GFXImageMemoryVisual:
         # Track displayed axes for lazy node matrix updates (Option C).
         self._last_displayed_axes: tuple[int, ...] | None = None
 
+        # Data-ready flags: AABB visibility is suppressed until real data
+        # has been committed (prevents showing wrong placeholder geometry).
+        self._data_ready_2d: bool = False
+        self._data_ready_3d: bool = False
+
+        # Cache initial AABB params for use when data first arrives.
+        self._aabb_enabled: bool = visual_model.aabb.enabled
+        self._aabb_color: str = visual_model.aabb.color
+        self._aabb_line_width: float = visual_model.aabb.line_width
+
         appearance = visual_model.appearance
         colormap = _make_colormap(appearance.color_map)
 
-        self.node_2d: gfx.WorldObject | None = None
-        self.node_3d: gfx.WorldObject | None = None
+        self.node_2d: gfx.Group | None = None
+        self._inner_node_2d: gfx.Image | None = None
+        self._aabb_line_2d: gfx.Line | None = None
+
+        self.node_3d: gfx.Group | None = None
+        self._inner_node_3d: gfx.Volume | None = None
+        self._aabb_line_3d: gfx.Line | None = None
 
         if "2d" in render_modes:
             # Placeholder 1x1 texture -- replaced on first on_data_ready_2d.
             placeholder = np.zeros((1, 1, 1), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=2, format="1xf4")
-            self.node_2d = gfx.Image(
+            self._inner_node_2d = gfx.Image(
                 gfx.Geometry(grid=tex),
                 gfx.ImageBasicMaterial(
                     clim=appearance.clim,
@@ -216,12 +301,21 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
+            # Placeholder AABB rect -- geometry replaced on first on_data_ready_2d.
+            # Stays invisible until real data arrives regardless of aabb.enabled.
+            placeholder_positions = _rect_wireframe_positions(np.zeros(2), np.ones(2))
+            self._aabb_line_2d = _make_aabb_line(
+                placeholder_positions, self._aabb_color, self._aabb_line_width
+            )
+            self.node_2d = gfx.Group()
+            self.node_2d.add(self._inner_node_2d)
+            self.node_2d.add(self._aabb_line_2d)
 
         if "3d" in render_modes:
             # Placeholder 2x2x2 texture -- replaced on first on_data_ready.
             placeholder = np.zeros((2, 2, 2), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=3, format="1xf4")
-            self.node_3d = gfx.Volume(
+            self._inner_node_3d = gfx.Volume(
                 gfx.Geometry(grid=tex),
                 gfx.VolumeMipMaterial(
                     clim=appearance.clim,
@@ -230,6 +324,15 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
+            # Placeholder AABB box -- geometry replaced on first on_data_ready.
+            # Stays invisible until real data arrives regardless of aabb.enabled.
+            placeholder_positions = _box_wireframe_positions(np.zeros(3), np.ones(3))
+            self._aabb_line_3d = _make_aabb_line(
+                placeholder_positions, self._aabb_color, self._aabb_line_width
+            )
+            self.node_3d = gfx.Group()
+            self.node_3d.add(self._inner_node_3d)
+            self.node_3d.add(self._aabb_line_3d)
 
         # Node matrix is set lazily on first build_slice_request when we
         # know the displayed axes.  Identity is fine as a placeholder.
@@ -262,6 +365,8 @@ class GFXImageMemoryVisual:
 
         Called from ``build_slice_request*`` when displayed axes change,
         and from ``on_transform_changed`` when the transform is updated.
+        The matrix is set on the Group nodes so all children (inner image/
+        volume and AABB line) inherit the same transform.
         """
         self._last_displayed_axes = displayed_axes
         sub = self._transform.set_slice(displayed_axes)
@@ -433,7 +538,7 @@ class GFXImageMemoryVisual:
         batch : list of (ChunkRequest, np.ndarray)
             Always contains exactly one element for this visual type.
         """
-        if not batch or self.node_3d is None:
+        if not batch or self._inner_node_3d is None:
             return
 
         _request, data = batch[0]
@@ -441,7 +546,21 @@ class GFXImageMemoryVisual:
         # pygfx Volume expects (W, H, D) -- transpose from numpy (D, H, W).
         data_wgpu = np.ascontiguousarray(data.T)
         tex = gfx.Texture(data_wgpu, dim=3, format="1xf4")
-        self.node_3d.geometry = gfx.Geometry(grid=tex)
+        self._inner_node_3d.geometry = gfx.Geometry(grid=tex)
+
+        # On first real data: rebuild AABB geometry from true shape and
+        # apply the pending aabb.enabled state.
+        if not self._data_ready_3d and self._aabb_line_3d is not None:
+            d, h, w = data.shape  # data is (D, H, W)
+            # pygfx voxel convention: voxel i center at i, edges at i±0.5.
+            # Volume of shape N spans [-0.5, N-0.5] in local space.
+            positions = _box_wireframe_positions(
+                np.array([-0.5, -0.5, -0.5]),
+                np.array([w - 0.5, h - 0.5, d - 0.5]),
+            )
+            self._aabb_line_3d.geometry = gfx.Geometry(positions=positions)
+            self._data_ready_3d = True
+            self._aabb_line_3d.visible = self._aabb_enabled
 
     def on_data_ready_2d(self, batch: list[tuple[ChunkRequest, np.ndarray]]) -> None:
         """Upload a 2-D slice to the pygfx Image node.
@@ -454,7 +573,7 @@ class GFXImageMemoryVisual:
         batch : list of (ChunkRequest, np.ndarray)
             Always contains exactly one element for this visual type.
         """
-        if not batch or self.node_2d is None:
+        if not batch or self._inner_node_2d is None:
             return
 
         _request, data = batch[0]
@@ -462,7 +581,21 @@ class GFXImageMemoryVisual:
         # pygfx Image expects (W, H, 1) -- transpose H<->W and add channel dim.
         data_wgpu = np.ascontiguousarray(data.T[:, :, np.newaxis])
         tex = gfx.Texture(data_wgpu, dim=2, format="1xf4")
-        self.node_2d.geometry = gfx.Geometry(grid=tex)
+        self._inner_node_2d.geometry = gfx.Geometry(grid=tex)
+
+        # On first real data: rebuild AABB rect geometry from true shape and
+        # apply the pending aabb.enabled state.
+        if not self._data_ready_2d and self._aabb_line_2d is not None:
+            h, w = data.shape  # data is (H, W)
+            # pygfx voxel convention: pixel i center at i, edges at i±0.5.
+            # Image of shape N spans [-0.5, N-0.5] in local space.
+            positions = _rect_wireframe_positions(
+                np.array([-0.5, -0.5]),
+                np.array([w - 0.5, h - 0.5]),
+            )
+            self._aabb_line_2d.geometry = gfx.Geometry(positions=positions)
+            self._data_ready_2d = True
+            self._aabb_line_2d.visible = self._aabb_enabled
 
     # ------------------------------------------------------------------
     # Transform event handler
@@ -495,10 +628,10 @@ class GFXImageMemoryVisual:
         event : AppearanceChangedEvent
             Carries ``field_name`` and ``new_value``.
         """
-        for node in (self.node_2d, self.node_3d):
-            if node is None:
+        for inner in (self._inner_node_2d, self._inner_node_3d):
+            if inner is None:
                 continue
-            material = node.material
+            material = inner.material
             if event.field_name == "clim":
                 material.clim = event.new_value
             elif event.field_name == "color_map":
@@ -508,7 +641,7 @@ class GFXImageMemoryVisual:
         # "visible" is handled by on_visibility_changed; ignore here.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
-        """Toggle node visibility.
+        """Toggle Group node visibility.
 
         Parameters
         ----------
@@ -518,3 +651,32 @@ class GFXImageMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def on_aabb_changed(self, event: AABBChangedEvent) -> None:
+        """Apply an AABB parameter change.
+
+        ``enabled`` toggles AABB line visibility (guarded by data-ready
+        flags so the line cannot appear before real geometry is in place).
+        ``color`` updates the line material.
+
+        Parameters
+        ----------
+        event : AABBChangedEvent
+            Carries ``field_name`` and ``new_value``.
+        """
+        if event.field_name == "enabled":
+            self._aabb_enabled = event.new_value
+            if self._aabb_line_2d is not None:
+                self._aabb_line_2d.visible = event.new_value and self._data_ready_2d
+            if self._aabb_line_3d is not None:
+                self._aabb_line_3d.visible = event.new_value and self._data_ready_3d
+        elif event.field_name == "color":
+            self._aabb_color = event.new_value
+            for line in (self._aabb_line_2d, self._aabb_line_3d):
+                if line is not None:
+                    line.material.color = event.new_value
+        elif event.field_name == "line_width":
+            self._aabb_line_width = event.new_value
+            for line in (self._aabb_line_2d, self._aabb_line_3d):
+                if line is not None:
+                    line.material.thickness = event.new_value

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -124,47 +125,6 @@ AABB_COLOR = "#ff00ff"
 # ---------------------------------------------------------------------------
 # Scene helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_box_wireframe(
-    box_min: np.ndarray, box_max: np.ndarray, color: str
-) -> gfx.Line:
-    """Build an AABB wireframe as disconnected edge pairs."""
-    x0, y0, z0 = box_min
-    x1, y1, z1 = box_max
-    positions = np.array(
-        [
-            [x0, y0, z0],
-            [x1, y0, z0],
-            [x1, y0, z0],
-            [x1, y1, z0],
-            [x1, y1, z0],
-            [x0, y1, z0],
-            [x0, y1, z0],
-            [x0, y0, z0],
-            [x0, y0, z1],
-            [x1, y0, z1],
-            [x1, y0, z1],
-            [x1, y1, z1],
-            [x1, y1, z1],
-            [x0, y1, z1],
-            [x0, y1, z1],
-            [x0, y0, z1],
-            [x0, y0, z0],
-            [x0, y0, z1],
-            [x1, y0, z0],
-            [x1, y0, z1],
-            [x1, y1, z0],
-            [x1, y1, z1],
-            [x0, y1, z0],
-            [x0, y1, z1],
-        ],
-        dtype=np.float32,
-    )
-    return gfx.Line(
-        gfx.Geometry(positions=positions),
-        gfx.LineSegmentMaterial(color=color, thickness=1.0),
-    )
 
 
 def _make_frustum_wireframe(corners: np.ndarray, color: str = "#00cc44") -> gfx.Line:
@@ -269,20 +229,9 @@ class CombinedApp(QMainWindow):
             gpu_budget_bytes=GPU_BUDGET_3D,
             threshold=0.2,
         )
+        self._visual_2d.aabb.color = AABB_COLOR
+        self._visual_3d.aabb.color = AABB_COLOR
         self._canvas_widget_3d = self._controller.add_canvas(self._scene_3d.id)
-
-        # Add AABB wireframe to the 3D scene.
-        gfx_visual_3d = self._get_gfx_visual_3d()
-        d, h, w = gfx_visual_3d._volume_geometry.base_layout.volume_shape
-        pad = 1.0
-        gfx_scene_3d = self._controller._render_manager.get_scene(self._scene_3d.id)
-        gfx_scene_3d.add(
-            _make_box_wireframe(
-                np.array([-0.5 - pad, -0.5 - pad, -0.5 - pad]),
-                np.array([w - 0.5 + pad, h - 0.5 + pad, d - 0.5 + pad]),
-                AABB_COLOR,
-            )
-        )
 
         self._setup_ui()
 
@@ -417,6 +366,25 @@ class CombinedApp(QMainWindow):
         self._lod_bias_sb.setValue(LOD_BIAS)
         pl.addWidget(self._lod_bias_sb)
 
+        pl.addWidget(_make_separator())
+
+        # ── Shared: bounding box ─────────────────────────────────────
+        aabb_group = QGroupBox("Bounding box")
+        aabb_layout = QVBoxLayout(aabb_group)
+        self._show_aabb_cb = QCheckBox("Show bounding box")
+        self._show_aabb_cb.setChecked(False)
+        self._show_aabb_cb.toggled.connect(self._on_show_aabb_toggled)
+        aabb_layout.addWidget(self._show_aabb_cb)
+        lw_row = QHBoxLayout()
+        lw_row.addWidget(QLabel("Line width (px):"))
+        self._aabb_lw_sb = QSpinBox()
+        self._aabb_lw_sb.setRange(1, 20)
+        self._aabb_lw_sb.setValue(int(self._visual_3d.aabb.line_width))
+        self._aabb_lw_sb.valueChanged.connect(self._on_aabb_line_width_changed)
+        lw_row.addWidget(self._aabb_lw_sb)
+        aabb_layout.addLayout(lw_row)
+        pl.addWidget(aabb_group)
+
         pl.addStretch()
 
         self._status_label = QLabel("Auto-redraw active — move camera to update")
@@ -501,6 +469,14 @@ class CombinedApp(QMainWindow):
     def _on_show_frustum_toggled(self, checked: bool) -> None:
         if self._frustum_line is not None:
             self._frustum_line.visible = checked
+
+    def _on_show_aabb_toggled(self, checked: bool) -> None:
+        self._visual_2d.aabb.enabled = checked
+        self._visual_3d.aabb.enabled = checked
+
+    def _on_aabb_line_width_changed(self, value: int) -> None:
+        self._visual_2d.aabb.line_width = float(value)
+        self._visual_3d.aabb.line_width = float(value)
 
     def _on_far_plane_changed(self, value: float) -> None:
         self._controller.set_camera_depth_range(

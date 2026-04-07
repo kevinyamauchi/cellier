@@ -32,6 +32,13 @@ class AppearanceChangedEvent(NamedTuple):
     requires_reslice: bool
 
 
+class AABBChangedEvent(NamedTuple):
+    source_id: UUID
+    visual_id: UUID
+    field_name: str
+    new_value: Any
+
+
 class VisualVisibilityChangedEvent(NamedTuple):
     source_id: UUID
     visual_id: UUID
@@ -109,6 +116,7 @@ CellierEventTypes = (
     DimsChangedEvent
     | CameraChangedEvent
     | AppearanceChangedEvent
+    | AABBChangedEvent
     | VisualVisibilityChangedEvent
     | DataStoreMetadataChangedEvent
     | DataStoreContentsChangedEvent
