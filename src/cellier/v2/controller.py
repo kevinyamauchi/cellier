@@ -68,6 +68,11 @@ _source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVa
     "_source_id_override", default=None
 )
 
+# Parallel context variable for update_aabb_field / _make_aabb_handler.
+_aabb_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
+    "_aabb_source_id_override", default=None
+)
+
 
 class CellierController:
     """The main class for constructing and controlling a cellier visualization.
@@ -867,9 +872,10 @@ class CellierController:
         def _on_aabb_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
             new_value = info.args[0]
+            source_id = _aabb_source_id_override.get() or self._id
             self._event_bus.emit(
                 AABBChangedEvent(
-                    source_id=self._id,
+                    source_id=source_id,
                     visual_id=visual_id,
                     field_name=field_name,
                     new_value=new_value,
@@ -1001,6 +1007,39 @@ class CellierController:
             setattr(visual.appearance, field, value)
         finally:
             _source_id_override.reset(token)
+
+    def update_aabb_field(
+        self,
+        visual_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field on a visual's AABB params model.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``AABBChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        field :
+            Attribute name on the AABB model, e.g. ``"enabled"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``AABBChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        visual = self.get_visual_model(visual_id)
+        token = _aabb_source_id_override.set(source_id)
+        try:
+            setattr(visual.aabb, field, value)
+        finally:
+            _aabb_source_id_override.reset(token)
 
     # ------------------------------------------------------------------
     # Camera settle
@@ -1332,6 +1371,46 @@ class CellierController:
         effective_owner = owner_id if owner_id is not None else self._id
         handle = self._event_bus.subscribe(
             AppearanceChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=effective_owner,
+            weak=weak,
+        )
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
+
+    def on_aabb_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[AABBChangedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired whenever the AABB params of *visual_id* change.
+
+        The callback receives the full ``AABBChangedEvent``, which includes
+        ``source_id`` for echo-filtering, ``field_name``, and ``new_value``.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``AABBChangedEvent`` on each AABB change.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        effective_owner = owner_id if owner_id is not None else self._id
+        handle = self._event_bus.subscribe(
+            AABBChangedEvent,
             callback,
             entity_id=visual_id,
             owner_id=effective_owner,

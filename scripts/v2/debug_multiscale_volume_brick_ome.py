@@ -55,6 +55,7 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
+        from cellier.v2.gui.visuals._aabb import QtAABBWidget
         from cellier.v2.gui.visuals._colormap import QtColormapComboBox
         from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
 
@@ -77,6 +78,13 @@ class OmeBrickViewer:
             controller,
             visual_model.id,
             initial_colormap=visual_model.appearance.color_map,
+        )
+        self._aabb_widget = QtAABBWidget(
+            controller,
+            visual_model.id,
+            initial_enabled=visual_model.aabb.enabled,
+            initial_line_width=visual_model.aabb.line_width,
+            initial_color=visual_model.aabb.color,
         )
 
         self._window = QtWidgets.QMainWindow()
@@ -177,18 +185,7 @@ class OmeBrickViewer:
         # ── Shared: bounding box ──────────────────────────────────────
         aabb_group = QtWidgets.QGroupBox("Bounding box")
         aabb_layout = QtWidgets.QVBoxLayout(aabb_group)
-        self._aabb_check = QtWidgets.QCheckBox("Show bounding box")
-        self._aabb_check.setChecked(True)
-        self._aabb_check.toggled.connect(self._on_aabb_toggled)
-        aabb_layout.addWidget(self._aabb_check)
-        lw_row = QtWidgets.QHBoxLayout()
-        lw_row.addWidget(QtWidgets.QLabel("Line width (px):"))
-        self._aabb_lw_spin = QtWidgets.QSpinBox()
-        self._aabb_lw_spin.setRange(1, 20)
-        self._aabb_lw_spin.setValue(int(self._visual_model.aabb.line_width))
-        self._aabb_lw_spin.valueChanged.connect(self._on_aabb_line_width_changed)
-        lw_row.addWidget(self._aabb_lw_spin)
-        aabb_layout.addLayout(lw_row)
+        aabb_layout.addWidget(self._aabb_widget.widget)
         panel_layout.addWidget(aabb_group)
 
         self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
@@ -265,14 +262,6 @@ class OmeBrickViewer:
     def _on_threshold_changed(self, value: float) -> None:
         self._visual_model.appearance.iso_threshold = value
         print(f"[DEBUG] ISO threshold changed to {value}")
-
-    # ── AABB callbacks ────────────────────────────────────────────────
-
-    def _on_aabb_toggled(self, checked: bool) -> None:
-        self._visual_model.aabb.enabled = checked
-
-    def _on_aabb_line_width_changed(self, value: int) -> None:
-        self._visual_model.aabb.line_width = float(value)
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +428,7 @@ async def async_main(zarr_uri: str):
     app.aboutToQuit.connect(canvas_widget.close)
     app.aboutToQuit.connect(viewer._clim_slider.close)
     app.aboutToQuit.connect(viewer._colormap_combo.close)
+    app.aboutToQuit.connect(viewer._aabb_widget.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()
