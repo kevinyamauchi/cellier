@@ -55,6 +55,7 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
+        from cellier.v2.gui.visuals._colormap import QtColormapComboBox
         from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
 
         self._controller = controller
@@ -71,6 +72,11 @@ class OmeBrickViewer:
             visual_model.id,
             clim_range=clim_range,
             initial_clim=visual_model.appearance.clim,
+        )
+        self._colormap_combo = QtColormapComboBox(
+            controller,
+            visual_model.id,
+            initial_colormap=visual_model.appearance.color_map,
         )
 
         self._window = QtWidgets.QMainWindow()
@@ -142,6 +148,12 @@ class OmeBrickViewer:
         thresh_layout.addWidget(self._threshold_spin)
         panel_layout.addWidget(thresh_group)
         self._widget_3d.append(thresh_group)
+
+        # ── Shared: colormap ──────────────────────────────────────────
+        cmap_group = QtWidgets.QGroupBox("Colormap")
+        cmap_layout = QtWidgets.QVBoxLayout(cmap_group)
+        cmap_layout.addWidget(self._colormap_combo.widget)
+        panel_layout.addWidget(cmap_group)
 
         # ── Shared: contrast limits ───────────────────────────────────
         clim_group = QtWidgets.QGroupBox("Contrast limits")
@@ -249,10 +261,6 @@ class OmeBrickViewer:
         mode = text.lower()
         self._visual_model.appearance.render_mode = mode
         print(f"[DEBUG] Render mode changed to {mode}")
-        if mode == "mip":
-            self._visual_model.appearance.color_map = "viridis"
-        else:
-            self._visual_model.appearance.color_map = "grays"
 
     def _on_threshold_changed(self, value: float) -> None:
         self._visual_model.appearance.iso_threshold = value
@@ -430,6 +438,7 @@ async def async_main(zarr_uri: str):
     app = QtWidgets.QApplication.instance()
     app.aboutToQuit.connect(canvas_widget.close)
     app.aboutToQuit.connect(viewer._clim_slider.close)
+    app.aboutToQuit.connect(viewer._colormap_combo.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()
