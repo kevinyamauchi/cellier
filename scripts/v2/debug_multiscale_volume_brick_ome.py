@@ -27,7 +27,7 @@ Controls
   frustum culling and a flat "load all bricks at the coarsest level" mode.
 - **ISO threshold** spinner *(3D only)* — adjust the isosurface threshold.
 - **Z slice** spinner *(2D only)* — select the displayed Z plane.
-- **Clim max** spinner — adjust the upper contrast limit (both views).
+- **Contrast limits** range slider — adjust the lower and upper contrast limits (both views).
 - **LOD bias** spinner — scale the screen-space LOD thresholds (both views).
 """
 
@@ -51,8 +51,11 @@ class OmeBrickViewer:
         canvas_widget: QtCanvasWidget,
         n_levels: int,
         z_depth: int,
+        clim_range: tuple[float, float],
     ):
         from PySide6 import QtCore, QtWidgets
+
+        from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
 
         self._controller = controller
         self._scene = scene
@@ -62,6 +65,13 @@ class OmeBrickViewer:
         self._n_levels = n_levels
         self._z_max = z_depth - 1
         self._active_mode = "3d"
+
+        self._clim_slider = QtClimRangeSlider(
+            controller,
+            visual_model.id,
+            clim_range=clim_range,
+            initial_clim=visual_model.appearance.clim,
+        )
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
@@ -133,22 +143,10 @@ class OmeBrickViewer:
         panel_layout.addWidget(thresh_group)
         self._widget_3d.append(thresh_group)
 
-        # ── Debug: force Z to 1000 (tests bidirectional dims sync) ──────
-        self._z_slice_button = QtWidgets.QPushButton("Z slice: 1000")
-        self._z_slice_button.clicked.connect(self._on_set_z_slice)
-        panel_layout.addWidget(self._z_slice_button)
-
         # ── Shared: contrast limits ───────────────────────────────────
         clim_group = QtWidgets.QGroupBox("Contrast limits")
-        clim_layout = QtWidgets.QHBoxLayout(clim_group)
-        clim_layout.addWidget(QtWidgets.QLabel("clim max"))
-        self._clim_max_spin = QtWidgets.QDoubleSpinBox()
-        self._clim_max_spin.setRange(0.01, 65000)
-        self._clim_max_spin.setSingleStep(0.05)
-        self._clim_max_spin.setDecimals(3)
-        self._clim_max_spin.setValue(1.0)
-        self._clim_max_spin.valueChanged.connect(self._on_clim_max_changed)
-        clim_layout.addWidget(self._clim_max_spin)
+        clim_layout = QtWidgets.QVBoxLayout(clim_group)
+        clim_layout.addWidget(self._clim_slider.widget)
         panel_layout.addWidget(clim_group)
 
         # ── Shared: LOD bias ──────────────────────────────────────────
@@ -186,9 +184,6 @@ class OmeBrickViewer:
         panel_layout.addWidget(self._status_label)
         panel_layout.addStretch()
 
-    def _on_set_z_slice(self, event=None):
-        self._scene.dims.selection.slice_indices = {0: 1000}
-
     @property
     def window(self):
         return self._window
@@ -225,10 +220,6 @@ class OmeBrickViewer:
     def _on_reslice_clicked(self) -> None:
         print("[DEBUG] Manual reslice triggered")
         self._controller.reslice_scene(self._scene.id)
-
-    def _on_clim_max_changed(self, value: float) -> None:
-        self._visual_model.appearance.clim = (0.0, value)
-        print(f"[DEBUG] clim changed to (0.0, {value})")
 
     def _on_lod_bias_changed(self, value: float) -> None:
         self._visual_model.appearance.lod_bias = value
@@ -427,8 +418,8 @@ async def async_main(zarr_uri: str):
         canvas_widget=canvas_widget,
         n_levels=data_store.n_levels,
         z_depth=z_depth,
+        clim_range=(0.0, initial_clim_max),
     )
-    viewer._clim_max_spin.setValue(initial_clim_max)
     viewer.window.show()
 
     # Fit camera from metadata-derived bounding box, then kick off first reslice.
@@ -438,6 +429,7 @@ async def async_main(zarr_uri: str):
 
     app = QtWidgets.QApplication.instance()
     app.aboutToQuit.connect(canvas_widget.close)
+    app.aboutToQuit.connect(viewer._clim_slider.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()
