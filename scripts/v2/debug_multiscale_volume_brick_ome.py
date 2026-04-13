@@ -49,6 +49,7 @@ class OmeBrickViewer:
         scene,
         visual_model,
         canvas_widget: QtCanvasWidget,
+        zarr_uri: str,
         n_levels: int,
         z_depth: int,
         clim_range: tuple[float, float],
@@ -56,6 +57,7 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
+        from cellier.v2.gui._dataset_info import QtOmeZarrMetadataWidget
         from cellier.v2.gui.visuals._aabb import QtAABBWidget
         from cellier.v2.gui.visuals._colormap import QtColormapComboBox
         from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
@@ -97,6 +99,7 @@ class OmeBrickViewer:
             initial_threshold=visual_model.appearance.iso_threshold,
             decimals=slider_decimals,
         )
+        self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
@@ -118,6 +121,9 @@ class OmeBrickViewer:
 
         # Track 3D-only widgets for show/hide on toggle.
         self._widget_3d: list = []
+
+        # ── Dataset metadata ──────────────────────────────────────────
+        panel_layout.addWidget(self._metadata_widget.widget)
 
         # ── Shared: toggle + reslice + mode label ─────────────────────
         self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
@@ -406,6 +412,7 @@ async def async_main(zarr_uri: str):
         scene=scene,
         visual_model=visual_model,
         canvas_widget=canvas_widget,
+        zarr_uri=zarr_uri,
         n_levels=data_store.n_levels,
         z_depth=z_depth,
         clim_range=(0.0, initial_clim_max),
