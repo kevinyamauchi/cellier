@@ -52,12 +52,14 @@ class OmeBrickViewer:
         n_levels: int,
         z_depth: int,
         clim_range: tuple[float, float],
+        slider_decimals: int = 2,
     ):
         from PySide6 import QtCore, QtWidgets
 
         from cellier.v2.gui.visuals._aabb import QtAABBWidget
         from cellier.v2.gui.visuals._colormap import QtColormapComboBox
         from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
+        from cellier.v2.gui.visuals._image import QtVolumeRenderControls
 
         self._controller = controller
         self._scene = scene
@@ -73,6 +75,7 @@ class OmeBrickViewer:
             visual_model.id,
             clim_range=clim_range,
             initial_clim=visual_model.appearance.clim,
+            decimals=slider_decimals,
         )
         self._colormap_combo = QtColormapComboBox(
             controller,
@@ -85,6 +88,14 @@ class OmeBrickViewer:
             initial_enabled=visual_model.aabb.enabled,
             initial_line_width=visual_model.aabb.line_width,
             initial_color=visual_model.aabb.color,
+        )
+        self._render_controls = QtVolumeRenderControls(
+            controller,
+            visual_model.id,
+            dtype_max=clim_range[1],
+            initial_render_mode=visual_model.appearance.render_mode,
+            initial_threshold=visual_model.appearance.iso_threshold,
+            decimals=slider_decimals,
         )
 
         self._window = QtWidgets.QMainWindow()
@@ -100,7 +111,7 @@ class OmeBrickViewer:
 
         # ── Side panel ────────────────────────────────────────────────
         panel = QtWidgets.QWidget()
-        panel.setFixedWidth(270)
+        panel.setFixedWidth(300)
         panel_layout = QtWidgets.QVBoxLayout(panel)
         panel_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         root_layout.addWidget(panel)
@@ -133,29 +144,12 @@ class OmeBrickViewer:
         panel_layout.addWidget(mode_group)
         self._widget_3d.append(mode_group)
 
-        # ── 3D-only: render mode ──────────────────────────────────────
-        render_group = QtWidgets.QGroupBox("Render mode")
-        render_layout = QtWidgets.QHBoxLayout(render_group)
-        self._render_mode_combo = QtWidgets.QComboBox()
-        self._render_mode_combo.addItems(["ISO", "MIP"])
-        self._render_mode_combo.currentTextChanged.connect(self._on_render_mode_changed)
-        render_layout.addWidget(self._render_mode_combo)
+        # ── 3D-only: render mode + ISO threshold ─────────────────────
+        render_group = QtWidgets.QGroupBox("Render")
+        render_layout = QtWidgets.QVBoxLayout(render_group)
+        render_layout.addWidget(self._render_controls.widget)
         panel_layout.addWidget(render_group)
         self._widget_3d.append(render_group)
-
-        # ── 3D-only: ISO threshold ────────────────────────────────────
-        thresh_group = QtWidgets.QGroupBox("ISO threshold")
-        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
-        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
-        self._threshold_spin = QtWidgets.QDoubleSpinBox()
-        self._threshold_spin.setRange(0.0, 65000.0)
-        self._threshold_spin.setSingleStep(0.01)
-        self._threshold_spin.setDecimals(3)
-        self._threshold_spin.setValue(self._visual_model.appearance.iso_threshold)
-        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
-        thresh_layout.addWidget(self._threshold_spin)
-        panel_layout.addWidget(thresh_group)
-        self._widget_3d.append(thresh_group)
 
         # ── Shared: colormap ──────────────────────────────────────────
         cmap_group = QtWidgets.QGroupBox("Colormap")
@@ -254,15 +248,6 @@ class OmeBrickViewer:
         )
         self._controller.reslice_scene(self._scene.id)
 
-    def _on_render_mode_changed(self, text: str) -> None:
-        mode = text.lower()
-        self._visual_model.appearance.render_mode = mode
-        print(f"[DEBUG] Render mode changed to {mode}")
-
-    def _on_threshold_changed(self, value: float) -> None:
-        self._visual_model.appearance.iso_threshold = value
-        print(f"[DEBUG] ISO threshold changed to {value}")
-
 
 # ---------------------------------------------------------------------------
 # Scene helpers
@@ -274,6 +259,13 @@ def _dtype_clim_max(dtype: np.dtype) -> float:
     if np.issubdtype(dtype, np.integer):
         return float(np.iinfo(dtype).max)
     return 1.0
+
+
+def _dtype_decimals(dtype: np.dtype) -> int:
+    """Return slider label decimal places appropriate for the given dtype."""
+    if np.issubdtype(dtype, np.integer):
+        return 0
+    return 2
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +338,7 @@ async def async_main(zarr_uri: str):
 
     # ── Initial appearance ────────────────────────────────────────────
     initial_clim_max = _dtype_clim_max(data_store.dtype)
+    slider_decimals = _dtype_decimals(data_store.dtype)
     _DEBUG_MODE = "none"
 
     # ── Single scene supporting both 2D and 3D ────────────────────────
@@ -416,6 +409,7 @@ async def async_main(zarr_uri: str):
         n_levels=data_store.n_levels,
         z_depth=z_depth,
         clim_range=(0.0, initial_clim_max),
+        slider_decimals=slider_decimals,
     )
     viewer.window.show()
 
@@ -429,6 +423,7 @@ async def async_main(zarr_uri: str):
     app.aboutToQuit.connect(viewer._clim_slider.close)
     app.aboutToQuit.connect(viewer._colormap_combo.close)
     app.aboutToQuit.connect(viewer._aabb_widget.close)
+    app.aboutToQuit.connect(viewer._render_controls.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()

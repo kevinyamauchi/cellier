@@ -24,6 +24,10 @@ class QtClimRangeSlider:
     initial_clim :
         Starting ``(lo, hi)`` selection — typically
         ``visual_model.appearance.clim``.
+    decimals :
+        Number of decimal places shown in the slider labels.  Use ``0`` for
+        integer dtypes and ``2`` (or similar) for float data.  Default is
+        ``2``.
     parent :
         Optional Qt parent widget.
     """
@@ -35,6 +39,7 @@ class QtClimRangeSlider:
         *,
         clim_range: tuple[float, float],
         initial_clim: tuple[float, float],
+        decimals: int = 2,
         parent=None,
     ) -> None:
         from qtpy.QtCore import Qt
@@ -49,6 +54,7 @@ class QtClimRangeSlider:
         self._slider = QLabeledDoubleRangeSlider(Qt.Orientation.Horizontal, parent)
         self._slider.setRange(*clim_range)
         self._slider.setValue(initial_clim)
+        self._slider.setDecimals(decimals)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         controller.on_visual_changed(
