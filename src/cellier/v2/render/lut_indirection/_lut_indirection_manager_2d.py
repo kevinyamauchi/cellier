@@ -23,11 +23,23 @@ class LutIndirectionManager2D:
         Layout of the finest (level 1) resolution.
     n_levels : int
         Total number of LOD levels.
+    scale_vecs_data : list[np.ndarray] or None
+        Per-level scale vectors in data-axis order ``(sy, sx)`` — i.e.
+        ``(scale_row, scale_col)`` for the tile grid.  When provided the
+        LUT fill uses the actual per-axis downsampling factor instead of
+        assuming a uniform ``2^(level-1)`` factor.  Pass
+        ``ImageGeometry2D._scale_vecs_data`` here.
     """
 
-    def __init__(self, base_layout: BlockLayout2D, n_levels: int) -> None:
+    def __init__(
+        self,
+        base_layout: BlockLayout2D,
+        n_levels: int,
+        scale_vecs_data: list[np.ndarray] | None = None,
+    ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
+        self._scale_vecs_data = scale_vecs_data
         self.lut_data, self.lut_tex = build_lut_texture_2d(base_layout.grid_dims)
 
     def rebuild(self, tile_manager: TileManager2D) -> None:
@@ -47,6 +59,7 @@ class LutIndirectionManager2D:
             self._n_levels,
             self.lut_data,
             self.lut_tex,
+            scale_vecs_data=self._scale_vecs_data,
         )
 
 
@@ -80,6 +93,7 @@ def rebuild_lut_2d(
     n_levels: int,
     lut_data: np.ndarray,
     lut_tex: gfx.Texture,
+    scale_vecs_data: list[np.ndarray] | None = None,
 ) -> None:
     """Rebuild the full 2D LUT from the current tile manager state.
 
@@ -91,8 +105,8 @@ def rebuild_lut_2d(
 
     - ``lut[gy, gx, 0]`` = sx (cache grid X)
     - ``lut[gy, gx, 1]`` = sy (cache grid Y)
-    - ``lut[gy, gx, 2]`` = 0  (unused, reserved)
-    - ``lut[gy, gx, 3]`` = level (1 = finest; 0 = out-of-bounds)
+    - ``lut[gy, gx, 2]`` = level (1 = finest; 0 = out-of-bounds)
+    - ``lut[gy, gx, 3]`` = 0  (unused, reserved)
 
     Parameters
     ----------
@@ -106,6 +120,12 @@ def rebuild_lut_2d(
         Backing float32 array ``(gH, gW, 4)`` to overwrite.
     lut_tex : gfx.Texture
         The LUT texture to schedule for GPU upload.
+    scale_vecs_data : list[np.ndarray] or None
+        Per-level scale vectors in data-axis order ``(sy, sx)`` mapping
+        level-k tiles to base-grid coverage.  When provided the actual
+        per-axis downsampling factor is used; otherwise a uniform
+        ``2^(level-1)`` fallback is applied (correct only for isotropic
+        power-of-2 multiscale pyramids).
     """
     gh, gw = base_layout.grid_dims
 
@@ -121,14 +141,22 @@ def rebuild_lut_2d(
     for level in range(n_levels, 0, -1):
         if level not in by_level:
             continue
-        scale = 2 ** (level - 1)
+        level_idx = level - 1  # 0-indexed into scale_vecs_data
+        if scale_vecs_data is not None and level_idx < len(scale_vecs_data):
+            sv = scale_vecs_data[level_idx]
+            scale_y = max(1, int(round(float(sv[0]))))
+            scale_x = max(1, int(round(float(sv[1]))))
+        else:
+            iso_scale = 2 ** (level - 1)
+            scale_y = iso_scale
+            scale_x = iso_scale
         for key, slot in by_level[level]:
             sy, sx = slot.grid_pos
             # Base-grid slice covered by this coarse tile, clamped.
-            gy0 = key.gy * scale
-            gy1 = min(gy0 + scale, gh)
-            gx0 = key.gx * scale
-            gx1 = min(gx0 + scale, gw)
+            gy0 = key.gy * scale_y
+            gy1 = min(gy0 + scale_y, gh)
+            gx0 = key.gx * scale_x
+            gx1 = min(gx0 + scale_x, gw)
             lut_data[gy0:gy1, gx0:gx1] = (sx, sy, level, 0)
 
     lut_tex.update_range((0, 0, 0), lut_tex.size)
