@@ -32,10 +32,18 @@ class SceneManager:
     def __init__(
         self,
         scene_id: UUID,
+        lighting: str = "none",
     ) -> None:
         self._scene_id = scene_id
         self._scene = gfx.Scene()
         self._visuals: dict[UUID, Any] = {}
+        self._active_nodes: dict[UUID, Any] = {}  # visual_id → active node
+
+        if lighting == "default":
+            self._scene.add(gfx.AmbientLight(intensity=0.4))
+            dir_light = gfx.DirectionalLight(intensity=3.0)
+            dir_light.local.position = np.array([500, 500, 1000], dtype=np.float32)
+            self._scene.add(dir_light)
 
     @property
     def scene_id(self) -> UUID:
@@ -53,39 +61,77 @@ class SceneManager:
         return list(self._visuals.keys())
 
     def add_visual(self, visual: Any, displayed_axes: tuple[int, ...]) -> None:
-        """Register a visual and add its node to the scene graph.
+        """Register a visual and add its initial node to the scene graph.
 
-        Adds ``node_3d`` if ``len(displayed_axes) == 3``, ``node_2d``
-        otherwise.
+        Calls ``visual.get_node_for_dims(displayed_axes)`` to select the
+        correct node, then stores it in ``_active_nodes`` and adds it to
+        the pygfx scene.
 
         Parameters
         ----------
-        visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
-            The visual to register.
+        visual : Any
+            The GFX visual to register.  Must implement
+            ``get_node_for_dims(displayed_axes)``.
         displayed_axes : tuple[int, ...]
-            Current displayed axes from the scene's dims selection.  Used to
-            determine which node to add to the scene graph.
+            Current displayed axes from the scene's dims selection.
 
         Raises
         ------
         ValueError
-            If the visual does not have a node for this dimensionality.
+            If ``get_node_for_dims`` returns ``None``.
         """
-        if len(displayed_axes) == 3:
-            if visual.node_3d is None:
-                raise ValueError(
-                    f"Visual {visual.visual_model_id} has no 3D node. "
-                    "Ensure render_modes includes '3d'."
-                )
-            self._scene.add(visual.node_3d)
-        else:
-            if visual.node_2d is None:
-                raise ValueError(
-                    f"Visual {visual.visual_model_id} has no 2D node. "
-                    "Ensure render_modes includes '2d'."
-                )
-            self._scene.add(visual.node_2d)
+        node = visual.get_node_for_dims(displayed_axes)
+        if node is None:
+            raise ValueError(
+                f"Visual {visual.visual_model_id} returned None from "
+                f"get_node_for_dims({displayed_axes!r}). "
+                "Ensure render_modes includes the required dimensionality."
+            )
+        self._scene.add(node)
         self._visuals[visual.visual_model_id] = visual
+        self._active_nodes[visual.visual_model_id] = node
+
+    def get_active_node(self, visual_id: UUID) -> Any:
+        """Return the node currently active in the scene for *visual_id*.
+
+        Returns ``None`` if the visual has not yet been registered or if its
+        active node is ``None``.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to query.
+        """
+        return self._active_nodes.get(visual_id)
+
+    def swap_node(self, visual_id: UUID, new_node: Any) -> None:
+        """Replace the active scene-graph node for *visual_id*.
+
+        Removes the previously active node and adds *new_node*.  If
+        ``old_node is new_node`` (single-node visuals such as mesh and
+        lines), the scene graph is not touched — the node stays in the
+        scene and the subsequent reslice updates its content.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual whose node is being swapped.
+        new_node : gfx.WorldObject or None
+            The node that should be active after this call.
+        """
+        old_node = self._active_nodes.get(visual_id)
+
+        if old_node is new_node:
+            # Single-node visual or no change — leave scene graph alone.
+            return
+
+        if old_node is not None:
+            self._scene.remove(old_node)
+
+        if new_node is not None:
+            self._scene.add(new_node)
+
+        self._active_nodes[visual_id] = new_node
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Unregister a visual and remove its node from the scene graph.

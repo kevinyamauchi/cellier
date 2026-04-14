@@ -775,48 +775,21 @@ class CellierController:
     def _rebuild_visuals_geometry(
         self, scene_id: UUID, displayed_axes: tuple[int, ...]
     ) -> None:
-        """Rebuild geometry for all visuals in a scene after displayed_axes change."""
+        """Swap each visual's active node after a displayed_axes change.
+
+        Calls ``gfx_visual.get_node_for_dims(displayed_axes)`` on each visual
+        to obtain the new node, then delegates scene-graph surgery to
+        ``SceneManager.swap_node``.  Single-node visuals (mesh, lines) are
+        handled transparently because ``swap_node`` no-ops when the old and
+        new nodes are the same object.
+        """
         scene = self._model.scenes[scene_id]
         scene_manager = self._render_manager._scenes[scene_id]
 
         for visual_model in scene.visuals:
-            data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
             gfx_visual = scene_manager.get_visual(visual_model.id)
-
-            # In-memory visuals have both nodes pre-built; just swap them.
-            if not hasattr(gfx_visual, "rebuild_geometry"):
-                nodes_in_scene = [
-                    n
-                    for n in (gfx_visual.node_3d, gfx_visual.node_2d)
-                    if n is not None and n.parent is not None
-                ]
-                new_node = (
-                    gfx_visual.node_3d
-                    if len(displayed_axes) == 3
-                    else gfx_visual.node_2d
-                )
-                for node in nodes_in_scene:
-                    scene_manager.scene.remove(node)
-                if new_node is not None:
-                    scene_manager.scene.add(new_node)
-                continue
-
-            # Capture which nodes are currently in the scene before rebuild,
-            # since rebuild_geometry creates new node objects for the target
-            # mode and the old node references become stale.
-            nodes_in_scene = [
-                n
-                for n in (gfx_visual.node_3d, gfx_visual.node_2d)
-                if n is not None and n.parent is not None
-            ]
-
-            level_shapes = list(data_store.level_shapes)
-            _, new_node = gfx_visual.rebuild_geometry(level_shapes, displayed_axes)
-
-            for node in nodes_in_scene:
-                scene_manager.scene.remove(node)
-            if new_node is not None:
-                scene_manager.scene.add(new_node)
+            new_node = gfx_visual.get_node_for_dims(displayed_axes)
+            scene_manager.swap_node(visual_model.id, new_node)
 
     def _switch_canvas_cameras(
         self, scene_id: UUID, displayed_axes: tuple[int, ...]

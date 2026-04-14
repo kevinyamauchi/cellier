@@ -377,6 +377,42 @@ class GFXImageMemoryVisual:
             self.node_2d.local.matrix = m
 
     # ------------------------------------------------------------------
+    # Node selection
+    # ------------------------------------------------------------------
+
+    def get_node_for_dims(self, displayed_axes: tuple[int, ...]) -> gfx.Group | None:
+        """Return the pre-built node appropriate for *displayed_axes*.
+
+        Also eagerly updates the node matrix so the transform is correct
+        before the node is placed in the scene by ``SceneManager.swap_node``.
+
+        Parameters
+        ----------
+        displayed_axes : tuple[int, ...]
+            The new set of displayed axes.
+
+        Returns
+        -------
+        gfx.Group or None
+            ``node_3d`` when ``len(displayed_axes) == 3``,
+            ``node_2d`` otherwise.  Returns ``None`` if the required node
+            was not built (e.g. 3D axes requested but only ``"2d"`` mode
+            was specified).
+        """
+        if len(displayed_axes) == 3:
+            node = self.node_3d
+        else:
+            node = self.node_2d
+
+        # Eagerly update the node matrix so the transform is already applied
+        # when the node enters the scene, rather than waiting for the next
+        # build_slice_request call.
+        if displayed_axes != self._last_displayed_axes:
+            self._update_node_matrix(displayed_axes)
+
+        return node
+
+    # ------------------------------------------------------------------
     # Planning -- build ChunkRequests (synchronous, < 1 ms)
     # ------------------------------------------------------------------
 
