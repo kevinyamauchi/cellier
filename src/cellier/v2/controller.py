@@ -29,6 +29,7 @@ from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
 from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
 from cellier.v2.scene.cameras import (
@@ -46,6 +47,7 @@ from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import MultiscaleImageVisual
 from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 from cellier.v2.visuals._mesh_memory import (
     MeshAppearance,
     MeshPhongAppearance,
@@ -61,6 +63,7 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
@@ -649,6 +652,89 @@ class CellierController:
         )
         return visual_model
 
+    def add_lines(
+        self,
+        data: LinesMemoryStore,
+        scene_id: UUID,
+        appearance: LinesMemoryAppearance | None = None,
+        name: str = "lines",
+    ) -> LinesVisual:
+        """Add a lines visual backed by a LinesMemoryStore.
+
+        Parameters
+        ----------
+        data : LinesMemoryStore
+            The backing data store.  Registered in the model if not already
+            present.
+        scene_id : UUID
+            ID of the target scene.
+        appearance : LinesMemoryAppearance | None
+            Appearance model.  Defaults to LinesMemoryAppearance() if None.
+        name : str
+            Human-readable label for the visual.
+
+        Returns
+        -------
+        LinesVisual
+            The newly created model-layer visual.
+        """
+        if appearance is None:
+            appearance = LinesMemoryAppearance()
+
+        if data.id not in self._model.data.stores:
+            self._model.data.stores[data.id] = data
+
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        visual_model = LinesVisual(
+            name=name,
+            data_store_id=str(data.id),
+            appearance=appearance,
+        )
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXLinesMemoryVisual(
+            visual_model=visual_model,
+            data_store=data,
+            render_modes=render_modes,
+        )
+
+        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
     def _add_image_multiscale(
         self,
         data: BaseDataStore,
@@ -1009,7 +1095,11 @@ class CellierController:
 
     def _wire_transform(
         self,
-        visual: MultiscaleImageVisual | ImageVisual | MeshVisual | PointsVisual,
+        visual: MultiscaleImageVisual
+        | ImageVisual
+        | MeshVisual
+        | PointsVisual
+        | LinesVisual,
         scene_id: UUID,
     ) -> None:
         """Subscribe to transform field changes on a visual model."""
@@ -1035,7 +1125,11 @@ class CellierController:
 
     def _wire_appearance(
         self,
-        visual: MultiscaleImageVisual | ImageVisual | MeshVisual | PointsVisual,
+        visual: MultiscaleImageVisual
+        | ImageVisual
+        | MeshVisual
+        | PointsVisual
+        | LinesVisual,
     ) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         visual.appearance.events.connect(self._make_appearance_handler(visual.id))

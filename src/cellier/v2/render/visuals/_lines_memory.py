@@ -1,0 +1,353 @@
+# src/cellier/v2/render/visuals/_lines_memory.py
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+import numpy as np
+import pygfx as gfx
+
+from cellier.v2.data.lines._lines_requests import LinesSliceRequest
+
+if TYPE_CHECKING:
+    from cellier.v2._state import DimsState
+    from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
+    from cellier.v2.data.lines._lines_requests import LinesData
+    from cellier.v2.events._events import (
+        AppearanceChangedEvent,
+        TransformChangedEvent,
+        VisualVisibilityChangedEvent,
+    )
+    from cellier.v2.transform import AffineTransform
+    from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+
+# Placeholder geometry — one degenerate segment (both vertices at the origin).
+# LineSegmentMaterial requires an even vertex count; two vertices is the minimum.
+_PLACEHOLDER_POSITIONS = np.zeros((2, 3), dtype=np.float32)
+
+
+def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
+    """Embed a 2-D or 3-D AffineTransform into a 4x4 pygfx matrix.
+
+    Reverses data axis order (z, y, x) → pygfx (x, y, z).
+    Identical to the helper in _points_memory.py — keep in sync or
+    extract to a shared utility.
+    """
+    nd = transform.ndim
+    src = transform.matrix
+    swap = list(reversed(range(nd)))
+    m = np.eye(4, dtype=np.float32)
+    for dst_i, src_i in enumerate(swap):
+        for dst_j, src_j in enumerate(swap):
+            m[dst_i, dst_j] = src[src_i, src_j]
+        m[dst_i, 3] = src[src_i, nd]
+    return m
+
+
+def _build_material(appearance: LinesMemoryAppearance) -> gfx.LineSegmentMaterial:
+    """Construct a LineSegmentMaterial from a LinesMemoryAppearance."""
+    return gfx.LineSegmentMaterial(
+        thickness=appearance.thickness,
+        thickness_space=appearance.thickness_space,
+        color=appearance.color,
+        color_mode=appearance.color_mode,
+        opacity=appearance.opacity,
+    )
+
+
+class GFXLinesMemoryVisual:
+    """Render-layer visual for one LinesVisual backed by LinesMemoryStore.
+
+    Uses a single ``gfx.Line`` node with ``gfx.LineSegmentMaterial`` for
+    both 2D and 3D modes.  ``get_node_for_dims`` always returns ``self.node``;
+    SceneManager.swap_node no-ops because ``old_node is new_node``.  The
+    subsequent reslice updates the geometry and swaps the material between
+    ``_material`` and ``_empty_material``.
+
+    Segment representation
+    ----------------------
+    Vertices arrive as even-length arrays.  Pair ``(2n, 2n+1)`` is segment
+    ``n``.  ``gfx.LineSegmentMaterial`` draws them as independent disconnected
+    segments, not a connected polyline.
+
+    Coordinate convention
+    ---------------------
+    The store delivers positions in data-axis order: column 0 is axis 0 (z),
+    column 1 is axis 1 (y), column 2 is axis 2 (x).
+
+    In ``_commit``:
+    - **3D path** — ``positions[:, [2, 1, 0]]`` reverses to pygfx ``(x, y, z)``
+      order.  This is the single axis-reversal site; do not reorder elsewhere.
+    - **2D path** — incoming ``(N, 2)`` positions (already projected by the
+      store) are padded with a zero column.  The node matrix handles
+      orientation; no column reversal is applied.
+
+    Parameters
+    ----------
+    visual_model : LinesVisual
+        Associated model-layer visual.
+    data_store : LinesMemoryStore
+        Backing data store.
+    render_modes : set[str]
+        ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
+    transform : AffineTransform | None
+        Data-to-world transform.  Identity used if None.
+    """
+
+    def __init__(
+        self,
+        visual_model: LinesVisual,
+        data_store: LinesMemoryStore,
+        render_modes: set[str],
+        transform: AffineTransform | None = None,
+    ) -> None:
+        invalid = render_modes - {"2d", "3d"}
+        if invalid or not render_modes:
+            raise ValueError(
+                f"render_modes must be a non-empty subset of {{'2d','3d'}}, "
+                f"got {render_modes!r}"
+            )
+
+        self.visual_model_id: UUID = visual_model.id
+        self.render_modes: set[str] = render_modes
+        self._data_store = data_store
+
+        if transform is None:
+            from cellier.v2.transform import AffineTransform as _AT
+
+            transform = _AT.identity(ndim=data_store.ndim)
+        elif transform.ndim < data_store.ndim:
+            transform = transform.expand_dims(data_store.ndim)
+        self._transform: AffineTransform = transform
+        self._last_displayed_axes: tuple[int, ...] | None = None
+
+        appearance = visual_model.appearance
+        self._material = _build_material(appearance)
+        self._empty_material = gfx.LineSegmentMaterial(color=(0, 0, 0, 0), opacity=0.0)
+
+        # Track color_mode as instance state to detect transitions in _commit.
+        self._current_color_mode: str = appearance.color_mode
+        self._is_empty: bool = True
+
+        geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
+        self.node = gfx.Line(geom, self._empty_material)
+
+        # Both attributes point to the same node.
+        # SceneManager.swap_node's old_node is new_node guard makes dim-toggling
+        # a no-op for this visual.
+        self.node_2d = self.node
+        self.node_3d = self.node
+
+    # ------------------------------------------------------------------
+    # LOD
+    # ------------------------------------------------------------------
+
+    @property
+    def n_levels(self) -> int:
+        """Always 1 — single-resolution in-memory store."""
+        return 1
+
+    # ------------------------------------------------------------------
+    # Node selection
+    # ------------------------------------------------------------------
+
+    def get_node_for_dims(self, displayed_axes: tuple[int, ...]) -> gfx.Line:
+        """Return the node for the given displayed axes — always self.node.
+
+        SceneManager.swap_node will no-op because the returned node is
+        the same object as the currently active node.  The reslice that
+        follows updates the geometry and material.
+
+        Parameters
+        ----------
+        displayed_axes : tuple[int, ...]
+            New displayed axes.
+
+        Returns
+        -------
+        gfx.Line
+            Always self.node.
+        """
+        if displayed_axes != self._last_displayed_axes:
+            self._update_node_matrix(displayed_axes)
+        return self.node
+
+    # ------------------------------------------------------------------
+    # Node matrix
+    # ------------------------------------------------------------------
+
+    def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        self._last_displayed_axes = displayed_axes
+        sub = self._transform.set_slice(displayed_axes)
+        self.node.local.matrix = _pygfx_matrix(sub)
+
+    # ------------------------------------------------------------------
+    # Slice request building
+    # ------------------------------------------------------------------
+
+    def _build_request(self, dims_state: DimsState) -> LinesSliceRequest:
+        shared_id = uuid4()
+        return LinesSliceRequest(
+            slice_request_id=shared_id,
+            chunk_request_id=shared_id,
+            scale_index=0,
+            displayed_axes=dims_state.selection.displayed_axes,
+            slice_indices=dict(dims_state.selection.slice_indices),
+            thickness=0.5,
+        )
+
+    def build_slice_request(
+        self,
+        camera_pos_world: np.ndarray,
+        frustum_corners_world: np.ndarray | None,
+        thresholds: list[float] | None,
+        dims_state: DimsState | None = None,
+        force_level: int | None = None,
+    ) -> list[LinesSliceRequest]:
+        """3-D planning path — returns one LinesSliceRequest."""
+        if dims_state is None:
+            from cellier.v2._state import AxisAlignedSelectionState
+            from cellier.v2._state import DimsState as _DS
+
+            dims_state = _DS(
+                axis_labels=tuple(str(i) for i in range(self._data_store.ndim)),
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=tuple(range(self._data_store.ndim)),
+                    slice_indices={},
+                ),
+            )
+        displayed = dims_state.selection.displayed_axes
+        if displayed != self._last_displayed_axes:
+            self._update_node_matrix(displayed)
+        return [self._build_request(dims_state)]
+
+    def build_slice_request_2d(
+        self,
+        camera_pos_world: np.ndarray,
+        viewport_width_px: float,
+        world_width: float,
+        view_min_world: np.ndarray | None,
+        view_max_world: np.ndarray | None,
+        dims_state: DimsState,
+        lod_bias: float = 1.0,
+        force_level: int | None = None,
+        use_culling: bool = True,
+    ) -> list[LinesSliceRequest]:
+        """2-D planning path — returns one LinesSliceRequest."""
+        displayed = dims_state.selection.displayed_axes
+        if displayed != self._last_displayed_axes:
+            self._update_node_matrix(displayed)
+        return [self._build_request(dims_state)]
+
+    # ------------------------------------------------------------------
+    # Commit — shared logic for both callbacks
+    # ------------------------------------------------------------------
+
+    def _commit(self, lines_data: LinesData, is_2d: bool) -> None:
+        """Upload LinesData to self.node.
+
+        Pads 2D positions to 3D with z=0.
+        Applies axis reversal for 3D data to match pygfx coordinate order.
+        Swaps material between _material and _empty_material as needed.
+        Updates _current_color_mode when the incoming data changes mode.
+
+        Coordinate convention (DO NOT reorder positions elsewhere):
+        - 3D path: positions[:, [2, 1, 0]] reverses (z, y, x) → (x, y, z)
+          for pygfx.  This is the single reversal site.
+        - 2D path: zero-pad to 3D; no column reversal.
+        """
+        positions = lines_data.positions
+        n_verts = positions.shape[0]
+        n_dims = positions.shape[1]
+
+        if n_dims == 2:
+            # 2D path — pad displayed-plane coords with z=0.
+            # Node matrix handles axis orientation; no reversal needed.
+            zeros = np.zeros((n_verts, 1), dtype=np.float32)
+            pos3d = np.concatenate([positions, zeros], axis=1)
+        else:
+            # 3D path — reverse (z, y, x) data order to (x, y, z) pygfx order.
+            # This is the single axis-reversal site for lines. Do not reorder
+            # positions anywhere else in the pipeline.
+            pos3d = np.ascontiguousarray(positions)[:, [2, 1, 0]]
+
+        geom_kwargs: dict = {"positions": pos3d}
+
+        colors = lines_data.colors
+        if colors is not None:
+            geom_kwargs["colors"] = np.ascontiguousarray(colors)
+
+        self.node.geometry = gfx.Geometry(**geom_kwargs)
+
+        # Update color_mode on live material if it changed.
+        incoming_color_mode = lines_data.color_mode if colors is not None else "uniform"
+        if incoming_color_mode != self._current_color_mode and not lines_data.is_empty:
+            self._current_color_mode = incoming_color_mode
+            self._material.color_mode = incoming_color_mode
+
+        # Select material.
+        target = self._empty_material if lines_data.is_empty else self._material
+        if self.node.material is not target:
+            self.node.material = target
+
+        self._is_empty = lines_data.is_empty
+
+    def on_data_ready(self, batch: list[tuple[LinesSliceRequest, LinesData]]) -> None:
+        """3-D callback — called on the main thread by SliceCoordinator."""
+        if not batch:
+            return
+        _, data = batch[0]
+        self._commit(data, is_2d=False)
+
+    def on_data_ready_2d(
+        self, batch: list[tuple[LinesSliceRequest, LinesData]]
+    ) -> None:
+        """2-D callback — called on the main thread by SliceCoordinator."""
+        if not batch:
+            return
+        _, data = batch[0]
+        self._commit(data, is_2d=True)
+
+    # ------------------------------------------------------------------
+    # Event handlers
+    # ------------------------------------------------------------------
+
+    def on_transform_changed(self, event: TransformChangedEvent) -> None:
+        self._transform = event.transform
+        if self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
+    def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
+        """Apply appearance field changes to the live material.
+
+        ``color_mode`` changes also update ``_current_color_mode`` so
+        the next ``_commit`` call does not overwrite them.
+
+        Note: ``thickness_space`` is a constructor-only parameter on
+        ``gfx.LineSegmentMaterial``; changes to ``thickness_space``
+        require rebuilding the material.
+        """
+        name = event.field_name
+        val = event.new_value
+        if name == "color":
+            self._material.color = val
+        elif name == "color_mode":
+            self._material.color_mode = val
+            self._current_color_mode = val
+        elif name == "opacity":
+            self._material.opacity = val
+        elif name == "thickness":
+            self._material.thickness = val
+
+    def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
+        self.node.visible = event.visible
+
+    # ------------------------------------------------------------------
+    # No-op cancellation stubs (no brick cache)
+    # ------------------------------------------------------------------
+
+    def cancel_pending(self) -> None:
+        """No-op — in-memory visuals have no reserved GPU brick slots."""
+
+    def cancel_pending_2d(self) -> None:
+        """No-op — in-memory visuals have no reserved GPU brick slots."""
