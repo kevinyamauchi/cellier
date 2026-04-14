@@ -285,8 +285,17 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         self.brick_max_texture = brick_max_texture
         self.vol_params_buffer = vol_params_buffer
         self.block_scales_buffer = block_scales_buffer
-        self.render_mode: str = "iso"
+        self._store.render_mode = "iso"
         self._frame_index: int = 0
+
+    @property
+    def render_mode(self) -> str:
+        """Volume render mode: ``"iso"`` or ``"mip"``."""
+        return self._store.render_mode
+
+    @render_mode.setter
+    def render_mode(self, value: str) -> None:
+        self._store.render_mode = value
 
     def tick(self) -> None:
         """Advance jitter seed. Call once per rendered frame."""

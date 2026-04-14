@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable, Literal, overload
+import contextvars
+from typing import TYPE_CHECKING, Any, Callable, Literal, overload
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -15,6 +16,8 @@ from cellier.v2.events import (
     CameraChangedEvent,
     DimsChangedEvent,
     EventBus,
+    ResliceCompletedEvent,
+    ResliceStartedEvent,
     SceneAddedEvent,
     SubscriptionHandle,
     TransformChangedEvent,
@@ -58,6 +61,18 @@ if TYPE_CHECKING:
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
 
+# Context variable used by update_slice_indices / update_appearance_field to
+# thread a caller-supplied source_id through the synchronous psygnal bridge.
+# Default None means the bridge falls back to the controller's own ID.
+_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
+    "_source_id_override", default=None
+)
+
+# Parallel context variable for update_aabb_field / _make_aabb_handler.
+_aabb_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
+    "_aabb_source_id_override", default=None
+)
+
 
 class CellierController:
     """The main class for constructing and controlling a cellier visualization.
@@ -93,6 +108,20 @@ class CellierController:
         self._event_bus.subscribe(
             CameraChangedEvent,
             self._on_camera_changed,
+            owner_id=self._id,
+        )
+        # Wire SliceCoordinator to DimsChangedEvent first so it invalidates
+        # stale 2D caches before the controller submits new slice requests.
+        coordinator = self._render_manager._slice_coordinator
+        self._event_bus.subscribe(
+            DimsChangedEvent,
+            coordinator._on_dims_changed,
+            owner_id=coordinator.id,
+        )
+        # Controller's own dims handler: reslice the affected scene.
+        self._event_bus.subscribe(
+            DimsChangedEvent,
+            self._on_dims_changed_bus,
             owner_id=self._id,
         )
 
@@ -731,9 +760,10 @@ class CellierController:
                 self._switch_canvas_cameras(
                     scene_id, new_state.selection.displayed_axes
                 )
+            source_id = _source_id_override.get() or self._id
             self._event_bus.emit(
                 DimsChangedEvent(
-                    source_id=self._id,
+                    source_id=source_id,
                     scene_id=scene_id,
                     dims_state=new_state,
                     displayed_axes_changed=displayed_axes_changed,
@@ -842,9 +872,10 @@ class CellierController:
         def _on_aabb_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
             new_value = info.args[0]
+            source_id = _aabb_source_id_override.get() or self._id
             self._event_bus.emit(
                 AABBChangedEvent(
-                    source_id=self._id,
+                    source_id=source_id,
                     visual_id=visual_id,
                     field_name=field_name,
                     new_value=new_value,
@@ -859,10 +890,11 @@ class CellierController:
         def _on_appearance_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
             new_value = info.args[0]
+            source_id = _source_id_override.get() or self._id
             if field_name == "visible":
                 self._event_bus.emit(
                     VisualVisibilityChangedEvent(
-                        source_id=self._id,
+                        source_id=source_id,
                         visual_id=visual_id,
                         visible=new_value,
                     )
@@ -870,7 +902,7 @@ class CellierController:
             else:
                 self._event_bus.emit(
                     AppearanceChangedEvent(
-                        source_id=self._id,
+                        source_id=source_id,
                         visual_id=visual_id,
                         field_name=field_name,
                         new_value=new_value,
@@ -905,6 +937,109 @@ class CellierController:
         else:
             cfg = VisualRenderConfig()
         self._render_manager.reslice_visual(visual_id, dims_state, cfg)
+
+    def _on_dims_changed_bus(self, event: DimsChangedEvent) -> None:
+        """Bus handler — reslice the scene whenever its dims state changes."""
+        self.reslice_scene(event.scene_id)
+
+    # ------------------------------------------------------------------
+    # Model mutation with source-ID threading
+    # ------------------------------------------------------------------
+
+    def update_slice_indices(
+        self,
+        scene_id: UUID,
+        slice_indices: dict[int, int],
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set ``slice_indices`` on a scene's dims.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``DimsChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        slice_indices :
+            Mapping of axis index → slice position.
+        source_id :
+            UUID to stamp on the emitted ``DimsChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        token = _source_id_override.set(source_id)
+        try:
+            self._model.scenes[scene_id].dims.selection.slice_indices = slice_indices
+        finally:
+            _source_id_override.reset(token)
+
+    def update_appearance_field(
+        self,
+        visual_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field on a visual's appearance model.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``AppearanceChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        field :
+            Attribute name on the appearance model, e.g. ``"clim"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``AppearanceChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        visual = self.get_visual_model(visual_id)
+        token = _source_id_override.set(source_id)
+        try:
+            setattr(visual.appearance, field, value)
+        finally:
+            _source_id_override.reset(token)
+
+    def update_aabb_field(
+        self,
+        visual_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field on a visual's AABB params model.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``AABBChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        field :
+            Attribute name on the AABB model, e.g. ``"enabled"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``AABBChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        visual = self.get_visual_model(visual_id)
+        token = _aabb_source_id_override.set(source_id)
+        try:
+            setattr(visual.aabb, field, value)
+        finally:
+            _aabb_source_id_override.reset(token)
 
     # ------------------------------------------------------------------
     # Camera settle
@@ -1115,46 +1250,267 @@ class CellierController:
         """
         raise NotImplementedError("get_dims_widget is not implemented in Phase 1.")
 
+    # ------------------------------------------------------------------
+    # External event subscriptions
+    # ------------------------------------------------------------------
+
     def on_dims_changed(
-        self, scene_id: UUID, callback: Callable[[DimsState], None]
-    ) -> None:
+        self,
+        scene_id: UUID,
+        callback: Callable[[DimsChangedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
         """Register a callback fired whenever the dims for *scene_id* change.
 
-        The callback receives a ``DimsState`` snapshot.
+        The callback receives the full ``DimsChangedEvent``, which includes
+        ``source_id`` for echo-filtering and ``dims_state`` for the new state.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``DimsChangedEvent`` on each dims change.
+        owner_id :
+            When provided, the subscription is registered under this UUID so
+            that ``unsubscribe_owner(owner_id)`` removes it.  Pass a widget's
+            own UUID for per-widget cleanup.  Defaults to the controller's ID.
+        weak :
+            If True, hold only a weak reference to *callback*.  Use for
+            transient widgets that may be destroyed outside the controller's
+            teardown path.  Cannot be used with lambdas.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Pass to ``EventBus.unsubscribe()`` for individual removal.
         """
+        effective_owner = owner_id if owner_id is not None else self._id
         handle = self._event_bus.subscribe(
             DimsChangedEvent,
-            lambda e: callback(e.dims_state),
+            callback,
             entity_id=scene_id,
-            owner_id=self._id,
+            owner_id=effective_owner,
+            weak=weak,
         )
-        self._external_handles.append(handle)
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
 
     def on_camera_changed(
-        self, scene_id: UUID, callback: Callable[[CameraState], None]
-    ) -> None:
+        self,
+        scene_id: UUID,
+        callback: Callable[[CameraChangedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
         """Register a callback fired whenever the camera for *scene_id* changes.
 
         Camera event wiring is dormant in this phase; the subscription is
         registered but will never fire until camera events are wired.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``CameraChangedEvent`` on each camera change.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
         """
+        effective_owner = owner_id if owner_id is not None else self._id
         handle = self._event_bus.subscribe(
             CameraChangedEvent,
-            lambda e: callback(e.camera_state),
+            callback,
             entity_id=scene_id,
-            owner_id=self._id,
+            owner_id=effective_owner,
+            weak=weak,
         )
-        self._external_handles.append(handle)
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
 
-    def on_visual_changed(self, visual_id: UUID, callback: Callable) -> None:
+    def on_visual_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[AppearanceChangedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
         """Register a callback fired whenever the appearance of *visual_id* changes.
 
-        The callback receives the live ``MultiscaleImageVisual`` model.
+        The callback receives the full ``AppearanceChangedEvent``, which
+        includes ``source_id`` for echo-filtering, ``field_name``, and
+        ``new_value``.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``AppearanceChangedEvent`` on each appearance change.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
         """
+        effective_owner = owner_id if owner_id is not None else self._id
         handle = self._event_bus.subscribe(
             AppearanceChangedEvent,
-            lambda e: callback(self.get_visual_model(e.visual_id)),
+            callback,
             entity_id=visual_id,
-            owner_id=self._id,
+            owner_id=effective_owner,
+            weak=weak,
         )
-        self._external_handles.append(handle)
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
+
+    def on_aabb_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[AABBChangedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired whenever the AABB params of *visual_id* change.
+
+        The callback receives the full ``AABBChangedEvent``, which includes
+        ``source_id`` for echo-filtering, ``field_name``, and ``new_value``.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``AABBChangedEvent`` on each AABB change.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        effective_owner = owner_id if owner_id is not None else self._id
+        handle = self._event_bus.subscribe(
+            AABBChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=effective_owner,
+            weak=weak,
+        )
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
+
+    def on_reslice_started(
+        self,
+        scene_id: UUID,
+        callback: Callable[[ResliceStartedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a reslice cycle begins for *scene_id*.
+
+        Useful for showing a loading indicator.  Fired once per reslice
+        submission, before any async data fetching starts.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``ResliceStartedEvent``.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        effective_owner = owner_id if owner_id is not None else self._id
+        handle = self._event_bus.subscribe(
+            ResliceStartedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=effective_owner,
+            weak=weak,
+        )
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
+
+    def on_reslice_completed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[ResliceCompletedEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a reslice cycle completes for *visual_id*.
+
+        Useful for hiding a loading indicator.  Fired once per visual per
+        reslice cycle, after all bricks/tiles in the batch are committed.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``ResliceCompletedEvent``.
+        owner_id :
+            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        effective_owner = owner_id if owner_id is not None else self._id
+        handle = self._event_bus.subscribe(
+            ResliceCompletedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=effective_owner,
+            weak=weak,
+        )
+        if owner_id is None:
+            self._external_handles.append(handle)
+        return handle
+
+    def unsubscribe_owner(self, owner_id: UUID) -> None:
+        """Remove all subscriptions registered under *owner_id*.
+
+        GUI widgets should call this from their Qt ``closeEvent`` or
+        ``destroyed`` signal handler to deterministically clean up their
+        bus subscriptions.
+
+        Parameters
+        ----------
+        owner_id :
+            The UUID used as ``owner_id`` when the subscriptions were
+            registered (typically the widget's own ``self._id``).
+        """
+        self._event_bus.unsubscribe_all(owner_id)

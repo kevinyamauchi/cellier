@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     from cellier.v2.data.image import MultiscaleZarrDataStore
+    from cellier.v2.events._events import DimsChangedEvent
     from cellier.v2.render._requests import ReslicingRequest
     from cellier.v2.render._scene_config import VisualRenderConfig
     from cellier.v2.render.scene_manager import SceneManager
@@ -42,6 +42,7 @@ class SliceCoordinator:
         slicer: AsyncSlicer,
         data_stores: dict[UUID, MultiscaleZarrDataStore],
     ) -> None:
+        self.id: UUID = uuid4()
         self._scenes = scenes
         self._slicer = slicer
         self._data_stores = data_stores
@@ -140,11 +141,37 @@ class SliceCoordinator:
             except KeyError:
                 pass
 
-    # ── Dormant EventBus handler stubs ───────────────────────────────────
+    # ── EventBus handler methods ─────────────────────────────────────────
 
-    def _on_dims_changed(self, event) -> None:
-        """Dormant stub — not yet subscribed to the bus."""
-        pass
+    def _on_dims_changed(self, event: DimsChangedEvent) -> None:
+        """Invalidate stale 2D tile caches when the slice position changes.
+
+        Called synchronously by the EventBus before the controller's own
+        reslice handler, ensuring stale tiles are evicted before new slice
+        requests are submitted.
+
+        When ``displayed_axes_changed`` is True the geometry rebuild path
+        (``_rebuild_2d_resources``) already resets the cache; no extra
+        action is needed here.
+
+        When only ``slice_indices`` changed, every 2D-capable visual in
+        the scene has its committed tile cache cleared and its LUT
+        indirection table rebuilt against the empty cache.
+        """
+        if event.displayed_axes_changed:
+            return
+
+        scene = self._scenes.get(event.scene_id)
+        if scene is None:
+            return
+
+        for visual_id in list(scene.visual_ids):
+            try:
+                visual = scene.get_visual(visual_id)
+            except KeyError:
+                continue
+            if "2d" in visual.render_modes and hasattr(visual, "invalidate_2d_cache"):
+                visual.invalidate_2d_cache()
 
     def _on_appearance_changed(self, event) -> None:
         """Dormant stub — not yet subscribed to the bus."""

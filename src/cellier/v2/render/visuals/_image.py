@@ -539,6 +539,7 @@ class GFXMultiscaleImageVisual:
             self._lut_manager_2d = LutIndirectionManager2D(
                 base_layout=image_geometry_2d.base_layout,
                 n_levels=image_geometry_2d.n_levels,
+                scale_vecs_data=image_geometry_2d._scale_vecs_data,
             )
             self._lut_params_buffer_2d = build_lut_params_buffer_2d(
                 image_geometry_2d.base_layout, cache_parameters_2d
@@ -860,6 +861,7 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_2d = LutIndirectionManager2D(
             base_layout=geo2d.base_layout,
             n_levels=geo2d.n_levels,
+            scale_vecs_data=geo2d._scale_vecs_data,
         )
         # Rebuild param buffers
         self._lut_params_buffer_2d = build_lut_params_buffer_2d(
@@ -1285,10 +1287,20 @@ class GFXMultiscaleImageVisual:
 
         # Camera / viewport are 2D from pygfx -- use the 2D
         # sub-transform for inverse mapping.
+        #
+        # Axis-order note: pygfx delivers world coords as (X, Y) where
+        #   X = second displayed axis,  Y = first displayed axis.
+        # But set_slice(displayed=(a, b)).imap_coordinates expects input in
+        #   (a-world, b-world) = (first-displayed, second-displayed) order
+        # and returns (a-data, b-data) = (gy, gx) order.
+        # Downstream consumers (sort_tiles_by_distance_2d, viewport_cull_2d)
+        # expect (gx, gy) = (second-displayed, first-displayed) order.
+        # So we swap the input and swap the output.
         sub_2d = self._transform.set_slice(displayed)
+        # camera_pos_world[:2] is (X_world, Y_world); imap expects (Y_world, X_world).
         camera_pos_2d = sub_2d.imap_coordinates(
-            camera_pos_world[:2].reshape(1, -1)
-        ).flatten()
+            camera_pos_world[[1, 0]].reshape(1, -1)
+        ).flatten()[[1, 0]]  # swap output (gy, gx) -> (gx, gy)
         # Pad to 3D for compatibility with downstream code.
         camera_pos = np.array(
             [camera_pos_2d[0], camera_pos_2d[1], 0.0], dtype=np.float32
@@ -1296,25 +1308,50 @@ class GFXMultiscaleImageVisual:
 
         # Transform viewport AABB to data space via corners.
         if use_culling and view_min_world is not None and view_max_world is not None:
-            cx = float(camera_pos_world[0])
-            cy = float(camera_pos_world[1])
+            cx = float(camera_pos_world[0])  # X_world = second-displayed axis
+            cy = float(camera_pos_world[1])  # Y_world = first-displayed axis
             half_w = world_width / 2.0
             half_h = (float(view_max_world[1]) - float(view_min_world[1])) / 2.0
+            # imap expects (first-displayed, second-displayed) = (cy, cx) order.
             corners_world_2d = np.array(
                 [
-                    [cx - half_w, cy - half_h],
-                    [cx + half_w, cy - half_h],
-                    [cx + half_w, cy + half_h],
-                    [cx - half_w, cy + half_h],
+                    [cy - half_h, cx - half_w],
+                    [cy - half_h, cx + half_w],
+                    [cy + half_h, cx + half_w],
+                    [cy + half_h, cx - half_w],
                 ],
                 dtype=np.float32,
             )
-            corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)
+            # imap returns (gy, gx); swap columns to (gx, gy) for culling.
+            corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)[:, [1, 0]]
             view_min = corners_data_2d.min(axis=0)
             view_max = corners_data_2d.max(axis=0)
         else:
             view_min = None
             view_max = None
+
+        # ── DEBUG: print camera & viewport in level-0 voxel space ──────────
+        import logging as _logging
+
+        _DBG = _logging.getLogger("cellier.2d_reslice_debug")
+        if _DBG.isEnabledFor(_logging.DEBUG):
+            _DBG.debug(
+                "[2D plan] displayed=%s  camera_L0_vox(gx,gy)=(%.2f, %.2f)  "
+                "viewport_L0_vox: min=%s  max=%s",
+                displayed,
+                float(camera_pos[0]),
+                float(camera_pos[1]),
+                (
+                    f"({view_min[0]:.2f},{view_min[1]:.2f})"
+                    if view_min is not None
+                    else "None"
+                ),
+                (
+                    f"({view_max[0]:.2f},{view_max[1]:.2f})"
+                    if view_max is not None
+                    else "None"
+                ),
+            )
 
         # Slice indices mapped per-level via composed transforms.
 
@@ -1386,6 +1423,7 @@ class GFXMultiscaleImageVisual:
         ndim = len(dims_state.axis_labels)
         sel = dims_state.selection
 
+        _debug_tile_count = 0
         for tile_key, slot in fill_plan:
             chunk_id = uuid4()
             y0, x0, y1, x1 = _block_key_2d_to_padded_coords(
@@ -1400,6 +1438,23 @@ class GFXMultiscaleImageVisual:
                 level_shape=self._full_level_shapes[level_index],
                 world_to_level_k=self._world_to_level_transforms[level_index],
             )
+
+            # ── DEBUG: print tile region and data selection ─────────────────
+            if _DBG.isEnabledFor(_logging.DEBUG) and _debug_tile_count < 4:
+                _sv = geo2d._scale_arr_shader[level_index]
+                _cx_l0 = (tile_key.gx + 0.5) * block_size * float(_sv[0])
+                _cy_l0 = (tile_key.gy + 0.5) * block_size * float(_sv[1])
+                _DBG.debug(
+                    "  tile level=%d gy=%d gx=%d  "
+                    "centre_L0_vox(gx,gy)=(%.2f,%.2f)  axis_sel=%s",
+                    tile_key.level,
+                    tile_key.gy,
+                    tile_key.gx,
+                    _cx_l0,
+                    _cy_l0,
+                    axis_selections,
+                )
+                _debug_tile_count += 1
 
             req = ChunkRequest(
                 chunk_request_id=chunk_id,
@@ -1500,6 +1555,20 @@ class GFXMultiscaleImageVisual:
             return
         self._block_cache_2d.tile_manager.release_all_in_flight()
         self._pending_slot_map_2d = {}
+
+    def invalidate_2d_cache(self) -> None:
+        """Evict all committed 2D tiles and rebuild the LUT indirection table.
+
+        Call this when the slice position changes so that stale tiles from the
+        previous Z plane are not blended with newly loaded tiles.  This is a
+        lighter operation than ``_rebuild_2d_resources``, which also tears down
+        and recreates the GPU geometry; here only the tile occupancy state is
+        reset.
+        """
+        if self._block_cache_2d is None or self._lut_manager_2d is None:
+            return
+        self._block_cache_2d.tile_manager.clear()
+        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
 
     # ── EventBus handler methods ─────────────────────────────────────────
 

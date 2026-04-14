@@ -27,7 +27,7 @@ Controls
   frustum culling and a flat "load all bricks at the coarsest level" mode.
 - **ISO threshold** spinner *(3D only)* — adjust the isosurface threshold.
 - **Z slice** spinner *(2D only)* — select the displayed Z plane.
-- **Clim max** spinner — adjust the upper contrast limit (both views).
+- **Contrast limits** range slider — adjust the lower and upper contrast limits (both views).
 - **LOD bias** spinner — scale the screen-space LOD thresholds (both views).
 """
 
@@ -48,20 +48,58 @@ class OmeBrickViewer:
         controller,
         scene,
         visual_model,
-        canvas_view,
+        canvas_widget: QtCanvasWidget,
+        zarr_uri: str,
         n_levels: int,
         z_depth: int,
+        clim_range: tuple[float, float],
+        slider_decimals: int = 2,
     ):
         from PySide6 import QtCore, QtWidgets
+
+        from cellier.v2.gui._dataset_info import QtOmeZarrMetadataWidget
+        from cellier.v2.gui.visuals._aabb import QtAABBWidget
+        from cellier.v2.gui.visuals._colormap import QtColormapComboBox
+        from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
+        from cellier.v2.gui.visuals._image import QtVolumeRenderControls
 
         self._controller = controller
         self._scene = scene
         self._visual_model = visual_model
-        self._canvas_view = canvas_view
+        self._canvas_widget = canvas_widget
+        self._dims_sliders = canvas_widget.dims_sliders
         self._n_levels = n_levels
         self._z_max = z_depth - 1
         self._active_mode = "3d"
-        self._current_z = scene.dims.selection.slice_indices.get(0, z_depth // 2)
+
+        self._clim_slider = QtClimRangeSlider(
+            controller,
+            visual_model.id,
+            clim_range=clim_range,
+            initial_clim=visual_model.appearance.clim,
+            decimals=slider_decimals,
+        )
+        self._colormap_combo = QtColormapComboBox(
+            controller,
+            visual_model.id,
+            initial_colormap=visual_model.appearance.color_map,
+        )
+        self._aabb_widget = QtAABBWidget(
+            controller,
+            visual_model.id,
+            initial_enabled=visual_model.aabb.enabled,
+            initial_line_width=visual_model.aabb.line_width,
+            initial_color=visual_model.aabb.color,
+        )
+        self._render_controls = QtVolumeRenderControls(
+            controller,
+            visual_model.id,
+            dtype_max=clim_range[1],
+            initial_render_mode=visual_model.appearance.render_mode,
+            initial_threshold=visual_model.appearance.iso_threshold,
+            decimals=slider_decimals,
+        )
+        self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
@@ -71,19 +109,21 @@ class OmeBrickViewer:
         self._window.setCentralWidget(central)
         root_layout = QtWidgets.QHBoxLayout(central)
 
-        # ── Canvas ────────────────────────────────────────────────────
-        root_layout.addWidget(canvas_view.widget, stretch=1)
+        # ── Canvas + dims sliders ─────────────────────────────────────
+        root_layout.addWidget(canvas_widget.widget, stretch=1)
 
         # ── Side panel ────────────────────────────────────────────────
         panel = QtWidgets.QWidget()
-        panel.setFixedWidth(270)
+        panel.setFixedWidth(300)
         panel_layout = QtWidgets.QVBoxLayout(panel)
         panel_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         root_layout.addWidget(panel)
 
-        # Track 3D-only / 2D-only widgets for show/hide on toggle.
+        # Track 3D-only widgets for show/hide on toggle.
         self._widget_3d: list = []
-        self._widget_2d: list = []
+
+        # ── Dataset metadata ──────────────────────────────────────────
+        panel_layout.addWidget(self._metadata_widget.widget)
 
         # ── Shared: toggle + reslice + mode label ─────────────────────
         self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
@@ -110,53 +150,23 @@ class OmeBrickViewer:
         panel_layout.addWidget(mode_group)
         self._widget_3d.append(mode_group)
 
-        # ── 3D-only: render mode ──────────────────────────────────────
-        render_group = QtWidgets.QGroupBox("Render mode")
-        render_layout = QtWidgets.QHBoxLayout(render_group)
-        self._render_mode_combo = QtWidgets.QComboBox()
-        self._render_mode_combo.addItems(["ISO", "MIP"])
-        self._render_mode_combo.currentTextChanged.connect(self._on_render_mode_changed)
-        render_layout.addWidget(self._render_mode_combo)
+        # ── 3D-only: render mode + ISO threshold ─────────────────────
+        render_group = QtWidgets.QGroupBox("Render")
+        render_layout = QtWidgets.QVBoxLayout(render_group)
+        render_layout.addWidget(self._render_controls.widget)
         panel_layout.addWidget(render_group)
         self._widget_3d.append(render_group)
 
-        # ── 3D-only: ISO threshold ────────────────────────────────────
-        thresh_group = QtWidgets.QGroupBox("ISO threshold")
-        thresh_layout = QtWidgets.QHBoxLayout(thresh_group)
-        thresh_layout.addWidget(QtWidgets.QLabel("threshold"))
-        self._threshold_spin = QtWidgets.QDoubleSpinBox()
-        self._threshold_spin.setRange(0.0, 65000.0)
-        self._threshold_spin.setSingleStep(0.01)
-        self._threshold_spin.setDecimals(3)
-        self._threshold_spin.setValue(self._visual_model.appearance.iso_threshold)
-        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
-        thresh_layout.addWidget(self._threshold_spin)
-        panel_layout.addWidget(thresh_group)
-        self._widget_3d.append(thresh_group)
-
-        # ── 2D-only: Z slice ──────────────────────────────────────────
-        z_group = QtWidgets.QGroupBox("Z slice")
-        z_layout = QtWidgets.QHBoxLayout(z_group)
-        z_layout.addWidget(QtWidgets.QLabel("z"))
-        self._z_slice_spin = QtWidgets.QSpinBox()
-        self._z_slice_spin.setRange(0, self._z_max)
-        self._z_slice_spin.setValue(self._current_z)
-        self._z_slice_spin.valueChanged.connect(self._on_z_slice_changed)
-        z_layout.addWidget(self._z_slice_spin)
-        panel_layout.addWidget(z_group)
-        self._widget_2d.append(z_group)
+        # ── Shared: colormap ──────────────────────────────────────────
+        cmap_group = QtWidgets.QGroupBox("Colormap")
+        cmap_layout = QtWidgets.QVBoxLayout(cmap_group)
+        cmap_layout.addWidget(self._colormap_combo.widget)
+        panel_layout.addWidget(cmap_group)
 
         # ── Shared: contrast limits ───────────────────────────────────
         clim_group = QtWidgets.QGroupBox("Contrast limits")
-        clim_layout = QtWidgets.QHBoxLayout(clim_group)
-        clim_layout.addWidget(QtWidgets.QLabel("clim max"))
-        self._clim_max_spin = QtWidgets.QDoubleSpinBox()
-        self._clim_max_spin.setRange(0.01, 65000)
-        self._clim_max_spin.setSingleStep(0.05)
-        self._clim_max_spin.setDecimals(3)
-        self._clim_max_spin.setValue(1.0)
-        self._clim_max_spin.valueChanged.connect(self._on_clim_max_changed)
-        clim_layout.addWidget(self._clim_max_spin)
+        clim_layout = QtWidgets.QVBoxLayout(clim_group)
+        clim_layout.addWidget(self._clim_slider.widget)
         panel_layout.addWidget(clim_group)
 
         # ── Shared: LOD bias ──────────────────────────────────────────
@@ -175,28 +185,13 @@ class OmeBrickViewer:
         # ── Shared: bounding box ──────────────────────────────────────
         aabb_group = QtWidgets.QGroupBox("Bounding box")
         aabb_layout = QtWidgets.QVBoxLayout(aabb_group)
-        self._aabb_check = QtWidgets.QCheckBox("Show bounding box")
-        self._aabb_check.setChecked(True)
-        self._aabb_check.toggled.connect(self._on_aabb_toggled)
-        aabb_layout.addWidget(self._aabb_check)
-        lw_row = QtWidgets.QHBoxLayout()
-        lw_row.addWidget(QtWidgets.QLabel("Line width (px):"))
-        self._aabb_lw_spin = QtWidgets.QSpinBox()
-        self._aabb_lw_spin.setRange(1, 20)
-        self._aabb_lw_spin.setValue(int(self._visual_model.aabb.line_width))
-        self._aabb_lw_spin.valueChanged.connect(self._on_aabb_line_width_changed)
-        lw_row.addWidget(self._aabb_lw_spin)
-        aabb_layout.addLayout(lw_row)
+        aabb_layout.addWidget(self._aabb_widget.widget)
         panel_layout.addWidget(aabb_group)
 
         self._status_label = QtWidgets.QLabel("Mode: LOD + frustum culling")
         self._status_label.setWordWrap(True)
         panel_layout.addWidget(self._status_label)
         panel_layout.addStretch()
-
-        # Hide 2D-only widgets initially (start in 3D mode).
-        for w in self._widget_2d:
-            w.setVisible(False)
 
     @property
     def window(self):
@@ -212,12 +207,12 @@ class OmeBrickViewer:
             self._mode_label.setText("Mode: 2D")
             # Set slice_indices before changing displayed_axes so the dims
             # state is consistent when the geometry-rebuild event fires.
-            self._scene.dims.selection.slice_indices = {0: self._current_z}
+            # Read the last Z value the slider stored (retained even while hidden).
+            current_z = self._dims_sliders.current_index().get(0, self._z_max // 2)
+            self._scene.dims.selection.slice_indices = {0: current_z}
             self._scene.dims.selection.displayed_axes = (1, 2)
             for w in self._widget_3d:
                 w.setVisible(False)
-            for w in self._widget_2d:
-                w.setVisible(True)
         else:
             coordinator.cancel_scene(self._scene.id)
             self._active_mode = "3d"
@@ -225,8 +220,6 @@ class OmeBrickViewer:
             # Clear slice_indices before changing displayed_axes.
             self._scene.dims.selection.slice_indices = {}
             self._scene.dims.selection.displayed_axes = (0, 1, 2)
-            for w in self._widget_2d:
-                w.setVisible(False)
             for w in self._widget_3d:
                 w.setVisible(True)
         self._controller.reslice_scene(self._scene.id)
@@ -236,10 +229,6 @@ class OmeBrickViewer:
     def _on_reslice_clicked(self) -> None:
         print("[DEBUG] Manual reslice triggered")
         self._controller.reslice_scene(self._scene.id)
-
-    def _on_clim_max_changed(self, value: float) -> None:
-        self._visual_model.appearance.clim = (0.0, value)
-        print(f"[DEBUG] clim changed to (0.0, {value})")
 
     def _on_lod_bias_changed(self, value: float) -> None:
         self._visual_model.appearance.lod_bias = value
@@ -265,38 +254,6 @@ class OmeBrickViewer:
         )
         self._controller.reslice_scene(self._scene.id)
 
-    def _on_render_mode_changed(self, text: str) -> None:
-        mode = text.lower()
-        self._visual_model.appearance.render_mode = mode
-        print(f"[DEBUG] Render mode changed to {mode}")
-        if mode == "mip":
-            self._visual_model.appearance.color_map = "viridis"
-        else:
-            self._visual_model.appearance.color_map = "grays"
-
-    def _on_threshold_changed(self, value: float) -> None:
-        self._visual_model.appearance.iso_threshold = value
-        print(f"[DEBUG] ISO threshold changed to {value}")
-
-    # ── 2D-only callbacks ─────────────────────────────────────────────
-
-    def _on_z_slice_changed(self, value: int) -> None:
-        self._current_z = value
-        self._scene.dims.selection.slice_indices = {0: value}
-        rm = self._controller._render_manager
-        gfx_visual = rm._scenes[self._scene.id]._visuals[self._visual_model.id]
-        gfx_visual._block_cache_2d.tile_manager.clear()
-        gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
-        self._controller.reslice_scene(self._scene.id)
-
-    # ── AABB callbacks ────────────────────────────────────────────────
-
-    def _on_aabb_toggled(self, checked: bool) -> None:
-        self._visual_model.aabb.enabled = checked
-
-    def _on_aabb_line_width_changed(self, value: int) -> None:
-        self._visual_model.aabb.line_width = float(value)
-
 
 # ---------------------------------------------------------------------------
 # Scene helpers
@@ -310,6 +267,13 @@ def _dtype_clim_max(dtype: np.dtype) -> float:
     return 1.0
 
 
+def _dtype_decimals(dtype: np.dtype) -> int:
+    """Return slider label decimal places appropriate for the given dtype."""
+    if np.issubdtype(dtype, np.integer):
+        return 0
+    return 2
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -320,6 +284,7 @@ async def async_main(zarr_uri: str):
 
     from cellier.v2.controller import CellierController
     from cellier.v2.data.image import OMEZarrImageDataStore
+    from cellier.v2.gui._scene import QtCanvasWidget
     from cellier.v2.render._config import (
         CameraConfig,
         RenderManagerConfig,
@@ -379,6 +344,7 @@ async def async_main(zarr_uri: str):
 
     # ── Initial appearance ────────────────────────────────────────────
     initial_clim_max = _dtype_clim_max(data_store.dtype)
+    slider_decimals = _dtype_decimals(data_store.dtype)
     _DEBUG_MODE = "none"
 
     # ── Single scene supporting both 2D and 3D ────────────────────────
@@ -428,20 +394,30 @@ async def async_main(zarr_uri: str):
     print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
     print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
 
-    # ── Canvas ────────────────────────────────────────────────────────
-    canvas_widget = controller.add_canvas(scene.id, depth_range=depth_range)
+    # ── Canvas + dims sliders ─────────────────────────────────────────
+    controller.add_canvas(scene.id, depth_range=depth_range)
     canvas_view = controller._render_manager._find_canvas_for_scene(scene.id)
+
+    # Axis ranges derived from the finest level's voxel shape (ZYX order).
+    level0_shape = data_store.level_shapes[0]
+    axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
+
+    canvas_widget = QtCanvasWidget.from_scene_and_canvas(
+        controller, scene, canvas_view, axis_ranges=axis_ranges
+    )
 
     # ── Show window ───────────────────────────────────────────────────
     viewer = OmeBrickViewer(
         controller,
         scene=scene,
         visual_model=visual_model,
-        canvas_view=canvas_view,
+        canvas_widget=canvas_widget,
+        zarr_uri=zarr_uri,
         n_levels=data_store.n_levels,
         z_depth=z_depth,
+        clim_range=(0.0, initial_clim_max),
+        slider_decimals=slider_decimals,
     )
-    viewer._clim_max_spin.setValue(initial_clim_max)
     viewer.window.show()
 
     # Fit camera from metadata-derived bounding box, then kick off first reslice.
@@ -450,6 +426,11 @@ async def async_main(zarr_uri: str):
     print("[DEBUG] Camera fitted. Use 'Reslice now' to reload bricks.")
 
     app = QtWidgets.QApplication.instance()
+    app.aboutToQuit.connect(canvas_widget.close)
+    app.aboutToQuit.connect(viewer._clim_slider.close)
+    app.aboutToQuit.connect(viewer._colormap_combo.close)
+    app.aboutToQuit.connect(viewer._aabb_widget.close)
+    app.aboutToQuit.connect(viewer._render_controls.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()
