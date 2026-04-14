@@ -51,7 +51,15 @@ def _build_kvstore_spec(uri: str, array_path: str) -> dict:
 
     if scheme == "file":
         # file:///absolute/path  ->  path = /absolute/path
-        root = parsed.path
+        if (len(parsed.netloc) > 0) and (len(parsed.path) == 0):
+            # The path ends up in netloc on windows
+            root = parsed.netloc
+        elif (len(parsed.netloc) == 0) and (len(parsed.path) > 0):
+            # The path ends up in path on linux, macos
+            root = parsed.path
+        else:
+            raise ValueError(f"URI couldn't be parsed: {parsed}")
+
         return {
             "driver": "file",
             "path": str(pathlib.PurePosixPath(root) / array_path),
@@ -87,8 +95,10 @@ def _detect_zarr_driver(uri: str, array_path: str) -> str:
     parsed = urlparse(uri)
     if parsed.scheme == "file":
         if (len(parsed.netloc) > 0) and (len(parsed.path) == 0):
+            # The path ends up in netloc on windows
             level_path = pathlib.Path(parsed.netloc) / array_path
         elif (len(parsed.netloc) == 0) and (len(parsed.path) > 0):
+            # The path ends up in path on linux, macos
             level_path = pathlib.Path(parsed.path) / array_path
         else:
             raise ValueError(f"URI couldn't be parsed: {parsed}")
