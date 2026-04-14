@@ -753,6 +753,31 @@ class GFXMultiscaleImageVisual:
             return self._image_geometry_2d.n_levels
         raise RuntimeError("No geometry available")
 
+    # ── Node selection ───────────────────────────────────────────────
+
+    def get_node_for_dims(self, displayed_axes: tuple[int, ...]) -> gfx.Group | None:
+        """Rebuild geometry if needed and return the node for *displayed_axes*.
+
+        Calls ``self.rebuild_geometry`` internally using the already-stored
+        ``_full_level_shapes``.  The controller no longer needs to supply
+        level shapes or call ``rebuild_geometry`` directly.
+
+        Parameters
+        ----------
+        displayed_axes : tuple[int, ...]
+            The new set of displayed axes.
+
+        Returns
+        -------
+        gfx.Group or None
+            The new active node after geometry rebuild, or ``None`` if the
+            required render mode was not built.
+        """
+        _old_node, new_node = self.rebuild_geometry(
+            self._full_level_shapes, displayed_axes
+        )
+        return new_node
+
     # ── Geometry rebuild ─────────────────────────────────────────────
 
     def rebuild_geometry(

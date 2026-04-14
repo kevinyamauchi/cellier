@@ -30,6 +30,54 @@ if TYPE_CHECKING:
 _SUPPORTED_SCHEMES = frozenset({"file", "s3", "gs", "gcs", "https", "http"})
 
 
+def _is_windows_drive_prefix(text: str) -> bool:
+    return len(text) >= 2 and text[1] == ":" and text[0].isalpha()
+
+
+def _file_uri_to_local_path(uri: str) -> pathlib.Path:
+    r"""Convert a ``file://`` URI to a local filesystem path.
+
+    Accepts canonical URIs (``file:///C:/...``) and common legacy variants
+    seen in tests on Windows (e.g. ``file://C:\\...``).
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        raise ValueError(f"Expected file:// URI, got {uri!r}")
+
+    netloc = parsed.netloc.replace("\\", "/")
+    path = parsed.path.replace("\\", "/")
+
+    if len(netloc) == 0 and len(path) == 0:
+        raise ValueError(f"URI couldn't be parsed: {parsed}")
+
+    # Canonical Windows file URI: file:///C:/... (drive in path with leading /)
+    if (
+        len(netloc) == 0
+        and len(path) >= 3
+        and path[0] == "/"
+        and _is_windows_drive_prefix(path[1:])
+    ):
+        return pathlib.Path(path[1:])
+
+    if len(netloc) > 0:
+        # Handle Windows drive forms where the drive/path may appear in netloc.
+        if _is_windows_drive_prefix(netloc):
+            return pathlib.Path(netloc.rstrip("/") + path)
+        # UNC path form: file://server/share/path
+        return pathlib.Path(f"//{netloc}{path}")
+
+    return pathlib.Path(path)
+
+
+def _join_uri_path(uri: str, child_path: str) -> str:
+    """Join a relative child path onto a URI root."""
+    child = child_path.replace("\\", "/").lstrip("/")
+    parsed = urlparse(uri)
+    if parsed.scheme == "file":
+        return (_file_uri_to_local_path(uri) / pathlib.PurePosixPath(child)).as_uri()
+    return f"{uri.rstrip('/')}/{child}"
+
+
 def _validate_uri_scheme(uri: str) -> None:
     """Raise ``ValueError`` if *uri* does not start with a supported scheme."""
     parsed = urlparse(uri)
@@ -50,11 +98,11 @@ def _build_kvstore_spec(uri: str, array_path: str) -> dict:
     scheme = parsed.scheme
 
     if scheme == "file":
-        # file:///absolute/path  ->  path = /absolute/path
-        root = parsed.path
+        root = _file_uri_to_local_path(uri)
+
         return {
             "driver": "file",
-            "path": str(pathlib.PurePosixPath(root) / array_path),
+            "path": str(root / pathlib.PurePosixPath(array_path)),
         }
     elif scheme in ("s3",):
         bucket = parsed.netloc
@@ -86,13 +134,16 @@ def _detect_zarr_driver(uri: str, array_path: str) -> str:
     """
     parsed = urlparse(uri)
     if parsed.scheme == "file":
-        level_path = pathlib.Path(parsed.path) / array_path
+        level_path = _file_uri_to_local_path(uri) / pathlib.PurePosixPath(array_path)
+
         if (level_path / ".zarray").exists():
             return "zarr"
         if (level_path / "zarr.json").exists():
             return "zarr3"
         raise FileNotFoundError(
             f"Cannot determine zarr format for '{level_path}': "
+            f"{array_path} is not a zarr file."
+            f"{parsed} didn't work"
             f"neither '.zarray' (zarr v2) nor 'zarr.json' (zarr v3) found."
         )
     # Remote: default to zarr3 (OME-Zarr v0.5 implies zarr v3).
@@ -411,7 +462,7 @@ class OMEZarrImageDataStore(BaseDataStore):
             # No Series metadata — fall back to numeric path.
             image_path = str(series_index)
 
-        resolved_path = zarr_path.rstrip("/") + "/" + image_path
+        resolved_path = _join_uri_path(zarr_path, image_path)
         print(
             f"  Bf2Raw container detected — resolving series {series_index} "
             f"at '{image_path}'"
