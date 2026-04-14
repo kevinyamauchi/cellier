@@ -93,6 +93,8 @@ def _detect_zarr_driver(uri: str, array_path: str) -> str:
             return "zarr3"
         raise FileNotFoundError(
             f"Cannot determine zarr format for '{level_path}': "
+            f"{array_path} is not a zarr file."
+            f"{parsed} didn't work"
             f"neither '.zarray' (zarr v2) nor 'zarr.json' (zarr v3) found."
         )
     # Remote: default to zarr3 (OME-Zarr v0.5 implies zarr v3).
