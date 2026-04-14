@@ -83,20 +83,24 @@ class RenderManager:
         if not value:
             self._temporal_pass.reset()
 
-    def add_scene(self, scene_id: UUID) -> SceneManager:
+    def add_scene(self, scene_id: UUID, lighting: str = "none") -> SceneManager:
         """Create and register a new scene.
 
         Parameters
         ----------
         scene_id : UUID
             Unique identifier for the scene.
+        lighting : str
+            ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to
+            add ambient and directional lights — required for
+            ``MeshPhongAppearance``.
 
         Returns
         -------
         SceneManager
             The newly created scene manager.
         """
-        scene_manager = SceneManager(scene_id=scene_id)
+        scene_manager = SceneManager(scene_id=scene_id, lighting=lighting)
         self._scenes[scene_id] = scene_manager
         return scene_manager
 

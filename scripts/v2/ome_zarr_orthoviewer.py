@@ -323,6 +323,11 @@ class OmeZarrOrthoViewer:
         canvas_widgets: dict,
         clim_range: tuple[float, float],
         slider_decimals: int = 2,
+        # Plane overlay (optional — pass None to omit the group)
+        plane_visual=None,
+        plane_store=None,
+        gfx_vol_visual=None,
+        initial_plane_opacity: float = 0.4,
     ):
         from PySide6 import QtCore, QtWidgets
 
@@ -450,6 +455,56 @@ class OmeZarrOrthoViewer:
         layout_3d.addWidget(render_3d_box)
 
         panel_layout.addWidget(group_3d)
+
+        # Plane Overlay group (only shown when plane objects are provided)
+        if plane_visual is not None or gfx_vol_visual is not None:
+            from PySide6.QtCore import Qt
+            from superqt import QLabeledDoubleSlider
+
+            group_planes = QtWidgets.QGroupBox("Plane Overlay")
+            layout_planes = QtWidgets.QVBoxLayout(group_planes)
+
+            # Volume opacity slider
+            vol_opacity_label = QtWidgets.QLabel("Volume opacity")
+            vol_opacity_slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
+            vol_opacity_slider.setRange(0.0, 1.0)
+            vol_opacity_slider.setValue(1.0)
+            vol_opacity_slider.setDecimals(2)
+
+            def _on_vol_opacity_changed(value: float) -> None:
+                if (
+                    gfx_vol_visual is not None
+                    and gfx_vol_visual.material_3d is not None
+                ):
+                    gfx_vol_visual.material_3d.opacity = value
+
+            vol_opacity_slider.valueChanged.connect(_on_vol_opacity_changed)
+            layout_planes.addWidget(vol_opacity_label)
+            layout_planes.addWidget(vol_opacity_slider)
+
+            # Plane opacity slider
+            plane_opacity_label = QtWidgets.QLabel("Plane opacity")
+            plane_opacity_slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
+            plane_opacity_slider.setRange(0.0, 1.0)
+            plane_opacity_slider.setValue(initial_plane_opacity)
+            plane_opacity_slider.setDecimals(2)
+
+            def _on_plane_opacity_changed(value: float) -> None:
+                if plane_visual is not None:
+                    plane_visual.appearance.opacity = value
+                if plane_store is not None:
+                    plane_store.colors = _make_plane_colors(value)
+
+                self._controller.reslice_visual(plane_visual.id)
+
+            plane_opacity_slider.valueChanged.connect(_on_plane_opacity_changed)
+            layout_planes.addWidget(plane_opacity_label)
+            layout_planes.addWidget(plane_opacity_slider)
+
+            _on_plane_opacity_changed(initial_plane_opacity)
+
+            panel_layout.addWidget(group_planes)
+
         panel_layout.addStretch()
 
     @property
@@ -464,6 +519,256 @@ class OmeZarrOrthoViewer:
         self._3d_clim.close()
         self._3d_colormap.close()
         self._3d_render.close()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Slice-plane mesh helpers (Step 16)
+# ---------------------------------------------------------------------------
+
+# Colors that visually match the slider gradients in SLIDER_STYLE_XY/XZ/YZ.
+_PLANE_COLOR_XY = (0.33, 0.33, 1.00)  # blue
+_PLANE_COLOR_XZ = (0.23, 0.67, 0.23)  # green
+_PLANE_COLOR_YZ = (0.80, 0.40, 0.00)  # orange
+
+
+def _make_plane_positions(
+    z_world: float,
+    y_world: float,
+    x_world: float,
+    world_max_zyx: np.ndarray,
+) -> np.ndarray:
+    """Return (12, 3) float32 positions for the three slice planes.
+
+    Vertices are in (z, y, x) axis order.  Planes are quads split into
+    two triangles each:
+      - XY plane (slices Z): vertices 0–3
+      - XZ plane (slices Y): vertices 4–7
+      - YZ plane (slices X): vertices 8–11
+
+    Parameters
+    ----------
+    z_world : float
+        World-space Z position for the XY plane.
+    y_world : float
+        World-space Y position for the XZ plane.
+    x_world : float
+        World-space X position for the YZ plane.
+    world_max_zyx : np.ndarray
+        Shape (3,) — world-space extents [wz, wy, wx].
+
+    Returns
+    -------
+    np.ndarray
+        (12, 3) float32 array of vertex positions.
+    """
+    wz, wy, wx = (
+        float(world_max_zyx[0]),
+        float(world_max_zyx[1]),
+        float(world_max_zyx[2]),
+    )
+    z = float(z_world)
+    y = float(y_world)
+    x = float(x_world)
+
+    return np.array(
+        [
+            # XY plane (slices Z) — vertices 0–3
+            [z, 0, 0],
+            [z, wy, 0],
+            [z, wy, wx],
+            [z, 0, wx],
+            # XZ plane (slices Y) — vertices 4–7
+            [0, y, 0],
+            [wz, y, 0],
+            [wz, y, wx],
+            [0, y, wx],
+            # YZ plane (slices X) — vertices 8–11
+            [0, 0, x],
+            [wz, 0, x],
+            [wz, wy, x],
+            [0, wy, x],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _make_plane_colors(opacity: float) -> np.ndarray:
+    """Return (6, 4) float32 per-face RGBA colors for the three planes.
+
+    Face order: XY faces 0–1 (blue), XZ faces 2–3 (green), YZ faces 4–5
+    (orange).  Alpha is set to *opacity* uniformly.
+
+    Parameters
+    ----------
+    opacity : float
+        Alpha value 0–1 applied to all six faces.
+
+    Returns
+    -------
+    np.ndarray
+        (6, 4) float32 RGBA array.
+    """
+    rgb_xy = _PLANE_COLOR_XY
+    rgb_xz = _PLANE_COLOR_XZ
+    rgb_yz = _PLANE_COLOR_YZ
+    a = float(opacity)
+    return np.array(
+        [
+            [*rgb_xy, a],  # XY face 0
+            [*rgb_xy, a],  # XY face 1
+            [*rgb_xz, a],  # XZ face 0
+            [*rgb_xz, a],  # XZ face 1
+            [*rgb_yz, a],  # YZ face 0
+            [*rgb_yz, a],  # YZ face 1
+        ],
+        dtype=np.float32,
+    )
+
+
+def _make_plane_mesh(
+    controller,
+    vol_scene,
+    z_world: float,
+    y_world: float,
+    x_world: float,
+    world_max_zyx: np.ndarray,
+    initial_opacity: float = 0.4,
+):
+    """Create the three slice-plane quads as a single mesh visual.
+
+    Parameters
+    ----------
+    controller : CellierController
+        The active controller.
+    vol_scene : Scene
+        The 3D volume scene to add the mesh to.
+    z_world, y_world, x_world : float
+        Initial world-space slice positions.
+    world_max_zyx : np.ndarray
+        Shape (3,) world-space AABB extents.
+    initial_opacity : float
+        Starting alpha for the plane faces.
+
+    Returns
+    -------
+    tuple[MeshMemoryStore, MeshVisual]
+        The live store and model objects.
+    """
+    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
+    from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+
+    positions = _make_plane_positions(z_world, y_world, x_world, world_max_zyx)
+    colors = _make_plane_colors(initial_opacity)
+
+    indices = np.array(
+        [
+            [0, 1, 2],
+            [0, 2, 3],  # XY plane
+            [4, 5, 6],
+            [4, 6, 7],  # XZ plane
+            [8, 9, 10],
+            [8, 10, 11],  # YZ plane
+        ],
+        dtype=np.int32,
+    )
+
+    store = MeshMemoryStore(
+        positions=positions,
+        indices=indices,
+        colors=colors,
+        name="slice_planes",
+    )
+
+    appearance = MeshFlatAppearance(
+        color_mode="face",
+        side="both",
+        opacity=initial_opacity,
+        wireframe=False,
+    )
+
+    visual = controller.add_mesh(
+        data=store,
+        scene_id=vol_scene.id,
+        appearance=appearance,
+        name="slice_planes",
+    )
+
+    return store, visual
+
+
+class _PlaneUpdater:
+    """Wires 2D dims changes to the slice-plane mesh positions.
+
+    One instance is created for the whole viewer.  Separate named methods
+    are registered as callbacks for each 2D scene via
+    ``controller.on_dims_changed`` so that no lambdas are used.
+
+    Parameters
+    ----------
+    controller : CellierController
+        The active controller.
+    plane_store : MeshMemoryStore
+        The store holding the three slice-plane quads.
+    plane_visual : MeshVisual
+        The model-layer visual (used for its ``.id``).
+    world_max_zyx : np.ndarray
+        Shape (3,) world-space AABB extents [wz, wy, wx].
+    """
+
+    def __init__(
+        self,
+        controller,
+        plane_store,
+        plane_visual,
+        world_max_zyx: np.ndarray,
+    ) -> None:
+        self._controller = controller
+        self._plane_store = plane_store
+        self._plane_visual = plane_visual
+        self._world_max_zyx = world_max_zyx
+
+        # Cache the current slice positions so we can reconstruct the full
+        # positions array when only one axis changes.
+        positions = plane_store.positions
+        self._z_world = float(positions[0, 0])  # vertex 0, z-component
+        self._y_world = float(positions[4, 1])  # vertex 4, y-component
+        self._x_world = float(positions[8, 2])  # vertex 8, x-component
+
+    def _update(self) -> None:
+        """Recompute positions and push to GPU via reslice_visual."""
+        self._plane_store.positions = _make_plane_positions(
+            self._z_world,
+            self._y_world,
+            self._x_world,
+            self._world_max_zyx,
+        )
+        self._controller.reslice_visual(self._plane_visual.id)
+
+    def on_xy_dims_changed(self, event) -> None:
+        """Called when the XY scene dims change (Z slider moved)."""
+        slice_indices = event.dims_state.selection.slice_indices
+        if 0 in slice_indices:
+            self._z_world = float(slice_indices[0])
+            self._update()
+
+    def on_xz_dims_changed(self, event) -> None:
+        """Called when the XZ scene dims change (Y slider moved)."""
+        slice_indices = event.dims_state.selection.slice_indices
+        if 1 in slice_indices:
+            self._y_world = float(slice_indices[1])
+            self._update()
+
+    def on_yz_dims_changed(self, event) -> None:
+        """Called when the YZ scene dims change (X slider moved)."""
+        slice_indices = event.dims_state.selection.slice_indices
+        if 2 in slice_indices:
+            self._x_world = float(slice_indices[2])
+            self._update()
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +969,33 @@ async def async_main(zarr_uri: str) -> None:
 
     visuals = {"xy": xy_visual, "xz": xz_visual, "yz": yz_visual, "vol": vol_visual}
 
+    # ── Slice plane mesh overlay ─────────────────────────────────────────────
+    _INITIAL_PLANE_OPACITY = 1.0
+
+    plane_store, plane_visual = _make_plane_mesh(
+        controller,
+        vol_scene,
+        z_mid_world,
+        y_mid_world,
+        x_mid_world,
+        world_max_zyx,
+        initial_opacity=_INITIAL_PLANE_OPACITY,
+    )
+
+    plane_updater = _PlaneUpdater(
+        controller=controller,
+        plane_store=plane_store,
+        plane_visual=plane_visual,
+        world_max_zyx=world_max_zyx,
+    )
+
+    controller.on_dims_changed(xy_scene.id, plane_updater.on_xy_dims_changed)
+    controller.on_dims_changed(xz_scene.id, plane_updater.on_xz_dims_changed)
+    controller.on_dims_changed(yz_scene.id, plane_updater.on_yz_dims_changed)
+
+    scene_mgr = controller._render_manager._scenes[vol_scene.id]
+    gfx_vol_visual = scene_mgr.get_visual(vol_visual.id)
+
     # ── Canvases ─────────────────────────────────────────────────────────
     controller.add_canvas(xy_scene.id, depth_range=depth_range)
     controller.add_canvas(xz_scene.id, depth_range=depth_range)
@@ -706,6 +1038,10 @@ async def async_main(zarr_uri: str) -> None:
         canvas_widgets=canvas_widgets,
         clim_range=clim_range,
         slider_decimals=slider_decimals,
+        plane_visual=plane_visual,
+        plane_store=plane_store,
+        gfx_vol_visual=gfx_vol_visual,
+        initial_plane_opacity=_INITIAL_PLANE_OPACITY,
     )
     viewer.window.show()
 

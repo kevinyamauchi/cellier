@@ -29,6 +29,7 @@ from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.v2.scene.cameras import (
     OrbitCameraController,
     OrthographicCamera,
@@ -44,6 +45,11 @@ from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import MultiscaleImageVisual
 from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._mesh_memory import (
+    MeshAppearance,
+    MeshPhongAppearance,
+    MeshVisual,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -53,6 +59,7 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
     from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import ImageAppearance
@@ -194,6 +201,7 @@ class CellierController:
         coordinate_system: CoordinateSystem,
         name: str,
         render_modes: set[Literal["2d", "3d"]] | None = None,
+        lighting: str = "none",
     ) -> Scene:
         """Create and register a new empty scene.
 
@@ -210,6 +218,10 @@ class CellierController:
             Defaults to ``{dim}``.  Pass ``{"2d", "3d"}`` to build both 2D
             and 3D nodes up front, enabling cheap toggling via
             ``scene.dims.selection.displayed_axes``.
+        lighting : str
+            ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to
+            add ambient and directional lights — required for
+            ``MeshPhongAppearance``.
 
         Returns
         -------
@@ -240,7 +252,7 @@ class CellierController:
         scene = Scene(name=name, dims=dims)
         self._model.scenes[scene.id] = scene
         self._scene_render_modes[scene.id] = render_modes
-        self._render_manager.add_scene(scene.id)
+        self._render_manager.add_scene(scene.id, lighting=lighting)
         self._scene_to_canvases[scene.id] = []
         self._wire_dims_model(scene)
         self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
@@ -427,6 +439,106 @@ class CellierController:
         self._event_bus.subscribe(
             AABBChangedEvent,
             gfx_visual.on_aabb_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def add_mesh(
+        self,
+        data: MeshMemoryStore,
+        scene_id: UUID,
+        appearance: MeshAppearance,
+        name: str = "mesh",
+    ) -> MeshVisual:
+        """Add a mesh visual to a scene.
+
+        Parameters
+        ----------
+        data : MeshMemoryStore
+            In-memory mesh.  Normals are auto-computed if not supplied;
+            indices are coerced to int32.
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : MeshFlatAppearance | MeshPhongAppearance
+            Appearance.  Use MeshPhongAppearance with lighting="default"
+            on the scene for shaded rendering.
+        name : str
+            Human-readable label.  Default "mesh".
+
+        Returns
+        -------
+        MeshVisual
+            The live model object.
+        """
+        import warnings
+
+        # Warn if Phong requested but no lights in scene.
+        if isinstance(appearance, MeshPhongAppearance):
+            import pygfx as gfx
+
+            sm = self._render_manager._scenes[scene_id]
+            has_light = any(
+                isinstance(c, (gfx.AmbientLight, gfx.DirectionalLight))
+                for c in sm.scene.children
+            )
+            if not has_light:
+                warnings.warn(
+                    "MeshPhongAppearance requires lights in the scene. "
+                    "Pass lighting='default' to add_scene(), otherwise "
+                    "the mesh will render black.",
+                    stacklevel=2,
+                )
+
+        if data.id not in self._model.data.stores:
+            self._model.data.stores[data.id] = data
+
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        visual_model = MeshVisual(
+            name=name,
+            data_store_id=str(data.id),
+            appearance=appearance,
+        )
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXMeshMemoryVisual(
+            visual_model=visual_model,
+            data_store=data,
+            render_modes=render_modes,
+        )
+
+        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -730,6 +842,8 @@ class CellierController:
                     force_level=visual.appearance.force_level,
                     frustum_cull=visual.appearance.frustum_cull,
                 )
+            else:
+                configs[visual.id] = VisualRenderConfig()
         return configs
 
     def _dims_state_for_scene(self, scene_id: UUID) -> DimsState:
@@ -1181,10 +1295,6 @@ class CellierController:
     def add_labels(self, *args, **kwargs):
         """Not implemented in Phase 1."""
         raise NotImplementedError("add_labels is not implemented in Phase 1.")
-
-    def add_mesh(self, *args, **kwargs):
-        """Not implemented in Phase 1."""
-        raise NotImplementedError("add_mesh is not implemented in Phase 1.")
 
     def remove_scene(self, scene_id: UUID) -> None:
         """Clean up bus subscriptions for a scene and its canvases.
