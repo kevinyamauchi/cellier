@@ -86,7 +86,13 @@ def _detect_zarr_driver(uri: str, array_path: str) -> str:
     """
     parsed = urlparse(uri)
     if parsed.scheme == "file":
-        level_path = pathlib.Path(parsed.path) / array_path
+        if (len(parsed.netloc) > 0) and (len(parsed.path) == 0):
+            level_path = pathlib.Path(parsed.netloc) / array_path
+        elif (len(parsed.netloc) == 0) and (len(parsed.path) > 0):
+            level_path = pathlib.Path(parsed.path) / array_path
+        else:
+            raise ValueError(f"URI couldn't be parsed: {parsed}")
+
         if (level_path / ".zarray").exists():
             return "zarr"
         if (level_path / "zarr.json").exists():
