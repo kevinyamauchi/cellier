@@ -523,31 +523,11 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         use_brick_shader=True,
         transform=voxel_to_world,
     )
-    print(f"DEBUG [vol_image] visual.transform.matrix =\n{v.transform.matrix}\n")
     image_visuals["vol"] = v
 
     # ── Fit vol camera on first data delivery ─────────────────────────────────
     _vol_scene_mgr = controller._render_manager._scenes[vol_scene.id]
     _gfx_vol_vis = _vol_scene_mgr.get_visual(v.id)
-    print(
-        f"DEBUG [vol_image GFX] _dataset_size (x,y,z) = {getattr(_gfx_vol_vis, '_dataset_size', 'N/A')}"
-    )
-    print(
-        f"DEBUG [vol_image GFX] _norm_size    (x,y,z) = {getattr(_gfx_vol_vis, '_norm_size', 'N/A')}"
-    )
-    _n3d = getattr(_gfx_vol_vis, "node_3d", None)
-    print(
-        f"DEBUG [vol_image GFX] node_3d.local.matrix =\n{_n3d.local.matrix if _n3d else 'N/A'}\n"
-    )
-
-    # Print 2D node matrices for xy/xz/yz
-    for key, scene in [("xy", xy_scene), ("xz", xz_scene), ("yz", yz_scene)]:
-        _scene_mgr = controller._render_manager._scenes[scene.id]
-        _gfx_vis = _scene_mgr.get_visual(image_visuals[key].id)
-        _n2d = getattr(_gfx_vis, "node_2d", None)
-        print(
-            f"DEBUG [{key}_image GFX] node_2d.local.matrix =\n{_n2d.local.matrix if _n2d else 'N/A'}\n"
-        )
     _vol_fitted = [False]
     _orig_on_data_ready = _gfx_vol_vis.on_data_ready
 
