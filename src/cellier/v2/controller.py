@@ -44,6 +44,7 @@ from cellier.v2.scene.dims import (
     DimsManager,
 )
 from cellier.v2.scene.scene import Scene
+from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import MultiscaleImageVisual
 from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
@@ -67,7 +68,6 @@ if TYPE_CHECKING:
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
-    from cellier.v2.transform import AffineTransform
     from cellier.v2.visuals._image import ImageAppearance
 
 
@@ -475,6 +475,7 @@ class CellierController:
         scene_id: UUID,
         appearance: MeshAppearance,
         name: str = "mesh",
+        transform: AffineTransform | None = None,
     ) -> MeshVisual:
         """Add a mesh visual to a scene.
 
@@ -490,6 +491,9 @@ class CellierController:
             on the scene for shaded rendering.
         name : str
             Human-readable label.  Default "mesh".
+        transform : AffineTransform | None
+            Data-to-world transform for this visual. Defaults to identity when
+            ``None``.
 
         Returns
         -------
@@ -523,18 +527,24 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=data.positions.shape[1])
+        )
 
         visual_model = MeshVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+            transform=resolved_transform,
         )
         scene.visuals.append(visual_model)
 
         gfx_visual = GFXMeshMemoryVisual(
             visual_model=visual_model,
-            data_store=data,
             render_modes=render_modes,
+            transform=resolved_transform,
         )
 
         self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
@@ -575,6 +585,7 @@ class CellierController:
         scene_id: UUID,
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
+        transform: AffineTransform | None = None,
     ) -> PointsVisual:
         """Add a points visual backed by a PointsMemoryStore.
 
@@ -589,6 +600,9 @@ class CellierController:
             Appearance model.  Defaults to PointsMarkerAppearance() if None.
         name : str
             Human-readable label for the visual.
+        transform : AffineTransform | None
+            Data-to-world transform for this visual. Defaults to identity when
+            ``None``.
 
         Returns
         -------
@@ -606,18 +620,24 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=data.ndim)
+        )
 
         visual_model = PointsVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+            transform=resolved_transform,
         )
         scene.visuals.append(visual_model)
 
         gfx_visual = GFXPointsMemoryVisual(
             visual_model=visual_model,
-            data_store=data,
             render_modes=render_modes,
+            transform=resolved_transform,
         )
 
         self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
@@ -658,6 +678,7 @@ class CellierController:
         scene_id: UUID,
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
+        transform: AffineTransform | None = None,
     ) -> LinesVisual:
         """Add a lines visual backed by a LinesMemoryStore.
 
@@ -672,6 +693,9 @@ class CellierController:
             Appearance model.  Defaults to LinesMemoryAppearance() if None.
         name : str
             Human-readable label for the visual.
+        transform : AffineTransform | None
+            Data-to-world transform for this visual. Defaults to identity when
+            ``None``.
 
         Returns
         -------
@@ -689,18 +713,24 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=data.ndim)
+        )
 
         visual_model = LinesVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+            transform=resolved_transform,
         )
         scene.visuals.append(visual_model)
 
         gfx_visual = GFXLinesMemoryVisual(
             visual_model=visual_model,
-            data_store=data,
             render_modes=render_modes,
+            transform=resolved_transform,
         )
 
         self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)

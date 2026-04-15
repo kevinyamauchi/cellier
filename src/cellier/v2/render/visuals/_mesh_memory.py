@@ -11,7 +11,6 @@ from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
 
 if TYPE_CHECKING:
     from cellier.v2._state import DimsState
-    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.mesh._mesh_requests import MeshData
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
@@ -99,7 +98,7 @@ def _build_material_2d(appearance) -> gfx.MeshBasicMaterial:
 
 
 class GFXMeshMemoryVisual:
-    """Render-layer visual for one MeshVisual backed by MeshMemoryStore.
+    """Render-layer visual for one MeshVisual backed by in-memory mesh data.
 
     Uses a single gfx.Mesh node for both 2D and 3D.
     get_node_for_dims always returns self.node; SceneManager.swap_node
@@ -111,20 +110,17 @@ class GFXMeshMemoryVisual:
     ----------
     visual_model : MeshVisual
         Associated model-layer visual.
-    data_store : MeshMemoryStore
-        Backing data store.
     render_modes : set[str]
         ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform | None
-        Data-to-world transform.  Identity used if None.
+    transform : AffineTransform
+        Data-to-world transform. Must cover all data axes.
     """
 
     def __init__(
         self,
         visual_model: MeshVisual,
-        data_store: MeshMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: AffineTransform,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -135,14 +131,6 @@ class GFXMeshMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._data_store = data_store
-
-        if transform is None:
-            from cellier.v2.transform import AffineTransform as _AT
-
-            transform = _AT.identity(ndim=data_store.positions.shape[1])
-        elif transform.ndim < data_store.positions.shape[1]:
-            transform = transform.expand_dims(data_store.positions.shape[1])
         self._transform: AffineTransform = transform
         self._last_displayed_axes: tuple[int, ...] | None = None
 
@@ -239,22 +227,10 @@ class GFXMeshMemoryVisual:
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
         thresholds: list[float] | None,
-        dims_state: DimsState | None = None,
+        dims_state: DimsState,
         force_level: int | None = None,
     ) -> list[MeshSliceRequest]:
         """3-D planning path — returns one MeshSliceRequest."""
-        if dims_state is None:
-            ndim = self._data_store.positions.shape[1]
-            from cellier.v2._state import AxisAlignedSelectionState
-            from cellier.v2._state import DimsState as _DS
-
-            dims_state = _DS(
-                axis_labels=tuple(str(i) for i in range(ndim)),
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=tuple(range(ndim)),
-                    slice_indices={},
-                ),
-            )
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)

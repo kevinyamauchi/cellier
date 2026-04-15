@@ -10,6 +10,7 @@ from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
 from cellier.v2.events._events import AppearanceChangedEvent
 from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
+from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._mesh_memory import (
     MeshFlatAppearance,
     MeshPhongAppearance,
@@ -29,8 +30,8 @@ def _visual(store, appearance=None):
     model = MeshVisual(name="test", data_store_id=str(store.id), appearance=appearance)
     return GFXMeshMemoryVisual(
         visual_model=model,
-        data_store=store,
         render_modes={"2d", "3d"},
+        transform=AffineTransform.identity(ndim=store.positions.shape[1]),
     )
 
 

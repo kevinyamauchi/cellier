@@ -14,12 +14,18 @@ import pytest
 from cellier.v2._state import CameraState
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
+from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.events._events import CameraChangedEvent, TransformChangedEvent
 from cellier.v2.render._config import CameraConfig, RenderManagerConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
+from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
+from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+from cellier.v2.visuals._points_memory import PointsMarkerAppearance
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,6 +56,24 @@ def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
     }
     defaults.update(kwargs)
     return MultiscaleZarrDataStore(**defaults)
+
+
+def _make_mesh_store() -> MeshMemoryStore:
+    positions = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32
+    )
+    indices = np.array([[0, 1, 2]], dtype=np.int32)
+    return MeshMemoryStore(positions=positions, indices=indices)
+
+
+def _make_points_store() -> PointsMemoryStore:
+    positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+    return PointsMemoryStore(positions=positions)
+
+
+def _make_lines_store() -> LinesMemoryStore:
+    positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+    return LinesMemoryStore(positions=positions)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +125,123 @@ def test_add_image_auto_registers_data_store(small_zarr_store):
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
     assert store.id in controller._model.data.stores
+
+
+def test_add_mesh_defaults_transform_to_identity():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_mesh_store()
+
+    visual = controller.add_mesh(
+        data=store,
+        scene_id=scene.id,
+        appearance=MeshFlatAppearance(),
+        name="mesh",
+    )
+
+    expected = AffineTransform.identity(ndim=store.positions.shape[1])
+    np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
+
+
+def test_add_mesh_uses_explicit_transform():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_mesh_store()
+    transform = AffineTransform.from_scale_and_translation(
+        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
+    )
+
+    visual = controller.add_mesh(
+        data=store,
+        scene_id=scene.id,
+        appearance=MeshFlatAppearance(),
+        name="mesh",
+        transform=transform,
+    )
+
+    np.testing.assert_array_equal(visual.transform.matrix, transform.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, transform.matrix)
+
+
+def test_add_points_defaults_transform_to_identity():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_points_store()
+
+    visual = controller.add_points(
+        data=store,
+        scene_id=scene.id,
+        appearance=PointsMarkerAppearance(),
+        name="points",
+    )
+
+    expected = AffineTransform.identity(ndim=store.ndim)
+    np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
+
+
+def test_add_points_uses_explicit_transform():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_points_store()
+    transform = AffineTransform.from_scale_and_translation(
+        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
+    )
+
+    visual = controller.add_points(
+        data=store,
+        scene_id=scene.id,
+        appearance=PointsMarkerAppearance(),
+        name="points",
+        transform=transform,
+    )
+
+    np.testing.assert_array_equal(visual.transform.matrix, transform.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, transform.matrix)
+
+
+def test_add_lines_defaults_transform_to_identity():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_lines_store()
+
+    visual = controller.add_lines(
+        data=store,
+        scene_id=scene.id,
+        appearance=LinesMemoryAppearance(),
+        name="lines",
+    )
+
+    expected = AffineTransform.identity(ndim=store.ndim)
+    np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
+
+
+def test_add_lines_uses_explicit_transform():
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_lines_store()
+    transform = AffineTransform.from_scale_and_translation(
+        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
+    )
+
+    visual = controller.add_lines(
+        data=store,
+        scene_id=scene.id,
+        appearance=LinesMemoryAppearance(),
+        name="lines",
+        transform=transform,
+    )
+
+    np.testing.assert_array_equal(visual.transform.matrix, transform.matrix)
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    np.testing.assert_array_equal(gfx_visual._transform.matrix, transform.matrix)
 
 
 def test_get_scene_by_name():

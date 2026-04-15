@@ -9,6 +9,7 @@ import numpy as np
 from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.data.points._points_requests import PointsSliceRequest
 from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
+from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
@@ -25,8 +26,8 @@ def _visual(store, appearance=None):
     )
     return GFXPointsMemoryVisual(
         visual_model=model,
-        data_store=store,
         render_modes={"2d", "3d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
     )
 
 
@@ -113,7 +114,11 @@ def test_3d_positions_reordered_zyx_to_xyz():
     positions = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
     store = PointsMemoryStore(positions=positions)
     model = PointsVisual(name="t", data_store_id=str(store.id))
-    v = GFXPointsMemoryVisual(visual_model=model, data_store=store, render_modes={"3d"})
+    v = GFXPointsMemoryVisual(
+        visual_model=model,
+        render_modes={"3d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
+    )
     v.on_data_ready(_make_batch(store, displayed=(0, 1, 2)))
     gpu_pos = v.node.geometry.positions.data
     # After reversal: column 0 should be x=3, column 1 y=2, column 2 z=1.
@@ -126,7 +131,11 @@ def test_2d_positions_padded_with_zero():
     positions = np.array([[0.0, 2.0, 3.0], [0.0, 4.0, 5.0]], dtype=np.float32)
     store = PointsMemoryStore(positions=positions)
     model = PointsVisual(name="t", data_store_id=str(store.id))
-    v = GFXPointsMemoryVisual(visual_model=model, data_store=store, render_modes={"2d"})
+    v = GFXPointsMemoryVisual(
+        visual_model=model,
+        render_modes={"2d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
+    )
     v.on_data_ready_2d(_make_batch(store, displayed=(1, 2), sliced={0: 0}))
     if not v._is_empty:
         gpu_pos = v.node.geometry.positions.data

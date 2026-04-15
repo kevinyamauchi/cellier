@@ -9,6 +9,7 @@ import numpy as np
 from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
 from cellier.v2.data.lines._lines_requests import LinesSliceRequest
 from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 
 
@@ -31,8 +32,8 @@ def _visual(store, appearance=None):
     model = LinesVisual(name="test", data_store_id=str(store.id), appearance=appearance)
     return GFXLinesMemoryVisual(
         visual_model=model,
-        data_store=store,
         render_modes={"2d", "3d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
     )
 
 
@@ -120,7 +121,11 @@ def test_3d_positions_reordered_zyx_to_xyz():
     positions = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
     store = LinesMemoryStore(positions=positions)
     model = LinesVisual(name="t", data_store_id=str(store.id))
-    v = GFXLinesMemoryVisual(visual_model=model, data_store=store, render_modes={"3d"})
+    v = GFXLinesMemoryVisual(
+        visual_model=model,
+        render_modes={"3d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
+    )
     v.on_data_ready(_make_batch(store, displayed=(0, 1, 2)))
     gpu_pos = v.node.geometry.positions.data
     # After reversal: first vertex should be (x=3, y=2, z=1).
@@ -135,7 +140,11 @@ def test_2d_positions_padded_with_zero():
     positions = np.array([[0.0, 1.0, 2.0], [0.0, 3.0, 4.0]], dtype=np.float32)
     store = LinesMemoryStore(positions=positions)
     model = LinesVisual(name="t", data_store_id=str(store.id))
-    v = GFXLinesMemoryVisual(visual_model=model, data_store=store, render_modes={"2d"})
+    v = GFXLinesMemoryVisual(
+        visual_model=model,
+        render_modes={"2d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
+    )
     v.on_data_ready_2d(_make_batch(store, displayed=(1, 2), sliced={0: 0}))
     if not v._is_empty:
         gpu_pos = v.node.geometry.positions.data
