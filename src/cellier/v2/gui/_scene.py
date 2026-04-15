@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
 
@@ -131,12 +131,20 @@ class QtDimsSliders:
         *,
         initial_slice_indices: dict[int, int] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
+        debounce_ms: int = 50,
         parent: QWidget | None = None,
     ) -> None:
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
         self._controller = controller
         self._scene_id = scene_id
+
+        # Single-shot QTimer for debouncing rapid slider moves.
+        # Fires _flush_debounced after the user pauses for debounce_ms.
+        self._debounce_timer = QTimer()
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(debounce_ms)
+        self._debounce_timer.timeout.connect(self._flush_debounced)
 
         # ── Qt seam 1: build container and sliders ───────────────────────────
         self._container = QWidget(parent)
@@ -202,8 +210,15 @@ class QtDimsSliders:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, axis: int, value: int) -> None:
+        # Restart the debounce timer on every slider move.  The actual
+        # update is submitted only when the timer fires (user pauses).
+        self._debounce_timer.start()
+
+    def _flush_debounced(self) -> None:
+        """Submit the current slider values after the debounce window expires."""
+        updates = {axis: sld.value() for axis, sld in self._sliders.items()}
         self._controller.update_slice_indices(
-            self._scene_id, {axis: value}, source_id=self._id
+            self._scene_id, updates, source_id=self._id
         )
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────

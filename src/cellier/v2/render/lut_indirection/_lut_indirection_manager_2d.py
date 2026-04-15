@@ -42,16 +42,26 @@ class LutIndirectionManager2D:
         self._scale_vecs_data = scale_vecs_data
         self.lut_data, self.lut_tex = build_lut_texture_2d(base_layout.grid_dims)
 
-    def rebuild(self, tile_manager: TileManager2D) -> None:
+    def rebuild(
+        self,
+        tile_manager: TileManager2D,
+        current_slice_coord: tuple[tuple[int, int], ...] | None = None,
+    ) -> None:
         """Rewrite ``lut_data`` from current tilemap state and schedule GPU upload.
 
-        Sweeps coarsest-to-finest so finer tiles naturally overwrite
-        coarser fallbacks in the base grid.
+        Uses a two-phase sweep when ``current_slice_coord`` is provided:
+        old-slice tiles are written first (background), then current-slice
+        tiles overwrite them (foreground).  This keeps the previous image
+        visible while new tiles stream in.
 
         Parameters
         ----------
         tile_manager : TileManager2D
             Current tile manager holding the resident tile mapping.
+        current_slice_coord : tuple of (axis_index, world_value) pairs or None
+            The slice coordinate set at the start of the most-recent
+            ``build_slice_request_2d`` call.  When ``None`` all tiles are
+            treated as foreground (backward-compatible single-phase sweep).
         """
         rebuild_lut_2d(
             self._base_layout,
@@ -60,6 +70,7 @@ class LutIndirectionManager2D:
             self.lut_data,
             self.lut_tex,
             scale_vecs_data=self._scale_vecs_data,
+            current_slice_coord=current_slice_coord,
         )
 
 
@@ -94,12 +105,21 @@ def rebuild_lut_2d(
     lut_data: np.ndarray,
     lut_tex: gfx.Texture,
     scale_vecs_data: list[np.ndarray] | None = None,
+    current_slice_coord: tuple[tuple[int, int], ...] | None = None,
 ) -> None:
     """Rebuild the full 2D LUT from the current tile manager state.
 
-    Works coarsest-to-finest.  Each level writes its cache slot
-    coordinates into all base-grid cells it covers.  Finer levels
-    overwrite coarser fallbacks.
+    When ``current_slice_coord`` is provided, uses a two-phase sweep:
+
+    - **Phase 1 (background):** Write tiles whose ``slice_coord`` differs from
+      ``current_slice_coord``, coarsest-to-finest.  These are old-slice tiles
+      that serve as a visual placeholder while new data loads.
+    - **Phase 2 (foreground):** Write tiles whose ``slice_coord`` matches
+      ``current_slice_coord``, coarsest-to-finest.  These overwrite the
+      background wherever new data has arrived.
+
+    When ``current_slice_coord`` is ``None``, all tiles are written in a single
+    coarsest-to-finest sweep (backward-compatible behaviour).
 
     Channel assignments:
 
@@ -126,37 +146,56 @@ def rebuild_lut_2d(
         per-axis downsampling factor is used; otherwise a uniform
         ``2^(level-1)`` fallback is applied (correct only for isotropic
         power-of-2 multiscale pyramids).
+    current_slice_coord : tuple of (axis_index, world_value) pairs or None
+        The slice coordinate to use for phase separation.  ``None`` disables
+        the two-phase sweep.
     """
     gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset to out-of-bounds (level 0).
 
-    # Group resident tiles by level.
-    by_level: dict[int, list] = {}
-    for key, slot in tile_manager.tilemap.items():
-        if key.level > 0:
-            by_level.setdefault(key.level, []).append((key, slot))
+    def _write_tiles(tiles_by_level: dict[int, list]) -> None:
+        """Write one group of tiles coarsest-to-finest into lut_data."""
+        for level in range(n_levels, 0, -1):
+            if level not in tiles_by_level:
+                continue
+            level_idx = level - 1  # 0-indexed into scale_vecs_data
+            if scale_vecs_data is not None and level_idx < len(scale_vecs_data):
+                sv = scale_vecs_data[level_idx]
+                scale_y = max(1, int(round(float(sv[0]))))
+                scale_x = max(1, int(round(float(sv[1]))))
+            else:
+                iso_scale = 2 ** (level - 1)
+                scale_y = iso_scale
+                scale_x = iso_scale
+            for key, slot in tiles_by_level[level]:
+                sy, sx = slot.grid_pos
+                # Base-grid slice covered by this coarse tile, clamped.
+                gy0 = key.gy * scale_y
+                gy1 = min(gy0 + scale_y, gh)
+                gx0 = key.gx * scale_x
+                gx1 = min(gx0 + scale_x, gw)
+                lut_data[gy0:gy1, gx0:gx1] = (sx, sy, level, 0)
 
-    # Write coarsest first so finer levels overwrite.
-    for level in range(n_levels, 0, -1):
-        if level not in by_level:
-            continue
-        level_idx = level - 1  # 0-indexed into scale_vecs_data
-        if scale_vecs_data is not None and level_idx < len(scale_vecs_data):
-            sv = scale_vecs_data[level_idx]
-            scale_y = max(1, int(round(float(sv[0]))))
-            scale_x = max(1, int(round(float(sv[1]))))
-        else:
-            iso_scale = 2 ** (level - 1)
-            scale_y = iso_scale
-            scale_x = iso_scale
-        for key, slot in by_level[level]:
-            sy, sx = slot.grid_pos
-            # Base-grid slice covered by this coarse tile, clamped.
-            gy0 = key.gy * scale_y
-            gy1 = min(gy0 + scale_y, gh)
-            gx0 = key.gx * scale_x
-            gx1 = min(gx0 + scale_x, gw)
-            lut_data[gy0:gy1, gx0:gx1] = (sx, sy, level, 0)
+    if current_slice_coord is None:
+        # Single-phase: all tiles are treated as foreground.
+        by_level: dict[int, list] = {}
+        for key, slot in tile_manager.tilemap.items():
+            if key.level > 0:
+                by_level.setdefault(key.level, []).append((key, slot))
+        _write_tiles(by_level)
+    else:
+        # Two-phase: background (old-slice) first, then foreground (current-slice).
+        bg_by_level: dict[int, list] = {}
+        fg_by_level: dict[int, list] = {}
+        for key, slot in tile_manager.tilemap.items():
+            if key.level <= 0:
+                continue
+            if key.slice_coord == current_slice_coord:
+                fg_by_level.setdefault(key.level, []).append((key, slot))
+            else:
+                bg_by_level.setdefault(key.level, []).append((key, slot))
+        _write_tiles(bg_by_level)
+        _write_tiles(fg_by_level)
 
     lut_tex.update_range((0, 0, 0), lut_tex.size)

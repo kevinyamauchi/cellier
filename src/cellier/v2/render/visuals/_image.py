@@ -602,6 +602,10 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_2d: LutIndirectionManager2D | None = None
         self._lut_params_buffer_2d = None
         self._block_scales_buffer_2d = None
+        # Sorted (axis_index, world_value) pairs for the most-recently-requested slice.
+        # Used by the two-phase LUT rebuild to separate current-slice tiles from
+        # old-slice fallback tiles.
+        self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
@@ -1362,6 +1366,12 @@ class GFXMultiscaleImageVisual:
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
+
+        # Record the current slice coordinate for two-phase LUT rebuild (Step 3).
+        self._current_slice_coord = tuple(
+            sorted(dims_state.selection.slice_indices.items())
+        )
+
         geo2d = self._image_geometry_2d
         block_size = geo2d.block_size
         n_levels = geo2d.n_levels
@@ -1465,8 +1475,8 @@ class GFXMultiscaleImageVisual:
         )
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
-        # Convert to dict
-        required = arr_to_block_keys_2d(tile_arr)
+        # Convert to dict (embed current slice coord into every key).
+        required = arr_to_block_keys_2d(tile_arr, slice_coord=self._current_slice_coord)
         n_total = len(required)
 
         # 3. Viewport culling
@@ -1492,12 +1502,27 @@ class GFXMultiscaleImageVisual:
             keys_to_keep = list(required.keys())[:n_budget]
             required = {k: required[k] for k in keys_to_keep}
 
-        # 5. Stage
+        # 5. Evict finer-than-target tiles, then stage.
+        # Evicting first returns slots to free_slots so the incoming coarser
+        # tiles can claim them without triggering unnecessary LRU evictions.
+        target_level = int(tile_arr[0, 0]) if len(tile_arr) > 0 else 1
+
+        n_evicted = self._block_cache_2d.tile_manager.evict_finer_than(target_level)
+
         t0 = time.perf_counter()
         fill_plan = self._block_cache_2d.tile_manager.stage(
             required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
+
+        # When tiles were evicted but all required coarse tiles are cache hits,
+        # on_data_ready_2d never fires so the LUT would remain stale (still
+        # pointing to freed slots).  Rebuild immediately in that case.
+        if n_evicted > 0 and not fill_plan:
+            self._lut_manager_2d.rebuild(
+                self._block_cache_2d.tile_manager,
+                current_slice_coord=self._current_slice_coord,
+            )
 
         # 6. Build ChunkRequests
         slice_id = uuid4()
@@ -1622,7 +1647,10 @@ class GFXMultiscaleImageVisual:
             n_resident,
         )
 
-        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+        self._lut_manager_2d.rebuild(
+            self._block_cache_2d.tile_manager,
+            current_slice_coord=self._current_slice_coord,
+        )
 
         _GPU_LOGGER.info(
             "lut_rebuilt  resident=%d  frame=%d",
@@ -1643,18 +1671,20 @@ class GFXMultiscaleImageVisual:
         self._pending_slot_map_2d = {}
 
     def invalidate_2d_cache(self) -> None:
-        """Evict all committed 2D tiles and rebuild the LUT indirection table.
+        """Cancel in-flight 2D requests when the slice position changes.
 
-        Call this when the slice position changes so that stale tiles from the
-        previous Z plane are not blended with newly loaded tiles.  This is a
-        lighter operation than ``_rebuild_2d_resources``, which also tears down
-        and recreates the GPU geometry; here only the tile occupancy state is
-        reset.
+        Old committed tiles are intentionally kept alive as a visible fallback
+        while new tiles load.  Because ``BlockKey2D`` now encodes
+        ``slice_coord``, tiles from different slice positions cannot collide, so
+        keeping them does not cause rendering artefacts.
+
+        A full LUT rebuild is not needed here — the LUT remains current from
+        the last ``on_data_ready_2d`` call and old tiles are the correct thing
+        to display until new ones arrive.
         """
         if self._block_cache_2d is None or self._lut_manager_2d is None:
             return
-        self._block_cache_2d.tile_manager.clear()
-        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+        self.cancel_pending_2d()
 
     # ── EventBus handler methods ─────────────────────────────────────────
 
