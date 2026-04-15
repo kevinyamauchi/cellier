@@ -310,7 +310,7 @@ class CellierController:
         threshold: float | None = ...,
         interpolation: str = ...,
         use_brick_shader: bool = ...,
-        voxel_spacing: ... = ...,
+        transform: AffineTransform | None = ...,
     ) -> MultiscaleImageVisual: ...
 
     def add_image(
@@ -325,7 +325,7 @@ class CellierController:
         threshold: float | None = None,
         interpolation: str = "linear",
         use_brick_shader: bool = False,
-        voxel_spacing=None,
+        transform: AffineTransform | None = None,
     ) -> MultiscaleImageVisual | ImageVisual:
         """Add an image visual to a scene.
 
@@ -367,8 +367,12 @@ class CellierController:
         use_brick_shader: bool
             If True, use the experimental brick shader.
             Default is False.
-        voxel_spacing: tuple[float, ...] | None
-            The spacing of the voxels in world coordinates.
+        transform : AffineTransform or None
+            Data-to-world affine transform.  Only scale and translation are
+            supported; a ``ValueError`` is raised if the linear part
+            contains rotation or shear.  When ``None`` the identity
+            transform is used (voxels equal world units).  Only used for
+            the multiscale path (ignored for ``ImageMemoryStore``).
 
         Returns
         -------
@@ -391,7 +395,7 @@ class CellierController:
                 threshold,
                 interpolation,
                 use_brick_shader=use_brick_shader,
-                voxel_spacing=voxel_spacing,
+                transform=transform,
             )
 
     def _add_image_memory(
@@ -777,7 +781,7 @@ class CellierController:
         threshold: float | None,
         interpolation: str,
         use_brick_shader: bool = False,
-        voxel_spacing=None,
+        transform: AffineTransform | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene."""
         if data.id not in self._model.data.stores:
@@ -797,6 +801,9 @@ class CellierController:
             appearance=appearance,
         )
 
+        if transform is not None:
+            visual_model.transform = transform
+
         scene.visuals.append(visual_model)
 
         render_modes = self._scene_render_modes.get(
@@ -814,7 +821,6 @@ class CellierController:
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             interpolation=interpolation,
             use_brick_shader=use_brick_shader,
-            voxel_spacing=voxel_spacing,
         )
 
         self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)

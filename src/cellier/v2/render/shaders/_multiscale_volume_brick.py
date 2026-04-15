@@ -82,9 +82,9 @@ BLOCK_SCALES_DTYPE = np.dtype([(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LE
 
 def compute_normalized_size(
     dataset_size: np.ndarray,
-    voxel_spacing: np.ndarray,
+    per_axis_scale: np.ndarray,
 ) -> np.ndarray:
-    """Compute normalized physical extent from dataset size and voxel spacing.
+    """Compute normalized physical extent from dataset size and per-axis scale.
 
     The longest physical axis is normalized to 1.0.
 
@@ -92,15 +92,16 @@ def compute_normalized_size(
     ----------
     dataset_size : ndarray, shape (3,)
         Finest-level voxel counts in shader order (x=W, y=H, z=D).
-    voxel_spacing : ndarray, shape (3,)
-        Physical voxel size in shader order (x=W, y=H, z=D).
+    per_axis_scale : ndarray, shape (3,)
+        Physical scale factor per axis in shader order (x=W, y=H, z=D).
+        For a pure scale transform this equals the voxel size in world units.
 
     Returns
     -------
     ndarray, shape (3,)
         Normalized physical size in shader order.
     """
-    phys_size = dataset_size * voxel_spacing
+    phys_size = dataset_size * per_axis_scale
     return phys_size / phys_size.max()
 
 

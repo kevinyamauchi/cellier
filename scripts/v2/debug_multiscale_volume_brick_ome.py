@@ -313,8 +313,6 @@ async def async_main(zarr_uri: str):
 
     print(f"\n  Level-0 physical scale (ZYX): {level_0_scale_zyx}")
 
-    voxel_spacing_xyz = level_0_scale_zyx[::-1].copy()
-
     # ── Compute world extents for AABB and depth range ────────────────
     vox_shape_zyx = np.array(data_store.level_shapes[0], dtype=np.float64)
     world_extents_zyx = vox_shape_zyx * level_0_scale_zyx
@@ -376,9 +374,8 @@ async def async_main(zarr_uri: str):
         gpu_budget_bytes_2d=64 * 1024**2,
         threshold=0.2,
         use_brick_shader=True,
-        voxel_spacing=voxel_spacing_xyz,
+        transform=voxel_to_world,
     )
-    visual_model.transform = voxel_to_world
 
     # ── Set debug mode on the 3D material ────────────────────────────
     vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)

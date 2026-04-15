@@ -825,8 +825,6 @@ async def async_main(zarr_uri: str) -> None:
     level_0_scale_zyx = np.array(ms.datasets[0].scale_transform.scale, dtype=np.float64)
     print(f"\n  Level-0 physical scale (ZYX): {level_0_scale_zyx}")
 
-    voxel_spacing_xyz = level_0_scale_zyx[::-1].copy()
-
     # ── World extents and depth range ─────────────────────────────────────
     vox_shape_zyx = np.array(data_store.level_shapes[0], dtype=np.float64)
     world_extents_zyx = vox_shape_zyx * level_0_scale_zyx
@@ -915,7 +913,7 @@ async def async_main(zarr_uri: str) -> None:
         "gpu_budget_bytes_2d": 64 * 1024**2,
         "threshold": 0.2,
         "use_brick_shader": True,
-        "voxel_spacing": voxel_spacing_xyz,
+        "transform": voxel_to_world,
     }
 
     xy_visual = controller.add_image(
@@ -924,7 +922,6 @@ async def async_main(zarr_uri: str) -> None:
         name="xy_volume",
         **common_image_kwargs,
     )
-    xy_visual.transform = voxel_to_world
 
     xz_visual = controller.add_image(
         scene_id=xz_scene.id,
@@ -932,7 +929,6 @@ async def async_main(zarr_uri: str) -> None:
         name="xz_volume",
         **common_image_kwargs,
     )
-    xz_visual.transform = voxel_to_world
 
     yz_visual = controller.add_image(
         scene_id=yz_scene.id,
@@ -940,7 +936,6 @@ async def async_main(zarr_uri: str) -> None:
         name="yz_volume",
         **common_image_kwargs,
     )
-    yz_visual.transform = voxel_to_world
 
     coarsest_level = data_store.n_levels - 1
     vol_visual = controller.add_image(
@@ -961,9 +956,8 @@ async def async_main(zarr_uri: str) -> None:
         gpu_budget_bytes_2d=64 * 1024**2,
         threshold=0.2,
         use_brick_shader=True,
-        voxel_spacing=voxel_spacing_xyz,
+        transform=voxel_to_world,
     )
-    vol_visual.transform = voxel_to_world
     vol_visual.aabb.enabled = True
     vol_visual.aabb.color = "#ff00ff"
 
