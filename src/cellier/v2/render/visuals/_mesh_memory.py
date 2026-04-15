@@ -282,12 +282,13 @@ class GFXMeshMemoryVisual:
         # Pad 2D → 3D.
         if n_dims == 2:
             zeros = np.zeros((n_verts, 1), dtype=np.float32)
-            pos3d = np.concatenate([positions, zeros], axis=1)
-            nor3d = np.concatenate([normals, zeros], axis=1)
+            pos3d = np.concatenate([positions, zeros], axis=1)[:, [1, 0, 2]]
+            nor3d = np.concatenate([normals, zeros], axis=1)[:, [1, 0, 2]]
+
         else:
             # switch the order from xyz to zyx to match the image
             pos3d = np.ascontiguousarray(positions)[:, [2, 1, 0]]
-            nor3d = np.ascontiguousarray(normals)
+            nor3d = np.ascontiguousarray(normals)[:, [2, 1, 0]]
 
         # Build geometry.
         colors = mesh_data.colors

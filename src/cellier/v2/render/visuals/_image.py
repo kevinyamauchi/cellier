@@ -834,8 +834,6 @@ class GFXMultiscaleImageVisual:
                     self._rebuild_2d_resources()
                 new_node = self.node_2d
 
-                print(shapes_2d_full)
-
         return old_node, new_node
 
     def _rebuild_3d_resources(self) -> None:

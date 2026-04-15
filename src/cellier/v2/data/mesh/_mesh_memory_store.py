@@ -159,6 +159,14 @@ class MeshMemoryStore(BaseDataStore):
         If CancelledError fires at either checkpoint the callback is
         never called, preventing stale geometry from reaching the GPU.
 
+        Inclusion rule
+        -------------
+        A face survives only when **all** of its vertices satisfy
+        ``slice_index - thickness <= coord <= slice_index + thickness``
+        on every sliced axis.  This is the mesh analogue of the lines
+        store's "both endpoints must pass" rule and avoids projecting
+        off-slice vertices onto the slice plane with the wrong colors.
+
         Parameters
         ----------
         request : MeshSliceRequest
@@ -183,9 +191,9 @@ class MeshMemoryStore(BaseDataStore):
         for axis, idx in request.slice_indices.items():
             lo = float(idx) - request.thickness
             hi = float(idx) + request.thickness
-            # Include face if ANY vertex is in the slab on this axis.
+            # Include face only if ALL vertices are in the slab on this axis.
             vertex_in = (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-            face_mask &= vertex_in[indices].any(axis=1)
+            face_mask &= vertex_in[indices].all(axis=1)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

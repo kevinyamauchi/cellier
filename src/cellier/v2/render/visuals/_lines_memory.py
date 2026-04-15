@@ -253,8 +253,8 @@ class GFXLinesMemoryVisual:
 
         Coordinate convention (DO NOT reorder positions elsewhere):
         - 3D path: positions[:, [2, 1, 0]] reverses (z, y, x) → (x, y, z)
-          for pygfx.  This is the single reversal site.
-        - 2D path: zero-pad to 3D; no column reversal.
+          for pygfx.
+        - 2D path: zero-pad to 3D; reverse columns [1, 0, 2]
         """
         positions = lines_data.positions
         n_verts = positions.shape[0]
@@ -264,7 +264,8 @@ class GFXLinesMemoryVisual:
             # 2D path — pad displayed-plane coords with z=0.
             # Node matrix handles axis orientation; no reversal needed.
             zeros = np.zeros((n_verts, 1), dtype=np.float32)
-            pos3d = np.concatenate([positions, zeros], axis=1)
+            pos3d = np.concatenate([positions, zeros], axis=1)[:, [1, 0, 2]]
+
         else:
             # 3D path — reverse (z, y, x) data order to (x, y, z) pygfx order.
             # This is the single axis-reversal site for lines. Do not reorder
