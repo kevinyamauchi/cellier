@@ -28,6 +28,20 @@ _PLACEHOLDER_INDICES = np.array([[0, 1, 2]], dtype=np.int32)
 _PLACEHOLDER_NORMALS = np.tile([0.0, 0.0, 1.0], (3, 1)).astype(np.float32)
 
 
+def _apply_transparency_state_3d(
+    material: gfx.MeshAbstractMaterial, opacity: float
+) -> None:
+    """Configure transparent-vs-opaque state for 3D mesh rendering.
+
+    For translucent meshes we use explicit alpha blending and disable depth
+    writes so objects behind remain visible through the mesh.
+    """
+    transparent = float(opacity) < 1.0 - 1e-6
+    material.alpha_mode = "blend" if transparent else "solid"
+    material.depth_test = True
+    material.depth_write = not transparent
+
+
 def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
     """Embed a 2-D or 3-D AffineTransform into a 4x4 pygfx matrix.
 
@@ -49,7 +63,7 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
 def _build_material_3d(appearance) -> gfx.MeshAbstractMaterial:
     side = _SIDE_MAP.get(appearance.side, "both")
     if appearance.appearance_type == "flat":
-        return gfx.MeshBasicMaterial(
+        material = gfx.MeshBasicMaterial(
             color=appearance.color,
             color_mode=appearance.color_mode,
             wireframe=appearance.wireframe,
@@ -58,7 +72,7 @@ def _build_material_3d(appearance) -> gfx.MeshAbstractMaterial:
             side=side,
         )
     else:  # phong
-        return gfx.MeshPhongMaterial(
+        material = gfx.MeshPhongMaterial(
             color=appearance.color,
             color_mode=appearance.color_mode,
             shininess=appearance.shininess,
@@ -66,6 +80,8 @@ def _build_material_3d(appearance) -> gfx.MeshAbstractMaterial:
             flat_shading=appearance.flat_shading,
             side=side,
         )
+    _apply_transparency_state_3d(material, appearance.opacity)
+    return material
 
 
 def _build_material_2d(appearance) -> gfx.MeshBasicMaterial:
@@ -362,6 +378,8 @@ class GFXMeshMemoryVisual:
                 mat.opacity = val
             elif name == "side":
                 mat.side = val
+        if name == "opacity":
+            _apply_transparency_state_3d(self._material_3d, float(val))
         # Flat-only fields.
         if name == "wireframe" and hasattr(self._material_3d, "wireframe"):
             self._material_3d.wireframe = val

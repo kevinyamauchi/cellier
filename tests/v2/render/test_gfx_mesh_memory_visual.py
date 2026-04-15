@@ -8,6 +8,7 @@ import pygfx as gfx
 
 from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
+from cellier.v2.events._events import AppearanceChangedEvent
 from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.v2.visuals._mesh_memory import (
     MeshFlatAppearance,
@@ -122,3 +123,43 @@ def test_flat_appearance_builds_basic_material():
     v = _visual(_store(), appearance=MeshFlatAppearance())
     assert isinstance(v._material_3d, gfx.MeshBasicMaterial)
     assert isinstance(v._material_2d, gfx.MeshBasicMaterial)
+
+
+def test_transparent_3d_material_uses_blend_and_no_depth_write():
+    v = _visual(_store(), appearance=MeshFlatAppearance(opacity=0.8))
+    assert v._material_3d.alpha_mode == "blend"
+    assert v._material_3d.depth_test is True
+    assert v._material_3d.depth_write is False
+
+
+def test_opaque_3d_material_uses_solid_and_depth_write():
+    v = _visual(_store(), appearance=MeshFlatAppearance(opacity=1.0))
+    assert v._material_3d.alpha_mode == "solid"
+    assert v._material_3d.depth_test is True
+    assert v._material_3d.depth_write is True
+
+
+def test_opacity_event_updates_3d_transparency_state():
+    v = _visual(_store(), appearance=MeshFlatAppearance(opacity=1.0))
+
+    ev_t = AppearanceChangedEvent(
+        source_id=uuid4(),
+        visual_id=v.visual_model_id,
+        field_name="opacity",
+        new_value=0.8,
+        requires_reslice=False,
+    )
+    v.on_appearance_changed(ev_t)
+    assert v._material_3d.alpha_mode == "blend"
+    assert v._material_3d.depth_write is False
+
+    ev_o = AppearanceChangedEvent(
+        source_id=uuid4(),
+        visual_id=v.visual_model_id,
+        field_name="opacity",
+        new_value=1.0,
+        requires_reslice=False,
+    )
+    v.on_appearance_changed(ev_o)
+    assert v._material_3d.alpha_mode == "solid"
+    assert v._material_3d.depth_write is True

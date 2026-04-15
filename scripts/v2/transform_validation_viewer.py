@@ -599,7 +599,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
 
     mesh_appearance = MeshFlatAppearance(
         color_mode="vertex",
-        side="both",
+        side="front",
         opacity=0.8,
     )
 
