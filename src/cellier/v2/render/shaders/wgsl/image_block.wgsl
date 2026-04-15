@@ -36,20 +36,20 @@ fn get_tile_scale(level: i32) -> vec2<f32> {
     }
 }
 
-fn sample_im_lut(texcoord: vec2<f32>, sizef: vec2<f32>) -> vec4<f32> {
-    // sizef = textureDimensions(t_img) = (gW, gH) in proxy texels.
+fn sample_im_lut(texcoord: vec2<f32>) -> vec4<f32> {
     let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
     let cache_size = vec2<f32>(u_lut_params.cache_size_x, u_lut_params.cache_size_y);
     let lut_size   = vec2<i32>(i32(u_lut_params.lut_size_x), i32(u_lut_params.lut_size_y));
+    let vol_size   = vec2<f32>(u_lut_params.vol_size_x, u_lut_params.vol_size_y);
     let overlap    = u_lut_params.overlap;
     let padded_size = block_size + vec2<f32>(2.0 * overlap);
 
-    // Position in proxy space (grid units: 1 unit = 1 tile).
-    let pos = clamp(texcoord * sizef, vec2<f32>(0.0), sizef - vec2<f32>(0.5));
+    // Position in level-0 voxel coordinates (x=W, y=H).
+    let pos = clamp(texcoord * vol_size, vec2<f32>(0.0), vol_size - vec2<f32>(0.5));
 
     // Which tile does this pixel fall into?
     let tile_f   = floor(pos / block_size);
-    // LUT index: clamp to valid range. Note: lut_size is (gW, gH).
+    // LUT index: clamp to valid range. lut_size is (gW, gH).
     let tile_idx = clamp(vec2<i32>(tile_f), vec2<i32>(0), lut_size - vec2<i32>(1));
 
     // LUT lookup: returns (cache_tile_x, cache_tile_y, level, 0).
@@ -61,7 +61,7 @@ fn sample_im_lut(texcoord: vec2<f32>, sizef: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // Cache slot origin in cache texture coordinates (grid units).
+    // Cache slot origin in cache texture coordinates (voxel units).
     let tile_origin = vec2<f32>(lutv.x, lutv.y) * padded_size;
 
     // LOD scale correction: remap within-tile position for coarser levels.
@@ -108,11 +108,8 @@ fn vs_main(in: VertexInput) -> Varyings {
 
 @fragment
 fn fs_main(varyings: Varyings) -> FragmentOutput {
-    // sizef from the proxy texture dimensions (gW, gH).
-    let sizef = vec2<f32>(textureDimensions(t_img));
-
     // Sample through the LUT indirection.
-    let raw = sample_im_lut(varyings.texcoord, sizef);
+    let raw = sample_im_lut(varyings.texcoord);
 
     // Apply clim + colormap (standard pygfx machinery).
     let color = sampled_value_to_color(raw);

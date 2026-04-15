@@ -47,8 +47,9 @@ def build_lut_params_buffer_2d(
 ) -> Buffer:
     """Build the LUT parameter uniform buffer.
 
-    The proxy texture uses grid dims (1 texel per tile), so spatial
-    uniforms are normalised to grid units (1 unit = 1 tile).
+    Spatial uniforms are emitted in voxel-space (pixel units), not
+    proxy-grid units. This keeps shader sampling aligned with the true
+    image footprint when geometry uses real ``(W, H)`` extents.
 
     Parameters
     ----------
@@ -66,27 +67,21 @@ def build_lut_params_buffer_2d(
     bs = float(base_layout.block_size)
     ov = float(cache_info.overlap)
     gs = float(cache_info.grid_side)
-
-    # Grid-unit coordinate space: 1 proxy texel = 1 tile.
-    # block_size in grid units = 1.0
-    # overlap in grid units = overlap_pixels / block_size
-    ov_u = ov / bs
-    padded_u = 1.0 + 2.0 * ov_u
-    cs_u = gs * padded_u  # cache extent per axis in grid units
-
-    ph, pw = base_layout.padded_shape
+    h, w = base_layout.volume_shape
+    padded_block = bs + 2.0 * ov
+    cache_extent = gs * padded_block
 
     # NOTE: Must be 0-d array, not shape (1,).
     data = np.zeros((), dtype=LUT_PARAMS_DTYPE)
-    data["block_size_x"] = 1.0
-    data["block_size_y"] = 1.0
-    data["overlap"] = ov_u
-    data["cache_size_x"] = cs_u
-    data["cache_size_y"] = cs_u
+    data["block_size_x"] = bs
+    data["block_size_y"] = bs
+    data["overlap"] = ov
+    data["cache_size_x"] = cache_extent
+    data["cache_size_y"] = cache_extent
     data["lut_size_x"] = float(gw)
     data["lut_size_y"] = float(gh)
-    data["vol_size_x"] = float(pw)
-    data["vol_size_y"] = float(ph)
+    data["vol_size_x"] = float(w)
+    data["vol_size_y"] = float(h)
 
     return Buffer(data, force_contiguous=True)
 

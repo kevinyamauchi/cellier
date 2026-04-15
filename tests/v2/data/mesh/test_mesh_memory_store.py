@@ -110,11 +110,38 @@ def test_get_data_2d_empty_slab():
 
 def test_get_data_2d_positions_projected():
     store = _simple_store()
-    # Tetrahedron has vertices at z=0 and z=1.  Slice at z=0, thickness=0.5.
+    # Tetrahedron vertices: 0=(0,0,0), 1=(1,0,0), 2=(0,1,0), 3=(0,0,1).
+    # Axis 0 (the sliced axis) values: 0→0, 1→1, 2→0, 3→0.
+    # Slice at axis0=0, thickness=0.5: vertices 0, 2, 3 are in the slab;
+    # vertex 1 is not.
+    # All-vertices rule: only face [0,2,3] has every vertex in the slab.
     result = asyncio.run(store.get_data(_req(sliced={0: 0}, thickness=0.5)))
     assert not result.is_empty
     # Projected positions have only 2 columns (y, x).
     assert result.positions.shape[1] == 2
+    # Exactly one face survives — the one whose vertices are all on the slice.
+    assert result.indices.shape == (1, 3)
+    # Exactly three vertices survive.
+    assert result.positions.shape[0] == 3
+
+
+def test_get_data_2d_all_vertices_must_be_in_slab():
+    """Faces with any off-slab vertex are excluded (all-vertex rule)."""
+    store = _simple_store()
+    # Tetrahedron at z=0 slice: vertices 0, 2, 3 in slab; vertex 1 at z=1.
+    # Faces touching vertex 1 ([0,1,2], [0,1,3], [1,2,3]) must be excluded.
+    result = asyncio.run(store.get_data(_req(sliced={0: 0}, thickness=0.5)))
+    assert not result.is_empty
+    assert result.indices.shape[0] == 1  # only face [0,2,3] survives
+
+
+def test_get_data_2d_off_slab_face_excluded():
+    """A face whose vertices are entirely off-slab produces an empty result."""
+    store = _simple_store()
+    # Slice at z=1, thickness=0.5: only vertex 1 (z=1) is in the slab.
+    # No face has ALL vertices at z≈1, so result must be empty.
+    result = asyncio.run(store.get_data(_req(sliced={0: 1}, thickness=0.5)))
+    assert result.is_empty
 
 
 def test_get_data_2d_indices_reindexed():

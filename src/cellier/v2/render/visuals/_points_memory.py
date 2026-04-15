@@ -248,8 +248,8 @@ class GFXPointsMemoryVisual:
 
         Coordinate convention (DO NOT reorder positions elsewhere):
         - 3D path: positions[:, [2, 1, 0]] reverses (z, y, x) → (x, y, z)
-          for pygfx.  This is the single reversal site.
-        - 2D path: zero-pad to 3D; no column reversal.
+          for pygfx.
+        - 2D path: zero-pad to 3D; swap columns [1, 0, 2].
         """
         positions = points_data.positions
         n_points = positions.shape[0]
@@ -260,6 +260,7 @@ class GFXPointsMemoryVisual:
             # Node matrix handles axis orientation; no reversal needed.
             zeros = np.zeros((n_points, 1), dtype=np.float32)
             pos3d = np.concatenate([positions, zeros], axis=1)
+            pos3d = pos3d[:, [1, 0, 2]]
         else:
             # 3D path — reverse (z, y, x) data order to (x, y, z) pygfx order.
             # This is the single axis-reversal site for points. Do not reorder

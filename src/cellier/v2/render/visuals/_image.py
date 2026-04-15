@@ -912,8 +912,6 @@ class GFXMultiscaleImageVisual:
                 self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map_2d = {}
 
-    # ── Node matrix update (Option C -- lazy, displayed-axes-aware) ──
-
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
         """Recompute and apply the pygfx node matrix for *displayed_axes*."""
         self._last_displayed_axes = displayed_axes
@@ -932,8 +930,6 @@ class GFXMultiscaleImageVisual:
 
         if self.node_2d is not None:
             self.node_2d.local.matrix = _pygfx_matrix(sub)
-
-    # ── Composed world→level-k transforms ───────────────────────────────
 
     def _build_world_to_level_transforms(
         self,
@@ -1818,7 +1814,14 @@ class GFXMultiscaleImageVisual:
         image = gfx.Image(geometry, material)
 
         bs = self._image_geometry_2d.block_size
-        image.local.scale = (bs, bs, 1.0)
-        image.local.position = (bs * 0.5, bs * 0.5, 0)
+        h, w = self._image_geometry_2d.level_shapes[0]
+        # Proxy grid rounds up to whole tiles. Apply a per-axis correction so
+        # the displayed quad footprint matches the true finest-level (W, H).
+        sx = float(w) / float(gw * bs)
+        sy = float(h) / float(gh * bs)
+        scale_x = float(bs) * sx
+        scale_y = float(bs) * sy
+        image.local.scale = (scale_x, scale_y, 1.0)
+        image.local.position = (scale_x * 0.5, scale_y * 0.5, 0.0)
 
         return image, material, proxy_tex
