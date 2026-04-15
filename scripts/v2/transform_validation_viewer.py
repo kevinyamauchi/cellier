@@ -494,7 +494,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
 
     image_visuals = {}
     for key, scene in [("xy", xy_scene), ("xz", xz_scene), ("yz", yz_scene)]:
-        v = controller.add_image(
+        v = controller.add_image_multiscale(
             scene_id=scene.id,
             appearance=common_2d_img_appearance,
             name=f"{key}_image",
@@ -511,7 +511,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         iso_threshold=0.05,
         render_mode="iso",
     )
-    v = controller.add_image(
+    v = controller.add_image_multiscale(
         scene_id=vol_scene.id,
         appearance=vol_img_appearance,
         name="vol_image",

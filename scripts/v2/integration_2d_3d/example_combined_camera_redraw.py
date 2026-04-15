@@ -193,7 +193,7 @@ class CombinedApp(QMainWindow):
         )
         self._scene_2d.dims.selection.slice_indices = {0: z_depth // 2}
 
-        self._visual_2d = self._controller.add_image(
+        self._visual_2d = self._controller.add_image_multiscale(
             data=data_store,
             scene_id=self._scene_2d.id,
             appearance=ImageAppearance(
@@ -214,7 +214,7 @@ class CombinedApp(QMainWindow):
             dim="3d", coordinate_system=cs, name="scene_3d"
         )
 
-        self._visual_3d = self._controller.add_image(
+        self._visual_3d = self._controller.add_image_multiscale(
             data=data_store,
             scene_id=self._scene_3d.id,
             appearance=ImageAppearance(

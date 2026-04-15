@@ -103,7 +103,7 @@ def test_add_image_populates_scene_and_render_layer(small_zarr_store):
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
     appearance = _make_appearance(lod_bias=1.0, force_level=None, frustum_cull=True)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=appearance, name="vol"
     )
 
@@ -121,7 +121,7 @@ def test_add_image_auto_registers_data_store(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    controller.add_image(
+    controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
     assert store.id in controller._model.data.stores
@@ -261,7 +261,7 @@ def test_reslice_scene_reads_appearance_fields(small_zarr_store):
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
     appearance = _make_appearance(lod_bias=2.5, force_level=1, frustum_cull=False)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=appearance, name="vol"
     )
 
@@ -286,7 +286,7 @@ def test_to_file_roundtrip(tmp_path, small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    controller.add_image(
+    controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -367,7 +367,7 @@ def test_appearance_bridge_color_map(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -389,7 +389,7 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -410,7 +410,7 @@ def test_appearance_bridge_force_level(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -431,7 +431,7 @@ def test_appearance_bridge_visible(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -475,7 +475,7 @@ def test_visual_added_event_emitted(small_zarr_store):
     events = []
     controller._event_bus.subscribe(VisualAddedEvent, events.append)
 
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -504,7 +504,7 @@ def test_unsubscribe_all_cleans_up(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -561,7 +561,7 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store,
         scene_id=scene.id,
         appearance=_make_appearance(lod_bias=1.0, force_level=None, frustum_cull=True),
@@ -676,7 +676,7 @@ def test_wire_transform_emits_event(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 
@@ -699,7 +699,7 @@ def test_transform_change_triggers_reslice(small_zarr_store):
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    visual = controller.add_image(
+    visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
 

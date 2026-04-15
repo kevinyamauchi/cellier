@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from typing import TYPE_CHECKING, Any, Callable, Literal, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import UUID, uuid4
 
 import numpy as np
 
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
@@ -64,6 +63,7 @@ if TYPE_CHECKING:
 
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
@@ -288,122 +288,12 @@ class CellierController:
     # Visual management
     # ------------------------------------------------------------------
 
-    @overload
     def add_image(
         self,
         data: ImageMemoryStore,
         scene_id: UUID,
         appearance: ImageMemoryAppearance,
-        name: str = ...,
-    ) -> ImageVisual: ...
-
-    @overload
-    def add_image(
-        self,
-        data: BaseDataStore,
-        scene_id: UUID,
-        appearance: ImageAppearance,
-        name: str = ...,
-        block_size: int = ...,
-        gpu_budget_bytes: int = ...,
-        gpu_budget_bytes_2d: int = ...,
-        threshold: float | None = ...,
-        interpolation: str = ...,
-        use_brick_shader: bool = ...,
-        transform: AffineTransform | None = ...,
-    ) -> MultiscaleImageVisual: ...
-
-    def add_image(
-        self,
-        data,
-        scene_id: UUID,
-        appearance,
         name: str = "image",
-        block_size: int = 32,
-        gpu_budget_bytes: int = 1 * 1024**3,
-        gpu_budget_bytes_2d: int = 64 * 1024**2,
-        threshold: float | None = None,
-        interpolation: str = "linear",
-        use_brick_shader: bool = False,
-        transform: AffineTransform | None = None,
-    ) -> MultiscaleImageVisual | ImageVisual:
-        """Add an image visual to a scene.
-
-        Dispatches to the appropriate rendering path based on the type of
-        ``data``:
-
-        - ``ImageMemoryStore`` → ``GFXImageMemoryVisual`` backed by
-          ``gfx.Image`` (2D) or ``gfx.Volume`` (3D). No brick cache; the
-          full slice is uploaded on every reslice.
-        - ``MultiscaleZarrDataStore`` → ``GFXMultiscaleImageVisual`` backed
-          by a brick cache + LUT indirection system. Supports LOD, frustum
-          culling, and out-of-core streaming.
-
-        Parameters
-        ----------
-        data : ImageMemoryStore | MultiscaleZarrDataStore
-            The data source.
-        scene_id : UUID
-            ID of an existing scene (returned by ``add_scene``).
-        appearance : ImageMemoryAppearance | ImageAppearance
-            Appearance parameters. Must match the type of ``data``.
-        name : str
-            Human-readable label for the visual. Default ``"image"``.
-        block_size : int
-            Brick side length in voxels. Only used for multiscale path.
-            Default 32.
-        gpu_budget_bytes : int
-            GPU memory budget for the 3D brick cache. Only used for
-            multiscale path. Default 1 GiB.
-        gpu_budget_bytes_2d : int
-            GPU memory budget for the 2D tile cache. Only used for
-            multiscale path. Default 64 MiB.
-        threshold : float
-            Isosurface threshold for 3D raycast rendering. Only used for
-            multiscale path. Default 0.2.
-        interpolation : str
-            Sampler filter ``"linear"`` or ``"nearest"``. Only used for
-            multiscale path. Default ``"linear"``.
-        use_brick_shader: bool
-            If True, use the experimental brick shader.
-            Default is False.
-        transform : AffineTransform or None
-            Data-to-world affine transform.  Only scale and translation are
-            supported; a ``ValueError`` is raised if the linear part
-            contains rotation or shear.  When ``None`` the identity
-            transform is used (voxels equal world units).  Only used for
-            the multiscale path (ignored for ``ImageMemoryStore``).
-
-        Returns
-        -------
-        ImageVisual
-            When ``data`` is an ``ImageMemoryStore``.
-        MultiscaleImageVisual
-            When ``data`` is a ``MultiscaleZarrDataStore``.
-        """
-        if isinstance(data, ImageMemoryStore):
-            return self._add_image_memory(data, scene_id, appearance, name)
-        else:
-            return self._add_image_multiscale(
-                data,
-                scene_id,
-                appearance,
-                name,
-                block_size,
-                gpu_budget_bytes,
-                gpu_budget_bytes_2d,
-                threshold,
-                interpolation,
-                use_brick_shader=use_brick_shader,
-                transform=transform,
-            )
-
-    def _add_image_memory(
-        self,
-        data: ImageMemoryStore,
-        scene_id: UUID,
-        appearance: ImageMemoryAppearance,
-        name: str,
     ) -> ImageVisual:
         """Add an in-memory image visual to a scene."""
         # ── 1. Register the data store if needed ────────────────────────
@@ -769,17 +659,17 @@ class CellierController:
         )
         return visual_model
 
-    def _add_image_multiscale(
+    def add_image_multiscale(
         self,
         data: BaseDataStore,
         scene_id: UUID,
         appearance: ImageAppearance,
-        name: str,
-        block_size: int,
-        gpu_budget_bytes: int,
-        gpu_budget_bytes_2d: int,
-        threshold: float | None,
-        interpolation: str,
+        name: str = "image",
+        block_size: int = 32,
+        gpu_budget_bytes: int = 1 * 1024**3,
+        gpu_budget_bytes_2d: int = 64 * 1024**2,
+        threshold: float | None = None,
+        interpolation: str = "linear",
         use_brick_shader: bool = False,
         transform: AffineTransform | None = None,
     ) -> MultiscaleImageVisual:
@@ -874,7 +764,7 @@ class CellierController:
         """Register a pre-built visual model with a scene.
 
         Use this when you have already constructed a MultiscaleImageVisual
-        model yourself.  For the common case, prefer ``add_image()``.
+        model yourself.  For the common case, prefer ``add_image_multiscale()``.
 
         Parameters
         ----------
@@ -997,9 +887,9 @@ class CellierController:
     def fit_camera(self, scene_id: UUID) -> None:
         """Fit the camera to the current scene bounding box.
 
-        Safe to call immediately after ``add_image`` and transform assignment
-        — the node matrix is set at construction time so no chunk data needs
-        to be loaded first.
+        Safe to call immediately after ``add_image`` / ``add_image_multiscale``
+        and transform assignment — the node matrix is set
+        at construction time so no chunk data needs to be loaded first.
 
         Parameters
         ----------

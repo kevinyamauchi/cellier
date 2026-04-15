@@ -356,7 +356,7 @@ async def async_main(zarr_uri: str):
     # Pre-set the Z slice position for when we toggle to 2D.
     scene.dims.selection.slice_indices = {0: z_depth // 2}
 
-    visual_model = controller.add_image(
+    visual_model = controller.add_image_multiscale(
         data=data_store,
         scene_id=scene.id,
         appearance=ImageAppearance(

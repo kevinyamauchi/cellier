@@ -916,21 +916,21 @@ async def async_main(zarr_uri: str) -> None:
         "transform": voxel_to_world,
     }
 
-    xy_visual = controller.add_image(
+    xy_visual = controller.add_image_multiscale(
         scene_id=xy_scene.id,
         appearance=common_2d_appearance,
         name="xy_volume",
         **common_image_kwargs,
     )
 
-    xz_visual = controller.add_image(
+    xz_visual = controller.add_image_multiscale(
         scene_id=xz_scene.id,
         appearance=common_2d_appearance,
         name="xz_volume",
         **common_image_kwargs,
     )
 
-    yz_visual = controller.add_image(
+    yz_visual = controller.add_image_multiscale(
         scene_id=yz_scene.id,
         appearance=common_2d_appearance,
         name="yz_volume",
@@ -938,7 +938,7 @@ async def async_main(zarr_uri: str) -> None:
     )
 
     coarsest_level = data_store.n_levels - 1
-    vol_visual = controller.add_image(
+    vol_visual = controller.add_image_multiscale(
         scene_id=vol_scene.id,
         appearance=ImageAppearance(
             color_map="grays",
