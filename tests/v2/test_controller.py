@@ -21,7 +21,7 @@ from cellier.v2.events._events import CameraChangedEvent, TransformChangedEvent
 from cellier.v2.render._config import CameraConfig, RenderManagerConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.viewer_model import DataManager, ViewerModel
+from cellier.v2.viewer_model import ViewerModel
 from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
 from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
@@ -300,8 +300,6 @@ def test_to_file_roundtrip(tmp_path, small_zarr_store):
 
 def test_stubs_raise():
     controller = CellierController()
-    with pytest.raises(NotImplementedError):
-        controller.from_model(ViewerModel(data=DataManager()))
     with pytest.raises(NotImplementedError):
         controller.remove_scene(uuid4())
     with pytest.raises(NotImplementedError):
