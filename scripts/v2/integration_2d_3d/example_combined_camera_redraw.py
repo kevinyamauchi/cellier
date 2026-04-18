@@ -162,6 +162,141 @@ def _make_separator() -> QFrame:
 
 
 # ---------------------------------------------------------------------------
+# ViewerModel builder
+# ---------------------------------------------------------------------------
+
+
+def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
+    """Construct the ViewerModel for the combined 2D/3D viewer (no render layer).
+
+    Parameters
+    ----------
+    data_store : MultiscaleZarrDataStore
+        The opened multiscale Zarr data store.
+    z_depth : int
+        Number of Z voxels at level 0; used to set the initial 2D slice index.
+
+    Returns
+    -------
+    viewer_model : ViewerModel
+        Fully assembled model, ready for CellierController.from_model.
+    visual_2d : MultiscaleImageVisual
+        The 2D image visual, for post-construction access.
+    visual_3d : MultiscaleImageVisual
+        The 3D image visual, for post-construction access.
+    """
+    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.v2.scene.canvas import Canvas
+    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.v2.scene.scene import Scene
+    from cellier.v2.viewer_model import DataManager, ViewerModel
+    from cellier.v2.visuals._image import (
+        MultiscaleImageRenderConfig,
+        MultiscaleImageVisual,
+    )
+
+    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+
+    # ── 2D scene ──────────────────────────────────────────────────────
+    visual_2d = MultiscaleImageVisual(
+        name="image_2d",
+        data_store_id=str(data_store.id),
+        level_transforms=data_store.level_transforms,
+        appearance=ImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            lod_bias=LOD_BIAS,
+            force_level=None,
+            frustum_cull=True,
+        ),
+        render_config=MultiscaleImageRenderConfig(
+            block_size=BLOCK_SIZE,
+            gpu_budget_bytes=GPU_BUDGET_2D,
+        ),
+    )
+    scene_2d = Scene(
+        name="scene_2d",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(1, 2),
+                slice_indices={0: z_depth // 2},
+            ),
+        ),
+        render_modes={"2d"},
+        lighting="none",
+        visuals=[visual_2d],
+        canvases={},
+    )
+    canvas_2d = Canvas(
+        cameras={
+            "2d": PerspectiveCamera(
+                fov=70.0,
+                near_clipping_plane=1.0,
+                far_clipping_plane=10000.0,
+                controller=OrbitCameraController(enabled=True),
+            )
+        }
+    )
+    scene_2d.canvases[canvas_2d.id] = canvas_2d
+
+    # ── 3D scene ──────────────────────────────────────────────────────
+    visual_3d = MultiscaleImageVisual(
+        name="volume_3d",
+        data_store_id=str(data_store.id),
+        level_transforms=data_store.level_transforms,
+        appearance=ImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            lod_bias=LOD_BIAS,
+            force_level=None,
+            frustum_cull=True,
+            iso_threshold=0.2,
+        ),
+        render_config=MultiscaleImageRenderConfig(
+            block_size=BLOCK_SIZE,
+            gpu_budget_bytes=GPU_BUDGET_3D,
+        ),
+    )
+    scene_3d = Scene(
+        name="scene_3d",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(0, 1, 2),
+                slice_indices={},
+            ),
+        ),
+        render_modes={"3d"},
+        lighting="none",
+        visuals=[visual_3d],
+        canvases={},
+    )
+    canvas_3d = Canvas(
+        cameras={
+            "3d": PerspectiveCamera(
+                fov=70.0,
+                near_clipping_plane=1.0,
+                far_clipping_plane=10000.0,
+                controller=OrbitCameraController(enabled=True),
+            )
+        }
+    )
+    scene_3d.canvases[canvas_3d.id] = canvas_3d
+
+    # ── Assemble ViewerModel ──────────────────────────────────────────
+    viewer_model = ViewerModel(
+        data=DataManager(stores={data_store.id: data_store}),
+        scenes={
+            scene_2d.id: scene_2d,
+            scene_3d.id: scene_3d,
+        },
+    )
+
+    return viewer_model, visual_2d, visual_3d
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -178,60 +313,40 @@ class CombinedApp(QMainWindow):
         self._active_mode: str = "2d"
         self._frustum_line: gfx.Line | None = None
 
-        self._controller = CellierController(
-            widget_parent=self,
-            render_config=RenderManagerConfig(slicing=SlicingConfig(batch_size=128)),
-        )
-        cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
-
         z_depth = data_store.level_shapes[0][0]
         self._z_max = z_depth - 1
 
-        # ── 2D scene ──────────────────────────────────────────────────
-        self._scene_2d = self._controller.add_scene(
-            dim="2d", coordinate_system=cs, name="scene_2d"
-        )
-        self._scene_2d.dims.selection.slice_indices = {0: z_depth // 2}
-
-        self._visual_2d = self._controller.add_image_multiscale(
-            data=data_store,
-            scene_id=self._scene_2d.id,
-            appearance=ImageAppearance(
-                color_map="viridis",
-                clim=(0.0, 1.0),
-                lod_bias=LOD_BIAS,
-                force_level=None,
-                frustum_cull=True,
-            ),
-            name="image_2d",
-            block_size=BLOCK_SIZE,
-            gpu_budget_bytes=GPU_BUDGET_2D,
-        )
-        self._canvas_widget_2d = self._controller.add_canvas(self._scene_2d.id)
-
-        # ── 3D scene ──────────────────────────────────────────────────
-        self._scene_3d = self._controller.add_scene(
-            dim="3d", coordinate_system=cs, name="scene_3d"
+        # ── Build ViewerModel (no render layer) ───────────────────────
+        viewer_model, self._visual_2d, self._visual_3d = _build_viewer_model(
+            data_store, z_depth
         )
 
-        self._visual_3d = self._controller.add_image_multiscale(
-            data=data_store,
-            scene_id=self._scene_3d.id,
-            appearance=ImageAppearance(
-                color_map="viridis",
-                clim=(0.0, 1.0),
-                lod_bias=LOD_BIAS,
-                force_level=None,
-                frustum_cull=True,
-            ),
-            name="volume_3d",
-            block_size=BLOCK_SIZE,
-            gpu_budget_bytes=GPU_BUDGET_3D,
-            threshold=0.2,
+        # ── Construct controller from model ───────────────────────────
+        self._controller = CellierController.from_model(
+            viewer_model,
+            render_config=RenderManagerConfig(slicing=SlicingConfig(batch_size=128)),
+            widget_parent=self,
         )
+
+        # ── Retrieve scenes by name ───────────────────────────────────
+        self._scene_2d = self._controller.get_scene_by_name("scene_2d")
+        self._scene_3d = self._controller.get_scene_by_name("scene_3d")
+
+        # ── Get raw canvas widgets ────────────────────────────────────
+        self._canvas_widget_2d = (
+            self._controller._render_manager._find_canvas_for_scene(
+                self._scene_2d.id
+            ).widget
+        )
+        self._canvas_widget_3d = (
+            self._controller._render_manager._find_canvas_for_scene(
+                self._scene_3d.id
+            ).widget
+        )
+
+        # ── Post-construction: set AABB colors ────────────────────────
         self._visual_2d.aabb.color = AABB_COLOR
         self._visual_3d.aabb.color = AABB_COLOR
-        self._canvas_widget_3d = self._controller.add_canvas(self._scene_3d.id)
 
         self._setup_ui()
 

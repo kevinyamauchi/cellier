@@ -37,15 +37,13 @@ from cellier.v2.scene.cameras import (
     PerspectiveCamera,
 )
 from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import (
-    AxisAlignedSelection,
-    CoordinateSystem,
-    DimsManager,
-)
-from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import MultiscaleImageVisual
+from cellier.v2.visuals._image import (
+    ImageAppearance,
+    MultiscaleImageRenderConfig,
+    MultiscaleImageVisual,
+)
 from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 from cellier.v2.visuals._mesh_memory import (
@@ -68,7 +66,8 @@ if TYPE_CHECKING:
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
-    from cellier.v2.visuals._image import ImageAppearance
+    from cellier.v2.scene.scene import Scene
+    from cellier.v2.visuals._types import VisualType
 
 
 # Appearance fields that require a reslice (not just a GPU material update).
@@ -151,29 +150,87 @@ class CellierController:
         cls,
         model: ViewerModel,
         widget_parent: QWidget | None = None,
+        render_config: RenderManagerConfig | None = None,
     ) -> CellierController:
-        """Construct a controller from a pre-built ViewerModel.
+        """Construct a controller from a serialized ViewerModel.
 
-        Not implemented in Phase 1.  Materializing the full render layer from
-        an existing model requires reading level_shapes from every data store
-        and is deferred until needed.
+        Iteratively adds all data stores, scenes, visuals, and canvases
+        through the public API. The order is:
+
+        1. Data stores  — registered before visuals reference them.
+        2. Scenes       — registered with render_modes and lighting from model.
+        3. Visuals      — added per scene; data stores must already be present.
+        4. Canvases     — restored with camera state from model.
+
+        Parameters
+        ----------
+        model : ViewerModel
+            A ViewerModel loaded from disk or constructed programmatically.
+        widget_parent : QWidget or None
+            Qt parent for canvas widgets. Defaults to None.
+        render_config : RenderManagerConfig or None
+            Render pipeline configuration. Defaults to None (uses defaults).
+
+        Returns
+        -------
+        CellierController
         """
-        raise NotImplementedError(
-            "CellierController.from_model is not implemented in Phase 1."
+        controller = cls(
+            widget_parent=widget_parent,
+            render_config=render_config,
         )
+
+        # 1. Register all data stores.
+        for store in model.data.stores.values():
+            controller.add_data_store(store)
+
+        # 2. Register all scenes (render_modes and lighting come from the model).
+        for scene in model.scenes.values():
+            controller.add_scene(scene)
+
+        # 3. Add visuals per scene. Data stores are already registered in step 1.
+        # The deserialized model's scene.visuals already contains the models.
+        # Clear them first so _add_* helpers can re-append with proper wiring.
+        for scene in model.scenes.values():
+            visual_models = list(scene.visuals)
+            scene.visuals.clear()
+            for visual_model in visual_models:
+                controller.add_visual(scene.id, visual_model)
+
+        # 4. Restore canvases with camera state from the model.
+        for scene in model.scenes.values():
+            for canvas_model in scene.canvases.values():
+                controller.add_canvas_from_model(scene.id, canvas_model)
+
+        return controller
 
     @classmethod
     def from_file(
         cls,
         path: str | pathlib.Path,
         widget_parent: QWidget | None = None,
+        render_config: RenderManagerConfig | None = None,
     ) -> CellierController:
         """Deserialize a ViewerModel from disk and construct a controller.
 
-        Not implemented in Phase 1.
+        Parameters
+        ----------
+        path : str or Path
+            Path to a JSON file previously written by ``to_file``.
+        widget_parent : QWidget or None
+            Qt parent for canvas widgets.
+        render_config : RenderManagerConfig or None
+            Render pipeline configuration.
+
+        Returns
+        -------
+        CellierController
         """
-        raise NotImplementedError(
-            "CellierController.from_file is not implemented in Phase 1."
+        model = ViewerModel.from_file(path)
+        return cls.from_model(
+            model,
+            widget_parent=widget_parent,
+            render_config=render_config,
         )
 
     # ------------------------------------------------------------------
@@ -201,64 +258,23 @@ class CellierController:
     # Scene management
     # ------------------------------------------------------------------
 
-    def add_scene(
-        self,
-        dim: str,
-        coordinate_system: CoordinateSystem,
-        name: str,
-        render_modes: set[Literal["2d", "3d"]] | None = None,
-        lighting: str = "none",
-    ) -> Scene:
-        """Create and register a new empty scene.
+    def add_scene(self, scene: Scene) -> Scene:
+        """Register a pre-built Scene with the controller.
 
         Parameters
         ----------
-        dim : str
-            ``"2d"`` or ``"3d"``.  Sets the initial displayed axes.
-        coordinate_system : CoordinateSystem
-            World coordinate system for the scene.
-        name : str
-            Human-readable name.
-        render_modes : set of ``"2d"`` / ``"3d"`` or None
-            Which rendering modes visuals added to this scene should support.
-            Defaults to ``{dim}``.  Pass ``{"2d", "3d"}`` to build both 2D
-            and 3D nodes up front, enabling cheap toggling via
-            ``scene.dims.selection.displayed_axes``.
-        lighting : str
-            ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to
-            add ambient and directional lights — required for
-            ``MeshPhongAppearance``.
+        scene : Scene
+            A fully-constructed Scene model. The scene's ``render_modes`` and
+            ``lighting`` fields determine which render nodes are built.
 
         Returns
         -------
         Scene
-            The live model object.  Use ``scene.id`` in subsequent calls.
+            The same object passed in.
         """
-        ndim = len(coordinate_system.axis_labels)
-        if dim == "3d":
-            displayed_axes = tuple(range(ndim))
-            slice_indices_dict: dict[int, int] = {}
-        elif dim == "2d":
-            # Display the last two axes; slice all others at 0.
-            displayed_axes = tuple(range(ndim - 2, ndim))
-            slice_indices_dict = dict.fromkeys(range(ndim - 2), 0)
-        else:
-            raise ValueError(f"dim must be '2d' or '3d', got {dim!r}")
-
-        if render_modes is None:
-            render_modes = {dim}
-
-        dims = DimsManager(
-            coordinate_system=coordinate_system,
-            selection=AxisAlignedSelection(
-                displayed_axes=displayed_axes,
-                slice_indices=slice_indices_dict,
-            ),
-        )
-        scene = Scene(name=name, dims=dims)
         self._model.scenes[scene.id] = scene
-        self._scene_render_modes[scene.id] = render_modes
-        self._render_manager.add_scene(scene.id, lighting=lighting)
+        self._scene_render_modes[scene.id] = scene.render_modes
+        self._render_manager.add_scene(scene.id, lighting=scene.lighting)
         self._scene_to_canvases[scene.id] = []
         self._wire_dims_model(scene)
         self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
@@ -285,8 +301,69 @@ class CellierController:
         return data_store
 
     # ------------------------------------------------------------------
-    # Visual management
+    # Visual management — public API
     # ------------------------------------------------------------------
+
+    def add_visual(
+        self,
+        scene_id: UUID,
+        visual_model: VisualType,
+        data_store: BaseDataStore | None = None,
+    ) -> VisualType:
+        """Register a pre-built visual model with a scene.
+
+        This is the canonical construction path used by ``from_model``.
+        All typed convenience methods (``add_image``, ``add_mesh``, etc.)
+        delegate to this method internally.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        visual_model : VisualType
+            Pre-built visual model. Its ``data_store_id`` must already be
+            registered via ``add_data_store``, or ``data_store`` must be
+            passed explicitly.
+        data_store : BaseDataStore or None
+            If provided, register the store first (no-op if already present),
+            then use it. If ``None``, the store is looked up by
+            ``visual_model.data_store_id``; a ``KeyError`` is raised if not
+            found.
+
+        Returns
+        -------
+        VisualType
+            The same visual_model passed in.
+
+        Raises
+        ------
+        KeyError
+            If ``data_store`` is None and ``visual_model.data_store_id`` is not
+            registered.
+        TypeError
+            If the visual type is not recognized.
+        """
+        if data_store is not None:
+            if data_store.id not in self._model.data.stores:
+                self._model.data.stores[data_store.id] = data_store
+
+        visual_type = visual_model.visual_type
+
+        if visual_type == "multiscale_image":
+            return self._add_multiscale_image_visual(scene_id, visual_model)
+        elif visual_type == "image_memory":
+            return self._add_image_visual(scene_id, visual_model)
+        elif visual_type == "points":
+            return self._add_points_visual(scene_id, visual_model)
+        elif visual_type == "lines":
+            return self._add_lines_visual(scene_id, visual_model)
+        elif visual_type == "mesh_memory":
+            return self._add_mesh_visual(scene_id, visual_model)
+        else:
+            raise TypeError(
+                f"Unrecognized visual_type {visual_type!r}. "
+                "Register a handler in add_visual."
+            )
 
     def add_image(
         self,
@@ -295,73 +372,29 @@ class CellierController:
         appearance: ImageMemoryAppearance,
         name: str = "image",
     ) -> ImageVisual:
-        """Add an in-memory image visual to a scene."""
-        # ── 1. Register the data store if needed ────────────────────────
-        if data.id not in self._model.data.stores:
-            self._model.data.stores[data.id] = data
+        """Add an in-memory image visual to a scene.
 
-        # ── 2. Determine render modes from scene registration ───────────
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
+        Parameters
+        ----------
+        data : ImageMemoryStore
+            The backing data store.
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : ImageMemoryAppearance
+            Appearance parameters.
+        name : str
+            Human-readable label. Default ``"image"``.
 
-        # ── 3. Build model-layer objects ────────────────────────────────
+        Returns
+        -------
+        ImageVisual
+        """
         visual_model = ImageVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
         )
-        scene.visuals.append(visual_model)
-
-        # ── 4. Build render-layer object ────────────────────────────────
-        gfx_visual = GFXImageMemoryVisual(
-            visual_model=visual_model,
-            data_store=data,
-            render_modes=render_modes,
-        )
-
-        # ── 5. Register with RenderManager and controller maps ──────────
-        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        # ── 6. Wire appearance/transform bridges and EventBus subscriptions
-        self._wire_appearance(visual_model)
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
-        )
-        return visual_model
+        return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_mesh(
         self,
@@ -381,97 +414,30 @@ class CellierController:
         scene_id : UUID
             ID of an existing scene.
         appearance : MeshFlatAppearance | MeshPhongAppearance
-            Appearance.  Use MeshPhongAppearance with lighting="default"
+            Appearance.  Use MeshPhongAppearance with ``lighting="default"``
             on the scene for shaded rendering.
         name : str
-            Human-readable label.  Default "mesh".
-        transform : AffineTransform | None
+            Human-readable label.  Default ``"mesh"``.
+        transform : AffineTransform or None
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
 
         Returns
         -------
         MeshVisual
-            The live model object.
         """
-        import warnings
-
-        # Warn if Phong requested but no lights in scene.
-        if isinstance(appearance, MeshPhongAppearance):
-            import pygfx as gfx
-
-            sm = self._render_manager._scenes[scene_id]
-            has_light = any(
-                isinstance(c, (gfx.AmbientLight, gfx.DirectionalLight))
-                for c in sm.scene.children
-            )
-            if not has_light:
-                warnings.warn(
-                    "MeshPhongAppearance requires lights in the scene. "
-                    "Pass lighting='default' to add_scene(), otherwise "
-                    "the mesh will render black.",
-                    stacklevel=2,
-                )
-
-        if data.id not in self._model.data.stores:
-            self._model.data.stores[data.id] = data
-
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
         resolved_transform = (
             transform
             if transform is not None
             else AffineTransform.identity(ndim=data.positions.shape[1])
         )
-
         visual_model = MeshVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
             transform=resolved_transform,
         )
-        scene.visuals.append(visual_model)
-
-        gfx_visual = GFXMeshMemoryVisual(
-            visual_model=visual_model,
-            render_modes=render_modes,
-            transform=resolved_transform,
-        )
-
-        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
-        )
-        return visual_model
+        return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_points(
         self,
@@ -486,85 +452,36 @@ class CellierController:
         Parameters
         ----------
         data : PointsMemoryStore
-            The backing data store.  Registered in the model if not already
-            present.
+            The backing data store.
         scene_id : UUID
             ID of the target scene.
-        appearance : PointsMarkerAppearance | None
+        appearance : PointsMarkerAppearance or None
             Appearance model.  Defaults to PointsMarkerAppearance() if None.
         name : str
             Human-readable label for the visual.
-        transform : AffineTransform | None
+        transform : AffineTransform or None
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
 
         Returns
         -------
         PointsVisual
-            The newly created model-layer visual.
         """
         if appearance is None:
             appearance = PointsMarkerAppearance()
 
-        if data.id not in self._model.data.stores:
-            self._model.data.stores[data.id] = data
-
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
         resolved_transform = (
             transform
             if transform is not None
             else AffineTransform.identity(ndim=data.ndim)
         )
-
         visual_model = PointsVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
             transform=resolved_transform,
         )
-        scene.visuals.append(visual_model)
-
-        gfx_visual = GFXPointsMemoryVisual(
-            visual_model=visual_model,
-            render_modes=render_modes,
-            transform=resolved_transform,
-        )
-
-        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
-        )
-        return visual_model
+        return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_lines(
         self,
@@ -579,85 +496,36 @@ class CellierController:
         Parameters
         ----------
         data : LinesMemoryStore
-            The backing data store.  Registered in the model if not already
-            present.
+            The backing data store.
         scene_id : UUID
             ID of the target scene.
-        appearance : LinesMemoryAppearance | None
+        appearance : LinesMemoryAppearance or None
             Appearance model.  Defaults to LinesMemoryAppearance() if None.
         name : str
             Human-readable label for the visual.
-        transform : AffineTransform | None
+        transform : AffineTransform or None
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
 
         Returns
         -------
         LinesVisual
-            The newly created model-layer visual.
         """
         if appearance is None:
             appearance = LinesMemoryAppearance()
 
-        if data.id not in self._model.data.stores:
-            self._model.data.stores[data.id] = data
-
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
         resolved_transform = (
             transform
             if transform is not None
             else AffineTransform.identity(ndim=data.ndim)
         )
-
         visual_model = LinesVisual(
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
             transform=resolved_transform,
         )
-        scene.visuals.append(visual_model)
-
-        gfx_visual = GFXLinesMemoryVisual(
-            visual_model=visual_model,
-            render_modes=render_modes,
-            transform=resolved_transform,
-        )
-
-        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
-        )
-        return visual_model
+        return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_image_multiscale(
         self,
@@ -665,56 +533,94 @@ class CellierController:
         scene_id: UUID,
         appearance: ImageAppearance,
         name: str = "image",
-        block_size: int = 32,
-        gpu_budget_bytes: int = 1 * 1024**3,
-        gpu_budget_bytes_2d: int = 64 * 1024**2,
-        threshold: float | None = None,
-        interpolation: str = "linear",
-        use_brick_shader: bool = False,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
     ) -> MultiscaleImageVisual:
-        """Add a multiscale image visual to a scene."""
-        if data.id not in self._model.data.stores:
-            self._model.data.stores[data.id] = data
+        """Add a multiscale image visual to a scene.
 
-        # Write explicit threshold into appearance for backward compat.
-        if threshold is not None:
-            appearance.iso_threshold = threshold
+        Parameters
+        ----------
+        data : BaseDataStore
+            The backing data store.
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : ImageAppearance
+            Visual appearance parameters.
+        name : str
+            Human-readable label. Default ``"image"``.
+        render_config : MultiscaleImageRenderConfig or None
+            Render-layer configuration. Defaults to
+            ``MultiscaleImageRenderConfig()`` with all default values if None.
+        transform : AffineTransform or None
+            Data-to-world transform. Defaults to identity when None.
 
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
+        Returns
+        -------
+        MultiscaleImageVisual
+        """
+        if render_config is None:
+            render_config = MultiscaleImageRenderConfig()
 
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=len(data.level_shapes[0]))
+        )
         visual_model = MultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
             level_transforms=data.level_transforms,
             appearance=appearance,
+            render_config=render_config,
+            transform=resolved_transform,
         )
+        return self.add_visual(scene_id, visual_model, data_store=data)
 
-        if transform is not None:
-            visual_model.transform = transform
+    # ------------------------------------------------------------------
+    # Visual management — private dispatch methods
+    # ------------------------------------------------------------------
 
-        scene.visuals.append(visual_model)
+    def _add_multiscale_image_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MultiscaleImageVisual,
+    ) -> MultiscaleImageVisual:
+        """Wire and register a pre-built MultiscaleImageVisual.
 
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        visual_model : MultiscaleImageVisual
+            Pre-built visual model. Its ``data_store_id`` must already be
+            registered in ``self._model.data.stores``.
+
+        Returns
+        -------
+        MultiscaleImageVisual
+        """
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
 
-        level_shapes = list(data.level_shapes)
+        scene.visuals.append(visual_model)
+
+        level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
             render_modes=render_modes,
             displayed_axes=displayed_axes,
-            block_size=block_size,
-            gpu_budget_bytes=gpu_budget_bytes,
-            gpu_budget_bytes_2d=gpu_budget_bytes_2d,
-            interpolation=interpolation,
-            use_brick_shader=use_brick_shader,
         )
 
-        self._render_manager.add_visual(scene_id, gfx_visual, data, displayed_axes)
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
         self._visual_to_scene[visual_model.id] = scene_id
+
         self._wire_appearance(visual_model)
         self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
@@ -751,66 +657,298 @@ class CellierController:
         )
         return visual_model
 
-    def add_visual(
+    def _add_image_visual(
         self,
         scene_id: UUID,
-        visual_model: MultiscaleImageVisual,
-        data_store_id: UUID,
-        block_size: int = 32,
-        gpu_budget_bytes: int = 1 * 1024**3,
-        threshold: float = 0.2,
-        interpolation: str = "linear",
-    ) -> MultiscaleImageVisual:
-        """Register a pre-built visual model with a scene.
-
-        Use this when you have already constructed a MultiscaleImageVisual
-        model yourself.  For the common case, prefer ``add_image_multiscale()``.
+        visual_model: ImageVisual,
+    ) -> ImageVisual:
+        """Wire and register a pre-built ImageVisual.
 
         Parameters
         ----------
         scene_id : UUID
             ID of an existing scene.
-        visual_model : MultiscaleImageVisual
-            The pre-built model.
-        data_store_id : UUID
-            ID of a data store already registered via ``add_data_store()``.
-        block_size : int
-            Brick side length in voxels.  Default 32.
-        gpu_budget_bytes : int
-            GPU memory budget for the brick cache.  Default 1 GiB.
-        threshold : float
-            Isosurface threshold for 3D raycast rendering.  Default 0.2.
-        interpolation : str
-            Sampler filter ``"linear"`` or ``"nearest"``.  Default ``"linear"``.
+        visual_model : ImageVisual
+            Pre-built visual model.
 
         Returns
         -------
-        MultiscaleImageVisual
-            The same model passed in.
+        ImageVisual
         """
-        data_store = self._model.data.stores[data_store_id]
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
         scene = self._model.scenes[scene_id]
-        scene.visuals.append(visual_model)
-
         displayed_axes = scene.dims.selection.displayed_axes
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-        level_shapes = list(data_store.level_shapes)
-        gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
-            model=visual_model,
-            level_shapes=level_shapes,
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXImageMemoryVisual(
+            visual_model=visual_model,
+            data_store=data_store,
             render_modes=render_modes,
-            displayed_axes=displayed_axes,
-            block_size=block_size,
-            gpu_budget_bytes=gpu_budget_bytes,
-            threshold=threshold,
-            interpolation=interpolation,
         )
+
         self._render_manager.add_visual(
             scene_id, gfx_visual, data_store, displayed_axes
         )
         self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_points_visual(
+        self,
+        scene_id: UUID,
+        visual_model: PointsVisual,
+    ) -> PointsVisual:
+        """Wire and register a pre-built PointsVisual.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        visual_model : PointsVisual
+            Pre-built visual model.
+
+        Returns
+        -------
+        PointsVisual
+        """
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXPointsMemoryVisual(
+            visual_model=visual_model,
+            render_modes=render_modes,
+            transform=visual_model.transform,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_lines_visual(
+        self,
+        scene_id: UUID,
+        visual_model: LinesVisual,
+    ) -> LinesVisual:
+        """Wire and register a pre-built LinesVisual.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        visual_model : LinesVisual
+            Pre-built visual model.
+
+        Returns
+        -------
+        LinesVisual
+        """
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXLinesMemoryVisual(
+            visual_model=visual_model,
+            render_modes=render_modes,
+            transform=visual_model.transform,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_mesh_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MeshVisual,
+    ) -> MeshVisual:
+        """Wire and register a pre-built MeshVisual.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        visual_model : MeshVisual
+            Pre-built visual model.
+
+        Returns
+        -------
+        MeshVisual
+        """
+        import warnings
+
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        # Warn if Phong requested but no lights in scene.
+        if isinstance(visual_model.appearance, MeshPhongAppearance):
+            import pygfx as gfx
+
+            scene_manager = self._render_manager._scenes[scene_id]
+            has_light = any(
+                isinstance(child, (gfx.AmbientLight, gfx.DirectionalLight))
+                for child in scene_manager.scene.children
+            )
+            if not has_light:
+                warnings.warn(
+                    "MeshPhongAppearance requires lights in the scene. "
+                    "Pass lighting='default' to the Scene model, otherwise "
+                    "the mesh will render black.",
+                    stacklevel=3,
+                )
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXMeshMemoryVisual(
+            visual_model=visual_model,
+            render_modes=render_modes,
+            transform=visual_model.transform,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
         return visual_model
 
     # ------------------------------------------------------------------
@@ -843,8 +981,6 @@ class CellierController:
         QWidget
             The render widget.  Embed with ``layout.addWidget(widget)``.
         """
-        canvas_id = uuid4()
-
         # Infer dimensionality from the scene if not specified.
         if available_dims is None:
             scene = self._model.scenes[scene_id]
@@ -861,8 +997,9 @@ class CellierController:
         canvas_model = Canvas(cameras={available_dims: camera_model})
         self._model.scenes[scene_id].canvases[canvas_model.id] = canvas_model
 
+        # Use canvas_model.id as canonical ID for both model and render layers.
         canvas_view = self._render_manager.add_canvas(
-            canvas_id,
+            canvas_model.id,
             scene_id,
             parent=self._widget_parent,
             dim=available_dims,
@@ -871,8 +1008,75 @@ class CellierController:
         )
         canvas_view.set_event_bus(self._event_bus)
 
-        self._canvas_to_scene[canvas_id] = scene_id
-        self._scene_to_canvases[scene_id].append(canvas_id)
+        self._canvas_to_scene[canvas_model.id] = scene_id
+        self._scene_to_canvases[scene_id].append(canvas_model.id)
+
+        return canvas_view.widget
+
+    def add_canvas_from_model(
+        self,
+        scene_id: UUID,
+        canvas_model: Canvas,
+    ) -> QWidget:
+        """Register a pre-built Canvas model with a scene.
+
+        Used by ``from_model`` to restore canvases from a serialized
+        ViewerModel. Camera state (position, rotation, fov, depth range) is
+        read directly from the camera models stored in ``canvas_model.cameras``.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+        canvas_model : Canvas
+            Pre-built canvas model. Must have at least one entry in
+            ``canvas_model.cameras``.
+
+        Returns
+        -------
+        QWidget
+            The render widget.
+
+        Raises
+        ------
+        ValueError
+            If ``canvas_model.cameras`` is empty.
+        """
+        if not canvas_model.cameras:
+            raise ValueError("canvas_model.cameras must not be empty.")
+
+        available_dims, camera_model = next(iter(canvas_model.cameras.items()))
+
+        if isinstance(camera_model, PerspectiveCamera):
+            fov = camera_model.fov
+            depth_range = (
+                camera_model.near_clipping_plane,
+                camera_model.far_clipping_plane,
+            )
+        else:
+            # OrthographicCamera or unknown: use depth range from model.
+            fov = 70.0
+            depth_range = (
+                camera_model.near_clipping_plane,
+                camera_model.far_clipping_plane,
+            )
+
+        # Store the model using its existing id.
+        self._model.scenes[scene_id].canvases[canvas_model.id] = canvas_model
+
+        # Use canvas_model.id as the single canonical ID for both layers.
+        canvas_view = self._render_manager.add_canvas(
+            canvas_model.id,
+            scene_id,
+            parent=self._widget_parent,
+            dim=available_dims,
+            fov=fov,
+            depth_range=depth_range,
+        )
+        canvas_view.set_event_bus(self._event_bus)
+
+        self._canvas_to_scene[canvas_model.id] = scene_id
+        self._scene_to_canvases[scene_id].append(canvas_model.id)
 
         return canvas_view.widget
 

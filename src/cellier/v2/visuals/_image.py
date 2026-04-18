@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from cmap import Colormap
+from psygnal import EventedModel
 from pydantic import Field, model_validator
 
 from cellier.v2.transform import AffineTransform
@@ -48,6 +49,34 @@ class ImageAppearance(BaseAppearance):
     render_mode: Literal["iso", "mip"] = "iso"
 
 
+class MultiscaleImageRenderConfig(EventedModel):
+    """Render-layer configuration for a multiscale image visual.
+
+    These parameters control GPU resource allocation and shader selection.
+    They are stored in the model so they round-trip through serialization.
+
+    Parameters
+    ----------
+    block_size : int
+        Brick / tile side length in voxels. Default 32.
+    gpu_budget_bytes : int
+        Maximum GPU memory for the 3-D brick cache. Default 1 GiB.
+    gpu_budget_bytes_2d : int
+        Maximum GPU memory for the 2-D tile cache. Default 64 MiB.
+    interpolation : Literal["linear", "nearest"]
+        Sampler filter for the block shader. Default ``"linear"``.
+    use_brick_shader : bool
+        When True, use the Kiln-style MultiscaleVolumeBrickShader for 3-D
+        rendering instead of the default VolumeBlockShader. Default False.
+    """
+
+    block_size: int = 32
+    gpu_budget_bytes: int = 1 * 1024**3
+    gpu_budget_bytes_2d: int = 64 * 1024**2
+    interpolation: Literal["linear", "nearest"] = "linear"
+    use_brick_shader: bool = False
+
+
 class MultiscaleImageVisual(BaseVisual):
     """Model for a multiscale image visual.
 
@@ -78,6 +107,9 @@ class MultiscaleImageVisual(BaseVisual):
     level_transforms: list[AffineTransform]
     appearance: ImageAppearance
     aabb: AABBParams = Field(default_factory=AABBParams)
+    render_config: MultiscaleImageRenderConfig = Field(
+        default_factory=MultiscaleImageRenderConfig
+    )
     requires_camera_reslice: bool = Field(default=True, frozen=True)
 
     @model_validator(mode="before")

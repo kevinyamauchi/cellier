@@ -156,6 +156,7 @@ class QtDimsSliders:
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._sliders: dict[int, QLabeledSlider] = {}
+        self._displayed_axes: tuple[int, ...] = initial_displayed_axes
         _initial = initial_slice_indices or {}
 
         for axis, (min_val, max_val) in axis_ranges.items():
@@ -215,8 +216,17 @@ class QtDimsSliders:
         self._debounce_timer.start()
 
     def _flush_debounced(self) -> None:
-        """Submit the current slider values after the debounce window expires."""
-        updates = {axis: sld.value() for axis, sld in self._sliders.items()}
+        """Submit the current slider values after the debounce window expires.
+
+        Only sliced (non-displayed) axes are included in the update so that
+        displayed-axis sliders — which are hidden and defaulted to the range
+        minimum — do not inject spurious slice constraints.
+        """
+        updates = {
+            axis: sld.value()
+            for axis, sld in self._sliders.items()
+            if axis not in self._displayed_axes
+        }
         self._controller.update_slice_indices(
             self._scene_id, updates, source_id=self._id
         )
@@ -232,6 +242,7 @@ class QtDimsSliders:
     # ── Visibility helper ────────────────────────────────────────────────────
 
     def _update_visibility(self, displayed_axes: tuple[int, ...]) -> None:
+        self._displayed_axes = displayed_axes
         layout: QFormLayout = self._container.layout()
         for axis, sld in self._sliders.items():
             layout.setRowVisible(sld, axis not in displayed_axes)

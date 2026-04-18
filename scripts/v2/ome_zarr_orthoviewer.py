@@ -178,7 +178,7 @@ def make_example_zarr(output_path: Path = _EXAMPLE_PATH) -> Path:
     }
 
     print(
-        f"Done. Physical size: z={nz*sz:.0f} µm, y={ny*syx:.0f} µm, x={nx*syx:.0f} µm"
+        f"Done. Physical size: z={nz * sz:.0f} µm, y={ny * syx:.0f} µm, x={nx * syx:.0f} µm"
     )
     print(f"Blob radius: {_EXAMPLE_BLOB_RADIUS_UM} µm  (spherical in world space)")
     return output_path.resolve()
@@ -789,6 +789,212 @@ def _dtype_decimals(dtype: np.dtype) -> int:
 
 
 # ---------------------------------------------------------------------------
+# ViewerModel builder
+# ---------------------------------------------------------------------------
+
+
+def _build_viewer_model(
+    data_store,
+    cs,
+    voxel_to_world,
+    initial_clim_max: float,
+    depth_range: tuple[float, float],
+    z_mid_world: int,
+    y_mid_world: int,
+    x_mid_world: int,
+):
+    """Construct the ViewerModel for the orthoviewer (no render layer).
+
+    Parameters
+    ----------
+    data_store : OMEZarrImageDataStore
+        The opened OME-Zarr data store.
+    cs : CoordinateSystem
+        The world coordinate system (also used for axis_labels display).
+    voxel_to_world : AffineTransform
+        Level-0 voxel-to-world transform derived from physical scale.
+    initial_clim_max : float
+        Upper contrast-limit bound for the initial clim.
+    depth_range : tuple[float, float]
+        (near, far) clipping planes for the perspective cameras.
+    z_mid_world, y_mid_world, x_mid_world : int
+        Initial slice positions (world coordinates, rounded integers).
+
+    Returns
+    -------
+    viewer_model : ViewerModel
+        Fully assembled model, ready for CellierController.from_model.
+    visuals : dict
+        Mapping ``{"xy", "xz", "yz", "vol"}`` → MultiscaleImageVisual.
+    """
+    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.v2.scene.canvas import Canvas
+    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.v2.scene.scene import Scene
+    from cellier.v2.viewer_model import DataManager, ViewerModel
+    from cellier.v2.visuals._image import (
+        ImageAppearance,
+        MultiscaleImageRenderConfig,
+        MultiscaleImageVisual,
+    )
+
+    def _make_camera() -> PerspectiveCamera:
+        return PerspectiveCamera(
+            fov=70.0,
+            near_clipping_plane=depth_range[0],
+            far_clipping_plane=depth_range[1],
+            controller=OrbitCameraController(enabled=True),
+        )
+
+    coarsest_level = data_store.n_levels - 1
+
+    common_2d_appearance = ImageAppearance(
+        color_map="grays",
+        clim=(0.0, initial_clim_max),
+        lod_bias=1.0,
+        force_level=None,
+        frustum_cull=True,
+        iso_threshold=0.2,
+        render_mode="mip",
+    )
+    common_render_config = MultiscaleImageRenderConfig(
+        block_size=32,
+        gpu_budget_bytes=512 * 1024**2,
+        gpu_budget_bytes_2d=64 * 1024**2,
+        use_brick_shader=True,
+    )
+
+    def _make_2d_visual(name: str) -> MultiscaleImageVisual:
+        return MultiscaleImageVisual(
+            name=name,
+            data_store_id=str(data_store.id),
+            level_transforms=data_store.level_transforms,
+            appearance=common_2d_appearance,
+            render_config=common_render_config,
+            transform=voxel_to_world,
+        )
+
+    # ── XY scene (slice Z) ────────────────────────────────────────────────
+    xy_visual = _make_2d_visual("xy_volume")
+    xy_scene = Scene(
+        name="xy",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(1, 2),
+                slice_indices={0: z_mid_world},
+            ),
+        ),
+        render_modes={"2d"},
+        lighting="none",
+        visuals=[xy_visual],
+        canvases={},
+    )
+    xy_canvas = Canvas(cameras={"2d": _make_camera()})
+    xy_scene.canvases[xy_canvas.id] = xy_canvas
+
+    # ── XZ scene (slice Y) ────────────────────────────────────────────────
+    xz_visual = _make_2d_visual("xz_volume")
+    xz_scene = Scene(
+        name="xz",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(0, 2),
+                slice_indices={1: y_mid_world},
+            ),
+        ),
+        render_modes={"2d"},
+        lighting="none",
+        visuals=[xz_visual],
+        canvases={},
+    )
+    xz_canvas = Canvas(cameras={"2d": _make_camera()})
+    xz_scene.canvases[xz_canvas.id] = xz_canvas
+
+    # ── YZ scene (slice X) ────────────────────────────────────────────────
+    yz_visual = _make_2d_visual("yz_volume")
+    yz_scene = Scene(
+        name="yz",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(0, 1),
+                slice_indices={2: x_mid_world},
+            ),
+        ),
+        render_modes={"2d"},
+        lighting="none",
+        visuals=[yz_visual],
+        canvases={},
+    )
+    yz_canvas = Canvas(cameras={"2d": _make_camera()})
+    yz_scene.canvases[yz_canvas.id] = yz_canvas
+
+    # ── Volume scene (3D) ─────────────────────────────────────────────────
+    vol_visual = MultiscaleImageVisual(
+        name="vol_volume",
+        data_store_id=str(data_store.id),
+        level_transforms=data_store.level_transforms,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=coarsest_level,
+            frustum_cull=False,
+            iso_threshold=0.2,
+            render_mode="iso",
+        ),
+        render_config=MultiscaleImageRenderConfig(
+            block_size=32,
+            gpu_budget_bytes=2048 * 1024**2,
+            gpu_budget_bytes_2d=64 * 1024**2,
+            use_brick_shader=True,
+        ),
+        transform=voxel_to_world,
+    )
+    vol_visual.aabb.enabled = True
+    vol_visual.aabb.color = "#ff00ff"
+
+    vol_scene = Scene(
+        name="vol",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(0, 1, 2),
+                slice_indices={},
+            ),
+        ),
+        render_modes={"3d"},
+        lighting="none",
+        visuals=[vol_visual],
+        canvases={},
+    )
+    vol_canvas = Canvas(cameras={"3d": _make_camera()})
+    vol_scene.canvases[vol_canvas.id] = vol_canvas
+
+    # ── Assemble ViewerModel ──────────────────────────────────────────────
+    viewer_model = ViewerModel(
+        data=DataManager(stores={data_store.id: data_store}),
+        scenes={
+            xy_scene.id: xy_scene,
+            xz_scene.id: xz_scene,
+            yz_scene.id: yz_scene,
+            vol_scene.id: vol_scene,
+        },
+    )
+
+    visuals = {
+        "xy": xy_visual,
+        "xz": xz_visual,
+        "yz": yz_visual,
+        "vol": vol_visual,
+    }
+
+    return viewer_model, visuals
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -805,7 +1011,6 @@ async def async_main(zarr_uri: str) -> None:
     )
     from cellier.v2.scene.dims import CoordinateSystem
     from cellier.v2.transform import AffineTransform
-    from cellier.v2.visuals._image import ImageAppearance
 
     # ── Open OME-Zarr store ───────────────────────────────────────────────
     print(f"Opening OME-Zarr store: {zarr_uri}")
@@ -834,13 +1039,6 @@ async def async_main(zarr_uri: str) -> None:
     print(f"  Max extent: {max_extent:.3f}")
     print(f"  Depth range: near={depth_range[0]:.2f}  far={depth_range[1]:.0f}\n")
 
-    # ── Controller ────────────────────────────────────────────────────────
-    controller = CellierController(
-        widget_parent=None,
-        render_config=RenderManagerConfig(
-            slicing=SlicingConfig(batch_size=32, render_every=4),
-        ),
-    )
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
     voxel_to_world = AffineTransform.from_scale_and_translation(
         scale=tuple(level_0_scale_zyx)
@@ -859,111 +1057,44 @@ async def async_main(zarr_uri: str) -> None:
     # Slider steps of 1 world unit → 1/scale_i voxels per step.
     world_max_zyx = (np.array(level0_shape, dtype=np.float64) - 1) * level_0_scale_zyx
     axis_ranges = {
-        i: (0, int(round(float(world_max_zyx[i])))) for i in range(len(level0_shape))
+        i: (0, round(float(world_max_zyx[i]))) for i in range(len(level0_shape))
     }
 
     # Initial slice positions at mid-volume, in world coordinates (rounded to int).
-    z_mid_world = int(round(float(world_max_zyx[0]) / 2.0))
-    y_mid_world = int(round(float(world_max_zyx[1]) / 2.0))
-    x_mid_world = int(round(float(world_max_zyx[2]) / 2.0))
+    z_mid_world = round(float(world_max_zyx[0]) / 2.0)
+    y_mid_world = round(float(world_max_zyx[1]) / 2.0)
+    x_mid_world = round(float(world_max_zyx[2]) / 2.0)
 
-    # ── Scenes ───────────────────────────────────────────────────────────
-    # XY scene: displayed_axes=(1,2) [y,x], slice on Z (axis 0)
-    xy_scene = controller.add_scene(
-        dim="2d", coordinate_system=cs, name="xy", render_modes={"2d"}
+    # ── Build ViewerModel (no render layer) ───────────────────────────────
+    viewer_model, visuals = _build_viewer_model(
+        data_store=data_store,
+        cs=cs,
+        voxel_to_world=voxel_to_world,
+        initial_clim_max=initial_clim_max,
+        depth_range=depth_range,
+        z_mid_world=z_mid_world,
+        y_mid_world=y_mid_world,
+        x_mid_world=x_mid_world,
     )
-    xy_scene.dims.selection.displayed_axes = (1, 2)
-    xy_scene.dims.selection.slice_indices = {0: z_mid_world}
 
-    # XZ scene: displayed_axes=(0,2) [z,x], slice on Y (axis 1)
-    xz_scene = controller.add_scene(
-        dim="2d", coordinate_system=cs, name="xz", render_modes={"2d"}
+    # ── Construct controller from model ───────────────────────────────────
+    controller = CellierController.from_model(
+        viewer_model,
+        render_config=RenderManagerConfig(
+            slicing=SlicingConfig(batch_size=32, render_every=4),
+        ),
+        widget_parent=None,
     )
-    xz_scene.dims.selection.displayed_axes = (0, 2)
-    xz_scene.dims.selection.slice_indices = {1: y_mid_world}
 
-    # YZ scene: displayed_axes=(0,1) [z,y], slice on X (axis 2)
-    yz_scene = controller.add_scene(
-        dim="2d", coordinate_system=cs, name="yz", render_modes={"2d"}
-    )
-    yz_scene.dims.selection.displayed_axes = (0, 1)
-    yz_scene.dims.selection.slice_indices = {2: x_mid_world}
-
-    # 3D scene: full volume at coarsest level
-    vol_scene = controller.add_scene(
-        dim="3d", coordinate_system=cs, name="vol", render_modes={"3d"}
-    )
+    # ── Retrieve scenes by name ───────────────────────────────────────────
+    xy_scene = controller.get_scene_by_name("xy")
+    xz_scene = controller.get_scene_by_name("xz")
+    yz_scene = controller.get_scene_by_name("yz")
+    vol_scene = controller.get_scene_by_name("vol")
 
     scenes = {"xy": xy_scene, "xz": xz_scene, "yz": yz_scene, "vol": vol_scene}
 
-    # ── Visuals ───────────────────────────────────────────────────────────
-    common_2d_appearance = ImageAppearance(
-        color_map="grays",
-        clim=(0.0, initial_clim_max),
-        lod_bias=1.0,
-        force_level=None,
-        frustum_cull=True,
-        iso_threshold=0.2,
-        render_mode="mip",
-    )
-    common_image_kwargs = {
-        "data": data_store,
-        "block_size": 32,
-        "gpu_budget_bytes": 512 * 1024**2,
-        "gpu_budget_bytes_2d": 64 * 1024**2,
-        "threshold": 0.2,
-        "use_brick_shader": True,
-        "transform": voxel_to_world,
-    }
-
-    xy_visual = controller.add_image_multiscale(
-        scene_id=xy_scene.id,
-        appearance=common_2d_appearance,
-        name="xy_volume",
-        **common_image_kwargs,
-    )
-
-    xz_visual = controller.add_image_multiscale(
-        scene_id=xz_scene.id,
-        appearance=common_2d_appearance,
-        name="xz_volume",
-        **common_image_kwargs,
-    )
-
-    yz_visual = controller.add_image_multiscale(
-        scene_id=yz_scene.id,
-        appearance=common_2d_appearance,
-        name="yz_volume",
-        **common_image_kwargs,
-    )
-
-    coarsest_level = data_store.n_levels - 1
-    vol_visual = controller.add_image_multiscale(
-        scene_id=vol_scene.id,
-        appearance=ImageAppearance(
-            color_map="grays",
-            clim=(0.0, initial_clim_max),
-            lod_bias=1.0,
-            force_level=coarsest_level,
-            frustum_cull=False,
-            iso_threshold=0.2,
-            render_mode="iso",
-        ),
-        name="vol_volume",
-        data=data_store,
-        block_size=32,
-        gpu_budget_bytes=2048 * 1024**2,
-        gpu_budget_bytes_2d=64 * 1024**2,
-        threshold=0.2,
-        use_brick_shader=True,
-        transform=voxel_to_world,
-    )
-    vol_visual.aabb.enabled = True
-    vol_visual.aabb.color = "#ff00ff"
-
-    visuals = {"xy": xy_visual, "xz": xz_visual, "yz": yz_visual, "vol": vol_visual}
-
-    # ── Slice plane mesh overlay ─────────────────────────────────────────────
+    # ── Slice plane mesh overlay ──────────────────────────────────────────
     _INITIAL_PLANE_OPACITY = 1.0
 
     plane_store, plane_visual = _make_plane_mesh(
@@ -988,14 +1119,9 @@ async def async_main(zarr_uri: str) -> None:
     controller.on_dims_changed(yz_scene.id, plane_updater.on_yz_dims_changed)
 
     scene_mgr = controller._render_manager._scenes[vol_scene.id]
-    gfx_vol_visual = scene_mgr.get_visual(vol_visual.id)
+    gfx_vol_visual = scene_mgr.get_visual(visuals["vol"].id)
 
-    # ── Canvases ─────────────────────────────────────────────────────────
-    controller.add_canvas(xy_scene.id, depth_range=depth_range)
-    controller.add_canvas(xz_scene.id, depth_range=depth_range)
-    controller.add_canvas(yz_scene.id, depth_range=depth_range)
-    controller.add_canvas(vol_scene.id, depth_range=depth_range)
-
+    # ── Canvas views ──────────────────────────────────────────────────────
     def _canvas_view(scene_id):
         return controller._render_manager._find_canvas_for_scene(scene_id)
 

@@ -711,19 +711,16 @@ class GFXMultiscaleImageVisual:
         level_shapes: list[tuple[int, ...]],
         render_modes: set[str],
         displayed_axes: tuple[int, ...],
-        block_size: int = 32,
-        gpu_budget_bytes: int = 1 * 1024**3,
-        gpu_budget_bytes_2d: int = 64 * 1024**2,
-        threshold: float | None = None,
-        interpolation: str = "linear",
-        use_brick_shader: bool = False,
     ) -> GFXMultiscaleImageVisual:
         """Build a ``GFXMultiscaleImageVisual`` from a ``MultiscaleImageVisual`` model.
+
+        All render-layer parameters (block size, GPU budgets, interpolation,
+        brick shader flag) are read from ``model.render_config``.
 
         Parameters
         ----------
         model : MultiscaleImageVisual
-            Source visual model.
+            Source visual model.  Must have a ``render_config`` field.
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level, finest first.
         render_modes : set[str]
@@ -733,26 +730,19 @@ class GFXMultiscaleImageVisual:
             is 3D; ``len == 2`` means 2D.  In dual-mode (``{"2d", "3d"}``),
             when starting in 3D the 2D geometry is built from
             ``displayed_axes[-2:]``.
-        block_size : int
-            Rendering brick side length in voxels.
-        gpu_budget_bytes : int
-            Maximum GPU memory for the 3D brick cache.
-        gpu_budget_bytes_2d : int
-            Maximum GPU memory for the 2D tile cache.  Defaults to 64 MiB,
-            which is sufficient for typical 2D slice viewing.
-        threshold : float or None
-            Deprecated. Use ``model.appearance.iso_threshold`` instead.
-            When provided, overrides the appearance value.
-        interpolation : str
-            Sampler filter (``"linear"`` or ``"nearest"``).
-        use_brick_shader : bool
-            When ``True``, use the Kiln-style ``MultiscaleVolumeBrickShader``
-            for 3D rendering instead of the default ``VolumeBlockShader``.
 
         Returns
         -------
         GFXMultiscaleImageVisual
         """
+        render_config = model.render_config
+        block_size = render_config.block_size
+        interpolation = render_config.interpolation
+        use_brick_shader = render_config.use_brick_shader
+        gpu_budget_bytes = render_config.gpu_budget_bytes
+        gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
+        threshold = model.appearance.iso_threshold
+
         if len(displayed_axes) == 3:
             axes_3d: tuple[int, ...] | None = displayed_axes
             axes_2d: tuple[int, ...] = displayed_axes[-2:]
@@ -786,9 +776,6 @@ class GFXMultiscaleImageVisual:
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
-        effective_threshold = (
-            threshold if threshold is not None else model.appearance.iso_threshold
-        )
 
         return cls(
             visual_model_id=model.id,
@@ -798,7 +785,7 @@ class GFXMultiscaleImageVisual:
             displayed_axes=displayed_axes,
             colormap=colormap,
             clim=clim,
-            threshold=effective_threshold,
+            threshold=threshold,
             interpolation=interpolation,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
