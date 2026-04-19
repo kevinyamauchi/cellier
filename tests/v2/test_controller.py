@@ -664,6 +664,67 @@ async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_
     assert non_reslice.id not in ids
 
 
+def test_on_camera_changed_updates_orthographic_camera_model():
+    """OrthographicCamera.width/height are written back by _on_camera_changed."""
+    from cellier.v2.scene.cameras import OrthographicCamera, PanZoomCameraController
+    from cellier.v2.scene.canvas import Canvas
+    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.v2.scene.scene import Scene
+
+    cs = _make_cs()
+    dims = DimsManager(
+        coordinate_system=cs,
+        selection=AxisAlignedSelection(
+            displayed_axes=(1, 2),
+            slice_indices={0: 0},
+        ),
+    )
+    ortho_camera = OrthographicCamera(
+        width=100.0,
+        height=100.0,
+        controller=PanZoomCameraController(enabled=True),
+    )
+    canvas_model = Canvas(cameras={"2d": ortho_camera})
+    scene = Scene(
+        name="test_2d",
+        dims=dims,
+        render_modes={"2d"},
+        visuals=[],
+        canvases={canvas_model.id: canvas_model},
+    )
+
+    controller = CellierController()
+    controller._model.scenes[scene.id] = scene
+    controller.camera_reslice_enabled = False
+
+    ortho_state = CameraState(
+        camera_type="orthographic",
+        position=(5.0, 10.0, 0.0),
+        rotation=(0.0, 0.0, 0.0, 1.0),
+        up=(0.0, 1.0, 0.0),
+        fov=0.0,
+        zoom=1.5,
+        extent=(320.0, 240.0),
+        depth_range=(-500.0, 500.0),
+    )
+    event = CameraChangedEvent(
+        source_id=canvas_model.id,
+        scene_id=scene.id,
+        camera_state=ortho_state,
+    )
+
+    controller._on_camera_changed(event)
+
+    updated = canvas_model.cameras["2d"]
+    assert isinstance(updated, OrthographicCamera)
+    assert updated.width == pytest.approx(320.0)
+    assert updated.height == pytest.approx(240.0)
+    assert updated.zoom == pytest.approx(1.5)
+    assert updated.near_clipping_plane == pytest.approx(-500.0)
+    assert updated.far_clipping_plane == pytest.approx(500.0)
+    assert updated.position == pytest.approx(np.array([5.0, 10.0, 0.0]))
+
+
 # ---------------------------------------------------------------------------
 # Transform wiring tests
 # ---------------------------------------------------------------------------

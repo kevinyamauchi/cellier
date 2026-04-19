@@ -34,9 +34,13 @@ class BaseAppearance(EventedModel):
     visible : bool
         If True, the visual is visible.
         Default value is True.
+    render_order : int
+        Pygfx node render order.  Objects with higher values are drawn later
+        and therefore appear on top when depth values are equal.  Default 0.
     """
 
     visible: bool = True
+    render_order: int = 0
 
 
 class BaseVisual(EventedModel):

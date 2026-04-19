@@ -116,6 +116,10 @@ class GFXMeshMemoryVisual:
         Data-to-world transform. Must cover all data axes.
     """
 
+    #: In-memory visuals are cheap to reslice and must never be cancelled.
+    #: SliceCoordinator.submit() reads this flag before calling cancel_visual.
+    cancellable: bool = False
+
     def __init__(
         self,
         visual_model: MeshVisual,
@@ -148,6 +152,7 @@ class GFXMeshMemoryVisual:
             normals=_PLACEHOLDER_NORMALS.copy(),
         )
         self.node = gfx.Mesh(geom, self._empty_material)
+        self.node.render_order = appearance.render_order
 
         # Both attributes point to the same node.
         # swap_node's old_node is new_node guard makes dim-toggling a no-op.
@@ -368,6 +373,8 @@ class GFXMeshMemoryVisual:
             self._material_3d.shininess = val
         elif name == "flat_shading" and hasattr(self._material_3d, "flat_shading"):
             self._material_3d.flat_shading = val
+        if name == "render_order":
+            self.node.render_order = val
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible

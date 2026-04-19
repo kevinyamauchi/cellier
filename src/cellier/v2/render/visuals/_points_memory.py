@@ -85,6 +85,10 @@ class GFXPointsMemoryVisual:
         Data-to-world transform. Must cover all data axes.
     """
 
+    #: In-memory visuals are cheap to reslice and must never be cancelled.
+    #: SliceCoordinator.submit() reads this flag before calling cancel_visual.
+    cancellable: bool = False
+
     def __init__(
         self,
         visual_model: PointsVisual,
@@ -114,6 +118,7 @@ class GFXPointsMemoryVisual:
 
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Points(geom, self._empty_material)
+        self.node.render_order = appearance.render_order
 
         # Both attributes point to the same node.
         # SceneManager.swap_node's old_node is new_node guard makes dim-toggling
@@ -317,6 +322,8 @@ class GFXPointsMemoryVisual:
             self._material.opacity = val
         elif name == "size":
             self._material.size = val
+        elif name == "render_order":
+            self.node.render_order = val
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible

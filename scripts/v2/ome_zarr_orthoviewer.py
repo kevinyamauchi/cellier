@@ -328,6 +328,9 @@ class OmeZarrOrthoViewer:
         plane_store=None,
         gfx_vol_visual=None,
         initial_plane_opacity: float = 0.4,
+        # Orientation overlays (pass None to omit checkboxes)
+        axes_2d_visual_ids: list | None = None,
+        orient_3d_visual_ids: list | None = None,
     ):
         from PySide6 import QtCore, QtWidgets
 
@@ -436,6 +439,19 @@ class OmeZarrOrthoViewer:
         QtWidgets.QVBoxLayout(cmap_2d_box).addWidget(self._2d_colormap.widget)
         layout_2d.addWidget(cmap_2d_box)
 
+        if axes_2d_visual_ids:
+            from PySide6.QtWidgets import QCheckBox
+
+            axes_2d_cb = QCheckBox("Show orientation axes")
+            axes_2d_cb.setChecked(True)
+
+            def _on_axes_2d_toggled(checked: bool) -> None:
+                for vid in axes_2d_visual_ids:
+                    controller.update_appearance_field(vid, "visible", checked)
+
+            axes_2d_cb.toggled.connect(_on_axes_2d_toggled)
+            layout_2d.addWidget(axes_2d_cb)
+
         panel_layout.addWidget(group_2d)
 
         # 3D group
@@ -453,6 +469,19 @@ class OmeZarrOrthoViewer:
         render_3d_box = QtWidgets.QGroupBox("Render mode")
         QtWidgets.QVBoxLayout(render_3d_box).addWidget(self._3d_render.widget)
         layout_3d.addWidget(render_3d_box)
+
+        if orient_3d_visual_ids:
+            from PySide6.QtWidgets import QCheckBox
+
+            orient_3d_cb = QCheckBox("Show orientation axes")
+            orient_3d_cb.setChecked(True)
+
+            def _on_orient_3d_toggled(checked: bool) -> None:
+                for vid in orient_3d_visual_ids:
+                    controller.update_appearance_field(vid, "visible", checked)
+
+            orient_3d_cb.toggled.connect(_on_orient_3d_toggled)
+            layout_3d.addWidget(orient_3d_cb)
 
         panel_layout.addWidget(group_3d)
 
@@ -534,6 +563,12 @@ class OmeZarrOrthoViewer:
 _PLANE_COLOR_XY = (0.33, 0.33, 1.00)  # blue
 _PLANE_COLOR_XZ = (0.23, 0.67, 0.23)  # green
 _PLANE_COLOR_YZ = (0.80, 0.40, 0.00)  # orange
+
+# Fraction of the shorter canvas world-extent used as the 2D axis line length.
+_AXIS_FRACTION: float = 0.15
+
+# Fraction of the shortest world dimension used as the 3D axis line length.
+_AXIS_3D_FRACTION: float = 0.12
 
 
 def _make_plane_positions(
@@ -771,6 +806,200 @@ class _PlaneUpdater:
             self._update()
 
 
+class _OrientationUpdater:
+    """Keeps orientation overlay positions in sync with camera and dims state.
+
+    One instance is created after the controller is built.  Named methods are
+    registered with ``controller.on_camera_changed`` and
+    ``controller.on_dims_changed`` for each 2D scene.
+
+    Coordinate mapping (pygfx order -> data order)
+    -----------------------------------------------
+    The pygfx orthographic camera is fitted with ``view_dir=(0, 0, -1)`` and
+    ``up=(0, 1, 0)``.  After fitting, ``camera_state.position`` in pygfx order
+    maps to data order as follows:
+
+    * XY scene (displayed Y, X): pygfx_x -> data X (axis 2),
+                                  pygfx_y -> data Y (axis 1).
+    * XZ scene (displayed Z, X): pygfx_x -> data X (axis 2),
+                                  pygfx_y -> data Z (axis 0).
+    * YZ scene (displayed Z, Y): pygfx_x -> data Y (axis 1),
+                                  pygfx_y -> data Z (axis 0).
+
+    Parameters
+    ----------
+    controller : CellierController
+        The active controller.
+    orientation : dict
+        The ``orientation`` dict returned by ``_build_viewer_model``.
+    world_max_zyx : np.ndarray
+        Shape (3,) world-space extents ``[wz, wy, wx]``.
+    """
+
+    def __init__(self, controller, orientation: dict, world_max_zyx: np.ndarray):
+        self._controller = controller
+
+        self._xy_axes_store = orientation["xy_axes_store"]
+        self._xz_axes_store = orientation["xz_axes_store"]
+        self._yz_axes_store = orientation["yz_axes_store"]
+        self._xy_axes_id = orientation["xy_axes_visual"].id
+        self._xz_axes_id = orientation["xz_axes_visual"].id
+        self._yz_axes_id = orientation["yz_axes_visual"].id
+
+        self._vol_points_store = orientation["vol_points_store"]
+        self._vol_points_id = orientation["vol_points_visual"].id
+        self._vol_axes_store = orientation["vol_axes_store"]
+        self._vol_axes_id = orientation["vol_axes_visual"].id
+
+        self._axis_3d_len = _AXIS_3D_FRACTION * float(world_max_zyx.min())
+
+        # Cached camera centres in data order (z, y, x); seeded at mid-volume.
+        mid = world_max_zyx / 2.0
+        self._xy_centre_zyx = mid.copy()
+        self._xz_centre_zyx = mid.copy()
+        self._yz_centre_zyx = mid.copy()
+
+        # Cached view extents per 2D scene (world_width, world_height).
+        self._xy_extent = (0.0, 0.0)
+        self._xz_extent = (0.0, 0.0)
+        self._yz_extent = (0.0, 0.0)
+
+        # Cached slice positions used when dims update but camera has not.
+        self._z_world = float(mid[0])
+        self._y_world = float(mid[1])
+        self._x_world = float(mid[2])
+
+    def _update_2d_axes(self, store, visual_id, centre_zyx, extent, axis_a, axis_b):
+        half_len = _AXIS_FRACTION * min(extent[0], extent[1])
+        c = centre_zyx.copy()
+        s0_start = c.copy()
+        s0_end = c.copy()
+        s0_end[axis_a] += half_len
+        s1_start = c.copy()
+        s1_end = c.copy()
+        s1_end[axis_b] += half_len
+        store.positions = np.array(
+            [s0_start, s0_end, s1_start, s1_end], dtype=np.float32
+        )
+        self._controller.reslice_visual(visual_id)
+
+    def _update_3d(self) -> None:
+        self._vol_points_store.positions = np.array(
+            [self._xy_centre_zyx, self._xz_centre_zyx, self._yz_centre_zyx],
+            dtype=np.float32,
+        )
+        self._controller.reslice_visual(self._vol_points_id)
+
+        L = self._axis_3d_len
+
+        def _seg(origin: np.ndarray, axis: int):
+            end = origin.copy()
+            end[axis] += L
+            return origin.copy(), end
+
+        xy_c = self._xy_centre_zyx
+        xz_c = self._xz_centre_zyx
+        yz_c = self._yz_centre_zyx
+
+        xy_s0_s, xy_s0_e = _seg(xy_c, 1)
+        xy_s1_s, xy_s1_e = _seg(xy_c, 2)
+        xz_s0_s, xz_s0_e = _seg(xz_c, 0)
+        xz_s1_s, xz_s1_e = _seg(xz_c, 2)
+        yz_s0_s, yz_s0_e = _seg(yz_c, 0)
+        yz_s1_s, yz_s1_e = _seg(yz_c, 1)
+
+        self._vol_axes_store.positions = np.array(
+            [
+                xy_s0_s,
+                xy_s0_e,
+                xy_s1_s,
+                xy_s1_e,
+                xz_s0_s,
+                xz_s0_e,
+                xz_s1_s,
+                xz_s1_e,
+                yz_s0_s,
+                yz_s0_e,
+                yz_s1_s,
+                yz_s1_e,
+            ],
+            dtype=np.float32,
+        )
+        self._controller.reslice_visual(self._vol_axes_id)
+
+    def on_xy_camera_changed(self, event) -> None:
+        cs = event.camera_state
+        # pygfx_x -> data X (axis 2), pygfx_y -> data Y (axis 1)
+        self._xy_centre_zyx = np.array(
+            [self._z_world, cs.position[1], cs.position[0]], dtype=np.float64
+        )
+        self._xy_extent = cs.extent
+        self._update_2d_axes(
+            self._xy_axes_store,
+            self._xy_axes_id,
+            self._xy_centre_zyx,
+            self._xy_extent,
+            axis_a=1,
+            axis_b=2,
+        )
+        self._update_3d()
+
+    def on_xz_camera_changed(self, event) -> None:
+        cs = event.camera_state
+        # pygfx_x -> data X (axis 2), pygfx_y -> data Z (axis 0)
+        self._xz_centre_zyx = np.array(
+            [cs.position[1], self._y_world, cs.position[0]], dtype=np.float64
+        )
+        self._xz_extent = cs.extent
+        self._update_2d_axes(
+            self._xz_axes_store,
+            self._xz_axes_id,
+            self._xz_centre_zyx,
+            self._xz_extent,
+            axis_a=0,
+            axis_b=2,
+        )
+        self._update_3d()
+
+    def on_yz_camera_changed(self, event) -> None:
+        cs = event.camera_state
+        # pygfx_x -> data Y (axis 1), pygfx_y -> data Z (axis 0)
+        self._yz_centre_zyx = np.array(
+            [cs.position[1], cs.position[0], self._x_world], dtype=np.float64
+        )
+        self._yz_extent = cs.extent
+        self._update_2d_axes(
+            self._yz_axes_store,
+            self._yz_axes_id,
+            self._yz_centre_zyx,
+            self._yz_extent,
+            axis_a=0,
+            axis_b=1,
+        )
+        self._update_3d()
+
+    def on_xy_dims_changed(self, event) -> None:
+        slice_indices = event.dims_state.selection.slice_indices
+        if 0 in slice_indices:
+            self._z_world = float(slice_indices[0])
+            self._xy_centre_zyx[0] = self._z_world
+        self._update_3d()
+
+    def on_xz_dims_changed(self, event) -> None:
+        slice_indices = event.dims_state.selection.slice_indices
+        if 1 in slice_indices:
+            self._y_world = float(slice_indices[1])
+            self._xz_centre_zyx[1] = self._y_world
+        self._update_3d()
+
+    def on_yz_dims_changed(self, event) -> None:
+        slice_indices = event.dims_state.selection.slice_indices
+        if 2 in slice_indices:
+            self._x_world = float(slice_indices[2])
+            self._yz_centre_zyx[2] = self._x_world
+        self._update_3d()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -826,8 +1055,17 @@ def _build_viewer_model(
         Fully assembled model, ready for CellierController.from_model.
     visuals : dict
         Mapping ``{"xy", "xz", "yz", "vol"}`` → MultiscaleImageVisual.
+    orientation : dict
+        Orientation overlay stores and visuals keyed by name.
     """
-    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
+    from cellier.v2.data.points._points_memory_store import PointsMemoryStore
+    from cellier.v2.scene.cameras import (
+        OrbitCameraController,
+        OrthographicCamera,
+        PanZoomCameraController,
+        PerspectiveCamera,
+    )
     from cellier.v2.scene.canvas import Canvas
     from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
     from cellier.v2.scene.scene import Scene
@@ -837,13 +1075,30 @@ def _build_viewer_model(
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
     )
+    from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+    from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
-    def _make_camera() -> PerspectiveCamera:
-        return PerspectiveCamera(
-            fov=70.0,
-            near_clipping_plane=depth_range[0],
-            far_clipping_plane=depth_range[1],
-            controller=OrbitCameraController(enabled=True),
+    def _make_2d_canvas() -> Canvas:
+        return Canvas(
+            cameras={
+                "2d": OrthographicCamera(
+                    near_clipping_plane=depth_range[0],
+                    far_clipping_plane=depth_range[1],
+                    controller=PanZoomCameraController(enabled=True),
+                )
+            }
+        )
+
+    def _make_3d_canvas() -> Canvas:
+        return Canvas(
+            cameras={
+                "3d": PerspectiveCamera(
+                    fov=70.0,
+                    near_clipping_plane=depth_range[0],
+                    far_clipping_plane=depth_range[1],
+                    controller=OrbitCameraController(enabled=True),
+                )
+            }
         )
 
     coarsest_level = data_store.n_levels - 1
@@ -890,7 +1145,7 @@ def _build_viewer_model(
         visuals=[xy_visual],
         canvases={},
     )
-    xy_canvas = Canvas(cameras={"2d": _make_camera()})
+    xy_canvas = _make_2d_canvas()
     xy_scene.canvases[xy_canvas.id] = xy_canvas
 
     # ── XZ scene (slice Y) ────────────────────────────────────────────────
@@ -909,7 +1164,7 @@ def _build_viewer_model(
         visuals=[xz_visual],
         canvases={},
     )
-    xz_canvas = Canvas(cameras={"2d": _make_camera()})
+    xz_canvas = _make_2d_canvas()
     xz_scene.canvases[xz_canvas.id] = xz_canvas
 
     # ── YZ scene (slice X) ────────────────────────────────────────────────
@@ -928,8 +1183,58 @@ def _build_viewer_model(
         visuals=[yz_visual],
         canvases={},
     )
-    yz_canvas = Canvas(cameras={"2d": _make_camera()})
+    yz_canvas = _make_2d_canvas()
     yz_scene.canvases[yz_canvas.id] = yz_canvas
+
+    # ── 2D orientation axis lines ─────────────────────────────────────────
+    # Positions are placeholder zeros; _OrientationUpdater fills them after
+    # fit_camera.  Colors are fixed per-vertex (set once, never updated).
+    # Each store has 4 vertices: [seg0_start, seg0_end, seg1_start, seg1_end].
+    _c_z = (*_PLANE_COLOR_XY, 1.0)  # blue   — Z axis
+    _c_y = (*_PLANE_COLOR_XZ, 1.0)  # green  — Y axis
+    _c_x = (*_PLANE_COLOR_YZ, 1.0)  # orange — X axis
+
+    def _make_2d_axes_store(colors: np.ndarray) -> LinesMemoryStore:
+        return LinesMemoryStore(
+            positions=np.zeros((4, 3), dtype=np.float32),
+            colors=colors,
+            name="2d_axes",
+        )
+
+    def _make_2d_axes_visual(store: LinesMemoryStore) -> LinesVisual:
+        return LinesVisual(
+            name="2d_axes",
+            data_store_id=str(store.id),
+            appearance=LinesMemoryAppearance(
+                thickness=2.0,
+                thickness_space="screen",
+                color_mode="vertex",
+                depth_test=False,
+                render_order=1,
+                opacity=0.999,
+            ),
+        )
+
+    # XY panel: displayed axes are Y (1) and X (2)
+    xy_axes_store = _make_2d_axes_store(
+        np.array([_c_y, _c_y, _c_x, _c_x], dtype=np.float32)
+    )
+    # XZ panel: displayed axes are Z (0) and X (2)
+    xz_axes_store = _make_2d_axes_store(
+        np.array([_c_z, _c_z, _c_x, _c_x], dtype=np.float32)
+    )
+    # YZ panel: displayed axes are Z (0) and Y (1)
+    yz_axes_store = _make_2d_axes_store(
+        np.array([_c_z, _c_z, _c_y, _c_y], dtype=np.float32)
+    )
+
+    xy_axes_visual = _make_2d_axes_visual(xy_axes_store)
+    xz_axes_visual = _make_2d_axes_visual(xz_axes_store)
+    yz_axes_visual = _make_2d_axes_visual(yz_axes_store)
+
+    xy_scene.visuals.append(xy_axes_visual)
+    xz_scene.visuals.append(xz_axes_visual)
+    yz_scene.visuals.append(yz_axes_visual)
 
     # ── Volume scene (3D) ─────────────────────────────────────────────────
     vol_visual = MultiscaleImageVisual(
@@ -970,12 +1275,87 @@ def _build_viewer_model(
         visuals=[vol_visual],
         canvases={},
     )
-    vol_canvas = Canvas(cameras={"3d": _make_camera()})
+    vol_canvas = _make_3d_canvas()
     vol_scene.canvases[vol_canvas.id] = vol_canvas
+
+    # ── 3D camera-centre points (3 points, one per 2D view) ──────────────
+    vol_points_store = PointsMemoryStore(
+        positions=np.zeros((3, 3), dtype=np.float32),
+        colors=np.array(
+            [
+                [*_PLANE_COLOR_XY, 1.0],  # XY view — blue
+                [*_PLANE_COLOR_XZ, 1.0],  # XZ view — green
+                [*_PLANE_COLOR_YZ, 1.0],  # YZ view — orange
+            ],
+            dtype=np.float32,
+        ),
+        name="3d_camera_centres",
+    )
+    vol_points_visual = PointsVisual(
+        name="3d_camera_centres",
+        data_store_id=str(vol_points_store.id),
+        appearance=PointsMarkerAppearance(
+            size=12.0,
+            size_space="screen",
+            color_mode="vertex",
+            render_order=1,
+            opacity=0.999,
+        ),
+    )
+
+    # ── 3D orientation axes (3 sets x 2 segments = 12 vertices) ─────────
+    # Color layout per set (4 vertices = 2 segments x 2 endpoints):
+    #   XY set: seg0 = Y-axis green,  seg1 = X-axis orange
+    #   XZ set: seg0 = Z-axis blue,   seg1 = X-axis orange
+    #   YZ set: seg0 = Z-axis blue,   seg1 = Y-axis green
+    vol_axes_store = LinesMemoryStore(
+        positions=np.zeros((12, 3), dtype=np.float32),
+        colors=np.array(
+            [
+                _c_y,
+                _c_y,
+                _c_x,
+                _c_x,  # XY set
+                _c_z,
+                _c_z,
+                _c_x,
+                _c_x,  # XZ set
+                _c_z,
+                _c_z,
+                _c_y,
+                _c_y,  # YZ set
+            ],
+            dtype=np.float32,
+        ),
+        name="3d_axes",
+    )
+    vol_axes_visual = LinesVisual(
+        name="3d_axes",
+        data_store_id=str(vol_axes_store.id),
+        appearance=LinesMemoryAppearance(
+            thickness=2.0,
+            thickness_space="screen",
+            color_mode="vertex",
+            render_order=1,
+            opacity=0.999,
+        ),
+    )
+
+    vol_scene.visuals.append(vol_points_visual)
+    vol_scene.visuals.append(vol_axes_visual)
 
     # ── Assemble ViewerModel ──────────────────────────────────────────────
     viewer_model = ViewerModel(
-        data=DataManager(stores={data_store.id: data_store}),
+        data=DataManager(
+            stores={
+                data_store.id: data_store,
+                xy_axes_store.id: xy_axes_store,
+                xz_axes_store.id: xz_axes_store,
+                yz_axes_store.id: yz_axes_store,
+                vol_points_store.id: vol_points_store,
+                vol_axes_store.id: vol_axes_store,
+            }
+        ),
         scenes={
             xy_scene.id: xy_scene,
             xz_scene.id: xz_scene,
@@ -991,7 +1371,20 @@ def _build_viewer_model(
         "vol": vol_visual,
     }
 
-    return viewer_model, visuals
+    orientation = {
+        "xy_axes_store": xy_axes_store,
+        "xz_axes_store": xz_axes_store,
+        "yz_axes_store": yz_axes_store,
+        "xy_axes_visual": xy_axes_visual,
+        "xz_axes_visual": xz_axes_visual,
+        "yz_axes_visual": yz_axes_visual,
+        "vol_points_store": vol_points_store,
+        "vol_points_visual": vol_points_visual,
+        "vol_axes_store": vol_axes_store,
+        "vol_axes_visual": vol_axes_visual,
+    }
+
+    return viewer_model, visuals, orientation
 
 
 # ---------------------------------------------------------------------------
@@ -1066,7 +1459,7 @@ async def async_main(zarr_uri: str) -> None:
     x_mid_world = round(float(world_max_zyx[2]) / 2.0)
 
     # ── Build ViewerModel (no render layer) ───────────────────────────────
-    viewer_model, visuals = _build_viewer_model(
+    viewer_model, visuals, orientation = _build_viewer_model(
         data_store=data_store,
         cs=cs,
         voxel_to_world=voxel_to_world,
@@ -1118,6 +1511,21 @@ async def async_main(zarr_uri: str) -> None:
     controller.on_dims_changed(xz_scene.id, plane_updater.on_xz_dims_changed)
     controller.on_dims_changed(yz_scene.id, plane_updater.on_yz_dims_changed)
 
+    # ── Orientation overlay wiring ────────────────────────────────────────
+    orient_updater = _OrientationUpdater(
+        controller=controller,
+        orientation=orientation,
+        world_max_zyx=world_max_zyx,
+    )
+
+    controller.on_camera_changed(xy_scene.id, orient_updater.on_xy_camera_changed)
+    controller.on_camera_changed(xz_scene.id, orient_updater.on_xz_camera_changed)
+    controller.on_camera_changed(yz_scene.id, orient_updater.on_yz_camera_changed)
+
+    controller.on_dims_changed(xy_scene.id, orient_updater.on_xy_dims_changed)
+    controller.on_dims_changed(xz_scene.id, orient_updater.on_xz_dims_changed)
+    controller.on_dims_changed(yz_scene.id, orient_updater.on_yz_dims_changed)
+
     scene_mgr = controller._render_manager._scenes[vol_scene.id]
     gfx_vol_visual = scene_mgr.get_visual(visuals["vol"].id)
 
@@ -1162,6 +1570,15 @@ async def async_main(zarr_uri: str) -> None:
         plane_store=plane_store,
         gfx_vol_visual=gfx_vol_visual,
         initial_plane_opacity=_INITIAL_PLANE_OPACITY,
+        axes_2d_visual_ids=[
+            orientation["xy_axes_visual"].id,
+            orientation["xz_axes_visual"].id,
+            orientation["yz_axes_visual"].id,
+        ],
+        orient_3d_visual_ids=[
+            orientation["vol_points_visual"].id,
+            orientation["vol_axes_visual"].id,
+        ],
     )
     viewer.window.show()
 
@@ -1169,6 +1586,22 @@ async def async_main(zarr_uri: str) -> None:
     for scene in scenes.values():
         controller.fit_camera(scene.id)
         controller.reslice_scene(scene.id)
+
+    # ── Seed orientation overlays with post-fit camera state ─────────────
+    def _seed_camera_event(scene_id):
+        from cellier.v2.events._events import CameraChangedEvent
+
+        canvas_view = controller._render_manager._find_canvas_for_scene(scene_id)
+        camera_state = canvas_view._capture_camera_state()
+        return CameraChangedEvent(
+            source_id=canvas_view._canvas_id,
+            scene_id=scene_id,
+            camera_state=camera_state,
+        )
+
+    orient_updater.on_xy_camera_changed(_seed_camera_event(xy_scene.id))
+    orient_updater.on_xz_camera_changed(_seed_camera_event(xz_scene.id))
+    orient_updater.on_yz_camera_changed(_seed_camera_event(yz_scene.id))
 
     print("[DEBUG] All cameras fitted. Initial reslice triggered.")
 

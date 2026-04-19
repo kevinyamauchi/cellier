@@ -486,6 +486,8 @@ class GFXMultiscaleImageVisual:
         Maximum GPU memory for the 2D tile cache texture.
     """
 
+    cancellable: bool = True
+
     def __init__(
         self,
         visual_model_id: UUID,
@@ -506,6 +508,7 @@ class GFXMultiscaleImageVisual:
         aabb_enabled: bool = False,
         aabb_color: str = "#ffffff",
         aabb_line_width: float = 2.0,
+        render_order: int = 0,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -698,6 +701,11 @@ class GFXMultiscaleImageVisual:
             self._aabb_line_2d = self._build_aabb_line_2d()
             self.node_2d.add(self._aabb_line_2d)
 
+        if self.node_3d is not None:
+            self.node_3d.render_order = render_order
+        if self.node_2d is not None:
+            self.node_2d.render_order = render_order
+
         # Apply node matrices now if displayed_axes are already known.
         # Without this, the matrices stay at identity until the first
         # displayed-axes change, which may never happen in a fixed viewer.
@@ -792,6 +800,7 @@ class GFXMultiscaleImageVisual:
             aabb_enabled=model.aabb.enabled,
             aabb_color=model.aabb.color,
             aabb_line_width=model.aabb.line_width,
+            render_order=model.appearance.render_order,
             transform=model.transform,
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
@@ -1723,6 +1732,11 @@ class GFXMultiscaleImageVisual:
         elif event.field_name == "render_mode":
             if self.material_3d is not None:
                 self.material_3d.render_mode = event.new_value
+        elif event.field_name == "render_order":
+            if self.node_3d is not None:
+                self.node_3d.render_order = event.new_value
+            if self.node_2d is not None:
+                self.node_2d.render_order = event.new_value
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""

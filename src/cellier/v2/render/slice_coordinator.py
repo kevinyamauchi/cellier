@@ -55,8 +55,13 @@ class SliceCoordinator:
     ) -> None:
         """Execute the full reslicing cycle for the scene in ``request.scene_id``.
 
-        Cancels in-flight tasks for visuals that will be re-submitted before
-        running the synchronous planning phase.
+        Cancels in-flight tasks for visuals that will be re-submitted, subject
+        to each visual's ``cancellable`` property.  Visuals with
+        ``cancellable = False`` (all in-memory visual types) are never cancelled;
+        their tasks run to completion so every intermediate position reaches the
+        GPU.  ``GFXMultiscaleImageVisual`` defaults to ``cancellable = True``.
+        All render-layer visual classes must expose ``cancellable`` as part of
+        their public API; an ``AttributeError`` indicates a missing implementation.
 
         Parameters
         ----------
@@ -73,7 +78,14 @@ class SliceCoordinator:
             to_cancel = frozenset(scene_manager.visual_ids)
 
         for visual_id in to_cancel:
-            self.cancel_visual(request.scene_id, visual_id)
+            try:
+                gfx_visual = scene_manager.get_visual(visual_id)
+            except KeyError:
+                # Visual not yet registered in render layer; cancel defensively.
+                self.cancel_visual(request.scene_id, visual_id)
+                continue
+            if gfx_visual.cancellable:
+                self.cancel_visual(request.scene_id, visual_id)
 
         requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 

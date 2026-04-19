@@ -1601,8 +1601,9 @@ class CellierController:
     def _update_camera_model(self, scene_id: UUID, camera_state: CameraState) -> None:
         """Write a CameraState snapshot back into the model-layer camera.
 
-        Branches on the actual model type (not camera_state.camera_type)
-        because add_canvas may create a PerspectiveCamera even for 2D scenes.
+        Branches on the actual model type: ``PerspectiveCamera`` writes
+        ``up_direction`` and ``fov``; ``OrthographicCamera`` writes ``width``
+        and ``height`` (``extent``).
         """
         scene = self._model.scenes[scene_id]
         # Find the first canvas and its first camera.
@@ -1804,8 +1805,9 @@ class CellierController:
     ) -> SubscriptionHandle:
         """Register a callback fired whenever the camera for *scene_id* changes.
 
-        Camera event wiring is dormant in this phase; the subscription is
-        registered but will never fire until camera events are wired.
+        The callback receives a ``CameraChangedEvent`` carrying the latest
+        ``CameraState``, including ``extent`` (width, height) for
+        ``OrthographicCamera`` scenes.
 
         Parameters
         ----------

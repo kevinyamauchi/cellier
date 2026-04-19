@@ -51,6 +51,7 @@ def _build_material(appearance: LinesMemoryAppearance) -> gfx.LineSegmentMateria
         color=appearance.color,
         color_mode=appearance.color_mode,
         opacity=appearance.opacity,
+        depth_test=appearance.depth_test,
     )
 
 
@@ -91,6 +92,10 @@ class GFXLinesMemoryVisual:
         Data-to-world transform. Must cover all data axes.
     """
 
+    #: In-memory visuals are cheap to reslice and must never be cancelled.
+    #: SliceCoordinator.submit() reads this flag before calling cancel_visual.
+    cancellable: bool = False
+
     def __init__(
         self,
         visual_model: LinesVisual,
@@ -119,6 +124,7 @@ class GFXLinesMemoryVisual:
 
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Line(geom, self._empty_material)
+        self.node.render_order = appearance.render_order
 
         # Both attributes point to the same node.
         # SceneManager.swap_node's old_node is new_node guard makes dim-toggling
@@ -316,6 +322,10 @@ class GFXLinesMemoryVisual:
             self._material.opacity = val
         elif name == "thickness":
             self._material.thickness = val
+        elif name == "depth_test":
+            self._material.depth_test = val
+        elif name == "render_order":
+            self.node.render_order = val
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
