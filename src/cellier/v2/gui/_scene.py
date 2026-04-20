@@ -139,12 +139,14 @@ class QtDimsSliders:
         self._controller = controller
         self._scene_id = scene_id
 
-        # Single-shot QTimer for debouncing rapid slider moves.
-        # Fires _flush_debounced after the user pauses for debounce_ms.
-        self._debounce_timer = QTimer()
-        self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.setInterval(debounce_ms)
-        self._debounce_timer.timeout.connect(self._flush_debounced)
+        # Single-shot QTimer for rate-limiting rapid slider moves.
+        # Fires at most once per interval; a dirty flag ensures the final
+        # position is always submitted even if it landed between ticks.
+        self._rate_limit_timer = QTimer()
+        self._rate_limit_timer.setSingleShot(True)
+        self._rate_limit_timer.setInterval(debounce_ms)
+        self._rate_limit_timer.timeout.connect(self._on_rate_limit_tick)
+        self._slider_dirty = False
 
         # ── Qt seam 1: build container and sliders ───────────────────────────
         self._container = QWidget(parent)
@@ -211,17 +213,19 @@ class QtDimsSliders:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, axis: int, value: int) -> None:
-        # Restart the debounce timer on every slider move.  The actual
-        # update is submitted only when the timer fires (user pauses).
-        self._debounce_timer.start()
+        self._slider_dirty = True
+        if not self._rate_limit_timer.isActive():
+            self._submit_slider_values()
+            self._rate_limit_timer.start()
 
-    def _flush_debounced(self) -> None:
-        """Submit the current slider values after the debounce window expires.
+    def _on_rate_limit_tick(self) -> None:
+        if self._slider_dirty:
+            self._submit_slider_values()
+            self._rate_limit_timer.start()
 
-        Only sliced (non-displayed) axes are included in the update so that
-        displayed-axis sliders — which are hidden and defaulted to the range
-        minimum — do not inject spurious slice constraints.
-        """
+    def _submit_slider_values(self) -> None:
+        """Submit current slider values for all sliced (non-displayed) axes."""
+        self._slider_dirty = False
         updates = {
             axis: sld.value()
             for axis, sld in self._sliders.items()
