@@ -1297,6 +1297,7 @@ async def async_main(zarr_uri: str) -> None:
     from cellier.v2.render._config import (
         RenderManagerConfig,
         SlicingConfig,
+        TemporalAccumulationConfig,
     )
     from cellier.v2.scene.dims import CoordinateSystem
     from cellier.v2.transform import AffineTransform
@@ -1375,6 +1376,7 @@ async def async_main(zarr_uri: str) -> None:
         viewer_model,
         render_config=RenderManagerConfig(
             slicing=SlicingConfig(batch_size=32, render_every=4),
+            temporal=TemporalAccumulationConfig(enabled=False),
         ),
         widget_parent=None,
     )

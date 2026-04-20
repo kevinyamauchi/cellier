@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
-from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
@@ -55,7 +54,6 @@ class RenderManager:
             slicer=self._slicer,
             data_stores=self._data_stores,
         )
-        self._temporal_pass = TemporalAccumulationPass(alpha=config.temporal.alpha)
 
     @property
     def config(self) -> RenderManagerConfig:
@@ -74,7 +72,8 @@ class RenderManager:
     @temporal_alpha.setter
     def temporal_alpha(self, value: float) -> None:
         self._config.temporal.alpha = value
-        self._temporal_pass.alpha = value
+        for canvas in self._canvases.values():
+            canvas._accum_pass.alpha = value
 
     @property
     def temporal_enabled(self) -> bool:
@@ -84,8 +83,8 @@ class RenderManager:
     @temporal_enabled.setter
     def temporal_enabled(self, value: bool) -> None:
         self._config.temporal.enabled = value
-        if not value:
-            self._temporal_pass.reset()
+        for canvas in self._canvases.values():
+            canvas._accum_pass.enabled = value
 
     def add_scene(self, scene_id: UUID, lighting: str = "none") -> SceneManager:
         """Create and register a new scene.
@@ -143,6 +142,10 @@ class RenderManager:
             parent=parent,
             **canvas_view_kwargs,
         )
+        # Apply temporal config to the canvas's accumulation pass.
+        canvas_view._accum_pass.alpha = self._config.temporal.alpha
+        if not self._config.temporal.enabled:
+            canvas_view._accum_pass.enabled = False
         # Wire up per-frame tick for visuals (e.g. jitter seed advance).
         canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
         self._canvases[canvas_id] = canvas_view
