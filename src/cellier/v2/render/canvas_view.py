@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.v2.events._bus import EventBus
+    from cellier.v2.render.visuals._canvas_overlay import GFXCanvasOverlay
 
 
 class CanvasView:
@@ -116,6 +117,7 @@ class CanvasView:
         )
 
         self._last_camera_state: CameraState = self._capture_camera_state()
+        self._overlays: list[GFXCanvasOverlay] = []
         self._canvas.request_draw(self._draw_frame)
 
     @property
@@ -254,6 +256,20 @@ class CanvasView:
             self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
         self._fitted.add(self._dim)
 
+    def add_overlay(self, overlay: GFXCanvasOverlay) -> None:
+        """Attach a screen-space overlay to this canvas.
+
+        The overlay is rendered as an additional post-pass on top of the
+        main scene each frame.  Multiple overlays are rendered in insertion
+        order.
+
+        Parameters
+        ----------
+        overlay : GFXCanvasOverlay
+            The render-layer overlay to attach.
+        """
+        self._overlays.append(overlay)
+
     def request_draw(self) -> None:
         """Request a redraw of the canvas."""
         self._canvas.request_draw(self._draw_frame)
@@ -382,4 +398,20 @@ class CanvasView:
             self._tick_visuals_fn()
 
         scene = self._get_scene_fn(self._scene_id)
-        self._renderer.render(scene, self._camera)
+
+        if self._overlays:
+            canvas_width, canvas_height = self._canvas.get_logical_size()
+            # First pass: main scene. flush=False keeps the colour and depth
+            # buffers open for the subsequent overlay passes.
+            self._renderer.render(scene, self._camera, flush=False)
+            for index, overlay in enumerate(self._overlays):
+                overlay.on_frame(canvas_width, canvas_height)
+                is_last = index == len(self._overlays) - 1
+                self._renderer.render(
+                    overlay.overlay_scene,
+                    overlay.overlay_camera,
+                    flush=is_last,
+                )
+        else:
+            # Fast path — no overlays; single render call as before.
+            self._renderer.render(scene, self._camera)

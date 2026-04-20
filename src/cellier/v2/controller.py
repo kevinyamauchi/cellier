@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
+    from cellier.v2.visuals._canvas_overlay import CanvasOverlay
     from cellier.v2.visuals._types import VisualType
 
 
@@ -1176,6 +1177,17 @@ class CellierController:
 
         canvas_view.set_event_bus(self._event_bus)
 
+        # Wire any overlays already stored on this canvas model to the render
+        # layer.  For canvases created via add_canvas() this loop is a no-op
+        # (overlays=[]).  For canvases restored from a serialized ViewerModel
+        # the overlays list is already populated, so this call is sufficient —
+        # from_model needs no additional overlay-restoration step.
+        # _render_manager.add_canvas_overlay is called directly rather than
+        # self.add_canvas_overlay to avoid re-appending models that are already
+        # in canvas_model.overlays.
+        for overlay_model in canvas_model.overlays:
+            self._render_manager.add_canvas_overlay(scene_id, overlay_model)
+
         self._canvas_to_scene[canvas_model.id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_model.id)
 
@@ -1206,6 +1218,91 @@ class CellierController:
             return
         gfx_scene = self._render_manager.get_scene(scene_id)
         canvas.show_object(gfx_scene)
+
+    def add_canvas_overlay(
+        self,
+        scene_id: UUID,
+        overlay: CanvasOverlay,
+    ) -> CanvasOverlay:
+        """Attach a screen-space overlay to the canvas rendering *scene_id*.
+
+        The overlay is rendered as a post-pass on top of the main scene each
+        frame.  It does not participate in reslicing, has no world-space
+        transform, and is not added to ``scene.visuals``.
+
+        The overlay model is stored in the ``Canvas.overlays`` list of the
+        first canvas registered for *scene_id*, making it part of the
+        serializable model.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene whose canvas should display the overlay.
+        overlay : CanvasOverlay
+            Model-layer overlay description.  Typically a
+            :class:`~cellier.v2.visuals._canvas_overlay.CenteredAxes2D`.
+
+        Returns
+        -------
+        CanvasOverlay
+            The same overlay object passed in (for ID access or chaining).
+
+        Raises
+        ------
+        ValueError
+            If no canvas is registered for *scene_id*.
+        """
+        canvas_ids = self._scene_to_canvases.get(scene_id, [])
+        if not canvas_ids:
+            raise ValueError(
+                f"No canvas registered for scene {scene_id!r}.  "
+                "Call add_canvas or add_canvas_from_model first."
+            )
+        # Attach to the first canvas (one scene → one canvas in typical use).
+        canvas_model = self._model.scenes[scene_id].canvases[canvas_ids[0]]
+        canvas_model.overlays.append(overlay)
+
+        self._render_manager.add_canvas_overlay(scene_id, overlay)
+
+        return overlay
+
+    def set_overlay_visible(self, overlay_id: UUID, visible: bool) -> None:
+        """Toggle the visibility of a canvas overlay.
+
+        Searches all canvases across all scenes for an overlay with
+        ``overlay_id``.  Updates both the model field and the render layer.
+
+        Parameters
+        ----------
+        overlay_id : UUID
+            ID of the :class:`~cellier.v2.visuals._canvas_overlay.CanvasOverlay`
+            to toggle.
+        visible : bool
+            ``True`` to show the overlay, ``False`` to hide it.
+
+        Raises
+        ------
+        KeyError
+            If no overlay with ``overlay_id`` is found.
+        """
+        for scene in self._model.scenes.values():
+            for canvas_model in scene.canvases.values():
+                for overlay_model in canvas_model.overlays:
+                    if overlay_model.id == overlay_id:
+                        overlay_model.visible = visible
+                        canvas_view = self._render_manager._find_canvas_for_scene(
+                            scene.id
+                        )
+                        if canvas_view is not None:
+                            for gfx_overlay in canvas_view._overlays:
+                                model_ref = getattr(gfx_overlay, "_model", None)
+                                if model_ref is overlay_model:
+                                    gfx_overlay.set_visible(visible)
+                        return
+        raise KeyError(
+            f"No canvas overlay with id={overlay_id!r} found.  "
+            "Ensure add_canvas_overlay was called before set_overlay_visible."
+        )
 
     def get_scene_by_name(self, name: str) -> Scene:
         """Return the live Scene model for the given name.

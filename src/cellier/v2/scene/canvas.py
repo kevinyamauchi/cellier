@@ -10,6 +10,7 @@ from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, Field
 
 from cellier.v2.scene.cameras import CameraType
+from cellier.v2.visuals._overlay_types import CanvasOverlayType
 
 
 class Canvas(EventedModel):
@@ -22,12 +23,16 @@ class Canvas(EventedModel):
     cameras : dict[str, CameraType]
         Mapping of ``"2d"`` and/or ``"3d"`` to camera models.
         At least one entry is required.
+    overlays : list[CanvasOverlayType]
+        Screen-space overlays attached to this canvas.  Rendered as
+        post-passes on top of the main scene.  Default empty list.
     """
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
     )
     cameras: dict[str, CameraType]
+    overlays: list[CanvasOverlayType] = Field(default_factory=list)
 
     def model_post_init(self, __context: Any) -> None:
         """Wire camera event relays after model initialization."""
