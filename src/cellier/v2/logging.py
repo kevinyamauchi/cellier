@@ -22,6 +22,11 @@ _GPU_LOGGER = logging.getLogger("cellier.render.gpu")
 _CACHE_LOGGER = logging.getLogger("cellier.render.cache")
 _SLICER_LOGGER = logging.getLogger("cellier.render.slicer")
 _CAMERA_LOGGER = logging.getLogger("cellier.render.camera")
+# Traces source_id injection through the ContextVar→psygnal→bus bridge.
+# Enable this logger to see who triggered each model mutation, which
+# bridge handler resolved the ContextVar, and whether it fell back to
+# the controller's own ID.
+_SOURCE_ID_LOGGER = logging.getLogger("cellier.render.source_id")
 
 _CATEGORY_MAP = {
     "perf": _PERF_LOGGER,
@@ -29,6 +34,7 @@ _CATEGORY_MAP = {
     "cache": _CACHE_LOGGER,
     "slicer": _SLICER_LOGGER,
     "camera": _CAMERA_LOGGER,
+    "source_id": _SOURCE_ID_LOGGER,
 }
 
 _ALL_CATEGORIES = tuple(_CATEGORY_MAP.keys())
@@ -117,6 +123,7 @@ _COLOR_MAP = {
     "cellier.render.cache": ("yellow", "CACHE"),
     "cellier.render.slicer": ("magenta", "SLICER"),
     "cellier.render.camera": ("blue", "CAMERA"),
+    "cellier.render.source_id": ("red", "SOURCE_ID"),
 }
 
 

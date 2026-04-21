@@ -1,7 +1,7 @@
 """cellier v2 event bus and event type catalogue."""
 
 from cellier.v2._state import CameraState, DimsState
-from cellier.v2.events._bus import EventBus, SubscriptionHandle
+from cellier.v2.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.v2.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
@@ -39,6 +39,7 @@ __all__ = [
     "ResliceStartedEvent",
     "SceneAddedEvent",
     "SceneRemovedEvent",
+    "SubscriberInfo",
     "SubscriptionHandle",
     "TransformChangedEvent",
     "VisualAddedEvent",

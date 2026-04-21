@@ -24,7 +24,7 @@ from cellier.v2.events import (
     VisualAddedEvent,
     VisualVisibilityChangedEvent,
 )
-from cellier.v2.logging import _CAMERA_LOGGER
+from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
@@ -1376,10 +1376,17 @@ class CellierController:
                 self._switch_canvas_cameras(
                     scene_id, new_state.selection.displayed_axes
                 )
-            source_id = _source_id_override.get() or self._id
+            resolved_source_id = _source_id_override.get() or self._id
+            _SOURCE_ID_LOGGER.debug(
+                "bridge  handler=_on_dims_psygnal  scene=%s"
+                "  resolved_source=%s  override_active=%s",
+                scene_id,
+                resolved_source_id,
+                _source_id_override.get() is not None,
+            )
             self._event_bus.emit(
                 DimsChangedEvent(
-                    source_id=source_id,
+                    source_id=resolved_source_id,
                     scene_id=scene_id,
                     dims_state=new_state,
                     displayed_axes_changed=displayed_axes_changed,
@@ -1479,10 +1486,18 @@ class CellierController:
         def _on_aabb_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
             new_value = info.args[0]
-            source_id = _aabb_source_id_override.get() or self._id
+            resolved_source_id = _aabb_source_id_override.get() or self._id
+            _SOURCE_ID_LOGGER.debug(
+                "bridge  handler=_on_aabb_psygnal  visual=%s  field=%s"
+                "  resolved_source=%s  override_active=%s",
+                visual_id,
+                field_name,
+                resolved_source_id,
+                _aabb_source_id_override.get() is not None,
+            )
             self._event_bus.emit(
                 AABBChangedEvent(
-                    source_id=source_id,
+                    source_id=resolved_source_id,
                     visual_id=visual_id,
                     field_name=field_name,
                     new_value=new_value,
@@ -1503,11 +1518,19 @@ class CellierController:
         def _on_appearance_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
             new_value = info.args[0]
-            source_id = _source_id_override.get() or self._id
+            resolved_source_id = _source_id_override.get() or self._id
+            _SOURCE_ID_LOGGER.debug(
+                "bridge  handler=_on_appearance_psygnal  visual=%s  field=%s"
+                "  resolved_source=%s  override_active=%s",
+                visual_id,
+                field_name,
+                resolved_source_id,
+                _source_id_override.get() is not None,
+            )
             if field_name == "visible":
                 self._event_bus.emit(
                     VisualVisibilityChangedEvent(
-                        source_id=source_id,
+                        source_id=resolved_source_id,
                         visual_id=visual_id,
                         visible=new_value,
                     )
@@ -1515,7 +1538,7 @@ class CellierController:
             else:
                 self._event_bus.emit(
                     AppearanceChangedEvent(
-                        source_id=source_id,
+                        source_id=resolved_source_id,
                         visual_id=visual_id,
                         field_name=field_name,
                         new_value=new_value,
@@ -1635,11 +1658,18 @@ class CellierController:
             UUID to stamp on the emitted ``DimsChangedEvent``.  Defaults
             to the controller's own ID.
         """
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  scene=%s  source=%s",
+            scene_id,
+            resolved_source_id,
+        )
         token = _source_id_override.set(source_id)
         try:
             self._model.scenes[scene_id].dims.selection.slice_indices = slice_indices
         finally:
             _source_id_override.reset(token)
+            _SOURCE_ID_LOGGER.debug("reset  scene=%s", scene_id)
 
     def update_appearance_field(
         self,
@@ -1668,11 +1698,19 @@ class CellierController:
             to the controller's own ID.
         """
         visual = self.get_visual_model(visual_id)
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  field=%s  visual=%s  source=%s",
+            field,
+            visual_id,
+            resolved_source_id,
+        )
         token = _source_id_override.set(source_id)
         try:
             setattr(visual.appearance, field, value)
         finally:
             _source_id_override.reset(token)
+            _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
 
     def update_aabb_field(
         self,
@@ -1701,11 +1739,19 @@ class CellierController:
             to the controller's own ID.
         """
         visual = self.get_visual_model(visual_id)
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  field=%s  visual=%s  source=%s",
+            field,
+            visual_id,
+            resolved_source_id,
+        )
         token = _aabb_source_id_override.set(source_id)
         try:
             setattr(visual.aabb, field, value)
         finally:
             _aabb_source_id_override.reset(token)
+            _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
 
     # ------------------------------------------------------------------
     # Camera settle

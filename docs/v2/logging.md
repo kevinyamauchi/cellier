@@ -17,6 +17,7 @@ pipeline:
 | `cache` | `cellier.render.cache` | Cache hit/miss summaries, eviction, clear |
 | `slicer` | `cellier.render.slicer` | Async task lifecycle, batch progress |
 | `camera` | `cellier.render.camera` | Camera change detection, settle timer, reslice trigger |
+| `source_id` | `cellier.render.source_id` | Source ID injection through the ContextVar → psygnal → bus bridge |
 
 All four live under the `cellier.render` parent logger, so standard Python
 logging hierarchy applies.
@@ -132,9 +133,45 @@ default handler colors each category:
 | CACHE | yellow |
 | SLICER | magenta |
 | CAMERA | blue |
+| SOURCE_ID | red |
 
 If Rich is not available, output falls back to a plain `StreamHandler`
 automatically.
+
+## Event source ID logging
+
+The `source_id` category traces how `source_id` is injected into bus events.
+It is useful when debugging echo-filtering issues or unexpected widget updates.
+See [debugging_events.md](debugging_events.md) for a full walkthrough.
+
+Enable it with:
+
+```python
+from cellier.v2.logging import enable_debug_logging
+
+enable_debug_logging(categories=("source_id",))
+```
+
+Each model mutation through a controller method produces three lines:
+
+```
+[SOURCE_ID] set    field=clim  visual=9c1b...  source=3f2a...
+[SOURCE_ID] bridge handler=_on_appearance_psygnal  visual=9c1b...  field=clim  resolved_source=3f2a...  override_active=True
+[SOURCE_ID] reset  field=clim  visual=9c1b...
+```
+
+- **`set`** — a controller mutation method (`update_appearance_field`,
+  `update_slice_indices`, or `update_aabb_field`) was called and the
+  `ContextVar` was set.
+- **`bridge`** — the psygnal handler fired and read the `ContextVar`.
+  `override_active=True` confirms the source came from a controller method.
+  `override_active=False` means the model field was mutated directly, and
+  `source_id` fell back to the controller's own ID.
+- **`reset`** — the `ContextVar` was restored after the mutation completed.
+
+| Color | Category |
+|-------|----------|
+| red | SOURCE_ID |
 
 ## How it works under the hood
 
