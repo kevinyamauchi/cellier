@@ -362,6 +362,48 @@ class RenderManager:
         )
         self._slice_coordinator.submit(request, {visual_id: cfg})
 
+    def look_at_visual(
+        self,
+        visual_id: UUID,
+        canvas_id: UUID,
+        view_direction: tuple[float, float, float] = (-1, -1, -1),
+        up: tuple[float, float, float] = (0, 0, 1),
+    ) -> None:
+        """Fit a canvas camera to a visual's bounding box.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the target visual.
+        canvas_id : UUID
+            ID of the canvas whose camera should be fitted.
+        view_direction : tuple[float, float, float]
+            Camera look direction vector (need not be normalized).
+        up : tuple[float, float, float]
+            Camera up vector.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        gfx_scene = self.get_scene(scene_id)
+        self._canvases[canvas_id]._camera.show_object(
+            gfx_scene, view_dir=view_direction, up=up
+        )
+
+    def set_camera_depth_range(
+        self,
+        canvas_id: UUID,
+        depth_range: tuple[float, float],
+    ) -> None:
+        """Set the near/far clip distances for a canvas camera.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the target canvas.
+        depth_range : tuple[float, float]
+            ``(near, far)`` clip distances in world units.
+        """
+        self._canvases[canvas_id].set_depth_range(depth_range)
+
     def _find_canvas_for_scene(self, scene_id: UUID) -> CanvasView | None:
         for canvas_id, s_id in self._canvas_to_scene.items():
             if s_id == scene_id:

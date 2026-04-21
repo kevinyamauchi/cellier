@@ -338,11 +338,11 @@ class CombinedApp(QMainWindow):
                 self._scene_2d.id
             ).widget
         )
-        self._canvas_widget_3d = (
-            self._controller._render_manager._find_canvas_for_scene(
-                self._scene_3d.id
-            ).widget
+        _canvas_view_3d = self._controller._render_manager._find_canvas_for_scene(
+            self._scene_3d.id
         )
+        self._canvas_widget_3d = _canvas_view_3d.widget
+        self._canvas_id_3d = _canvas_view_3d._canvas_id
 
         # ── Post-construction: set AABB colors ────────────────────────
         self._visual_2d.aabb.color = AABB_COLOR
@@ -595,7 +595,7 @@ class CombinedApp(QMainWindow):
 
     def _on_far_plane_changed(self, value: float) -> None:
         self._controller.set_camera_depth_range(
-            scene_id=self._scene_3d.id,
+            canvas_id=self._canvas_id_3d,
             depth_range=(1.0, value),
         )
 

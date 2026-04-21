@@ -1826,6 +1826,7 @@ class CellierController:
     def look_at_visual(
         self,
         visual_id: UUID,
+        canvas_id: UUID,
         view_direction: tuple[float, float, float] = (-1, -1, -1),
         up: tuple[float, float, float] = (0, 0, 1),
     ) -> None:
@@ -1835,36 +1836,30 @@ class CellierController:
         ----------
         visual_id : UUID
             ID of the target visual.
+        canvas_id : UUID
+            ID of the canvas whose camera should be fitted.
         view_direction : tuple[float, float, float]
             Camera look direction vector (need not be normalized).
         up : tuple[float, float, float]
             Camera up vector.
         """
-        scene_id = self._visual_to_scene[visual_id]
-        canvas_ids = self._scene_to_canvases.get(scene_id, [])
-        gfx_scene = self._render_manager.get_scene(scene_id)
-        for canvas_id in canvas_ids:
-            canvas_view = self._render_manager._canvases[canvas_id]
-            canvas_view._camera.show_object(gfx_scene, view_dir=view_direction, up=up)
+        self._render_manager.look_at_visual(visual_id, canvas_id, view_direction, up)
 
     def set_camera_depth_range(
         self,
-        scene_id: UUID,
+        canvas_id: UUID,
         depth_range: tuple[float, float],
     ) -> None:
-        """Set the near/far clip distances for all canvases attached to a scene.
+        """Set the near/far clip distances for a canvas camera.
 
         Parameters
         ----------
-        scene_id : UUID
-            ID of the target scene.
+        canvas_id : UUID
+            ID of the target canvas.
         depth_range : tuple[float, float]
             ``(near, far)`` clip distances in world units.
         """
-        canvas_ids = self._scene_to_canvases.get(scene_id, [])
-        for canvas_id in canvas_ids:
-            canvas_view = self._render_manager._canvases[canvas_id]
-            canvas_view.set_depth_range(depth_range)
+        self._render_manager.set_camera_depth_range(canvas_id, depth_range)
 
     # ------------------------------------------------------------------
     # Stubs for future features
