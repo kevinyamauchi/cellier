@@ -567,8 +567,309 @@ _PLANE_COLOR_YZ = (0.80, 0.40, 0.00)  # orange
 # Fraction of the shorter canvas world-extent used as the 2D axis line length.
 _AXIS_FRACTION: float = 0.15
 
-# Fraction of the shortest world dimension used as the 3D axis line length.
-_AXIS_3D_FRACTION: float = 0.12
+# Fractions of the shortest world dimension used to size the 3D axis mesh overlays.
+# Final world-unit sizes are computed at runtime from world_max_zyx.min().
+_AXIS_3D_LENGTH_FRACTION: float = 0.12  # arm length of each prism
+_AXIS_3D_CUBE_SIDE_FRACTION: float = 0.024  # side of the origin cube
+_AXIS_3D_PRISM_CROSS_SECTION_FRACTION: float = 0.020  # prism cross-section width
+
+# Neutral grey used for all six faces of the origin cube.
+_AXIS_3D_CUBE_COLOUR: tuple[float, float, float, float] = (0.75, 0.75, 0.75, 1.0)
+# Number of triangular faces per box (6 faces × 2 triangles).
+_N_FACES_PER_BOX: int = 12
+
+
+def _box_faces_geometry(
+    centre_zyx: np.ndarray,
+    half_extents_zyx: np.ndarray,
+    vertex_offset: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return positions and indices for one axis-aligned box.
+
+    Uses 24 vertices (4 duplicated per face) so each face can carry an
+    independent per-face colour without bleeding across face boundaries.
+
+    Parameters
+    ----------
+    centre_zyx : np.ndarray
+        Shape (3,) box centre in data order (z, y, x).
+    half_extents_zyx : np.ndarray
+        Shape (3,) half-widths along each data axis.
+    vertex_offset : int
+        Added to every index value so that multiple boxes can be
+        concatenated into a single geometry array without index collisions.
+
+    Returns
+    -------
+    positions : np.ndarray
+        (24, 3) float32 vertex positions.
+    indices : np.ndarray
+        (12, 3) int32 triangle indices, shifted by vertex_offset.
+    """
+    cz, cy, cx = float(centre_zyx[0]), float(centre_zyx[1]), float(centre_zyx[2])
+    hz, hy, hx = (
+        float(half_extents_zyx[0]),
+        float(half_extents_zyx[1]),
+        float(half_extents_zyx[2]),
+    )
+    z0, z1 = cz - hz, cz + hz
+    y0, y1 = cy - hy, cy + hy
+    x0, x1 = cx - hx, cx + hx
+
+    positions = np.array(
+        [
+            # Face 0: −Z
+            [z0, y0, x0],
+            [z0, y1, x0],
+            [z0, y1, x1],
+            [z0, y0, x1],
+            # Face 1: +Z
+            [z1, y0, x0],
+            [z1, y0, x1],
+            [z1, y1, x1],
+            [z1, y1, x0],
+            # Face 2: −Y
+            [z0, y0, x0],
+            [z0, y0, x1],
+            [z1, y0, x1],
+            [z1, y0, x0],
+            # Face 3: +Y
+            [z0, y1, x0],
+            [z1, y1, x0],
+            [z1, y1, x1],
+            [z0, y1, x1],
+            # Face 4: −X
+            [z0, y0, x0],
+            [z1, y0, x0],
+            [z1, y1, x0],
+            [z0, y1, x0],
+            # Face 5: +X
+            [z0, y0, x1],
+            [z0, y1, x1],
+            [z1, y1, x1],
+            [z1, y0, x1],
+        ],
+        dtype=np.float32,
+    )
+
+    base_indices = np.array(
+        [
+            [0, 1, 2],
+            [0, 2, 3],  # Face 0
+            [4, 5, 6],
+            [4, 6, 7],  # Face 1
+            [8, 9, 10],
+            [8, 10, 11],  # Face 2
+            [12, 13, 14],
+            [12, 14, 15],  # Face 3
+            [16, 17, 18],
+            [16, 18, 19],  # Face 4
+            [20, 21, 22],
+            [20, 22, 23],  # Face 5
+        ],
+        dtype=np.int32,
+    )
+    return positions, base_indices + vertex_offset
+
+
+def _make_axis_set_geometry(
+    axis_a: int,
+    axis_b: int,
+    axis_length: float,
+    cube_side: float,
+    prism_cross_section: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build combined positions and indices for one axis set: cube + 2 prisms.
+
+    All geometry is centred at the origin.  Apply a translation transform to
+    the mesh visual to place the set at any world position without rebuilding
+    the geometry.
+
+    The two prisms extend in the positive direction along axis_a and axis_b
+    respectively.  Each prism's near face is flush with the corresponding cube
+    face so the two primitives touch without overlapping.
+
+    Parameters
+    ----------
+    axis_a, axis_b : int
+        Data-order axis indices (0 = Z, 1 = Y, 2 = X) for the two prisms.
+    axis_length : float
+        Arm length of each prism in world units.
+    cube_side : float
+        Side length of the origin cube in world units.
+    prism_cross_section : float
+        Width and height of each prism's square cross-section in world units.
+
+    Returns
+    -------
+    positions : np.ndarray
+        (72, 3) float32 — 24 vertices × 3 boxes (cube + 2 prisms).
+    indices : np.ndarray
+        (36, 3) int32 — 12 triangles × 3 boxes.
+    """
+    half_cube = cube_side / 2.0
+    half_length = axis_length / 2.0
+    half_cross = prism_cross_section / 2.0
+
+    origin = np.zeros(3, dtype=np.float64)
+    cube_half_extents = np.full(3, half_cube, dtype=np.float64)
+    cube_positions, cube_indices = _box_faces_geometry(
+        origin, cube_half_extents, vertex_offset=0
+    )
+
+    centre_a = np.zeros(3, dtype=np.float64)
+    centre_a[axis_a] = half_cube + half_length
+    half_extents_a = np.full(3, half_cross, dtype=np.float64)
+    half_extents_a[axis_a] = half_length
+    prism_a_positions, prism_a_indices = _box_faces_geometry(
+        centre_a, half_extents_a, vertex_offset=24
+    )
+
+    centre_b = np.zeros(3, dtype=np.float64)
+    centre_b[axis_b] = half_cube + half_length
+    half_extents_b = np.full(3, half_cross, dtype=np.float64)
+    half_extents_b[axis_b] = half_length
+    prism_b_positions, prism_b_indices = _box_faces_geometry(
+        centre_b, half_extents_b, vertex_offset=48
+    )
+
+    positions = np.concatenate(
+        [cube_positions, prism_a_positions, prism_b_positions], axis=0
+    )
+    indices = np.concatenate([cube_indices, prism_a_indices, prism_b_indices], axis=0)
+    return positions, indices
+
+
+def _make_axis_set_face_colors(
+    axis_a_color_rgb: tuple[float, float, float],
+    axis_b_color_rgb: tuple[float, float, float],
+) -> np.ndarray:
+    """Return (36, 4) float32 per-face RGBA colors for one axis set.
+
+    Layout: 12 cube faces (neutral grey), 12 prism-A faces (axis_a_color_rgb),
+    12 prism-B faces (axis_b_color_rgb).  All faces are fully opaque.
+
+    Parameters
+    ----------
+    axis_a_color_rgb : tuple[float, float, float]
+        RGB color for the first-axis prism faces.
+    axis_b_color_rgb : tuple[float, float, float]
+        RGB color for the second-axis prism faces.
+
+    Returns
+    -------
+    np.ndarray
+        (36, 4) float32 RGBA per-face color array.
+    """
+    cube_color = np.array(_AXIS_3D_CUBE_COLOUR, dtype=np.float32)
+    color_a = np.array([*axis_a_color_rgb, 1.0], dtype=np.float32)
+    color_b = np.array([*axis_b_color_rgb, 1.0], dtype=np.float32)
+    return np.concatenate(
+        [
+            np.tile(cube_color, (_N_FACES_PER_BOX, 1)),
+            np.tile(color_a, (_N_FACES_PER_BOX, 1)),
+            np.tile(color_b, (_N_FACES_PER_BOX, 1)),
+        ],
+        axis=0,
+    )
+
+
+def _make_axis_meshes(
+    controller,
+    vol_scene,
+    initial_centre_zyx: np.ndarray,
+    world_min_extent: float,
+) -> tuple:
+    """Create the three axis-set mesh visuals in the 3D volume scene.
+
+    One mesh visual is created per 2D view (XY, XZ, YZ).  Each contains a
+    cube at the origin plus two rectangular prisms — one per displayed axis —
+    with their geometry baked relative to the origin.  A translation transform
+    positions the mesh at the camera centre; only the transform is updated on
+    subsequent camera changes, not the geometry.
+
+    Sizes are derived from *world_min_extent* via the fraction constants
+    ``_AXIS_3D_LENGTH_FRACTION``, ``_AXIS_3D_CUBE_SIDE_FRACTION``, and
+    ``_AXIS_3D_PRISM_CROSS_SECTION_FRACTION`` so the indicators scale
+    consistently across datasets with different physical extents.
+
+    Parameters
+    ----------
+    controller : CellierController
+        The active controller used to register each mesh with the scene.
+    vol_scene : Scene
+        The 3D volume scene model that receives the mesh visuals.
+    initial_centre_zyx : np.ndarray
+        Shape (3,) initial world position in data order (z, y, x), applied
+        as a translation transform to all three meshes at creation time.
+    world_min_extent : float
+        Shortest world-space dimension (``world_max_zyx.min()``), used to
+        derive axis_length, cube_side, and prism_cross_section.
+
+    Returns
+    -------
+    tuple[MeshVisual, MeshVisual, MeshVisual]
+        ``(xy_axis_visual, xz_axis_visual, yz_axis_visual)`` — the three
+        mesh visuals, one per 2D view.
+    """
+    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
+    from cellier.v2.transform import AffineTransform
+    from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+
+    # Axis RGB colors match the plane-mesh and slider color convention.
+    color_z = _PLANE_COLOR_XY  # blue  — data axis 0
+    color_y = _PLANE_COLOR_XZ  # green — data axis 1
+    color_x = _PLANE_COLOR_YZ  # orange — data axis 2
+
+    # Per-view specification: (view_name, axis_a_index, axis_b_index, color_a, color_b)
+    # XY view displays Y (axis 1) and X (axis 2).
+    # XZ view displays Z (axis 0) and X (axis 2).
+    # YZ view displays Z (axis 0) and Y (axis 1).
+    view_specifications = [
+        ("xy_axis_set", 1, 2, color_y, color_x),
+        ("xz_axis_set", 0, 2, color_z, color_x),
+        ("yz_axis_set", 0, 1, color_z, color_y),
+    ]
+
+    axis_length = _AXIS_3D_LENGTH_FRACTION * world_min_extent
+    cube_side = _AXIS_3D_CUBE_SIDE_FRACTION * world_min_extent
+    prism_cross_section = _AXIS_3D_PRISM_CROSS_SECTION_FRACTION * world_min_extent
+
+    initial_translation = tuple(float(v) for v in initial_centre_zyx)
+    initial_transform = AffineTransform.from_translation(initial_translation)
+
+    axis_visuals = []
+    for view_name, axis_a, axis_b, color_a, color_b in view_specifications:
+        positions, indices = _make_axis_set_geometry(
+            axis_a, axis_b, axis_length, cube_side, prism_cross_section
+        )
+        face_colors = _make_axis_set_face_colors(color_a, color_b)
+        store = MeshMemoryStore(
+            positions=positions,
+            indices=indices,
+            colors=face_colors,
+            name=view_name,
+        )
+        appearance = MeshFlatAppearance(
+            color_mode="face",
+            side="both",
+            opacity=1.0,
+            render_order=1,
+            depth_test=False,
+            depth_write=False,
+            depth_compare="<=",
+        )
+        visual = controller.add_mesh(
+            data=store,
+            scene_id=vol_scene.id,
+            appearance=appearance,
+            name=view_name,
+            transform=initial_transform,
+        )
+        axis_visuals.append(visual)
+
+    xy_axis_visual, xz_axis_visual, yz_axis_visual = axis_visuals
+    return xy_axis_visual, xz_axis_visual, yz_axis_visual
 
 
 def _make_plane_positions(
@@ -830,21 +1131,28 @@ class _OrientationUpdater:
     ----------
     controller : CellierController
         The active controller.
-    orientation : dict
-        The ``orientation`` dict returned by ``_build_viewer_model``.
+    xy_axis_visual : MeshVisual
+        Axis-set mesh visual for the XY view (displays Y and X prisms).
+    xz_axis_visual : MeshVisual
+        Axis-set mesh visual for the XZ view (displays Z and X prisms).
+    yz_axis_visual : MeshVisual
+        Axis-set mesh visual for the YZ view (displays Z and Y prisms).
     world_max_zyx : np.ndarray
         Shape (3,) world-space extents ``[wz, wy, wx]``.
     """
 
-    def __init__(self, controller, orientation: dict, world_max_zyx: np.ndarray):
+    def __init__(
+        self,
+        controller,
+        xy_axis_visual,
+        xz_axis_visual,
+        yz_axis_visual,
+        world_max_zyx: np.ndarray,
+    ):
         self._controller = controller
-
-        self._vol_points_store = orientation["vol_points_store"]
-        self._vol_points_id = orientation["vol_points_visual"].id
-        self._vol_axes_store = orientation["vol_axes_store"]
-        self._vol_axes_id = orientation["vol_axes_visual"].id
-
-        self._axis_3d_len = _AXIS_3D_FRACTION * float(world_max_zyx.min())
+        self._xy_axis_visual_id = xy_axis_visual.id
+        self._xz_axis_visual_id = xz_axis_visual.id
+        self._yz_axis_visual_id = yz_axis_visual.id
 
         # Cached camera centres in data order (z, y, x); seeded at mid-volume.
         mid = world_max_zyx / 2.0
@@ -858,48 +1166,41 @@ class _OrientationUpdater:
         self._x_world = float(mid[2])
 
     def _update_3d(self) -> None:
-        self._vol_points_store.positions = np.array(
-            [self._xy_centre_zyx, self._xz_centre_zyx, self._yz_centre_zyx],
-            dtype=np.float32,
-        )
-        self._controller.reslice_visual(self._vol_points_id)
+        from cellier.v2.transform import AffineTransform
 
-        L = self._axis_3d_len
+        labels = ("xy", "xz", "yz")
+        for label, visual_id, centre_zyx in zip(
+            labels,
+            (
+                self._xy_axis_visual_id,
+                self._xz_axis_visual_id,
+                self._yz_axis_visual_id,
+            ),
+            (
+                self._xy_centre_zyx,
+                self._xz_centre_zyx,
+                self._yz_centre_zyx,
+            ),
+        ):
+            translation = tuple(float(v) for v in centre_zyx)
+            print(f"[DEBUG orient] {label} axis set → centre_zyx={translation}")
+            self._controller.set_visual_transform(
+                visual_id,
+                AffineTransform.from_translation(translation),
+                reslice=False,
+            )
 
-        def _seg(origin: np.ndarray, axis: int):
-            end = origin.copy()
-            end[axis] += L
-            return origin.copy(), end
-
-        xy_c = self._xy_centre_zyx
-        xz_c = self._xz_centre_zyx
-        yz_c = self._yz_centre_zyx
-
-        xy_s0_s, xy_s0_e = _seg(xy_c, 1)
-        xy_s1_s, xy_s1_e = _seg(xy_c, 2)
-        xz_s0_s, xz_s0_e = _seg(xz_c, 0)
-        xz_s1_s, xz_s1_e = _seg(xz_c, 2)
-        yz_s0_s, yz_s0_e = _seg(yz_c, 0)
-        yz_s1_s, yz_s1_e = _seg(yz_c, 1)
-
-        self._vol_axes_store.positions = np.array(
-            [
-                xy_s0_s,
-                xy_s0_e,
-                xy_s1_s,
-                xy_s1_e,
-                xz_s0_s,
-                xz_s0_e,
-                xz_s1_s,
-                xz_s1_e,
-                yz_s0_s,
-                yz_s0_e,
-                yz_s1_s,
-                yz_s1_e,
-            ],
-            dtype=np.float32,
-        )
-        self._controller.reslice_visual(self._vol_axes_id)
+            # Inspect the render-layer node matrix after the transform update.
+            scene_id = self._controller._visual_to_scene[visual_id]
+            scene_mgr = self._controller._render_manager._scenes[scene_id]
+            gfx_visual = scene_mgr.get_visual(visual_id)
+            last_axes = gfx_visual._last_displayed_axes
+            node_matrix = gfx_visual.node.local.matrix
+            print(
+                f"[DEBUG orient] {label} _last_displayed_axes={last_axes} "
+                f"node.local.matrix translation col="
+                f"{node_matrix[:3, 3].tolist()}"
+            )
 
     def on_xy_camera_changed(self, event) -> None:
         camera_state = event.camera_state
@@ -1005,11 +1306,9 @@ def _build_viewer_model(
         Fully assembled model, ready for CellierController.from_model.
     visuals : dict
         Mapping ``{"xy", "xz", "yz", "vol"}`` → MultiscaleImageVisual.
-    orientation : dict
-        Orientation overlay stores and visuals keyed by name.
+    visuals : dict
+        Mapping ``{"xy", "xz", "yz", "vol"}`` → MultiscaleImageVisual.
     """
-    from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-    from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.scene.cameras import (
         OrbitCameraController,
         OrthographicCamera,
@@ -1025,8 +1324,6 @@ def _build_viewer_model(
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
     )
-    from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
-    from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
     def _make_2d_canvas() -> Canvas:
         return Canvas(
@@ -1136,11 +1433,6 @@ def _build_viewer_model(
     yz_canvas = _make_2d_canvas()
     yz_scene.canvases[yz_canvas.id] = yz_canvas
 
-    # Shared RGBA colors for the 3D orientation axis segments.
-    _c_z = (*_PLANE_COLOR_XY, 1.0)  # blue   — Z axis
-    _c_y = (*_PLANE_COLOR_XZ, 1.0)  # green  — Y axis
-    _c_x = (*_PLANE_COLOR_YZ, 1.0)  # orange — X axis
-
     # ── Volume scene (3D) ─────────────────────────────────────────────────
     vol_visual = MultiscaleImageVisual(
         name="vol_volume",
@@ -1183,83 +1475,9 @@ def _build_viewer_model(
     vol_canvas = _make_3d_canvas()
     vol_scene.canvases[vol_canvas.id] = vol_canvas
 
-    # ── 3D camera-centre points (3 points, one per 2D view) ──────────────
-    vol_points_store = PointsMemoryStore(
-        positions=np.zeros((3, 3), dtype=np.float32),
-        colors=np.array(
-            [
-                [*_PLANE_COLOR_XY, 1.0],  # XY view — blue
-                [*_PLANE_COLOR_XZ, 1.0],  # XZ view — green
-                [*_PLANE_COLOR_YZ, 1.0],  # YZ view — orange
-            ],
-            dtype=np.float32,
-        ),
-        name="3d_camera_centres",
-    )
-    vol_points_visual = PointsVisual(
-        name="3d_camera_centres",
-        data_store_id=str(vol_points_store.id),
-        appearance=PointsMarkerAppearance(
-            size=12.0,
-            size_space="screen",
-            color_mode="vertex",
-            render_order=1,
-            opacity=0.999,
-        ),
-    )
-
-    # ── 3D orientation axes (3 sets x 2 segments = 12 vertices) ─────────
-    # Color layout per set (4 vertices = 2 segments x 2 endpoints):
-    #   XY set: seg0 = Y-axis green,  seg1 = X-axis orange
-    #   XZ set: seg0 = Z-axis blue,   seg1 = X-axis orange
-    #   YZ set: seg0 = Z-axis blue,   seg1 = Y-axis green
-    vol_axes_store = LinesMemoryStore(
-        positions=np.zeros((12, 3), dtype=np.float32),
-        colors=np.array(
-            [
-                _c_y,
-                _c_y,
-                _c_x,
-                _c_x,  # XY set
-                _c_z,
-                _c_z,
-                _c_x,
-                _c_x,  # XZ set
-                _c_z,
-                _c_z,
-                _c_y,
-                _c_y,  # YZ set
-            ],
-            dtype=np.float32,
-        ),
-        name="3d_axes",
-    )
-    vol_axes_visual = LinesVisual(
-        name="3d_axes",
-        data_store_id=str(vol_axes_store.id),
-        appearance=LinesMemoryAppearance(
-            thickness=8.0,
-            thickness_space="screen",
-            color_mode="vertex",
-            render_order=1,
-            opacity=0.999,
-            depth_write=False,
-            depth_compare="<=",
-        ),
-    )
-
-    vol_scene.visuals.append(vol_points_visual)
-    vol_scene.visuals.append(vol_axes_visual)
-
     # ── Assemble ViewerModel ──────────────────────────────────────────────
     viewer_model = ViewerModel(
-        data=DataManager(
-            stores={
-                data_store.id: data_store,
-                vol_points_store.id: vol_points_store,
-                vol_axes_store.id: vol_axes_store,
-            }
-        ),
+        data=DataManager(stores={data_store.id: data_store}),
         scenes={
             xy_scene.id: xy_scene,
             xz_scene.id: xz_scene,
@@ -1275,14 +1493,7 @@ def _build_viewer_model(
         "vol": vol_visual,
     }
 
-    orientation = {
-        "vol_points_store": vol_points_store,
-        "vol_points_visual": vol_points_visual,
-        "vol_axes_store": vol_axes_store,
-        "vol_axes_visual": vol_axes_visual,
-    }
-
-    return viewer_model, visuals, orientation
+    return viewer_model, visuals
 
 
 # ---------------------------------------------------------------------------
@@ -1362,7 +1573,7 @@ async def async_main(zarr_uri: str) -> None:
     x_mid_world = round(float(world_max_zyx[2]) / 2.0)
 
     # ── Build ViewerModel (no render layer) ───────────────────────────────
-    viewer_model, visuals, orientation = _build_viewer_model(
+    viewer_model, visuals = _build_viewer_model(
         data_store=data_store,
         cs=cs,
         voxel_to_world=voxel_to_world,
@@ -1390,6 +1601,17 @@ async def async_main(zarr_uri: str) -> None:
     vol_scene = controller.get_scene_by_name("vol")
 
     scenes = {"xy": xy_scene, "xz": xz_scene, "yz": yz_scene, "vol": vol_scene}
+
+    # ── 3D axis-set mesh overlays (one per 2D view) ───────────────────────
+    initial_centre_zyx = np.array(
+        [z_mid_world, y_mid_world, x_mid_world], dtype=np.float64
+    )
+    xy_axis_visual, xz_axis_visual, yz_axis_visual = _make_axis_meshes(
+        controller=controller,
+        vol_scene=vol_scene,
+        initial_centre_zyx=initial_centre_zyx,
+        world_min_extent=float(world_max_zyx.min()),
+    )
 
     # ── Slice plane mesh overlay ──────────────────────────────────────────
     _INITIAL_PLANE_OPACITY = 1.0
@@ -1522,8 +1744,9 @@ async def async_main(zarr_uri: str) -> None:
             yz_axes_overlay.id,
         ],
         orient_3d_visual_ids=[
-            orientation["vol_points_visual"].id,
-            orientation["vol_axes_visual"].id,
+            xy_axis_visual.id,
+            xz_axis_visual.id,
+            yz_axis_visual.id,
         ],
     )
     viewer.window.show()
@@ -1531,7 +1754,9 @@ async def async_main(zarr_uri: str) -> None:
     # ── 3D orientation overlay wiring ─────────────────────────────────────
     orient_updater = _OrientationUpdater(
         controller=controller,
-        orientation=orientation,
+        xy_axis_visual=xy_axis_visual,
+        xz_axis_visual=xz_axis_visual,
+        yz_axis_visual=yz_axis_visual,
         world_max_zyx=world_max_zyx,
     )
 

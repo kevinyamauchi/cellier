@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Callable, Generator, Literal
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -121,6 +122,11 @@ class CellierController:
         self._external_handles: list[SubscriptionHandle] = []
         # Camera settle
         self._settle_tasks: dict[UUID, asyncio.Task] = {}
+        # When True, transform-change handlers skip reslice_scene.  Managed
+        # by the suppress_reslice context manager.  This is a flat boolean, so
+        # nested suppress_reslice calls or concurrent async transform mutations
+        # will interfere — use a depth counter if that ever becomes necessary.
+        self._suppress_reslice: bool = False
         self._event_bus.subscribe(
             CameraChangedEvent,
             self._on_camera_changed,
@@ -1436,7 +1442,11 @@ class CellierController:
         )
 
     def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
-        """Return a handler that emits TransformChangedEvent and triggers reslice."""
+        """Return a handler that emits TransformChangedEvent and triggers reslice.
+
+        The reslice is skipped when ``_suppress_reslice`` is True, which is
+        managed by the :meth:`suppress_reslice` context manager.
+        """
 
         def _on_transform(new_transform: AffineTransform) -> None:
             self._event_bus.emit(
@@ -1447,7 +1457,8 @@ class CellierController:
                     transform=new_transform,
                 )
             )
-            self.reslice_scene(scene_id)
+            if not self._suppress_reslice:
+                self.reslice_scene(scene_id)
 
         return _on_transform
 
@@ -1537,6 +1548,59 @@ class CellierController:
         else:
             cfg = VisualRenderConfig()
         self._render_manager.reslice_visual(visual_id, dims_state, cfg)
+
+    @contextmanager
+    def suppress_reslice(self) -> Generator[None, None, None]:
+        """Context manager that blocks reslice_scene inside transform handlers.
+
+        Use this when updating a visual's transform without needing to reload
+        its underlying data — for example, repositioning a static-geometry mesh
+        by translation only.
+
+        .. warning::
+            ``_suppress_reslice`` is a flat boolean.  Nested calls or concurrent
+            async tasks that mutate transforms inside overlapping
+            ``suppress_reslice`` blocks will interfere.  Replace with a depth
+            counter if that becomes necessary.
+        """
+        self._suppress_reslice = True
+        try:
+            yield
+        finally:
+            self._suppress_reslice = False
+
+    def set_visual_transform(
+        self,
+        visual_id: UUID,
+        transform: AffineTransform,
+        *,
+        reslice: bool = True,
+    ) -> None:
+        """Update the data-to-world transform of a visual.
+
+        Assigns *transform* to the live visual model, which fires its psygnal
+        field event and propagates the change to the render layer via the
+        event bus.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to update.
+        transform : AffineTransform
+            New data-to-world transform.
+        reslice : bool
+            If True (default), a full reslice is triggered after the transform
+            is applied — required for image visuals where the transform changes
+            which data falls in the current slab.  Pass False for
+            static-geometry visuals (mesh, points, lines) where the transform
+            only repositions the node and the underlying data is unchanged.
+        """
+        visual_model = self.get_visual_model(visual_id)
+        if reslice:
+            visual_model.transform = transform
+        else:
+            with self.suppress_reslice():
+                visual_model.transform = transform
 
     def _on_dims_changed_bus(self, event: DimsChangedEvent) -> None:
         """Bus handler — reslice the scene whenever its dims state changes."""
