@@ -51,6 +51,9 @@ def _build_material(appearance: PointsMarkerAppearance) -> gfx.PointsMaterial:
         color=appearance.color,
         color_mode=appearance.color_mode,
         opacity=appearance.opacity,
+        depth_test=appearance.depth_test,
+        depth_write=appearance.depth_write,
+        depth_compare=appearance.depth_compare,
     )
 
 
@@ -322,6 +325,12 @@ class GFXPointsMemoryVisual:
             self._material.opacity = val
         elif name == "size":
             self._material.size = val
+        elif name == "depth_test":
+            self._material.depth_test = val
+        elif name == "depth_write":
+            self._material.depth_write = val
+        elif name == "depth_compare":
+            self._material.depth_compare = val
         elif name == "render_order":
             self.node.render_order = val
 

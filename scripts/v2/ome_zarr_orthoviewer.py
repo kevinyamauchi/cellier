@@ -1238,11 +1238,13 @@ def _build_viewer_model(
         name="3d_axes",
         data_store_id=str(vol_axes_store.id),
         appearance=LinesMemoryAppearance(
-            thickness=2.0,
+            thickness=8.0,
             thickness_space="screen",
             color_mode="vertex",
             render_order=1,
             opacity=0.999,
+            depth_write=False,
+            depth_compare="<=",
         ),
     )
 

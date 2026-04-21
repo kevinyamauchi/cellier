@@ -785,7 +785,7 @@ class GFXMultiscaleImageVisual:
         colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
 
-        return cls(
+        instance = cls(
             visual_model_id=model.id,
             volume_geometry=volume_geometry,
             image_geometry_2d=image_geometry_2d,
@@ -806,6 +806,12 @@ class GFXMultiscaleImageVisual:
             full_level_shapes=list(level_shapes),
             use_brick_shader=use_brick_shader,
         )
+        for mat in (instance.material_3d, instance.material_2d):
+            if mat is not None:
+                mat.depth_test = model.appearance.depth_test
+                mat.depth_write = model.appearance.depth_write
+                mat.depth_compare = model.appearance.depth_compare
+        return instance
 
     # ── Properties ─────────────────────────────────────────────────────
 
@@ -1737,6 +1743,10 @@ class GFXMultiscaleImageVisual:
                 self.node_3d.render_order = event.new_value
             if self.node_2d is not None:
                 self.node_2d.render_order = event.new_value
+        elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
+            for mat in (self.material_3d, self.material_2d):
+                if mat is not None:
+                    setattr(mat, event.field_name, event.new_value)
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""

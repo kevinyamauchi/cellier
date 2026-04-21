@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from psygnal import EventedModel
@@ -41,6 +41,9 @@ class BaseAppearance(EventedModel):
 
     visible: bool = True
     render_order: int = 0
+    depth_test: bool = True
+    depth_write: bool = True
+    depth_compare: Literal["<", "<=", "==", "!=", ">=", ">"] = "<"
 
 
 class BaseVisual(EventedModel):

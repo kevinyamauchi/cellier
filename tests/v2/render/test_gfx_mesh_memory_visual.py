@@ -126,21 +126,27 @@ def test_flat_appearance_builds_basic_material():
     assert isinstance(v._material_2d, gfx.MeshBasicMaterial)
 
 
-def test_transparent_3d_material_uses_blend_and_no_depth_write():
+def test_transparent_3d_material_uses_blend():
     v = _visual(_store(), appearance=MeshFlatAppearance(opacity=0.8))
     assert v._material_3d.alpha_mode == "blend"
     assert v._material_3d.depth_test is True
+    assert v._material_3d.depth_write is True  # model default; not auto-managed
+
+
+def test_transparent_3d_material_depth_write_explicit():
+    v = _visual(_store(), appearance=MeshFlatAppearance(opacity=0.8, depth_write=False))
+    assert v._material_3d.alpha_mode == "blend"
     assert v._material_3d.depth_write is False
 
 
-def test_opaque_3d_material_uses_solid_and_depth_write():
+def test_opaque_3d_material_uses_solid():
     v = _visual(_store(), appearance=MeshFlatAppearance(opacity=1.0))
     assert v._material_3d.alpha_mode == "solid"
     assert v._material_3d.depth_test is True
     assert v._material_3d.depth_write is True
 
 
-def test_opacity_event_updates_3d_transparency_state():
+def test_opacity_event_updates_alpha_mode():
     v = _visual(_store(), appearance=MeshFlatAppearance(opacity=1.0))
 
     ev_t = AppearanceChangedEvent(
@@ -152,7 +158,7 @@ def test_opacity_event_updates_3d_transparency_state():
     )
     v.on_appearance_changed(ev_t)
     assert v._material_3d.alpha_mode == "blend"
-    assert v._material_3d.depth_write is False
+    assert v._material_3d.depth_write is True  # unchanged; not auto-managed by opacity
 
     ev_o = AppearanceChangedEvent(
         source_id=uuid4(),
