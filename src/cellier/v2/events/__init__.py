@@ -21,17 +21,27 @@ from cellier.v2.events._events import (
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.v2.events._update_events import (
+    AABBUpdateEvent,
+    AppearanceUpdateEvent,
+    CellierUpdateEventTypes,
+    DimsUpdateEvent,
+)
 
 __all__ = [
     "AABBChangedEvent",
+    "AABBUpdateEvent",
     "AppearanceChangedEvent",
+    "AppearanceUpdateEvent",
     "CameraChangedEvent",
     "CameraState",
     "CellierEventTypes",
+    "CellierUpdateEventTypes",
     "DataStoreContentsChangedEvent",
     "DataStoreMetadataChangedEvent",
     "DimsChangedEvent",
     "DimsState",
+    "DimsUpdateEvent",
     "EventBus",
     "FrameRenderedEvent",
     "ResliceCancelledEvent",

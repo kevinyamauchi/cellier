@@ -200,6 +200,8 @@ class OmeBrickViewer:
     # ── Toggle ────────────────────────────────────────────────────────
 
     def _on_toggle_clicked(self) -> None:
+        from cellier.v2.events import DimsUpdateEvent
+
         coordinator = self._controller._render_manager._slice_coordinator
         if self._active_mode == "3d":
             coordinator.cancel_scene(self._scene.id)
@@ -209,20 +211,30 @@ class OmeBrickViewer:
             # state is consistent when the geometry-rebuild event fires.
             # Read the last Z value the slider stored (retained even while hidden).
             current_z = self._dims_sliders.current_index().get(0, self._z_max // 2)
-            self._scene.dims.selection.slice_indices = {0: current_z}
-            self._scene.dims.selection.displayed_axes = (1, 2)
+            self._controller.incoming_events.emit(
+                DimsUpdateEvent(
+                    source_id=self._controller._id,
+                    scene_id=self._scene.id,
+                    slice_indices={0: current_z},
+                    displayed_axes=(1, 2),
+                )
+            )
             for w in self._widget_3d:
                 w.setVisible(False)
         else:
             coordinator.cancel_scene(self._scene.id)
             self._active_mode = "3d"
             self._mode_label.setText("Mode: 3D")
-            # Clear slice_indices before changing displayed_axes.
-            self._scene.dims.selection.slice_indices = {}
-            self._scene.dims.selection.displayed_axes = (0, 1, 2)
+            self._controller.incoming_events.emit(
+                DimsUpdateEvent(
+                    source_id=self._controller._id,
+                    scene_id=self._scene.id,
+                    slice_indices={},
+                    displayed_axes=(0, 1, 2),
+                )
+            )
             for w in self._widget_3d:
                 w.setVisible(True)
-        self._controller.reslice_scene(self._scene.id)
 
     # ── Shared callbacks ──────────────────────────────────────────────
 
@@ -231,28 +243,36 @@ class OmeBrickViewer:
         self._controller.reslice_scene(self._scene.id)
 
     def _on_lod_bias_changed(self, value: float) -> None:
-        self._visual_model.appearance.lod_bias = value
         print(f"[DEBUG] LOD bias changed to {value}")
-        self._controller.reslice_scene(self._scene.id)
+        self._controller.update_appearance_field(
+            self._visual_model.id, "lod_bias", value
+        )
 
     # ── 3D-only callbacks ─────────────────────────────────────────────
 
     def _on_pipeline_mode_toggle(self, lod_active: bool) -> None:
         if lod_active:
-            self._visual_model.appearance.force_level = None
-            self._visual_model.appearance.frustum_cull = True
+            self._controller.update_appearance_field(
+                self._visual_model.id, "force_level", None
+            )
+            self._controller.update_appearance_field(
+                self._visual_model.id, "frustum_cull", True
+            )
             self._status_label.setText("Mode: LOD + frustum culling")
         else:
             coarsest = self._n_levels - 1
-            self._visual_model.appearance.force_level = coarsest
-            self._visual_model.appearance.frustum_cull = False
+            self._controller.update_appearance_field(
+                self._visual_model.id, "force_level", coarsest
+            )
+            self._controller.update_appearance_field(
+                self._visual_model.id, "frustum_cull", False
+            )
             self._status_label.setText(f"Mode: Level {coarsest} all bricks (flat)")
         print(
             f"[DEBUG] Pipeline mode changed: "
             f"force_level={self._visual_model.appearance.force_level}, "
             f"frustum_cull={self._visual_model.appearance.frustum_cull}"
         )
-        self._controller.reslice_scene(self._scene.id)
 
 
 # ---------------------------------------------------------------------------

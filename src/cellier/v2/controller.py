@@ -12,9 +12,12 @@ import numpy as np
 
 from cellier.v2.events import (
     AABBChangedEvent,
+    AABBUpdateEvent,
     AppearanceChangedEvent,
+    AppearanceUpdateEvent,
     CameraChangedEvent,
     DimsChangedEvent,
+    DimsUpdateEvent,
     EventBus,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -112,9 +115,10 @@ class CellierController:
         self._canvas_to_scene: dict[UUID, UUID] = {}
         # Forward map: scene_id → list[canvas_id]
         self._scene_to_canvases: dict[UUID, list[UUID]] = {}
-        # Event bus
+        # Event buses
         self._id: UUID = uuid4()
         self._event_bus: EventBus = EventBus()
+        self._incoming_events: EventBus = EventBus()
         # Cache of last-known displayed_axes per scene for change detection
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
         # render_modes registered per scene (determines which nodes visuals build)
@@ -145,6 +149,33 @@ class CellierController:
             self._on_dims_changed_bus,
             owner_id=self._id,
         )
+        # Incoming bus: GUI update events dispatched to update_* methods.
+        self._incoming_events.subscribe(
+            AppearanceUpdateEvent,
+            self._on_appearance_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            DimsUpdateEvent,
+            self._on_dims_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            AABBUpdateEvent,
+            self._on_aabb_update,
+            owner_id=self._id,
+        )
+
+    @property
+    def incoming_events(self) -> EventBus:
+        """Incoming event bus for GUI-driven model mutations.
+
+        Emit ``AppearanceUpdateEvent``, ``DimsUpdateEvent``, or
+        ``AABBUpdateEvent`` onto this bus to request model changes.
+        The controller dispatches each event to the corresponding
+        ``update_*`` method, preserving ``source_id`` end-to-end.
+        """
+        return self._incoming_events
 
     def set_widget_parent(self, parent: QWidget) -> None:
         """Set the Qt parent for subsequently created canvas widgets.
@@ -1752,6 +1783,59 @@ class CellierController:
         finally:
             _aabb_source_id_override.reset(token)
             _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
+
+    def update_displayed_axes(
+        self,
+        scene_id: UUID,
+        displayed_axes: tuple[int, ...],
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set ``displayed_axes`` on a scene's dims.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``DimsChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        displayed_axes :
+            Tuple of axis indices to display; length 2 for 2D, 3 for 3D.
+        source_id :
+            UUID to stamp on the emitted ``DimsChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        token = _source_id_override.set(source_id)
+        try:
+            self._model.scenes[scene_id].dims.selection.displayed_axes = displayed_axes
+        finally:
+            _source_id_override.reset(token)
+
+    # ------------------------------------------------------------------
+    # IncomingEventBus handlers
+    # ------------------------------------------------------------------
+
+    def _on_appearance_update(self, event: AppearanceUpdateEvent) -> None:
+        self.update_appearance_field(
+            event.visual_id, event.field, event.value, source_id=event.source_id
+        )
+
+    def _on_dims_update(self, event: DimsUpdateEvent) -> None:
+        if event.slice_indices is not None:
+            self.update_slice_indices(
+                event.scene_id, event.slice_indices, source_id=event.source_id
+            )
+        if event.displayed_axes is not None:
+            self.update_displayed_axes(
+                event.scene_id, event.displayed_axes, source_id=event.source_id
+            )
+
+    def _on_aabb_update(self, event: AABBUpdateEvent) -> None:
+        self.update_aabb_field(
+            event.visual_id, event.field, event.value, source_id=event.source_id
+        )
 
     # ------------------------------------------------------------------
     # Camera settle

@@ -255,8 +255,12 @@ class _MultiVisualClimSlider:
         from qtpy.QtCore import Qt
         from superqt import QLabeledDoubleRangeSlider
 
+        from cellier.v2.events import AppearanceUpdateEvent
+
+        self._id = uuid4()
         self._controller = controller
         self._visual_ids = visual_ids
+        self._AppearanceUpdateEvent = AppearanceUpdateEvent
 
         self._slider = QLabeledDoubleRangeSlider(Qt.Orientation.Horizontal, parent)
         self._slider.setRange(*clim_range)
@@ -266,7 +270,14 @@ class _MultiVisualClimSlider:
 
     def _on_changed(self, value: tuple[float, float]) -> None:
         for vid in self._visual_ids:
-            self._controller.update_appearance_field(vid, "clim", value)
+            self._controller.incoming_events.emit(
+                self._AppearanceUpdateEvent(
+                    source_id=self._id,
+                    visual_id=vid,
+                    field="clim",
+                    value=value,
+                )
+            )
 
     @property
     def widget(self):
@@ -289,8 +300,12 @@ class _MultiVisualColormapCombo:
     ) -> None:
         from superqt import QColormapComboBox
 
+        from cellier.v2.events import AppearanceUpdateEvent
+
+        self._id = uuid4()
         self._controller = controller
         self._visual_ids = visual_ids
+        self._AppearanceUpdateEvent = AppearanceUpdateEvent
 
         self._combo = QColormapComboBox(parent)
         self._combo.setCurrentColormap(initial_colormap)
@@ -298,7 +313,14 @@ class _MultiVisualColormapCombo:
 
     def _on_changed(self, colormap) -> None:
         for vid in self._visual_ids:
-            self._controller.update_appearance_field(vid, "color_map", colormap)
+            self._controller.incoming_events.emit(
+                self._AppearanceUpdateEvent(
+                    source_id=self._id,
+                    visual_id=vid,
+                    field="color_map",
+                    value=colormap,
+                )
+            )
 
     @property
     def widget(self):
@@ -474,12 +496,24 @@ class OmeZarrOrthoViewer:
         if orient_3d_visual_ids:
             from PySide6.QtWidgets import QCheckBox
 
+            from cellier.v2.events import (
+                AppearanceUpdateEvent as _AppearanceUpdateEvent,
+            )
+
             orient_3d_cb = QCheckBox("Show orientation axes")
             orient_3d_cb.setChecked(True)
+            _orient_3d_bid = uuid4()
 
             def _on_orient_3d_toggled(checked: bool) -> None:
                 for vid in orient_3d_visual_ids:
-                    controller.update_appearance_field(vid, "visible", checked)
+                    controller.incoming_events.emit(
+                        _AppearanceUpdateEvent(
+                            source_id=_orient_3d_bid,
+                            visual_id=vid,
+                            field="visible",
+                            value=checked,
+                        )
+                    )
 
             orient_3d_cb.toggled.connect(_on_orient_3d_toggled)
             layout_3d.addWidget(orient_3d_cb)
@@ -521,11 +555,12 @@ class OmeZarrOrthoViewer:
 
             def _on_plane_opacity_changed(value: float) -> None:
                 if plane_visual is not None:
-                    plane_visual.appearance.opacity = value
+                    controller.update_appearance_field(
+                        plane_visual.id, "opacity", value
+                    )
                 if plane_store is not None:
                     plane_store.colors = _make_plane_colors(value)
-
-                self._controller.reslice_visual(plane_visual.id)
+                    controller.reslice_visual(plane_visual.id)
 
             plane_opacity_slider.valueChanged.connect(_on_plane_opacity_changed)
             layout_planes.addWidget(plane_opacity_label)

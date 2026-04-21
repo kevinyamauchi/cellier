@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from cellier.v2.events import AppearanceUpdateEvent
+
 
 class QtClimRangeSlider:
     """Bidirectional contrast-limits slider wired to the cellier v2 bus.
@@ -87,8 +89,13 @@ class QtClimRangeSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, value: tuple[float, float]) -> None:
-        self._controller.update_appearance_field(
-            self._visual_id, "clim", value, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="clim",
+                value=value,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────

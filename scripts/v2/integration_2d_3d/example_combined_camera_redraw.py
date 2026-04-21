@@ -563,9 +563,12 @@ class CombinedApp(QMainWindow):
     def _on_toggle_colormap(self) -> None:
         self._colormap_index = (self._colormap_index + 1) % len(self._COLORMAPS)
         new_cmap = self._COLORMAPS[self._colormap_index]
-        # Update both visuals.
-        self._visual_2d.appearance.color_map = new_cmap
-        self._visual_3d.appearance.color_map = new_cmap
+        self._controller.update_appearance_field(
+            self._visual_2d.id, "color_map", new_cmap
+        )
+        self._controller.update_appearance_field(
+            self._visual_3d.id, "color_map", new_cmap
+        )
         self._colormap_btn.setText(f"Colormap: {new_cmap}")
         print(f"[colormap] switched to '{new_cmap}'")
 
@@ -573,25 +576,29 @@ class CombinedApp(QMainWindow):
         self._force_level = button.property("force_level")
 
     def _on_z_slice_changed(self, value: int) -> None:
-        self._scene_2d.dims.selection.slice_indices = {0: value}
-        # All cached tiles are from the old z-plane — clear and re-fetch.
+        # Clear stale tiles before updating dims so the auto-triggered reslice
+        # starts with an empty cache for the new z-plane.
         gfx_visual = self._get_gfx_visual_2d()
         gfx_visual._block_cache_2d.tile_manager.clear()
         gfx_visual._lut_manager_2d.rebuild(gfx_visual._block_cache_2d.tile_manager)
-        # Trigger immediate reslice (not camera-driven, so bypass settle).
-        self._controller.reslice_scene(self._scene_2d.id)
+        # update_slice_indices emits DimsChangedEvent which triggers reslice.
+        self._controller.update_slice_indices(self._scene_2d.id, {0: value})
 
     def _on_show_frustum_toggled(self, checked: bool) -> None:
         if self._frustum_line is not None:
             self._frustum_line.visible = checked
 
     def _on_show_aabb_toggled(self, checked: bool) -> None:
-        self._visual_2d.aabb.enabled = checked
-        self._visual_3d.aabb.enabled = checked
+        self._controller.update_aabb_field(self._visual_2d.id, "enabled", checked)
+        self._controller.update_aabb_field(self._visual_3d.id, "enabled", checked)
 
     def _on_aabb_line_width_changed(self, value: int) -> None:
-        self._visual_2d.aabb.line_width = float(value)
-        self._visual_3d.aabb.line_width = float(value)
+        self._controller.update_aabb_field(
+            self._visual_2d.id, "line_width", float(value)
+        )
+        self._controller.update_aabb_field(
+            self._visual_3d.id, "line_width", float(value)
+        )
 
     def _on_far_plane_changed(self, value: float) -> None:
         self._controller.set_camera_depth_range(

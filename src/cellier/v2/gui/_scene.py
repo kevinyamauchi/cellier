@@ -43,6 +43,8 @@ from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
 
+from cellier.v2.events import DimsUpdateEvent
+
 SLIDER_STYLE = """
 QSlider::groove:horizontal {
     border: 1px solid #bbb;
@@ -231,8 +233,13 @@ class QtDimsSliders:
             for axis, sld in self._sliders.items()
             if axis not in self._displayed_axes
         }
-        self._controller.update_slice_indices(
-            self._scene_id, updates, source_id=self._id
+        self._controller.incoming_events.emit(
+            DimsUpdateEvent(
+                source_id=self._id,
+                scene_id=self._scene_id,
+                slice_indices=updates,
+                displayed_axes=None,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
