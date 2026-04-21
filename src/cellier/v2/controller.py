@@ -200,7 +200,7 @@ class CellierController:
 
         # 2. Register all scenes (render_modes and lighting come from the model).
         for scene in model.scenes.values():
-            controller.add_scene(scene)
+            controller.add_scene_model(scene)
 
         # 3. Add visuals per scene. Data stores are already registered in step 1.
         # The deserialized model's scene.visuals already contains the models.
@@ -263,73 +263,22 @@ class CellierController:
     # Scene management
     # ------------------------------------------------------------------
 
-    def add_scene(
-        self,
-        scene: Scene | None = None,
-        *,
-        name: str = "scene",
-        dim: Literal["2d", "3d"] = "3d",
-        coordinate_system: CoordinateSystem | None = None,
-        render_modes: set[Literal["2d", "3d"]] | None = None,
-        lighting: Literal["none", "default"] = "none",
-    ) -> Scene:
-        """Register a scene with the controller, building one from kwargs if needed.
+    def add_scene_model(self, scene: Scene) -> Scene:
+        """Register a pre-built Scene model with the controller.
+
+        Used by ``from_model`` to restore scenes from a serialized
+        ViewerModel, and called internally by ``add_scene``.
 
         Parameters
         ----------
-        scene : Scene or None
-            Pre-built Scene model.  When provided all other keyword arguments
-            are ignored.
-        name : str
-            Human-readable scene name.  Ignored when *scene* is supplied.
-        dim : "2d" or "3d"
-            Initial display dimensionality.  ``"3d"`` sets
-            ``displayed_axes`` to the last three axes of the coordinate
-            system; ``"2d"`` sets it to the last two.
-            Ignored when *scene* is supplied.
-        coordinate_system : CoordinateSystem or None
-            World coordinate system.  Defaults to a 3-axis ``("z", "y", "x")``
-            system when ``None``.  Ignored when *scene* is supplied.
-        render_modes : set or None
-            Which rendering modes visuals should support.  Defaults to
-            ``{"2d", "3d"}``.  Ignored when *scene* is supplied.
-        lighting : "none" or "default"
-            Pass ``"default"`` to add ambient/directional lights (required for
-            ``MeshPhongAppearance``).  Ignored when *scene* is supplied.
+        scene : Scene
+            Pre-built scene model.
 
         Returns
         -------
         Scene
-            The registered Scene object.
+            The same object passed in.
         """
-        if scene is None:
-            if coordinate_system is None:
-                coordinate_system = CoordinateSystem(
-                    name="world", axis_labels=("z", "y", "x")
-                )
-            ndim = len(coordinate_system.axis_labels)
-            n_displayed = 3 if dim == "3d" else 2
-            if ndim < n_displayed:
-                raise ValueError(
-                    f"coordinate_system has {ndim} axes but dim={dim!r} requires "
-                    f"at least {n_displayed}."
-                )
-            displayed_axes = tuple(range(ndim - n_displayed, ndim))
-            slice_indices = {i: 0 for i in range(ndim) if i not in displayed_axes}
-            dims = DimsManager(
-                coordinate_system=coordinate_system,
-                selection=AxisAlignedSelection(
-                    displayed_axes=displayed_axes,
-                    slice_indices=slice_indices,
-                ),
-            )
-            scene = Scene(
-                name=name,
-                dims=dims,
-                render_modes=render_modes if render_modes is not None else {"2d", "3d"},
-                lighting=lighting,
-            )
-
         self._model.scenes[scene.id] = scene
         self._scene_render_modes[scene.id] = scene.render_modes
         self._render_manager.add_scene(scene.id, lighting=scene.lighting)
@@ -337,6 +286,68 @@ class CellierController:
         self._wire_dims_model(scene)
         self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
         return scene
+
+    def add_scene(
+        self,
+        *,
+        name: str = "scene",
+        dim: Literal["2d", "3d"] = "3d",
+        coordinate_system: CoordinateSystem | None = None,
+        render_modes: set[Literal["2d", "3d"]] | None = None,
+        lighting: Literal["none", "default"] = "none",
+    ) -> Scene:
+        """Create a Scene from keyword arguments and register it.
+
+        Parameters
+        ----------
+        name : str
+            Human-readable scene name.
+        dim : "2d" or "3d"
+            Initial display dimensionality.  ``"3d"`` sets
+            ``displayed_axes`` to the last three axes of the coordinate
+            system; ``"2d"`` sets it to the last two.
+        coordinate_system : CoordinateSystem or None
+            World coordinate system.  Defaults to a 3-axis ``("z", "y", "x")``
+            system when ``None``.
+        render_modes : set or None
+            Which rendering modes visuals should support.  Defaults to
+            ``{"2d", "3d"}``.
+        lighting : "none" or "default"
+            Pass ``"default"`` to add ambient/directional lights (required for
+            ``MeshPhongAppearance``).
+
+        Returns
+        -------
+        Scene
+            The newly created and registered Scene.
+        """
+        if coordinate_system is None:
+            coordinate_system = CoordinateSystem(
+                name="world", axis_labels=("z", "y", "x")
+            )
+        ndim = len(coordinate_system.axis_labels)
+        n_displayed = 3 if dim == "3d" else 2
+        if ndim < n_displayed:
+            raise ValueError(
+                f"coordinate_system has {ndim} axes but dim={dim!r} requires "
+                f"at least {n_displayed}."
+            )
+        displayed_axes = tuple(range(ndim - n_displayed, ndim))
+        slice_indices = {i: 0 for i in range(ndim) if i not in displayed_axes}
+        dims = DimsManager(
+            coordinate_system=coordinate_system,
+            selection=AxisAlignedSelection(
+                displayed_axes=displayed_axes,
+                slice_indices=slice_indices,
+            ),
+        )
+        scene = Scene(
+            name=name,
+            dims=dims,
+            render_modes=render_modes if render_modes is not None else {"2d", "3d"},
+            lighting=lighting,
+        )
+        return self.add_scene_model(scene)
 
     # ------------------------------------------------------------------
     # Data store management
@@ -1212,7 +1223,7 @@ class CellierController:
         gfx_scene = self._render_manager.get_scene(scene_id)
         canvas.show_object(gfx_scene)
 
-    def add_canvas_overlay(
+    def add_canvas_overlay_model(
         self,
         scene_id: UUID,
         overlay: CanvasOverlay,
@@ -2152,7 +2163,7 @@ class CellierController:
         return handle
 
     def unsubscribe_owner(self, owner_id: UUID) -> None:
-        """Remove all subscriptions registered under *owner_id*.
+        """Remove all event subscriptions registered under *owner_id*.
 
         GUI widgets should call this from their Qt ``closeEvent`` or
         ``destroyed`` signal handler to deterministically clean up their

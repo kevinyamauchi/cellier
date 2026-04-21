@@ -1663,7 +1663,7 @@ async def async_main(zarr_uri: str) -> None:
     # Labels differ per panel because different data axes are displayed.
 
     # XY panel: screen-up = data Y, screen-right = data X
-    xy_axes_overlay = controller.add_canvas_overlay(
+    xy_axes_overlay = controller.add_canvas_overlay_model(
         xy_scene.id,
         CenteredAxes2D(
             name="xy_axes",
@@ -1680,7 +1680,7 @@ async def async_main(zarr_uri: str) -> None:
     )
 
     # XZ panel: screen-up = data Z, screen-right = data X
-    xz_axes_overlay = controller.add_canvas_overlay(
+    xz_axes_overlay = controller.add_canvas_overlay_model(
         xz_scene.id,
         CenteredAxes2D(
             name="xz_axes",
@@ -1697,7 +1697,7 @@ async def async_main(zarr_uri: str) -> None:
     )
 
     # YZ panel: screen-up = data Z, screen-right = data Y
-    yz_axes_overlay = controller.add_canvas_overlay(
+    yz_axes_overlay = controller.add_canvas_overlay_model(
         yz_scene.id,
         CenteredAxes2D(
             name="yz_axes",
