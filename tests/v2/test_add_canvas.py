@@ -38,7 +38,7 @@ def _make_scene(
 def test_add_canvas_3d_scene_creates_perspective_camera(qtbot):
     """Inferring dim from a 3D scene stores a PerspectiveCamera in the model."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(scene_id=scene.id)
 
@@ -52,7 +52,7 @@ def test_add_canvas_3d_scene_creates_perspective_camera(qtbot):
 def test_add_canvas_2d_scene_creates_orthographic_camera(qtbot):
     """Inferring dim from a 2D scene stores an OrthographicCamera in the model."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(1, 2)))
 
     controller.add_canvas(scene_id=scene.id)
 
@@ -71,7 +71,7 @@ def test_add_canvas_2d_scene_creates_orthographic_camera(qtbot):
 def test_add_canvas_explicit_render_modes_3d_only(qtbot):
     """render_modes={'3d'} stores only a PerspectiveCamera, no '2d' key."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(scene_id=scene.id, render_modes={"3d"})
 
@@ -83,7 +83,7 @@ def test_add_canvas_explicit_render_modes_3d_only(qtbot):
 def test_add_canvas_explicit_render_modes_2d_only(qtbot):
     """render_modes={'2d'} stores only an OrthographicCamera, no '3d' key."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(
         scene_id=scene.id,
@@ -104,7 +104,7 @@ def test_add_canvas_explicit_render_modes_2d_only(qtbot):
 def test_add_canvas_both_modes_stores_both_cameras(qtbot):
     """render_modes={'2d','3d'} stores both camera types in the model."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(scene_id=scene.id, render_modes={"2d", "3d"})
 
@@ -118,7 +118,7 @@ def test_add_canvas_both_modes_initial_dim_2d(qtbot):
     """initial_dim='2d' on a dual-mode canvas activates the 2D camera first."""
     controller = CellierController()
     # Scene is 3D but canvas supports both.
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(
         scene_id=scene.id,
@@ -142,7 +142,7 @@ def test_add_canvas_both_modes_initial_dim_2d(qtbot):
 def test_add_canvas_custom_depth_range_3d(qtbot):
     """depth_range_3d is stored on the PerspectiveCamera."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(scene_id=scene.id, depth_range_3d=(0.1, 100.0))
 
@@ -155,7 +155,7 @@ def test_add_canvas_custom_depth_range_3d(qtbot):
 def test_add_canvas_custom_depth_range_2d(qtbot):
     """depth_range_2d is stored on the OrthographicCamera."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     controller.add_canvas(
         scene_id=scene.id,
@@ -177,7 +177,7 @@ def test_add_canvas_custom_depth_range_2d(qtbot):
 def test_add_canvas_initial_dim_not_in_render_modes_raises(qtbot):
     """Passing initial_dim outside render_modes raises ValueError."""
     controller = CellierController()
-    scene = controller.add_scene(_make_scene(displayed_axes=(0, 1, 2)))
+    scene = controller.add_scene_model(_make_scene(displayed_axes=(0, 1, 2)))
 
     with pytest.raises(ValueError, match="initial_dim"):
         controller.add_canvas(
