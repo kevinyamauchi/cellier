@@ -1183,23 +1183,10 @@ class _OrientationUpdater:
             ),
         ):
             translation = tuple(float(v) for v in centre_zyx)
-            print(f"[DEBUG orient] {label} axis set → centre_zyx={translation}")
             self._controller.set_visual_transform(
                 visual_id,
                 AffineTransform.from_translation(translation),
                 reslice=False,
-            )
-
-            # Inspect the render-layer node matrix after the transform update.
-            scene_id = self._controller._visual_to_scene[visual_id]
-            scene_mgr = self._controller._render_manager._scenes[scene_id]
-            gfx_visual = scene_mgr.get_visual(visual_id)
-            last_axes = gfx_visual._last_displayed_axes
-            node_matrix = gfx_visual.node.local.matrix
-            print(
-                f"[DEBUG orient] {label} _last_displayed_axes={last_axes} "
-                f"node.local.matrix translation col="
-                f"{node_matrix[:3, 3].tolist()}"
             )
 
     def on_xy_camera_changed(self, event) -> None:
@@ -1788,8 +1775,6 @@ async def async_main(zarr_uri: str) -> None:
     orient_updater.on_xy_camera_changed(_seed_camera_event(xy_scene.id))
     orient_updater.on_xz_camera_changed(_seed_camera_event(xz_scene.id))
     orient_updater.on_yz_camera_changed(_seed_camera_event(yz_scene.id))
-
-    print("[DEBUG] All cameras fitted. Initial reslice triggered.")
 
     app = QtWidgets.QApplication.instance()
     app.aboutToQuit.connect(viewer.close_widgets)

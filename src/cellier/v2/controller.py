@@ -1,4 +1,4 @@
-"""CellierController — single entry-point for building Cellier v2 viewers."""
+"""CellierController is the coordinator between the models and the rendered views."""
 
 from __future__ import annotations
 
@@ -94,7 +94,8 @@ _aabb_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.Cont
 class CellierController:
     """The main class for constructing and controlling a cellier visualization.
 
-    Wraps a ViewerModel (model layer) and a RenderManager (render layer).
+    Wraps a ViewerModel (model layer) and a RenderManager (render layer) and
+    performs the synchronization between both.
     """
 
     def __init__(
@@ -148,7 +149,10 @@ class CellierController:
         )
 
     def set_widget_parent(self, parent: QWidget) -> None:
-        """Set the Qt parent for subsequently created canvas widgets."""
+        """Set the Qt parent for subsequently created canvas widgets.
+
+        TODO: in the future, we should have an abstraction for different GUI backends.
+        """
         self._widget_parent = parent
 
     # ------------------------------------------------------------------
@@ -210,7 +214,7 @@ class CellierController:
         # 4. Restore canvases with camera state from the model.
         for scene in model.scenes.values():
             for canvas_model in scene.canvases.values():
-                controller.add_canvas_from_model(scene.id, canvas_model)
+                controller.add_canvas_model(scene.id, canvas_model)
 
         return controller
 
@@ -248,20 +252,11 @@ class CellierController:
     # ------------------------------------------------------------------
 
     def to_file(self, path: str | pathlib.Path) -> None:
-        """Serialize the current model state to a JSON file.
-
-        Camera positions in the model are NOT synchronized from the render
-        layer before saving in Phase 1 — the model cameras remain at their
-        construction-time defaults.
-        """
+        """Serialize the current model state to a JSON file."""
         self._model.to_file(path)
 
     def to_model(self) -> ViewerModel:
-        """Return a copy of the current model state.
-
-        Camera positions are NOT synchronized from the render layer in
-        Phase 1 (same caveat as to_file).
-        """
+        """Return a copy of the current model state."""
         return self._model.model_copy(deep=True)
 
     # ------------------------------------------------------------------
@@ -279,10 +274,6 @@ class CellierController:
         lighting: Literal["none", "default"] = "none",
     ) -> Scene:
         """Register a scene with the controller, building one from kwargs if needed.
-
-        Pass a pre-built ``Scene`` as the first positional argument to restore
-        from a serialized model.  Omit it and use keyword arguments to create a
-        new scene without constructing dims/camera models manually.
 
         Parameters
         ----------
@@ -414,21 +405,19 @@ class CellierController:
             if data_store.id not in self._model.data.stores:
                 self._model.data.stores[data_store.id] = data_store
 
-        visual_type = visual_model.visual_type
-
-        if visual_type == "multiscale_image":
+        if isinstance(visual_model, MultiscaleImageVisual):
             return self._add_multiscale_image_visual(scene_id, visual_model)
-        elif visual_type == "image_memory":
+        elif isinstance(visual_model, ImageVisual):
             return self._add_image_visual(scene_id, visual_model)
-        elif visual_type == "points":
+        elif isinstance(visual_model, PointsVisual):
             return self._add_points_visual(scene_id, visual_model)
-        elif visual_type == "lines":
+        elif isinstance(visual_model, LinesVisual):
             return self._add_lines_visual(scene_id, visual_model)
-        elif visual_type == "mesh_memory":
+        elif isinstance(visual_model, MeshVisual):
             return self._add_mesh_visual(scene_id, visual_model)
         else:
             raise TypeError(
-                f"Unrecognized visual_type {visual_type!r}. "
+                f"Unrecognized visual type {type(visual_model)!r}. "
                 "Register a handler in add_visual."
             )
 
@@ -1099,11 +1088,9 @@ class CellierController:
             )
 
         canvas_model = Canvas(cameras=cameras)
-        return self.add_canvas_from_model(
-            scene_id, canvas_model, initial_dim=initial_dim
-        )
+        return self.add_canvas_model(scene_id, canvas_model, initial_dim=initial_dim)
 
-    def add_canvas_from_model(
+    def add_canvas_model(
         self,
         scene_id: UUID,
         canvas_model: Canvas,
@@ -1262,7 +1249,7 @@ class CellierController:
         if not canvas_ids:
             raise ValueError(
                 f"No canvas registered for scene {scene_id!r}.  "
-                "Call add_canvas or add_canvas_from_model first."
+                "Call add_canvas or add_canvas_model first."
             )
         # Attach to the first canvas (one scene → one canvas in typical use).
         canvas_model = self._model.scenes[scene_id].canvases[canvas_ids[0]]
@@ -1496,7 +1483,13 @@ class CellierController:
         return _on_aabb_psygnal
 
     def _make_appearance_handler(self, visual_id: UUID) -> Callable:
-        """Return a psygnal catch-all handler for a visual's ImageAppearance."""
+        """Return a psygnal catch-all handler for any visual's appearance model.
+
+        Routes field changes to one of two bus events: ``visible`` field changes
+        become ``VisualVisibilityChangedEvent``; all other fields become
+        ``AppearanceChangedEvent`` with ``requires_reslice=True`` for fields in
+        ``_RESLICE_FIELDS`` (``lod_bias``, ``force_level``, ``frustum_cull``).
+        """
 
         def _on_appearance_psygnal(info: EmissionInfo) -> None:
             field_name: str = info.signal.name
@@ -1933,7 +1926,7 @@ class CellierController:
         owner_id :
             When provided, the subscription is registered under this UUID so
             that ``unsubscribe_owner(owner_id)`` removes it.  Pass a widget's
-            own UUID for per-widget cleanup.  Defaults to the controller's ID.
+            own UUID for per-widget cleanup.
         weak :
             If True, hold only a weak reference to *callback*.  Use for
             transient widgets that may be destroyed outside the controller's
