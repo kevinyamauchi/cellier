@@ -317,7 +317,7 @@ def test_dims_bridge_emits_event():
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
     fired = []
-    controller.on_dims_changed(scene.id, fired.append)
+    controller.on_dims_changed(scene.id, fired.append, owner_id=uuid4())
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 5}
     assert len(fired) == 1
@@ -488,7 +488,7 @@ def test_on_dims_changed_callback():
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
     fired = []
-    controller.on_dims_changed(scene.id, fired.append)
+    controller.on_dims_changed(scene.id, fired.append, owner_id=uuid4())
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 7}
     assert len(fired) == 1

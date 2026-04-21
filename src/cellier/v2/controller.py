@@ -119,8 +119,6 @@ class CellierController:
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
         # render_modes registered per scene (determines which nodes visuals build)
         self._scene_render_modes: dict[UUID, set[Literal["2d", "3d"]]] = {}
-        # Handles for externally-registered callbacks
-        self._external_handles: list[SubscriptionHandle] = []
         # Camera settle
         self._settle_tasks: dict[UUID, asyncio.Task] = {}
         # When True, transform-change handlers skip reslice_scene.  Managed
@@ -1915,7 +1913,7 @@ class CellierController:
         scene_id: UUID,
         callback: Callable[[DimsChangedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired whenever the dims for *scene_id* change.
@@ -1930,9 +1928,9 @@ class CellierController:
         callback :
             Called with the ``DimsChangedEvent`` on each dims change.
         owner_id :
-            When provided, the subscription is registered under this UUID so
-            that ``unsubscribe_owner(owner_id)`` removes it.  Pass a widget's
-            own UUID for per-widget cleanup.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.  Use for
             transient widgets that may be destroyed outside the controller's
@@ -1943,24 +1941,20 @@ class CellierController:
         SubscriptionHandle
             Pass to ``EventBus.unsubscribe()`` for individual removal.
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             DimsChangedEvent,
             callback,
             entity_id=scene_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def on_camera_changed(
         self,
         scene_id: UUID,
         callback: Callable[[CameraChangedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired whenever the camera for *scene_id* changes.
@@ -1976,7 +1970,9 @@ class CellierController:
         callback :
             Called with the ``CameraChangedEvent`` on each camera change.
         owner_id :
-            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.
 
@@ -1984,24 +1980,20 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             CameraChangedEvent,
             callback,
             entity_id=scene_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def on_visual_changed(
         self,
         visual_id: UUID,
         callback: Callable[[AppearanceChangedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired whenever the appearance of *visual_id* changes.
@@ -2017,7 +2009,9 @@ class CellierController:
         callback :
             Called with the ``AppearanceChangedEvent`` on each appearance change.
         owner_id :
-            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.
 
@@ -2025,24 +2019,20 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             AppearanceChangedEvent,
             callback,
             entity_id=visual_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def on_aabb_changed(
         self,
         visual_id: UUID,
         callback: Callable[[AABBChangedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired whenever the AABB params of *visual_id* change.
@@ -2057,7 +2047,9 @@ class CellierController:
         callback :
             Called with the ``AABBChangedEvent`` on each AABB change.
         owner_id :
-            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.
 
@@ -2065,24 +2057,20 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             AABBChangedEvent,
             callback,
             entity_id=visual_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def on_reslice_started(
         self,
         scene_id: UUID,
         callback: Callable[[ResliceStartedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired when a reslice cycle begins for *scene_id*.
@@ -2097,7 +2085,9 @@ class CellierController:
         callback :
             Called with the ``ResliceStartedEvent``.
         owner_id :
-            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.
 
@@ -2105,24 +2095,20 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             ResliceStartedEvent,
             callback,
             entity_id=scene_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def on_reslice_completed(
         self,
         visual_id: UUID,
         callback: Callable[[ResliceCompletedEvent], None],
         *,
-        owner_id: UUID | None = None,
+        owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired when a reslice cycle completes for *visual_id*.
@@ -2137,7 +2123,9 @@ class CellierController:
         callback :
             Called with the ``ResliceCompletedEvent``.
         owner_id :
-            Per-widget owner UUID for bulk cleanup via ``unsubscribe_owner``.
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
         weak :
             If True, hold only a weak reference to *callback*.
 
@@ -2145,17 +2133,13 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        effective_owner = owner_id if owner_id is not None else self._id
-        handle = self._event_bus.subscribe(
+        return self._event_bus.subscribe(
             ResliceCompletedEvent,
             callback,
             entity_id=visual_id,
-            owner_id=effective_owner,
+            owner_id=owner_id,
             weak=weak,
         )
-        if owner_id is None:
-            self._external_handles.append(handle)
-        return handle
 
     def unsubscribe_owner(self, owner_id: UUID) -> None:
         """Remove all event subscriptions registered under *owner_id*.

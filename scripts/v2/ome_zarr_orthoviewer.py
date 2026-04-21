@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 
@@ -1063,6 +1064,7 @@ class _PlaneUpdater:
         plane_visual,
         world_max_zyx: np.ndarray,
     ) -> None:
+        self._id = uuid4()
         self._controller = controller
         self._plane_store = plane_store
         self._plane_visual = plane_visual
@@ -1149,6 +1151,7 @@ class _OrientationUpdater:
         yz_axis_visual,
         world_max_zyx: np.ndarray,
     ):
+        self._id = uuid4()
         self._controller = controller
         self._xy_axis_visual_id = xy_axis_visual.id
         self._xz_axis_visual_id = xz_axis_visual.id
@@ -1620,9 +1623,15 @@ async def async_main(zarr_uri: str) -> None:
         world_max_zyx=world_max_zyx,
     )
 
-    controller.on_dims_changed(xy_scene.id, plane_updater.on_xy_dims_changed)
-    controller.on_dims_changed(xz_scene.id, plane_updater.on_xz_dims_changed)
-    controller.on_dims_changed(yz_scene.id, plane_updater.on_yz_dims_changed)
+    controller.on_dims_changed(
+        xy_scene.id, plane_updater.on_xy_dims_changed, owner_id=plane_updater._id
+    )
+    controller.on_dims_changed(
+        xz_scene.id, plane_updater.on_xz_dims_changed, owner_id=plane_updater._id
+    )
+    controller.on_dims_changed(
+        yz_scene.id, plane_updater.on_yz_dims_changed, owner_id=plane_updater._id
+    )
 
     scene_mgr = controller._render_manager._scenes[vol_scene.id]
     gfx_vol_visual = scene_mgr.get_visual(visuals["vol"].id)
@@ -1747,13 +1756,25 @@ async def async_main(zarr_uri: str) -> None:
         world_max_zyx=world_max_zyx,
     )
 
-    controller.on_camera_changed(xy_scene.id, orient_updater.on_xy_camera_changed)
-    controller.on_camera_changed(xz_scene.id, orient_updater.on_xz_camera_changed)
-    controller.on_camera_changed(yz_scene.id, orient_updater.on_yz_camera_changed)
+    controller.on_camera_changed(
+        xy_scene.id, orient_updater.on_xy_camera_changed, owner_id=orient_updater._id
+    )
+    controller.on_camera_changed(
+        xz_scene.id, orient_updater.on_xz_camera_changed, owner_id=orient_updater._id
+    )
+    controller.on_camera_changed(
+        yz_scene.id, orient_updater.on_yz_camera_changed, owner_id=orient_updater._id
+    )
 
-    controller.on_dims_changed(xy_scene.id, orient_updater.on_xy_dims_changed)
-    controller.on_dims_changed(xz_scene.id, orient_updater.on_xz_dims_changed)
-    controller.on_dims_changed(yz_scene.id, orient_updater.on_yz_dims_changed)
+    controller.on_dims_changed(
+        xy_scene.id, orient_updater.on_xy_dims_changed, owner_id=orient_updater._id
+    )
+    controller.on_dims_changed(
+        xz_scene.id, orient_updater.on_xz_dims_changed, owner_id=orient_updater._id
+    )
+    controller.on_dims_changed(
+        yz_scene.id, orient_updater.on_yz_dims_changed, owner_id=orient_updater._id
+    )
 
     # ── Fit cameras and trigger initial reslice ───────────────────────────
     for scene in scenes.values():
