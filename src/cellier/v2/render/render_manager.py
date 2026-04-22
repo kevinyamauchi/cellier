@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from cellier.v2.events import DimsChangedEvent, EventBus
 from cellier.v2.render._config import RenderManagerConfig
@@ -23,7 +23,20 @@ if TYPE_CHECKING:
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.render._requests import DimsState
     from cellier.v2.render.visuals._canvas_overlay import GFXCanvasOverlay
+    from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+    from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
+    from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
     from cellier.v2.visuals._canvas_overlay import CanvasOverlay
+
+    _GFXVisual = (
+        GFXMultiscaleImageVisual
+        | GFXImageMemoryVisual
+        | GFXPointsMemoryVisual
+        | GFXLinesMemoryVisual
+        | GFXMeshMemoryVisual
+    )
 
 
 class RenderManager:
@@ -172,7 +185,7 @@ class RenderManager:
     def add_visual(
         self,
         scene_id: UUID,
-        visual: Any,
+        visual: _GFXVisual,
         data_store: BaseDataStore,
         displayed_axes: tuple[int, ...],
     ) -> None:
@@ -182,7 +195,7 @@ class RenderManager:
         ----------
         scene_id : UUID
             ID of the scene to add the visual to.
-        visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
+        visual : _GFXVisual
             The render-layer visual object.
         data_store : BaseDataStore
             The data store that will serve chunk data for this visual.

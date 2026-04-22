@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pygfx as gfx
@@ -14,6 +14,19 @@ if TYPE_CHECKING:
 
     from cellier.v2.data.image import ChunkRequest
     from cellier.v2.render._requests import ReslicingRequest
+    from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+    from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
+    from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
+
+    _GFXVisual = (
+        GFXMultiscaleImageVisual
+        | GFXImageMemoryVisual
+        | GFXPointsMemoryVisual
+        | GFXLinesMemoryVisual
+        | GFXMeshMemoryVisual
+    )
 
 
 class SceneManager:
@@ -36,8 +49,8 @@ class SceneManager:
     ) -> None:
         self._scene_id = scene_id
         self._scene = gfx.Scene()
-        self._visuals: dict[UUID, Any] = {}
-        self._active_nodes: dict[UUID, Any] = {}  # visual_id → active node
+        self._visuals: dict[UUID, _GFXVisual] = {}
+        self._active_nodes: dict[UUID, gfx.WorldObject | None] = {}
 
         self._has_lighting = lighting == "default"
         if self._has_lighting:
@@ -66,7 +79,7 @@ class SceneManager:
         """IDs of all registered visuals."""
         return list(self._visuals.keys())
 
-    def add_visual(self, visual: Any, displayed_axes: tuple[int, ...]) -> None:
+    def add_visual(self, visual: _GFXVisual, displayed_axes: tuple[int, ...]) -> None:
         """Register a visual and add its initial node to the scene graph.
 
         Calls ``visual.get_node_for_dims(displayed_axes)`` to select the
@@ -75,9 +88,8 @@ class SceneManager:
 
         Parameters
         ----------
-        visual : Any
-            The GFX visual to register.  Must implement
-            ``get_node_for_dims(displayed_axes)``.
+        visual : _GFXVisual
+            The GFX visual to register.
         displayed_axes : tuple[int, ...]
             Current displayed axes from the scene's dims selection.
 
@@ -97,7 +109,7 @@ class SceneManager:
         self._visuals[visual.visual_model_id] = visual
         self._active_nodes[visual.visual_model_id] = node
 
-    def get_active_node(self, visual_id: UUID) -> Any:
+    def get_active_node(self, visual_id: UUID) -> gfx.WorldObject | None:
         """Return the node currently active in the scene for *visual_id*.
 
         Returns ``None`` if the visual has not yet been registered or if its
@@ -110,7 +122,7 @@ class SceneManager:
         """
         return self._active_nodes.get(visual_id)
 
-    def swap_node(self, visual_id: UUID, new_node: Any) -> None:
+    def swap_node(self, visual_id: UUID, new_node: gfx.WorldObject | None) -> None:
         """Replace the active scene-graph node for *visual_id*.
 
         Removes the previously active node and adds *new_node*.  If
@@ -158,7 +170,7 @@ class SceneManager:
             self._scene.remove(active_node)
         self._visuals.pop(visual_id)
 
-    def get_visual(self, visual_id: UUID) -> Any:
+    def get_visual(self, visual_id: UUID) -> _GFXVisual:
         """Return the registered visual for ``visual_id``.
 
         Parameters
@@ -168,7 +180,7 @@ class SceneManager:
 
         Returns
         -------
-        GFXMultiscaleImageVisual | GFXImageMemoryVisual
+        _GFXVisual
 
         Raises
         ------
