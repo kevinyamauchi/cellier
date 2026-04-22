@@ -39,11 +39,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from psygnal import Signal
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
 
-from cellier.v2.events import DimsUpdateEvent
+from cellier.v2.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
 
 SLIDER_STYLE = """
 QSlider::groove:horizontal {
@@ -106,10 +107,13 @@ class QtDimsSliders:
     - Suppresses re-entrant slider signals with ``blockSignals`` when applying
       model-driven updates.
 
+    Wire to the controller after construction::
+
+        sliders = QtDimsSliders(scene_id, axis_ranges=..., axis_labels=...)
+        controller.connect_widget(sliders, subscription_specs=sliders.subscription_specs())
+
     Parameters
     ----------
-    controller :
-        The ``CellierController`` instance.
     scene_id :
         UUID of the scene whose slice indices this widget controls.
     axis_ranges :
@@ -124,9 +128,11 @@ class QtDimsSliders:
         Optional Qt parent widget for the internal container.
     """
 
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
     def __init__(
         self,
-        controller,
         scene_id,
         axis_ranges: dict[int, tuple[int, int]],
         axis_labels: dict[int, str],
@@ -138,7 +144,6 @@ class QtDimsSliders:
     ) -> None:
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._controller = controller
         self._scene_id = scene_id
 
         # Single-shot QTimer for rate-limiting rapid slider moves.
@@ -176,9 +181,6 @@ class QtDimsSliders:
 
         self._update_visibility(initial_displayed_axes)
 
-        # Subscribe; owner_id groups all our subscriptions for bulk cleanup.
-        controller.on_dims_changed(scene_id, self._on_dims_changed, owner_id=self._id)
-
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
@@ -194,8 +196,21 @@ class QtDimsSliders:
         return {axis: sld.value() for axis, sld in self._sliders.items()}
 
     def close(self) -> None:
-        """Unsubscribe from the bus.  Call when the owning window closes."""
-        self._controller.unsubscribe_owner(self._id)
+        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        self.closed.emit()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """Return the inbound subscription this widget requires.
+
+        Pass the result to ``CellierController.connect_widget``.
+        """
+        return [
+            SubscriptionSpec(
+                event_type=DimsChangedEvent,
+                handler=self._on_dims_changed,
+                entity_id=self._scene_id,
+            )
+        ]
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -233,7 +248,7 @@ class QtDimsSliders:
             for axis, sld in self._sliders.items()
             if axis not in self._displayed_axes
         }
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             DimsUpdateEvent(
                 source_id=self._id,
                 scene_id=self._scene_id,
@@ -307,7 +322,6 @@ class QtCanvasWidget:
     @classmethod
     def from_scene_and_canvas(
         cls,
-        controller,
         scene,
         canvas_view,
         axis_ranges: dict[int, tuple[int, int]],
@@ -320,10 +334,11 @@ class QtCanvasWidget:
         callers only need to supply *axis_ranges* (which requires data-store
         knowledge not available on the dims model itself).
 
+        Call ``controller.connect_widget`` on the returned widget's
+        ``dims_sliders`` after construction to wire subscriptions.
+
         Parameters
         ----------
-        controller :
-            The ``CellierController`` instance.
         scene :
             The live ``Scene`` object whose dims this panel controls.
         canvas_view :
@@ -341,7 +356,6 @@ class QtCanvasWidget:
         initial_displayed_axes = getattr(selection, "displayed_axes", ())
 
         dims_sliders = QtDimsSliders(
-            controller=controller,
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,

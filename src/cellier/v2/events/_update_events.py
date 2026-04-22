@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from uuid import UUID
 
 
@@ -85,3 +86,31 @@ class AABBUpdateEvent(NamedTuple):
 
 
 CellierUpdateEventTypes = AppearanceUpdateEvent | DimsUpdateEvent | AABBUpdateEvent
+
+
+class SubscriptionSpec(NamedTuple):
+    """One inbound event subscription declared by a cellier widget.
+
+    Pass a list of these to ``CellierController.connect_widget`` so that the
+    controller wires the widget's *handler* to the outgoing ``EventBus``
+    without the widget ever holding a controller reference.
+
+    Fields
+    ------
+    event_type :
+        The event class to subscribe to, e.g. ``AppearanceChangedEvent``.
+    handler :
+        Callable receiving the event.  Typically a bound method on the widget,
+        e.g. ``my_widget._on_visual_changed``.
+    entity_id :
+        Optional UUID to scope the subscription to a specific visual, scene,
+        or canvas.  ``None`` subscribes to all entities for that event type.
+    weak :
+        If ``True``, hold only a weak reference to *handler*.  Cannot be used
+        with lambdas.  Default is ``False``.
+    """
+
+    event_type: type
+    handler: Callable[..., None]
+    entity_id: UUID | None = None
+    weak: bool = False

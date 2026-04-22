@@ -73,31 +73,41 @@ class OmeBrickViewer:
         self._active_mode = "3d"
 
         self._clim_slider = QtClimRangeSlider(
-            controller,
             visual_model.id,
             clim_range=clim_range,
             initial_clim=visual_model.appearance.clim,
             decimals=slider_decimals,
         )
+        controller.connect_widget(
+            self._clim_slider, subscription_specs=self._clim_slider.subscription_specs()
+        )
         self._colormap_combo = QtColormapComboBox(
-            controller,
             visual_model.id,
             initial_colormap=visual_model.appearance.color_map,
         )
+        controller.connect_widget(
+            self._colormap_combo,
+            subscription_specs=self._colormap_combo.subscription_specs(),
+        )
         self._aabb_widget = QtAABBWidget(
-            controller,
             visual_model.id,
             initial_enabled=visual_model.aabb.enabled,
             initial_line_width=visual_model.aabb.line_width,
             initial_color=visual_model.aabb.color,
         )
+        controller.connect_widget(
+            self._aabb_widget, subscription_specs=self._aabb_widget.subscription_specs()
+        )
         self._render_controls = QtVolumeRenderControls(
-            controller,
             visual_model.id,
             dtype_max=clim_range[1],
             initial_render_mode=visual_model.appearance.render_mode,
             initial_threshold=visual_model.appearance.iso_threshold,
             decimals=slider_decimals,
+        )
+        controller.connect_widget(
+            self._render_controls,
+            subscription_specs=self._render_controls.subscription_specs(),
         )
         self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
 
@@ -509,7 +519,11 @@ async def async_main(zarr_uri: str):
     axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
 
     canvas_widget = QtCanvasWidget.from_scene_and_canvas(
-        controller, scene, canvas_view, axis_ranges=axis_ranges
+        scene, canvas_view, axis_ranges=axis_ranges
+    )
+    controller.connect_widget(
+        canvas_widget.dims_sliders,
+        subscription_specs=canvas_widget.dims_sliders.subscription_specs(),
     )
 
     # ── Show window ───────────────────────────────────────────────────

@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from cellier.v2.events import AppearanceUpdateEvent
+from psygnal import Signal
+
+from cellier.v2.events import (
+    AppearanceChangedEvent,
+    AppearanceUpdateEvent,
+    SubscriptionSpec,
+)
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 class QtRenderModeComboBox:
@@ -15,10 +25,13 @@ class QtRenderModeComboBox:
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
 
+    Wire to the controller after construction::
+
+        combo = QtRenderModeComboBox(visual_id, initial_render_mode="mip")
+        controller.connect_widget(combo, subscription_specs=combo.subscription_specs())
+
     Parameters
     ----------
-    controller :
-        The ``CellierController`` instance.
     visual_id :
         UUID of the visual whose ``render_mode`` field this widget controls.
     initial_render_mode :
@@ -27,10 +40,12 @@ class QtRenderModeComboBox:
         Optional Qt parent widget.
     """
 
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
     def __init__(
         self,
-        controller,
-        visual_id,
+        visual_id: UUID,
         *,
         initial_render_mode: str,
         parent=None,
@@ -39,7 +54,6 @@ class QtRenderModeComboBox:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._controller = controller
         self._visual_id = visual_id
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
@@ -47,10 +61,6 @@ class QtRenderModeComboBox:
         self._combo.addItems(["iso", "mip"])
         self._combo.setCurrentText(initial_render_mode)
         self._combo.currentTextChanged.connect(self._on_combo_changed)
-
-        controller.on_visual_changed(
-            visual_id, self._on_visual_changed, owner_id=self._id
-        )
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -63,8 +73,21 @@ class QtRenderModeComboBox:
         return self._combo
 
     def close(self) -> None:
-        """Unsubscribe from the bus.  Call when the owning window closes."""
-        self._controller.unsubscribe_owner(self._id)
+        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        self.closed.emit()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """Return the inbound subscription this widget requires.
+
+        Pass the result to ``CellierController.connect_widget``.
+        """
+        return [
+            SubscriptionSpec(
+                event_type=AppearanceChangedEvent,
+                handler=self._on_visual_changed,
+                entity_id=self._visual_id,
+            )
+        ]
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -78,7 +101,7 @@ class QtRenderModeComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, text: str) -> None:
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AppearanceUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -103,10 +126,13 @@ class QtIsoThresholdSlider:
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
 
+    Wire to the controller after construction::
+
+        slider = QtIsoThresholdSlider(visual_id, dtype_max=65535, initial_threshold=0.2)
+        controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+
     Parameters
     ----------
-    controller :
-        The ``CellierController`` instance.
     visual_id :
         UUID of the visual whose ``iso_threshold`` field this widget controls.
     dtype_max :
@@ -116,16 +142,17 @@ class QtIsoThresholdSlider:
         Starting value — typically ``visual_model.appearance.iso_threshold``.
     decimals :
         Number of decimal places shown in the slider label.  Use ``0`` for
-        integer dtypes and ``2`` (or similar) for float data.  Default is
-        ``2``.
+        integer dtypes and ``2`` (or similar) for float data.  Default is ``2``.
     parent :
         Optional Qt parent widget.
     """
 
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
     def __init__(
         self,
-        controller,
-        visual_id,
+        visual_id: UUID,
         *,
         dtype_max: float,
         initial_threshold: float,
@@ -137,7 +164,6 @@ class QtIsoThresholdSlider:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._controller = controller
         self._visual_id = visual_id
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
@@ -146,10 +172,6 @@ class QtIsoThresholdSlider:
         self._slider.setValue(initial_threshold)
         self._slider.setDecimals(decimals)
         self._slider.valueChanged.connect(self._on_slider_changed)
-
-        controller.on_visual_changed(
-            visual_id, self._on_visual_changed, owner_id=self._id
-        )
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -162,8 +184,21 @@ class QtIsoThresholdSlider:
         return self._slider
 
     def close(self) -> None:
-        """Unsubscribe from the bus.  Call when the owning window closes."""
-        self._controller.unsubscribe_owner(self._id)
+        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        self.closed.emit()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """Return the inbound subscription this widget requires.
+
+        Pass the result to ``CellierController.connect_widget``.
+        """
+        return [
+            SubscriptionSpec(
+                event_type=AppearanceChangedEvent,
+                handler=self._on_visual_changed,
+                entity_id=self._visual_id,
+            )
+        ]
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -177,7 +212,7 @@ class QtIsoThresholdSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, value: float) -> None:
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AppearanceUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -205,10 +240,15 @@ class QtVolumeRenderControls:
     handles both fields.  Follows the v2 widget pattern: source-ID echo
     filtering and signal blocking on model-driven updates.
 
+    Wire to the controller after construction::
+
+        controls = QtVolumeRenderControls(visual_id, dtype_max=255, ...)
+        controller.connect_widget(
+            controls, subscription_specs=controls.subscription_specs()
+        )
+
     Parameters
     ----------
-    controller :
-        The ``CellierController`` instance.
     visual_id :
         UUID of the visual whose ``render_mode`` and ``iso_threshold`` fields
         this widget controls.
@@ -227,10 +267,12 @@ class QtVolumeRenderControls:
         Optional Qt parent widget.
     """
 
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
     def __init__(
         self,
-        controller,
-        visual_id,
+        visual_id: UUID,
         *,
         dtype_max: float,
         initial_render_mode: str,
@@ -244,7 +286,6 @@ class QtVolumeRenderControls:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._controller = controller
         self._visual_id = visual_id
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
@@ -267,12 +308,7 @@ class QtVolumeRenderControls:
 
         # Show threshold row only in ISO mode.
         self._slider.setVisible(initial_render_mode == "iso")
-        # The QFormLayout row label mirrors the field widget's visibility.
         layout.labelForField(self._slider).setVisible(initial_render_mode == "iso")
-
-        controller.on_visual_changed(
-            visual_id, self._on_visual_changed, owner_id=self._id
-        )
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -285,8 +321,21 @@ class QtVolumeRenderControls:
         return self._container
 
     def close(self) -> None:
-        """Unsubscribe from the bus.  Call when the owning window closes."""
-        self._controller.unsubscribe_owner(self._id)
+        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        self.closed.emit()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """Return the inbound subscription this widget requires.
+
+        Pass the result to ``CellierController.connect_widget``.
+        """
+        return [
+            SubscriptionSpec(
+                event_type=AppearanceChangedEvent,
+                handler=self._on_visual_changed,
+                entity_id=self._visual_id,
+            )
+        ]
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -302,7 +351,7 @@ class QtVolumeRenderControls:
 
     def _on_combo_changed(self, text: str) -> None:
         self._update_threshold_visibility(text)
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AppearanceUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -312,7 +361,7 @@ class QtVolumeRenderControls:
         )
 
     def _on_slider_changed(self, value: float) -> None:
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AppearanceUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
