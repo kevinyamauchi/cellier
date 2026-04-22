@@ -1673,7 +1673,8 @@ async def async_main(zarr_uri: str) -> None:
 
     # ── Canvas views ──────────────────────────────────────────────────────
     def _canvas_view(scene_id):
-        return controller._render_manager._find_canvas_for_scene(scene_id)
+        canvas_id = controller.get_canvas_ids(scene_id)[0]
+        return controller.get_canvas_view(canvas_id)
 
     # ── Canvas widgets with per-panel slider colors ───────────────────────
     def _make_canvas_widget(scene, slider_style):
@@ -1708,7 +1709,7 @@ async def async_main(zarr_uri: str) -> None:
 
     # XY panel: screen-up = data Y, screen-right = data X
     xy_axes_overlay = controller.add_canvas_overlay_model(
-        xy_scene.id,
+        controller.get_canvas_ids(xy_scene.id)[0],
         CenteredAxes2D(
             name="xy_axes",
             axis_a_direction=(0.0, 1.0, 0.0),
@@ -1725,7 +1726,7 @@ async def async_main(zarr_uri: str) -> None:
 
     # XZ panel: screen-up = data Z, screen-right = data X
     xz_axes_overlay = controller.add_canvas_overlay_model(
-        xz_scene.id,
+        controller.get_canvas_ids(xz_scene.id)[0],
         CenteredAxes2D(
             name="xz_axes",
             axis_a_direction=(0.0, 1.0, 0.0),
@@ -1742,7 +1743,7 @@ async def async_main(zarr_uri: str) -> None:
 
     # YZ panel: screen-up = data Z, screen-right = data Y
     yz_axes_overlay = controller.add_canvas_overlay_model(
-        yz_scene.id,
+        controller.get_canvas_ids(yz_scene.id)[0],
         CenteredAxes2D(
             name="yz_axes",
             axis_a_direction=(0.0, 1.0, 0.0),
@@ -1820,7 +1821,7 @@ async def async_main(zarr_uri: str) -> None:
     def _seed_camera_event(scene_id):
         from cellier.v2.events._events import CameraChangedEvent
 
-        canvas_view = controller._render_manager._find_canvas_for_scene(scene_id)
+        canvas_view = controller.get_canvas_view(controller.get_canvas_ids(scene_id)[0])
         camera_state = canvas_view._capture_camera_state()
         return CameraChangedEvent(
             source_id=canvas_view._canvas_id,

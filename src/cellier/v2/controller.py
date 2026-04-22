@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
+    from cellier.v2.render.canvas_view import CanvasView
     from cellier.v2.visuals._canvas_overlay import CanvasOverlay
     from cellier.v2.visuals._types import VisualType
 
@@ -1217,7 +1218,7 @@ class CellierController:
         # self.add_canvas_overlay to avoid re-appending models that are already
         # in canvas_model.overlays.
         for overlay_model in canvas_model.overlays:
-            self._render_manager.add_canvas_overlay(scene_id, overlay_model)
+            self._render_manager.add_canvas_overlay(canvas_model.id, overlay_model)
 
         self._canvas_to_scene[canvas_model.id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_model.id)
@@ -1232,43 +1233,51 @@ class CellierController:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
 
-    def fit_camera(self, scene_id: UUID) -> None:
+    def fit_camera(self, scene_id: UUID, canvas_id: UUID | None = None) -> None:
         """Fit the camera to the current scene bounding box.
 
         Safe to call immediately after ``add_image`` / ``add_image_multiscale``
-        and transform assignment — the node matrix is set
-        at construction time so no chunk data needs to be loaded first.
+        and transform assignment — the node matrix is set at construction time
+        so no chunk data needs to be loaded first.
 
         Parameters
         ----------
         scene_id : UUID
             ID of the scene whose camera should be fitted.
+        canvas_id : UUID or None
+            If provided, fit only that canvas.  When ``None`` (default),
+            all canvases attached to *scene_id* are fitted.
         """
-        canvas = self._render_manager._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            return
         gfx_scene = self._render_manager.get_scene(scene_id)
-        canvas.show_object(gfx_scene)
+        if canvas_id is not None:
+            canvas = self._render_manager._canvases.get(canvas_id)
+            if canvas is not None:
+                canvas.show_object(gfx_scene)
+        else:
+            for cid in self._scene_to_canvases.get(scene_id, []):
+                canvas = self._render_manager._canvases.get(cid)
+                if canvas is not None:
+                    canvas.show_object(gfx_scene)
 
     def add_canvas_overlay_model(
         self,
-        scene_id: UUID,
+        canvas_id: UUID,
         overlay: CanvasOverlay,
     ) -> CanvasOverlay:
-        """Attach a screen-space overlay to the canvas rendering *scene_id*.
+        """Attach a screen-space overlay to a specific canvas.
 
         The overlay is rendered as a post-pass on top of the main scene each
         frame.  It does not participate in reslicing, has no world-space
         transform, and is not added to ``scene.visuals``.
 
-        The overlay model is stored in the ``Canvas.overlays`` list of the
-        first canvas registered for *scene_id*, making it part of the
-        serializable model.
+        The overlay model is stored in the ``Canvas.overlays`` list of
+        *canvas_id*, making it part of the serializable model.
 
         Parameters
         ----------
-        scene_id : UUID
-            ID of the scene whose canvas should display the overlay.
+        canvas_id : UUID
+            ID of the canvas that should display the overlay.  Use
+            :meth:`get_canvas_ids` to look up canvas IDs for a scene.
         overlay : CanvasOverlay
             Model-layer overlay description.  Typically a
             :class:`~cellier.v2.visuals._canvas_overlay.CenteredAxes2D`.
@@ -1280,20 +1289,14 @@ class CellierController:
 
         Raises
         ------
-        ValueError
-            If no canvas is registered for *scene_id*.
+        KeyError
+            If *canvas_id* is not registered.
         """
-        canvas_ids = self._scene_to_canvases.get(scene_id, [])
-        if not canvas_ids:
-            raise ValueError(
-                f"No canvas registered for scene {scene_id!r}.  "
-                "Call add_canvas or add_canvas_model first."
-            )
-        # Attach to the first canvas (one scene → one canvas in typical use).
-        canvas_model = self._model.scenes[scene_id].canvases[canvas_ids[0]]
+        scene_id = self._canvas_to_scene[canvas_id]
+        canvas_model = self._model.scenes[scene_id].canvases[canvas_id]
         canvas_model.overlays.append(overlay)
 
-        self._render_manager.add_canvas_overlay(scene_id, overlay)
+        self._render_manager.add_canvas_overlay(canvas_id, overlay)
 
         return overlay
 
@@ -1321,8 +1324,8 @@ class CellierController:
                 for overlay_model in canvas_model.overlays:
                     if overlay_model.id == overlay_id:
                         overlay_model.visible = visible
-                        canvas_view = self._render_manager._find_canvas_for_scene(
-                            scene.id
+                        canvas_view = self._render_manager._canvases.get(
+                            canvas_model.id
                         )
                         if canvas_view is not None:
                             for gfx_overlay in canvas_view._overlays:
@@ -1344,6 +1347,45 @@ class CellierController:
             if scene.name == name:
                 return scene
         raise KeyError(f"No scene named {name!r}")
+
+    def get_canvas_ids(self, scene_id: UUID) -> list[UUID]:
+        """Return the IDs of all canvases registered for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of an existing scene.
+
+        Returns
+        -------
+        list[UUID]
+            Canvas IDs in registration order.  Empty if no canvases have
+            been added yet.
+        """
+        return list(self._scene_to_canvases.get(scene_id, []))
+
+    def get_canvas_view(self, canvas_id: UUID) -> CanvasView:
+        """Return the render-layer ``CanvasView`` for *canvas_id*.
+
+        Provides access to the rendering backend (camera, widget, overlays)
+        for a canvas registered via :meth:`add_canvas` or
+        :meth:`add_canvas_model`.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of a registered canvas.
+
+        Returns
+        -------
+        CanvasView
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        """
+        return self._render_manager._canvases[canvas_id]
 
     def get_visual_model(self, visual_id: UUID) -> MultiscaleImageVisual:
         """Return the live visual model for visual_id.
@@ -1874,7 +1916,7 @@ class CellierController:
 
     def _on_camera_changed(self, event: CameraChangedEvent) -> None:
         """Synchronous bus handler — updates camera model and schedules settle task."""
-        self._update_camera_model(event.scene_id, event.camera_state)
+        self._update_camera_model(event.scene_id, event.source_id, event.camera_state)
 
         if not self._render_manager.config.camera.reslice_enabled:
             return
@@ -1899,17 +1941,37 @@ class CellierController:
             self._settle_after(canvas_id, event.scene_id)
         )
 
-    def _update_camera_model(self, scene_id: UUID, camera_state: CameraState) -> None:
+    def _update_camera_model(
+        self, scene_id: UUID, canvas_id: UUID, camera_state: CameraState
+    ) -> None:
         """Write a CameraState snapshot back into the model-layer camera.
 
         Branches on the actual model type: ``PerspectiveCamera`` writes
         ``up_direction`` and ``fov``; ``OrthographicCamera`` writes ``width``
         and ``height`` (``extent``).
+
+        Parameters
+        ----------
+        scene_id : UUID
+            Scene that owns the canvas.
+        canvas_id : UUID
+            The specific canvas whose camera moved (``event.source_id``).
+        camera_state : CameraState
+            Snapshot to write back.
         """
         scene = self._model.scenes[scene_id]
-        # Find the first canvas and its first camera.
-        canvas_model = next(iter(scene.canvases.values()))
-        camera_model = next(iter(canvas_model.cameras.values()))
+        canvas_model = scene.canvases.get(canvas_id)
+        if canvas_model is None:
+            return
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        if canvas_view is not None:
+            active_dim = canvas_view._dim
+        else:
+            # No render-layer canvas (e.g. headless tests): infer from type.
+            active_dim = "2d" if camera_state.camera_type == "orthographic" else "3d"
+        camera_model = canvas_model.cameras.get(active_dim)
+        if camera_model is None:
+            return
 
         # Common fields present on both camera model types.
         camera_model.position = np.array(camera_state.position, dtype=np.float32)

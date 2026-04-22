@@ -209,10 +209,10 @@ class RenderManager:
 
     def add_canvas_overlay(
         self,
-        scene_id: UUID,
+        canvas_id: UUID,
         overlay_model: CanvasOverlay,
     ) -> None:
-        """Build a GFX overlay and attach it to the canvas for *scene_id*.
+        """Build a GFX overlay and attach it to *canvas_id*.
 
         The GFX overlay is constructed from *overlay_model* and wired to the
         main camera of the canvas so that direction vectors are computed
@@ -220,23 +220,19 @@ class RenderManager:
 
         Parameters
         ----------
-        scene_id : UUID
-            ID of the scene whose canvas should receive the overlay.
+        canvas_id : UUID
+            ID of the canvas that should receive the overlay.
         overlay_model : CanvasOverlay
             Model-layer description of the overlay.
 
         Raises
         ------
+        KeyError
+            If *canvas_id* is not registered.
         ValueError
-            If no canvas is registered for *scene_id*, or if
-            *overlay_model* has an unrecognised ``overlay_type``.
+            If *overlay_model* has an unrecognised type.
         """
-        canvas = self._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            raise ValueError(
-                f"No canvas found for scene {scene_id!r}.  "
-                "Register a canvas before adding overlays."
-            )
+        canvas = self._canvases[canvas_id]
         gfx_overlay = self._build_gfx_overlay(overlay_model, canvas)
         canvas.add_overlay(gfx_overlay)
 
@@ -347,6 +343,9 @@ class RenderManager:
     ) -> None:
         """Reslice all visuals in one scene.
 
+        One reslicing request is submitted per registered canvas so that each
+        canvas uses its own camera state for LOD and frustum-culling decisions.
+
         Parameters
         ----------
         scene_id : UUID
@@ -360,13 +359,12 @@ class RenderManager:
         """
         if visual_configs is None:
             visual_configs = {}
-        canvas = self._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            return
-        request = canvas.capture_reslicing_request(
-            dims_state, target_visual_ids=target_visual_ids
-        )
-        self._slice_coordinator.submit(request, visual_configs)
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=target_visual_ids
+            )
+            self._slice_coordinator.submit(request, visual_configs)
 
     def reslice_visual(
         self,
@@ -376,9 +374,9 @@ class RenderManager:
     ) -> None:
         """Reslice one visual.
 
-        Looks up which scene owns ``visual_id``, builds a
-        ``ReslicingRequest`` with ``target_visual_ids={visual_id}``, and
-        submits it.
+        Looks up which scene owns ``visual_id``, then submits one
+        ``ReslicingRequest`` per registered canvas so that each canvas uses
+        its own camera state.
 
         Parameters
         ----------
@@ -391,13 +389,12 @@ class RenderManager:
         """
         cfg = visual_config if visual_config is not None else VisualRenderConfig()
         scene_id = self._visual_to_scene[visual_id]
-        canvas = self._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            return
-        request = canvas.capture_reslicing_request(
-            dims_state, target_visual_ids=frozenset({visual_id})
-        )
-        self._slice_coordinator.submit(request, {visual_id: cfg})
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=frozenset({visual_id})
+            )
+            self._slice_coordinator.submit(request, {visual_id: cfg})
 
     def look_at_visual(
         self,
@@ -441,8 +438,21 @@ class RenderManager:
         """
         self._canvases[canvas_id].set_depth_range(depth_range)
 
-    def _find_canvas_for_scene(self, scene_id: UUID) -> CanvasView | None:
-        for canvas_id, s_id in self._canvas_to_scene.items():
-            if s_id == scene_id:
-                return self._canvases[canvas_id]
-        return None
+    def _find_canvases_for_scene(self, scene_id: UUID) -> list[CanvasView]:
+        """Return all canvases registered for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to look up.
+
+        Returns
+        -------
+        list[CanvasView]
+            All canvas views rendering the scene.  Empty if none registered.
+        """
+        return [
+            self._canvases[cid]
+            for cid, sid in self._canvas_to_scene.items()
+            if sid == scene_id
+        ]

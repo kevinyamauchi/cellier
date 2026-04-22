@@ -763,7 +763,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     axis_ranges = {0: (0, 300), 1: (0, 300), 2: (0, 300)}
 
     def _get_canvas_view(scene_id):
-        return controller._render_manager._find_canvas_for_scene(scene_id)
+        return controller.get_canvas_view(controller.get_canvas_ids(scene_id)[0])
 
     def _make_2d_canvas_widget(scene, slider_style):
         canvas_view = _get_canvas_view(scene.id)

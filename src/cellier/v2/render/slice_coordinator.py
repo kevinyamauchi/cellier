@@ -21,10 +21,10 @@ class SliceCoordinator:
     runs the synchronous planning phase, cancels in-flight tasks for the
     affected visuals, and submits new async load tasks.
 
-    One ``AsyncSlicer`` task maps to one ``(scene_id, visual_id)`` pair.
-    A ``dict`` keyed by ``(scene_id, visual_id)`` tracks active slice IDs
-    so that per-visual cancellation can cancel only the affected task while
-    leaving other visuals in the same scene running.
+    One ``AsyncSlicer`` task maps to one ``(scene_id, canvas_id, visual_id)``
+    triple.  A ``dict`` keyed by this triple tracks active slice IDs so that
+    per-visual cancellation can cancel only the affected task while leaving
+    other visuals — and other canvases — in the same scene running.
 
     Parameters
     ----------
@@ -46,7 +46,7 @@ class SliceCoordinator:
         self._scenes = scenes
         self._slicer = slicer
         self._data_stores = data_stores
-        self._active_slice_ids: dict[tuple[UUID, UUID], UUID] = {}
+        self._active_slice_ids: dict[tuple[UUID, UUID, UUID], UUID] = {}
 
     def submit(
         self,
@@ -82,10 +82,10 @@ class SliceCoordinator:
                 gfx_visual = scene_manager.get_visual(visual_id)
             except KeyError:
                 # Visual not yet registered in render layer; cancel defensively.
-                self.cancel_visual(request.scene_id, visual_id)
+                self.cancel_visual(request.scene_id, request.canvas_id, visual_id)
                 continue
             if gfx_visual.cancellable:
-                self.cancel_visual(request.scene_id, visual_id)
+                self.cancel_visual(request.scene_id, request.canvas_id, visual_id)
 
         requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 
@@ -105,7 +105,9 @@ class SliceCoordinator:
                 consumer_id=str(visual_id),
             )
             if slice_id is not None:
-                self._active_slice_ids[(request.scene_id, visual_id)] = slice_id
+                self._active_slice_ids[
+                    (request.scene_id, request.canvas_id, visual_id)
+                ] = slice_id
 
     def cancel_scene(self, scene_id: UUID) -> None:
         """Cancel all in-flight tasks for a scene.
@@ -115,16 +117,16 @@ class SliceCoordinator:
         scene_id : UUID
             ID of the scene whose tasks should be cancelled.
         """
-        visual_ids = [
-            v_id
-            for (s_id, v_id) in list(self._active_slice_ids.keys())
+        keys = [
+            (s_id, c_id, v_id)
+            for (s_id, c_id, v_id) in list(self._active_slice_ids.keys())
             if s_id == scene_id
         ]
-        for visual_id in visual_ids:
-            self.cancel_visual(scene_id, visual_id)
+        for s_id, c_id, v_id in keys:
+            self.cancel_visual(s_id, c_id, v_id)
 
-    def cancel_visual(self, scene_id: UUID, visual_id: UUID) -> None:
-        """Cancel the in-flight task for one visual.
+    def cancel_visual(self, scene_id: UUID, canvas_id: UUID, visual_id: UUID) -> None:
+        """Cancel the in-flight task for one visual on one canvas.
 
         Also calls ``visual.cancel_pending()`` or ``cancel_pending_2d()``
         to release any GPU slots reserved during the last planning phase
@@ -134,10 +136,12 @@ class SliceCoordinator:
         ----------
         scene_id : UUID
             ID of the scene containing the visual.
+        canvas_id : UUID
+            ID of the canvas whose request should be cancelled.
         visual_id : UUID
             ID of the visual to cancel.
         """
-        key = (scene_id, visual_id)
+        key = (scene_id, canvas_id, visual_id)
         slice_id = self._active_slice_ids.pop(key, None)
         if slice_id is not None:
             self._slicer.cancel(slice_id)

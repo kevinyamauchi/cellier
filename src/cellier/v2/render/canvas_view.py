@@ -185,6 +185,7 @@ class CanvasView:
             dims_state=dims_state,
             request_id=uuid4(),
             scene_id=self._scene_id,
+            canvas_id=self._canvas_id,
             target_visual_ids=target_visual_ids,
         )
 
@@ -229,6 +230,7 @@ class CanvasView:
             dims_state=dims_state,
             request_id=uuid4(),
             scene_id=self._scene_id,
+            canvas_id=self._canvas_id,
             target_visual_ids=target_visual_ids,
         )
 

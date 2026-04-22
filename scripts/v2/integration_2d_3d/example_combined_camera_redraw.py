@@ -333,16 +333,11 @@ class CombinedApp(QMainWindow):
         self._scene_3d = self._controller.get_scene_by_name("scene_3d")
 
         # ── Get raw canvas widgets ────────────────────────────────────
-        self._canvas_widget_2d = (
-            self._controller._render_manager._find_canvas_for_scene(
-                self._scene_2d.id
-            ).widget
-        )
-        _canvas_view_3d = self._controller._render_manager._find_canvas_for_scene(
-            self._scene_3d.id
-        )
+        _canvas_id_2d = self._controller.get_canvas_ids(self._scene_2d.id)[0]
+        self._canvas_widget_2d = self._controller.get_canvas_view(_canvas_id_2d).widget
+        self._canvas_id_3d = self._controller.get_canvas_ids(self._scene_3d.id)[0]
+        _canvas_view_3d = self._controller.get_canvas_view(self._canvas_id_3d)
         self._canvas_widget_3d = _canvas_view_3d.widget
-        self._canvas_id_3d = _canvas_view_3d._canvas_id
 
         # ── Post-construction: set AABB colors ────────────────────────
         self._visual_2d.aabb.color = AABB_COLOR

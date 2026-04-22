@@ -500,7 +500,7 @@ async def async_main(zarr_uri: str):
     print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
 
     # ── Canvas view ───────────────────────────────────────────────────
-    canvas_view = controller._render_manager._find_canvas_for_scene(scene.id)
+    canvas_view = controller.get_canvas_view(controller.get_canvas_ids(scene.id)[0])
 
     # Axis ranges derived from the finest level's voxel shape (ZYX order).
     # These use voxel indices (not world coords) because slice_indices in this

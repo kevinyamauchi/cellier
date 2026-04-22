@@ -36,6 +36,7 @@ def _make_dims_state() -> DimsState:
 
 def _make_reslicing_request(
     scene_id: UUID | None = None,
+    canvas_id: UUID | None = None,
     target_visual_ids: frozenset[UUID] | None = None,
     screen_size_px: tuple[float, float] = (1200.0, 800.0),
     fov_y_rad: float = 1.2217,  # ~70 degrees
@@ -50,6 +51,7 @@ def _make_reslicing_request(
         dims_state=_make_dims_state(),
         request_id=uuid4(),
         scene_id=scene_id or uuid4(),
+        canvas_id=canvas_id or uuid4(),
         target_visual_ids=target_visual_ids,
     )
 
@@ -249,9 +251,10 @@ def test_scene_manager_visual_ids_property() -> None:
 
 def _make_coordinator_with_scene(
     n_visuals: int = 1,
-) -> tuple[SliceCoordinator, _StubSlicer, SceneManager, list[MagicMock], UUID]:
-    """Build a SliceCoordinator with one scene and n_visuals registered."""
+) -> tuple[SliceCoordinator, _StubSlicer, SceneManager, list[MagicMock], UUID, UUID]:
+    """Build a SliceCoordinator with one scene, one canvas, and n_visuals."""
     scene_id = uuid4()
+    canvas_id = uuid4()
     stub_slicer = _StubSlicer()
     scenes: dict[UUID, SceneManager] = {}
     data_stores: dict[UUID, MagicMock] = {}
@@ -280,12 +283,14 @@ def _make_coordinator_with_scene(
         data_stores[v.visual_model_id] = MagicMock()
         visuals.append(v)
 
-    return coordinator, stub_slicer, sm, visuals, scene_id
+    return coordinator, stub_slicer, sm, visuals, scene_id, canvas_id
 
 
 def test_slice_coordinator_submit_once_no_prior_task() -> None:
-    coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
-    req = _make_reslicing_request(scene_id=scene_id)
+    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+        _make_coordinator_with_scene()
+    )
+    req = _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id)
     coordinator.submit(req, {})
 
     assert len(stub_slicer.submitted) == 1
@@ -293,11 +298,17 @@ def test_slice_coordinator_submit_once_no_prior_task() -> None:
 
 
 def test_slice_coordinator_second_submit_cancels_first() -> None:
-    """Second submit must cancel the first task and then submit a new one."""
-    coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
+    """Second submit from the same canvas must cancel the first task."""
+    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+        _make_coordinator_with_scene()
+    )
 
-    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
-    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(
+        _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id), {}
+    )
+    coordinator.submit(
+        _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id), {}
+    )
 
     assert len(stub_slicer.submitted) == 2
     assert len(stub_slicer.cancelled) == 1
@@ -305,37 +316,45 @@ def test_slice_coordinator_second_submit_cancels_first() -> None:
 
 def test_slice_coordinator_cancel_visual_releases_pending() -> None:
     """cancel_visual must call visual.cancel_pending()."""
-    coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene()
+    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+        _make_coordinator_with_scene()
+    )
     visual = visuals[0]
 
-    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(
+        _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id), {}
+    )
 
     visual.cancel_pending.reset_mock()
-    coordinator.cancel_visual(scene_id, visual.visual_model_id)
+    coordinator.cancel_visual(scene_id, canvas_id, visual.visual_model_id)
     visual.cancel_pending.assert_called_once()
 
 
 def test_slice_coordinator_cancel_visual_only_affects_one() -> None:
     """Cancelling one visual must not cancel the other visual's task."""
-    coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene(
-        n_visuals=2
+    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+        _make_coordinator_with_scene(n_visuals=2)
     )
     v1, v2 = visuals
 
-    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(
+        _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id), {}
+    )
 
     n_cancelled_before = len(stub_slicer.cancelled)
-    coordinator.cancel_visual(scene_id, v1.visual_model_id)
+    coordinator.cancel_visual(scene_id, canvas_id, v1.visual_model_id)
     assert len(stub_slicer.cancelled) == n_cancelled_before + 1
-    # v2's entry should still be in active_slice_ids
-    assert (scene_id, v2.visual_model_id) in coordinator._active_slice_ids
+    # v2's entry should still be in active_slice_ids under the 3-tuple key
+    assert (scene_id, canvas_id, v2.visual_model_id) in coordinator._active_slice_ids
 
 
 def test_slice_coordinator_cancel_scene_cancels_all() -> None:
-    coordinator, stub_slicer, sm, visuals, scene_id = _make_coordinator_with_scene(
-        n_visuals=2
+    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+        _make_coordinator_with_scene(n_visuals=2)
     )
-    coordinator.submit(_make_reslicing_request(scene_id=scene_id), {})
+    coordinator.submit(
+        _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id), {}
+    )
 
     coordinator.cancel_scene(scene_id)
     assert len(coordinator._active_slice_ids) == 0
@@ -366,6 +385,7 @@ def test_reslice_visual_uses_reverse_map() -> None:
     canvas_mock.scene_id = scene_id
     canvas_mock.capture_reslicing_request.return_value = _make_reslicing_request(
         scene_id=scene_id,
+        canvas_id=canvas_id,
         target_visual_ids=frozenset({visual.visual_model_id}),
     )
     rm._canvases[canvas_id] = canvas_mock
@@ -408,7 +428,9 @@ def test_reslice_visual_only_targets_one_visual() -> None:
 
     def _capture_request(dims_state, target_visual_ids=None):
         return _make_reslicing_request(
-            scene_id=scene_id, target_visual_ids=target_visual_ids
+            scene_id=scene_id,
+            canvas_id=canvas_id,
+            target_visual_ids=target_visual_ids,
         )
 
     canvas_mock.capture_reslicing_request.side_effect = _capture_request

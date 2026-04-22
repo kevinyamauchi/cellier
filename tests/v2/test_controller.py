@@ -578,7 +578,7 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
 
     controller._render_manager.reslice_scene = _capturing_reslice
     # Bypass camera model writeback — no canvas model wired in headless tests.
-    controller._update_camera_model = lambda scene_id, camera_state: None
+    controller._update_camera_model = lambda scene_id, canvas_id, camera_state: None
 
     canvas_id = uuid4()
     return controller, scene, visual, canvas_id, reslice_calls
