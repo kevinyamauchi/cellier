@@ -736,3 +736,10 @@ class GFXImageMemoryVisual:
             for line in (self._aabb_line_2d, self._aabb_line_3d):
                 if line is not None:
                     line.material.thickness = event.new_value
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass

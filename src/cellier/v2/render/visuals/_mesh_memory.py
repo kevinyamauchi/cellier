@@ -386,3 +386,10 @@ class GFXMeshMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass

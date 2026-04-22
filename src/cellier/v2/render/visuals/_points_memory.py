@@ -346,3 +346,10 @@ class GFXPointsMemoryVisual:
 
     def cancel_pending_2d(self) -> None:
         """No-op — in-memory visuals have no reserved GPU brick slots."""
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass

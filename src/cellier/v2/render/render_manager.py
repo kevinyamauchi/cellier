@@ -257,8 +257,7 @@ class RenderManager:
                 return
             for vid in sm.visual_ids:
                 vis = sm.get_visual(vid)
-                if hasattr(vis, "tick"):
-                    vis.tick()
+                vis.tick()
 
         return _tick
 
