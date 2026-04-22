@@ -327,10 +327,6 @@ class RenderManager:
     def get_scene(self, scene_id: UUID) -> gfx.Scene:
         """Return the pygfx Scene for ``scene_id``.
 
-        Passed as a callable to ``CanvasView`` at construction time so
-        ``CanvasView`` can render the scene without holding a direct
-        ``SceneManager`` reference.
-
         Parameters
         ----------
         scene_id : UUID
