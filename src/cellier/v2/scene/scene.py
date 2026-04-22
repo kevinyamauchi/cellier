@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from psygnal import EventedModel
-from pydantic import UUID4, AfterValidator, Field
+from pydantic import UUID4, AfterValidator, Field, field_serializer
 
 from cellier.v2.scene.canvas import Canvas
 from cellier.v2.scene.dims import DimsManager
@@ -29,6 +29,12 @@ class Scene(EventedModel):
         Discriminated union of visual model types.
     canvases : dict[UUID4, Canvas]
         Keyed by ``canvas.id``.
+    render_modes : set[Literal["2d", "3d"]]
+        Which rendering modes visuals added to this scene should support.
+        Defaults to ``{"2d", "3d"}``.
+    lighting : Literal["none", "default"]
+        ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to add
+        ambient and directional lights — required for MeshPhongAppearance.
     """
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
@@ -41,6 +47,12 @@ class Scene(EventedModel):
         UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))],
         Canvas,
     ] = Field(default_factory=dict)
+    render_modes: set[Literal["2d", "3d"]] = Field(default_factory=lambda: {"2d", "3d"})
+    lighting: Literal["none", "default"] = "none"
+
+    @field_serializer("render_modes")
+    def _serialize_render_modes(self, value: set) -> list:
+        return sorted(value)
 
     def model_post_init(self, __context: Any) -> None:
         """Wire dims and visual event relays after model initialization."""

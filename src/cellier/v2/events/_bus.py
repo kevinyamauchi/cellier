@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import weakref
 from collections import defaultdict
-from typing import Callable
+from dataclasses import dataclass
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from cellier.v2.events._events import (
@@ -45,6 +46,52 @@ _ENTITY_FIELD: dict[type, str] = {
     SceneAddedEvent: "scene_id",
     SceneRemovedEvent: "scene_id",
 }
+
+
+@dataclass
+class SubscriberInfo:
+    """Human-readable summary of one EventBus subscription.
+
+    Returned by :meth:`EventBus.get_subscribers`.  Intended for
+    interactive debugging and test assertions — not for production
+    control flow.
+
+    Attributes
+    ----------
+    callback_qualname : str
+        Dotted qualified name of the registered callback, e.g.
+        ``"QtDimsSliders._on_dims_changed"``.  Reads ``"(dead)"``
+        when the callback was held by a weak reference that has since
+        been garbage-collected.
+    callback_instance : object
+        The bound object when the callback is a bound method; ``None``
+        for plain functions or dead weak references.  In a debugger,
+        inspect this to examine the live subscriber.
+    owner_id : UUID or None
+        UUID used to group this subscription for bulk removal via
+        :meth:`EventBus.unsubscribe_all`.  Typically the owning
+        widget's ``self._id`` or the controller's ``self._id``.
+    entity_id : UUID or None
+        The entity this subscription is scoped to, or ``None`` when
+        the subscription receives events for all entities of that
+        type.  See :meth:`EventBus.get_subscribers` for a full
+        explanation of what constitutes an entity.
+    is_weak : bool
+        ``True`` when the bus holds only a weak reference to the
+        callback, meaning the subscriber may be garbage-collected
+        without explicit teardown.
+    is_alive : bool
+        ``True`` when the callback target is still reachable.  Always
+        ``True`` for strong references; may become ``False`` for weak
+        ones after the subscriber is garbage-collected.
+    """
+
+    callback_qualname: str
+    callback_instance: Any
+    owner_id: UUID | None
+    entity_id: UUID | None
+    is_weak: bool
+    is_alive: bool
 
 
 class SubscriptionHandle:
@@ -128,6 +175,76 @@ class _Subscription:
             fn = self._weak_func()  # type: ignore[union-attr]
             if fn is not None:
                 fn(event)
+
+    def __repr__(self) -> str:
+        if self._strong_cb is not None:
+            qualname = getattr(self._strong_cb, "__qualname__", repr(self._strong_cb))
+        elif self._weak_obj is not None:
+            # Bound method stored as (weak instance, weak unbound function) pair.
+            live_func = self._weak_func() if self._weak_func is not None else None
+            qualname = (
+                getattr(live_func, "__qualname__", "(dead)")
+                if live_func is not None
+                else "(dead)"
+            )
+        elif self._weak_func is not None:
+            live_func = self._weak_func()
+            qualname = (
+                getattr(live_func, "__qualname__", "(dead)")
+                if live_func is not None
+                else "(dead)"
+            )
+        else:
+            qualname = "(unknown)"
+        reference_kind = "weak" if self.is_weak else "strong"
+        liveness = "alive" if self.is_alive() else "dead"
+        return (
+            f"_Subscription(callback={qualname!r} "
+            f"owner_id={self.owner_id} "
+            f"entity_id={self.entity_id} "
+            f"{reference_kind}/{liveness})"
+        )
+
+
+def _build_subscriber_info(subscription: _Subscription) -> SubscriberInfo:
+    """Extract human-readable metadata from one internal subscription record."""
+    if subscription._strong_cb is not None:
+        live_callback = subscription._strong_cb
+        qualname = getattr(live_callback, "__qualname__", repr(live_callback))
+        instance = getattr(live_callback, "__self__", None)
+    elif subscription._weak_obj is not None:
+        # Bound method stored as (weak instance, weak unbound function) pair.
+        live_instance = subscription._weak_obj()
+        live_func = (
+            subscription._weak_func() if subscription._weak_func is not None else None
+        )
+        qualname = (
+            getattr(live_func, "__qualname__", "(dead)")
+            if live_func is not None
+            else "(dead)"
+        )
+        instance = live_instance
+    elif subscription._weak_func is not None:
+        # Plain function stored as a weak reference.
+        live_func = subscription._weak_func()
+        qualname = (
+            getattr(live_func, "__qualname__", "(dead)")
+            if live_func is not None
+            else "(dead)"
+        )
+        instance = None
+    else:
+        qualname = "(unknown)"
+        instance = None
+
+    return SubscriberInfo(
+        callback_qualname=qualname,
+        callback_instance=instance,
+        owner_id=subscription.owner_id,
+        entity_id=subscription.entity_id,
+        is_weak=subscription.is_weak,
+        is_alive=subscription.is_alive(),
+    )
 
 
 class EventBus:
@@ -269,3 +386,73 @@ class EventBus:
 
         if first_exc is not None:
             raise first_exc
+
+    def get_subscribers(
+        self,
+        event_type: type,
+        *,
+        entity_id: UUID | None = None,
+    ) -> list[SubscriberInfo]:
+        """Return a summary of every subscription registered for *event_type*.
+
+        Intended for interactive debugging and introspection.  Do not
+        use in production control flow.
+
+        Parameters
+        ----------
+        event_type :
+            The event class to query, e.g. ``DimsChangedEvent``.
+        entity_id :
+            Scope the results to subscriptions that would fire when an
+            event targets this specific entity UUID.  Pass ``None``
+            (the default) to return every subscription for
+            *event_type* regardless of scope.
+
+            **What is an entity?**
+
+            Each event type is associated with exactly one model-layer
+            object whose UUID acts as the routing key — the *entity*.
+            The full mapping is:
+
+            - Scene (keyed by ``scene_id``) — ``DimsChangedEvent``,
+              ``CameraChangedEvent``, ``ResliceStartedEvent``,
+              ``VisualAddedEvent``, ``VisualRemovedEvent``,
+              ``SceneAddedEvent``, ``SceneRemovedEvent``
+            - Visual (keyed by ``visual_id``) —
+              ``AppearanceChangedEvent``, ``AABBChangedEvent``,
+              ``VisualVisibilityChangedEvent``,
+              ``TransformChangedEvent``, ``ResliceCompletedEvent``,
+              ``ResliceCancelledEvent``
+            - Canvas (keyed by ``canvas_id``) — ``FrameRenderedEvent``
+            - Data store (keyed by ``data_store_id``) —
+              ``DataStoreMetadataChangedEvent``,
+              ``DataStoreContentsChangedEvent``
+
+            Subscribing with ``entity_id=some_scene_id`` means the
+            callback only fires for events whose ``scene_id`` matches.
+            Subscribing with ``entity_id=None`` means the callback
+            fires for every emission of that type.
+
+            When this method receives *entity_id*, the results include
+            both subscriptions scoped to that UUID **and** unscoped
+            subscriptions (``entity_id=None``), because both would be
+            called by the bus for that entity's events.
+
+        Returns
+        -------
+        list[SubscriberInfo]
+            One entry per matching subscription, in registration order.
+        """
+        all_subscriptions = self._subs.get(event_type, [])
+        results: list[SubscriberInfo] = []
+        for subscription in all_subscriptions:
+            if entity_id is not None:
+                # Mirror the dispatch logic in emit(): unscoped subscriptions
+                # (entity_id=None) match every entity and are always included.
+                if (
+                    subscription.entity_id is not None
+                    and subscription.entity_id != entity_id
+                ):
+                    continue
+            results.append(_build_subscriber_info(subscription))
+        return results

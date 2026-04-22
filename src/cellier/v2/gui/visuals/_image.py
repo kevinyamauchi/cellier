@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from cellier.v2.events import AppearanceUpdateEvent
+
 
 class QtRenderModeComboBox:
     """Bidirectional render-mode selector wired to the cellier v2 bus.
@@ -76,8 +78,13 @@ class QtRenderModeComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, text: str) -> None:
-        self._controller.update_appearance_field(
-            self._visual_id, "render_mode", text, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="render_mode",
+                value=text,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing currentTextChanged ───────────
@@ -170,8 +177,13 @@ class QtIsoThresholdSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, value: float) -> None:
-        self._controller.update_appearance_field(
-            self._visual_id, "iso_threshold", value, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="iso_threshold",
+                value=value,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
@@ -290,13 +302,23 @@ class QtVolumeRenderControls:
 
     def _on_combo_changed(self, text: str) -> None:
         self._update_threshold_visibility(text)
-        self._controller.update_appearance_field(
-            self._visual_id, "render_mode", text, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="render_mode",
+                value=text,
+            )
         )
 
     def _on_slider_changed(self, value: float) -> None:
-        self._controller.update_appearance_field(
-            self._visual_id, "iso_threshold", value, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="iso_threshold",
+                value=value,
+            )
         )
 
     # ── Qt seam 2: push values without re-firing signals ─────────────────────

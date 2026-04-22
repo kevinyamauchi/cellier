@@ -13,8 +13,8 @@ reference to it. External state change notifications are surfaced through the
 `controller.on_*` callback registration methods.
 
 This document covers: the shared state NamedTuples, the event catalogue, the bus API,
-bounce-back prevention, async handler conventions, how the controller bridges psygnal
-signals to bus events, and the registration lifecycle.
+bounce-back prevention, the ContextVar source-ID pattern, async handler conventions,
+how the controller bridges psygnal signals to bus events, and the registration lifecycle.
 
 ---
 
@@ -24,8 +24,8 @@ signals to bus events, and the registration lifecycle.
 src/cellier/v2/
 ├── _state.py          # DimsState, CameraState — shared by events and render layer
 └── events/
-    ├── __init__.py    # exports EventBus, all event types, SubscriptionHandle
-    ├── _bus.py        # EventBus, SubscriptionHandle, make_weak_callback
+    ├── __init__.py    # exports EventBus, SubscriberInfo, SubscriptionHandle, all event types
+    ├── _bus.py        # EventBus, SubscriptionHandle, SubscriberInfo, _Subscription
     └── _events.py     # all event NamedTuples
 ```
 
@@ -46,10 +46,10 @@ Union alias at module level groups them for type annotations on the bus.
 
 ### One universal field: `source_id`
 
-Every event carries a `source_id: UUID` identifying the object that emitted it. This
-is the sole mechanism for preventing feedback loops (see §Bounce-back prevention). The
-bus itself is source-agnostic; filtering on `source_id` is the subscriber's
-responsibility.
+Every event carries a `source_id: UUID` identifying the object that triggered the
+change. This is the primary mechanism for preventing feedback loops (see
+§Bounce-back prevention and the ContextVar pattern). The bus itself is source-agnostic;
+filtering on `source_id` is the subscriber's responsibility.
 
 ### No model references inside the bus
 
@@ -95,48 +95,76 @@ collected, without requiring any explicit call.
 These are not events — they are the immutable state payloads that events carry. They
 live in `src/cellier/v2/_state.py`. This module sits above both the events package and
 the render layer so neither needs to import the other to reach shared types.
-`ReslicingRequest` in `src/cellier/v2/render/_requests.py` imports `DimsState` from
-here. `CameraState` is new.
 
 ### `DimsState`
 
-Move from `src/cellier/v2/render/_requests.py` to `src/cellier/v2/_state.py` and
-update the import in `_requests.py` accordingly.
+`DimsState` is a two-level structure. The top level carries `axis_labels` alongside a
+`selection` object. The selection is typed as `SelectionState`, which is currently
+either an `AxisAlignedSelectionState` (the only concrete implementation) or the stub
+`PlaneSelectionState`.
 
 ```python
+SelectionState = AxisAlignedSelectionState | PlaneSelectionState
+
+
+class AxisAlignedSelectionState(NamedTuple):
+    """Immutable snapshot of an axis-aligned slice selection.
+
+    Parameters
+    ----------
+    displayed_axes :
+        Indices of axes currently rendered, e.g. ``(0, 1, 2)`` for 3-D
+        or ``(1, 2)`` for a 2-D XY slice.
+    slice_indices :
+        Mapping of axis index to the current integer slice position for
+        each non-displayed axis.  Empty for a pure 3-D view.
+    """
+
+    displayed_axes: tuple[int, ...]
+    slice_indices: dict[int, int]
+
+    def to_index_selection(self, ndim: int) -> tuple[int | slice, ...]:
+        """Return a per-axis numpy indexer in axis order.
+
+        Displayed axes → ``slice(None)``, sliced axes → their int value.
+        """
+        ...
+
+
 class DimsState(NamedTuple):
     """Current dimension display state for a scene.
 
     Parameters
     ----------
-    displayed_axes :
-        Indices of axes currently rendered, e.g. ``(0, 1, 2)`` for 3D
-        or ``(1, 2)`` for a 2D XY slice.
-    slice_indices :
-        Current integer index for each non-displayed axis, in the same
-        order as the non-displayed axes.  Empty for a pure 3D view.
+    axis_labels :
+        Ordered labels for every axis in the scene coordinate system,
+        e.g. ``("z", "y", "x")``.
+    selection :
+        Immutable snapshot of which axes are displayed and the current
+        slice position for all non-displayed axes.
     """
-    displayed_axes: tuple[int, ...]
-    slice_indices: tuple[int, ...]
+
+    axis_labels: tuple[str, ...]
+    selection: SelectionState
+```
+
+Access patterns — accessing displayed axes and slice indices from a `DimsState`:
+
+```python
+# in a bus event handler
+displayed = event.dims_state.selection.displayed_axes  # e.g. (0, 1, 2)
+z_index   = event.dims_state.selection.slice_indices.get(0, 0)
 ```
 
 ### `CameraState`
 
-New. A numpy-free immutable snapshot suitable for event payloads, external callbacks,
-and serialization. Distinct from `ReslicingRequest`, which carries numpy arrays for
-the hot slicing path.
+Numpy-free immutable snapshot suitable for event payloads, external callbacks, and
+serialization. Distinct from `ReslicingRequest`, which carries numpy arrays for the
+hot slicing path.
 
 ```python
-from typing import Literal, NamedTuple
-
-
 class CameraState(NamedTuple):
     """Immutable snapshot of the active camera's logical state.
-
-    Carries all fields needed to reconstruct the camera view for display
-    in external callbacks, camera sync across canvases, and
-    save/restore.  Numpy-free — frustum corners for the slicer are
-    computed separately inside ``CanvasView.capture_reslicing_request()``.
 
     For perspective cameras: ``fov`` is populated; ``extent`` is
     ``(0.0, 0.0)``.
@@ -166,6 +194,7 @@ class CameraState(NamedTuple):
     depth_range :
         ``(near, far)`` clip distances.
     """
+
     camera_type: Literal["perspective", "orthographic"]
     position: tuple[float, float, float]
     rotation: tuple[float, float, float, float]
@@ -186,44 +215,36 @@ re-exported from `cellier.v2.events` so subscribers have a single import locatio
 All events live in `src/cellier/v2/events/_events.py`. All are `NamedTuple`s. The
 first field of every event is `source_id: UUID`.
 
-```python
-from __future__ import annotations
-
-from typing import Literal, NamedTuple
-from uuid import UUID
-
-from cellier.v2._state import CameraState, DimsState
-```
-
 ### Scene / dims events
 
 ```python
 class DimsChangedEvent(NamedTuple):
     """Fired when a scene's DimsManager state changes.
 
-    Triggers: dims slider move, programmatic ``dims_model.slice_indices =
-    ...``, ``dims_model.displayed_axes = ...``.
+    Triggers: dims slider move, programmatic mutation of
+    ``dims.selection.slice_indices``, ``dims.selection.displayed_axes``.
 
     Primary consumers:
-    - ``CanvasView``: switch active camera when ``displayed_axes_changed``
-    - ``SliceCoordinator``: reslice all affected visuals
+    - ``SliceCoordinator``: invalidate stale 2D caches
+    - Controller: reslice the affected scene
     - Dims slider widget: update slider position without re-emitting
-    - External ``on_dims_changed`` callbacks
 
     Parameters
     ----------
     source_id :
-        ID of the object that caused the change.  The dims slider widget
-        sets this to its own ID so it can ignore the echo.
+        UUID of the object that caused the change.  The dims slider
+        widget passes its own ID via ``controller.update_slice_indices``
+        so it can echo-filter the resulting event.
     scene_id :
         The scene whose ``DimsManager`` changed.
     dims_state :
         Full snapshot of the new dims state.
     displayed_axes_changed :
         ``True`` when ``displayed_axes`` changed, not just
-        ``slice_indices``.  ``CanvasView`` uses this flag to decide
-        whether to switch the active camera.
+        ``slice_indices``.  The controller uses this flag to rebuild
+        visual geometry and switch canvas cameras.
     """
+
     source_id: UUID
     scene_id: UUID
     dims_state: DimsState
@@ -234,26 +255,24 @@ class DimsChangedEvent(NamedTuple):
 class CameraChangedEvent(NamedTuple):
     """Fired when the camera moves in a scene.
 
-    Sources: user drag/zoom via a pygfx ``Controller`` in a
-    ``CanvasView`` (``source_id`` = that canvas's ID), or a programmatic
-    ``controller.look_at_visual()`` call (``source_id`` = controller ID).
+    Source: ``CanvasView`` detects camera movement each frame by
+    comparing a cached ``CameraState`` snapshot; it emits this event
+    with ``source_id = canvas_id`` when the state changes.
 
     Primary consumers:
-    - Other ``CanvasView`` instances attached to the same scene (sync)
-    - ``SliceCoordinator``: reslice on camera move in continuous mode
-    - External ``on_camera_changed`` callbacks
+    - Controller: update camera model and schedule debounced reslice
 
     Parameters
     ----------
     source_id :
-        ID of the canvas that moved the camera.  A ``CanvasView`` that
-        receives this event and finds ``source_id == self._id`` ignores
-        it to break the sync feedback loop.
+        ID of the canvas that moved the camera (its ``canvas_id``, not
+        the canvas's internal ``_id``).
     scene_id :
         The scene whose active camera moved.
     camera_state :
         Full snapshot of the new camera state.
     """
+
     source_id: UUID
     scene_id: UUID
     camera_state: CameraState
@@ -265,56 +284,113 @@ class CameraChangedEvent(NamedTuple):
 class AppearanceChangedEvent(NamedTuple):
     """Fired when any field on a visual's appearance model changes.
 
-    Emitted by the controller whenever a psygnal field event fires on a
-    ``BaseAppearance`` subclass.  ``visible`` changes emit a separate
-    ``VisualVisibilityChangedEvent`` instead.
+    Emitted by the controller's psygnal bridge whenever a field event
+    fires on a ``BaseAppearance`` subclass.  ``visible`` field changes
+    emit ``VisualVisibilityChangedEvent`` instead.
 
     Primary consumers:
     - ``GFX*Visual``: update material / shader parameters
-    - ``SliceCoordinator``: reslice if ``requires_reslice``
     - External ``on_visual_changed`` callbacks
 
     Parameters
     ----------
     source_id :
-        Always the controller's own ID (appearance changes originate
-        from application code, never from the render layer).
+        UUID of the object that caused the change.  Widget-driven
+        changes carry the widget's own ID (injected via the ContextVar
+        pattern in ``update_appearance_field``); direct model mutations
+        fall back to the controller's ID.
     visual_id :
         The visual whose appearance changed.
     field_name :
-        The name of the changed field, e.g. ``"color_map"``.
+        The name of the changed field, e.g. ``"clim"``.
     new_value :
-        The new value.  Typed as ``object``; consumers cast as needed.
+        The new value.  Typed as ``Any``; consumers cast as needed.
     requires_reslice :
         ``True`` for fields that invalidate the current brick set
         (``lod_bias``, ``force_level``, ``frustum_cull``).
         ``False`` for pure GPU-side changes (``color_map``, ``clim``).
     """
+
     source_id: UUID
     visual_id: UUID
     field_name: str
-    new_value: object
+    new_value: Any
     requires_reslice: bool
 
 
 class VisualVisibilityChangedEvent(NamedTuple):
     """Fired when ``appearance.visible`` changes.
 
-    Separate from ``AppearanceChangedEvent`` so consumers that only need
-    to show/hide a node do not have to inspect ``field_name``.
+    Separate from ``AppearanceChangedEvent`` so consumers that only
+    need to show/hide a node do not have to inspect ``field_name``.
 
     Parameters
     ----------
     source_id :
-        Always the controller's own ID.
+        UUID of the object that caused the change.  Widget-driven
+        changes carry the widget's own ID; direct model mutations fall
+        back to the controller's ID.
     visual_id :
         The visual whose visibility changed.
     visible :
         The new visibility state.
     """
+
     source_id: UUID
     visual_id: UUID
     visible: bool
+
+
+class AABBChangedEvent(NamedTuple):
+    """Fired when any field on a visual's AABB params model changes.
+
+    Primary consumers:
+    - ``GFX*Visual``: update bounding-box display parameters
+
+    Parameters
+    ----------
+    source_id :
+        UUID of the object that caused the change.  Widget-driven
+        changes carry the widget's own ID (injected via
+        ``update_aabb_field``); direct model mutations fall back to
+        the controller's ID.
+    visual_id :
+        The visual whose AABB params changed.
+    field_name :
+        The name of the changed field, e.g. ``"enabled"``.
+    new_value :
+        The new value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field_name: str
+    new_value: Any
+
+
+class TransformChangedEvent(NamedTuple):
+    """Fired when a visual's data-to-world transform is replaced.
+
+    Primary consumers:
+    - ``GFX*Visual``: update the scene-graph node matrix
+
+    Parameters
+    ----------
+    source_id :
+        Always the controller's own ID; transform changes originate
+        from application code via ``set_visual_transform``.
+    scene_id :
+        The scene that contains the visual.
+    visual_id :
+        The visual whose transform changed.
+    transform :
+        The new ``AffineTransform``.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    visual_id: UUID
+    transform: AffineTransform
 ```
 
 ### Data store events
@@ -323,9 +399,6 @@ class VisualVisibilityChangedEvent(NamedTuple):
 class DataStoreMetadataChangedEvent(NamedTuple):
     """Fired when a data store's shape or chunk layout changes.
 
-    This is the more disruptive mutation: ``VolumeGeometry`` must be
-    rebuilt and the entire ``BrickCache`` evicted before reslicing.
-
     Parameters
     ----------
     source_id :
@@ -333,15 +406,13 @@ class DataStoreMetadataChangedEvent(NamedTuple):
     data_store_id :
         The data store whose metadata changed.
     """
+
     source_id: UUID
     data_store_id: UUID
 
 
 class DataStoreContentsChangedEvent(NamedTuple):
     """Fired when voxel values change but shape and chunk layout are unchanged.
-
-    Allows surgical ``BrickCache`` eviction: only bricks whose keys
-    appear in ``dirty_keys`` need to be evicted before reslicing.
 
     Parameters
     ----------
@@ -350,21 +421,20 @@ class DataStoreContentsChangedEvent(NamedTuple):
     data_store_id :
         The data store whose contents changed.
     dirty_keys :
-        The set of ``BrickKey`` tuples that are now stale.
-        ``None`` means the entire store is dirty — evict all.
+        The set of brick keys that are now stale.  ``None`` means the
+        entire store is dirty.
     """
+
     source_id: UUID
     data_store_id: UUID
-    dirty_keys: frozenset[tuple[int, ...]] | None
+    dirty_keys: Any
 ```
 
 ### Slicer lifecycle events
 
 ```python
 class ResliceStartedEvent(NamedTuple):
-    """Fired by ``SliceCoordinator`` before submitting async tasks.
-
-    Useful for disabling the Update button and showing a loading spinner.
+    """Fired before submitting async reslice tasks for a scene.
 
     Parameters
     ----------
@@ -375,13 +445,14 @@ class ResliceStartedEvent(NamedTuple):
     visual_ids :
         The visuals in this batch.
     """
+
     source_id: UUID
     scene_id: UUID
     visual_ids: frozenset[UUID]
 
 
 class ResliceCompletedEvent(NamedTuple):
-    """Fired by ``GFX*Visual`` after all bricks in a slice batch are committed.
+    """Fired after all bricks in one visual's slice batch are committed.
 
     Fired once per visual per reslice cycle, not once per brick.
 
@@ -396,6 +467,7 @@ class ResliceCompletedEvent(NamedTuple):
     brick_count :
         Number of bricks committed in this batch.
     """
+
     source_id: UUID
     scene_id: UUID
     visual_id: UUID
@@ -403,9 +475,7 @@ class ResliceCompletedEvent(NamedTuple):
 
 
 class ResliceCancelledEvent(NamedTuple):
-    """Fired by ``SliceCoordinator`` when an in-flight task is cancelled.
-
-    Happens when a second reslice is submitted before the first completes.
+    """Fired when an in-flight reslice task is cancelled.
 
     Parameters
     ----------
@@ -416,6 +486,7 @@ class ResliceCancelledEvent(NamedTuple):
     visual_id :
         The visual whose task was cancelled.
     """
+
     source_id: UUID
     scene_id: UUID
     visual_id: UUID
@@ -427,17 +498,16 @@ class ResliceCancelledEvent(NamedTuple):
 class FrameRenderedEvent(NamedTuple):
     """Fired by ``CanvasView`` at the end of each rendered frame.
 
-    Useful for benchmarking, screenshot capture, and frame-rate display.
-
     Parameters
     ----------
     source_id :
-        Always the ``CanvasView``'s ID (= ``canvas_id``).
+        Always the ``CanvasView``'s ``canvas_id``.
     canvas_id :
         The canvas that completed a frame.
     frame_time_ms :
         Wall-clock time for this frame in milliseconds.
     """
+
     source_id: UUID
     canvas_id: UUID
     frame_time_ms: float
@@ -448,6 +518,7 @@ class FrameRenderedEvent(NamedTuple):
 ```python
 class VisualAddedEvent(NamedTuple):
     """Fired after a visual is fully wired into a scene."""
+
     source_id: UUID
     scene_id: UUID
     visual_id: UUID
@@ -455,6 +526,7 @@ class VisualAddedEvent(NamedTuple):
 
 class VisualRemovedEvent(NamedTuple):
     """Fired after a visual is fully removed from a scene."""
+
     source_id: UUID
     scene_id: UUID
     visual_id: UUID
@@ -462,12 +534,14 @@ class VisualRemovedEvent(NamedTuple):
 
 class SceneAddedEvent(NamedTuple):
     """Fired after a scene is registered with the controller."""
+
     source_id: UUID
     scene_id: UUID
 
 
 class SceneRemovedEvent(NamedTuple):
     """Fired after a scene and all its canvases and visuals are removed."""
+
     source_id: UUID
     scene_id: UUID
 ```
@@ -479,7 +553,9 @@ CellierEventTypes = (
     DimsChangedEvent
     | CameraChangedEvent
     | AppearanceChangedEvent
+    | AABBChangedEvent
     | VisualVisibilityChangedEvent
+    | TransformChangedEvent
     | DataStoreMetadataChangedEvent
     | DataStoreContentsChangedEvent
     | ResliceStartedEvent
@@ -497,203 +573,84 @@ CellierEventTypes = (
 
 ## EventBus API
 
+### Internal subscription record: `_Subscription`
+
+Subscriptions are stored as `_Subscription` instances rather than plain tuples.
+Weak reference logic is fully encapsulated in this class — there is no standalone
+`make_weak_callback` helper.
+
 ```python
-# src/cellier/v2/events/_bus.py
+class _Subscription:
+    __slots__ = (
+        "_strong_cb",   # callback (strong ref)
+        "_weak_func",   # weakref to unbound function (weak bound methods or weak fns)
+        "_weak_obj",    # weakref to bound instance (weak bound methods only)
+        "entity_id",
+        "handle",
+        "is_weak",
+        "owner_id",
+    )
 
-from __future__ import annotations
+    def is_alive(self) -> bool:
+        """Return True if the callback target is still reachable."""
+        ...
 
-import logging
-import types
-import weakref
-from collections import defaultdict
-from typing import Callable, TypeVar
-from uuid import UUID, uuid4
+    def call(self, event) -> None:
+        """Invoke the callback. Assumes is_alive() is True."""
+        ...
 
-logger = logging.getLogger(__name__)
-E = TypeVar("E")
+    def __repr__(self) -> str:
+        # Produces e.g.:
+        # _Subscription(callback='QtDimsSliders._on_dims_changed'
+        #   owner_id=3f2a... entity_id=9c1b... strong/alive)
+        ...
+```
 
+### `SubscriberInfo` — debugging helper
 
-def make_weak_callback(callback: Callable) -> Callable:
-    """Wrap a callable in a weak reference.
+`get_subscribers()` returns `SubscriberInfo` dataclass instances (not raw
+`_Subscription` objects) for external inspection. See
+[debugging_events.md](debugging_events.md) for usage.
 
-    Bound methods (``instance.handler``) are temporary objects — a
-    direct ``weakref.ref`` to them dies immediately because nothing else
-    holds them alive.  This function handles that case by storing a weak
-    reference to the *instance* and a strong reference to the underlying
-    *function*, then reconstructing the call at dispatch time.
+```python
+@dataclass
+class SubscriberInfo:
+    callback_qualname: str   # e.g. "QtDimsSliders._on_dims_changed"
+    callback_instance: Any   # bound object, or None for plain functions
+    owner_id: UUID | None
+    entity_id: UUID | None
+    is_weak: bool
+    is_alive: bool
+```
 
-    Plain functions and lambdas are wrapped with a direct ``weakref.ref``.
-    Note: lambdas passed with ``weak=True`` will die immediately; callers
-    should pass lambdas with ``weak=False`` (see ``EventBus.subscribe``).
+### `EventBus`
 
-    The returned wrapper exposes an ``is_dead()`` method that returns
-    ``True`` once the referent has been garbage-collected.
-
-    Parameters
-    ----------
-    callback :
-        The callable to wrap.
-
-    Returns
-    -------
-    Callable
-        A wrapper that calls the original callback while it is alive and
-        becomes a no-op once the referent is collected.  The wrapper also
-        has an ``is_dead() -> bool`` attribute.
-    """
-    if isinstance(callback, types.MethodType):
-        instance_ref = weakref.ref(callback.__self__)
-        func = callback.__func__
-
-        def _call(*args, **kwargs):
-            instance = instance_ref()
-            if instance is None:
-                return None
-            return func(instance, *args, **kwargs)
-
-        _call.is_dead = lambda: instance_ref() is None  # type: ignore[attr-defined]
-    else:
-        fn_ref = weakref.ref(callback)
-
-        def _call(*args, **kwargs):
-            fn = fn_ref()
-            if fn is None:
-                return None
-            return fn(*args, **kwargs)
-
-        _call.is_dead = lambda: fn_ref() is None  # type: ignore[attr-defined]
-
-    return _call
-
-
-class SubscriptionHandle:
-    """Opaque token returned by ``EventBus.subscribe()``.
-
-    Pass to ``EventBus.unsubscribe()`` to remove the subscription.
-
-    Parameters
-    ----------
-    id :
-        Unique identifier for this subscription.
-    """
-    __slots__ = ("id",)
-
-    def __init__(self) -> None:
-        self.id: UUID = uuid4()
-
-
-# Internal entry stored per subscription.
-# Fields: (handle, entity_id_filter, callback_or_weak_wrapper, is_weak)
-_Entry = tuple[SubscriptionHandle, UUID | None, Callable, bool]
-
-
+```python
 class EventBus:
-    """Central typed-dispatch event bus for Cellier v2.
-
-    All inter-layer communication in Cellier passes through this object.
-    The model layer emits events; the render layer subscribes to them.
-    No model class imports render-layer code; no render-layer class
-    imports model code.
-
-    The bus is constructed by ``CellierController`` before any model or
-    render object exists.  The controller performs all wiring.
-    Application code never holds a reference to the bus.
-
-    Notes
-    -----
-    Dispatch is fully synchronous.  Handlers that need to await async
-    work must wrap it in ``asyncio.create_task()`` and return
-    immediately.  See §Async handler convention in the design document.
-
-    Subscriptions use strong references by default.  Pass ``weak=True``
-    to ``subscribe()`` for callbacks that may be garbage-collected
-    before the controller has a chance to call ``unsubscribe_all()``.
-    Dead weak subscriptions are cleaned up lazily on the next emission
-    of the same event type.
-    """
-
     def __init__(self) -> None:
-        # Primary store:
-        #   _subscriptions[EventType] -> list of _Entry
-        # entity_id_filter=None means "fire for all entities of this type".
-        self._subscriptions: dict[type, list[_Entry]] = defaultdict(list)
+        # event_type → list[_Subscription], in registration order
+        self._subs: dict[type, list[_Subscription]] = defaultdict(list)
 
-        # Reverse index for O(1) unsubscribe:
-        #   _handle_to_type[handle] -> event_type
-        self._handle_to_type: dict[SubscriptionHandle, type] = {}
+        # handle._id (UUID) → (event_type, _Subscription) for O(1) single removal
+        self._handle_index: dict[UUID, tuple[type, _Subscription]] = {}
+```
 
-        # Owner index for bulk deregistration:
-        #   _owner_to_handles[owner_id] -> list[SubscriptionHandle]
-        self._owner_to_handles: dict[UUID, list[SubscriptionHandle]] = defaultdict(list)
+**Note on `unsubscribe_all` performance.** There is no forward owner index.
+`unsubscribe_all(owner_id)` scans all subscriptions across all event types linearly.
+This is O(n) in the total number of subscriptions. In practice the subscription count
+is small (tens of entries) so this has no measurable cost.
 
-    def emit(self, event: object) -> None:
-        """Emit an event to all matching subscribers.
-
-        Dispatch is breadth-first over the subscriber list for this
-        event type.  Dead weak subscriptions are collected and removed
-        before callbacks fire.  Exceptions from individual subscribers
-        are logged but do not prevent other subscribers from receiving
-        the event; the first exception is re-raised after all subscribers
-        have run.
-
-        Parameters
-        ----------
-        event :
-            A ``CellierEventTypes`` NamedTuple instance.
-        """
-        event_type = type(event)
-        subscribers = self._subscriptions.get(event_type)
-        if not subscribers:
-            return
-
-        # Sweep dead weak entries before dispatch so they never fire.
-        dead_handles: list[SubscriptionHandle] = []
-        live: list[_Entry] = []
-        for entry in subscribers:
-            handle, filter_id, cb, is_weak = entry
-            if is_weak and cb.is_dead():
-                dead_handles.append(handle)
-            else:
-                live.append(entry)
-
-        if dead_handles:
-            self._subscriptions[event_type] = live
-            for handle in dead_handles:
-                self._handle_to_type.pop(handle, None)
-
-        # Resolve the entity ID lazily — only when at least one live
-        # subscriber has a filter set, to avoid the attribute lookup on
-        # hot paths where all subscribers are unfiltered.
-        entity_id: UUID | None = None
-        entity_field = _ENTITY_FIELD.get(event_type)
-
-        errors: list[Exception] = []
-        for handle, filter_id, callback, _is_weak in live:
-            if filter_id is not None:
-                if entity_id is None and entity_field is not None:
-                    entity_id = getattr(event, entity_field)
-                if entity_id != filter_id:
-                    continue
-            try:
-                callback(event)
-            except Exception as exc:
-                errors.append(exc)
-
-        if errors:
-            for exc in errors[1:]:
-                logger.exception("EventBus subscriber raised", exc_info=exc)
-            raise errors[0]
-
+```python
     def subscribe(
         self,
-        event_type: type[E],
-        callback: Callable[[E], None],
+        event_type: type,
+        callback: Callable,
         *,
         entity_id: UUID | None = None,
         owner_id: UUID | None = None,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Subscribe to events of a given type.
+        """Register callback to be called when event_type is emitted.
 
         Parameters
         ----------
@@ -703,90 +660,41 @@ class EventBus:
             Called synchronously for each matching event.
         entity_id :
             When provided, the callback fires only for events whose
-            canonical entity ID matches this value (e.g. a specific
-            ``scene_id`` for scene events, ``visual_id`` for visual
-            events).  ``None`` subscribes to all entities.
+            canonical entity ID matches this value.  ``None`` subscribes
+            to all entities.
         owner_id :
-            When provided, this subscription is registered under
-            ``owner_id`` so that ``unsubscribe_all(owner_id)`` removes
-            it atomically alongside all other subscriptions owned by
-            the same object.  Pass the owning object's own ``.id``.
+            Groups this subscription for bulk removal via
+            ``unsubscribe_all(owner_id)``.  Pass the owning object's own
+            ``._id``.
         weak :
-            When ``True``, the bus stores a weak reference to the
-            callback's owner.  The subscription is cleaned up
-            automatically when the owner is garbage-collected.  Use for
-            transient subscribers that may be destroyed outside the
-            controller's teardown path.
-
-            **Do not pass lambdas with** ``weak=True``: a lambda has no
-            other referent to keep it alive and will be collected
-            immediately, silently dropping the subscription.
+            Store a weak reference to the callback.  Dead weak
+            subscriptions are cleaned up lazily during emission.
+            Do not pass lambdas with ``weak=True``.
 
         Returns
         -------
         SubscriptionHandle
-            Opaque token.  Pass to ``unsubscribe()`` to remove this
-            subscription individually.
+            Opaque token for individual removal via ``unsubscribe()``.
 
         Raises
         ------
         ValueError
-            If ``weak=True`` is combined with a lambda, which would
-            result in the subscription dying immediately.
+            If ``weak=True`` is combined with a lambda.
         """
-        if weak and getattr(callback, "__name__", None) == "<lambda>":
-            raise ValueError(
-                "Cannot subscribe a lambda with weak=True: the lambda has no "
-                "persistent referent and will be garbage-collected immediately, "
-                "silently dropping the subscription.  Assign the lambda to a "
-                "variable or use weak=False."
-            )
+        ...
 
-        stored_cb = make_weak_callback(callback) if weak else callback
-        handle = SubscriptionHandle()
-        self._subscriptions[event_type].append(
-            (handle, entity_id, stored_cb, weak)
-        )
-        self._handle_to_type[handle] = event_type
-        if owner_id is not None:
-            self._owner_to_handles[owner_id].append(handle)
-        return handle
+    def unsubscribe(self, handle: SubscriptionHandle) -> None: ...
 
-    def unsubscribe(self, handle: SubscriptionHandle) -> None:
-        """Remove a single subscription.
+    def unsubscribe_all(self, owner_id: UUID) -> None: ...
 
-        Parameters
-        ----------
-        handle :
-            The handle returned by ``subscribe()``.  Passing an
-            already-removed or unknown handle is a no-op.
-        """
-        event_type = self._handle_to_type.pop(handle, None)
-        if event_type is None:
-            return
-        self._subscriptions[event_type] = [
-            entry for entry in self._subscriptions[event_type]
-            if entry[0] is not handle
-        ]
+    def emit(self, event) -> None: ...
 
-    def unsubscribe_all(self, owner_id: UUID) -> None:
-        """Remove every subscription owned by ``owner_id``.
-
-        Called by the controller when an entity (scene, visual, canvas)
-        is removed, ensuring no stale callbacks remain.  This is the
-        primary cleanup path for render-layer objects.  Weak subscriptions
-        are also cleaned up here if the owner is still alive but being
-        explicitly removed; there is no need to wait for garbage
-        collection.
-
-        Parameters
-        ----------
-        owner_id :
-            The ID of the object being removed.
-        """
-        handles = self._owner_to_handles.pop(owner_id, [])
-        for handle in handles:
-            self.unsubscribe(handle)
+    def get_subscribers(
+        self,
+        event_type: type,
+        *,
+        entity_id: UUID | None = None,
+    ) -> list[SubscriberInfo]: ...
 ```
 
 ### Entity ID resolution
@@ -796,106 +704,173 @@ module-level mapping. Each event type declares which of its fields is the filter
 entity:
 
 ```python
-# In _bus.py, module-level
-
 _ENTITY_FIELD: dict[type, str] = {
-    DimsChangedEvent:                "scene_id",
-    CameraChangedEvent:              "scene_id",
-    AppearanceChangedEvent:          "visual_id",
-    VisualVisibilityChangedEvent:    "visual_id",
-    DataStoreMetadataChangedEvent:   "data_store_id",
-    DataStoreContentsChangedEvent:   "data_store_id",
-    ResliceStartedEvent:             "scene_id",
-    ResliceCompletedEvent:           "visual_id",
-    ResliceCancelledEvent:           "visual_id",
-    FrameRenderedEvent:              "canvas_id",
-    VisualAddedEvent:                "scene_id",
-    VisualRemovedEvent:              "scene_id",
-    SceneAddedEvent:                 "scene_id",
-    SceneRemovedEvent:               "scene_id",
+    DimsChangedEvent:                  "scene_id",
+    CameraChangedEvent:                "scene_id",
+    AppearanceChangedEvent:            "visual_id",
+    AABBChangedEvent:                  "visual_id",
+    VisualVisibilityChangedEvent:      "visual_id",
+    TransformChangedEvent:             "visual_id",
+    DataStoreMetadataChangedEvent:     "data_store_id",
+    DataStoreContentsChangedEvent:     "data_store_id",
+    ResliceStartedEvent:               "scene_id",
+    ResliceCompletedEvent:             "visual_id",
+    ResliceCancelledEvent:             "visual_id",
+    FrameRenderedEvent:                "canvas_id",
+    VisualAddedEvent:                  "scene_id",
+    VisualRemovedEvent:                "scene_id",
+    SceneAddedEvent:                   "scene_id",
+    SceneRemovedEvent:                 "scene_id",
 }
 ```
 
 ---
 
-## Bounce-back prevention
+## Bounce-back prevention and the ContextVar pattern
 
-The v1 approach — temporarily disconnecting a callback before emitting and reconnecting
-afterwards — requires the emitter to know the receiver's callback identity and fails
-silently on lambdas or short-lived bound methods.
+### The problem
 
-The v2 approach: **every subscriber that can also be a source checks `event.source_id`
-at the top of its handler and returns immediately if it matches its own ID.**
+Preventing feedback loops requires two things:
 
-### Example: dims slider ↔ model sync
+1. **Echo filtering** — a widget that drives a model change must be able to identify
+   the resulting bus event as its own and ignore it, rather than redundantly
+   re-applying the value it just set.
+
+2. **Re-entrancy prevention** — when widget B is programmatically updated in response
+   to a change, it must not re-broadcast that update back into the system.
+
+Re-entrancy is handled at the widget level with Qt's `blockSignals(True/False)` around
+every programmatic `setValue()` call. This prevents the widget's own `valueChanged`
+signal from firing during a model-driven update.
+
+Echo filtering requires that every bus event carry a `source_id` that identifies the
+originating widget. Widgets check `if event.source_id == self._id: return` at the top
+of their bus handlers.
+
+### The challenge: psygnal does not carry caller metadata
+
+Widgets do not emit bus events directly. Instead they mutate model fields through
+controller methods, and a psygnal bridge handler fires synchronously to emit the bus
+event. The bridge handler's signature only receives the new field value via
+`EmissionInfo` — there is no mechanism within psygnal to pass the calling widget's UUID
+down to the handler.
+
+### The solution: ContextVar side-channel
+
+A `contextvars.ContextVar` is set by the controller method before the model mutation
+and reset after. The psygnal handler, running synchronously in the same call frame,
+reads the var to retrieve the caller-supplied `source_id`.
 
 ```python
-class DimsSliderWidget:
-    def __init__(self, scene_id: UUID, bus: EventBus) -> None:
-        self._id: UUID = uuid4()
-        self._scene_id = scene_id
-        bus.subscribe(
-            DimsChangedEvent,
-            self._on_dims_changed,
-            entity_id=scene_id,
-            owner_id=self._id,
-        )
+# Module-level — not on the controller class
+_source_id_override: ContextVar[UUID | None] = ContextVar(
+    "_source_id_override", default=None
+)
+_aabb_source_id_override: ContextVar[UUID | None] = ContextVar(
+    "_aabb_source_id_override", default=None
+)
+```
+
+Two separate vars exist — one for dims and appearance mutations, one for AABB mutations
+— so that concurrent mutations to different sub-objects do not interfere with each
+other's source attribution.
+
+The three controller methods that use this pattern:
+
+```python
+def update_slice_indices(
+    self, scene_id, slice_indices, *, source_id=None
+) -> None:
+    token = _source_id_override.set(source_id)
+    try:
+        self._model.scenes[scene_id].dims.selection.slice_indices = slice_indices
+        # ↑ psygnal fires _on_dims_psygnal synchronously here
+    finally:
+        _source_id_override.reset(token)   # always restored, even on exception
+
+
+def update_appearance_field(
+    self, visual_id, field, value, *, source_id=None
+) -> None:
+    visual = self.get_visual_model(visual_id)
+    token = _source_id_override.set(source_id)
+    try:
+        setattr(visual.appearance, field, value)
+        # ↑ psygnal fires _on_appearance_psygnal synchronously here
+    finally:
+        _source_id_override.reset(token)
+
+
+def update_aabb_field(
+    self, visual_id, field, value, *, source_id=None
+) -> None:
+    visual = self.get_visual_model(visual_id)
+    token = _aabb_source_id_override.set(source_id)
+    try:
+        setattr(visual.aabb, field, value)
+        # ↑ psygnal fires _on_aabb_psygnal synchronously here
+    finally:
+        _aabb_source_id_override.reset(token)
+```
+
+Each bridge handler reads the var before emitting:
+
+```python
+# Inside _on_appearance_psygnal (returned by _make_appearance_handler)
+resolved_source_id = _source_id_override.get() or self._id
+self._event_bus.emit(
+    AppearanceChangedEvent(source_id=resolved_source_id, ...)
+)
+```
+
+If a model field is mutated directly — bypassing the controller methods — the ContextVar
+is `None` and `source_id` falls back to the controller's own ID. No widget will
+echo-filter such an event, which is the correct behaviour: the change looks external
+to all subscribers.
+
+### Why ContextVar rather than a plain instance variable
+
+`ContextVar` is semantically correct for async code: each `asyncio.Task` has its own
+copy of the context, so concurrent async mutations cannot stomp each other's
+`source_id`. A plain `self._pending_source_id` instance variable would also work in
+practice because psygnal fires synchronously (the bridge handler always runs and
+completes before `set()` returns, so there is no race in a single-threaded async loop),
+but `ContextVar` is the more principled choice and matches the intended use case.
+
+### Full echo-filtering example
+
+```python
+class QtDimsSliders:
+    def __init__(self, controller, scene_id, ...):
+        self._id = uuid4()
+        controller.on_dims_changed(scene_id, self._on_dims_changed, owner_id=self._id)
 
     def _on_dims_changed(self, event: DimsChangedEvent) -> None:
         if event.source_id == self._id:
             return  # echo from our own slider move; ignore
-        self._update_slider_position(event.dims_state)
+        for axis, sld in self._sliders.items():
+            value = event.dims_state.selection.slice_indices.get(axis)
+            if value is not None:
+                self._set_value(axis, value)   # uses blockSignals internally
 
-    def _on_slider_moved(self, value: int) -> None:
-        # Tag the event with our own ID so the handler above ignores it.
-        self._bus.emit(DimsChangedEvent(
-            source_id=self._id,
-            scene_id=self._scene_id,
-            dims_state=...,
-            displayed_axes_changed=False,
-        ))
-```
-
-### Example: camera sync across canvases
-
-Two canvases showing the same scene mirror each other's camera. Canvas A emits
-`CameraChangedEvent(source_id=canvas_a_id, ...)` on user drag. Canvas B applies the
-state. Canvas A also receives the event but ignores it because `source_id == self._id`.
-
-```python
-class CanvasView:
-    def __init__(self, canvas_id: UUID, scene_id: UUID, bus: EventBus) -> None:
-        self._id = canvas_id
-        self._scene_id = scene_id
-        self._bus = bus
-        self._applying_model_state = False
-        bus.subscribe(
-            CameraChangedEvent,
-            self._on_camera_changed,
-            entity_id=scene_id,
-            owner_id=canvas_id,
+    def _submit_slider_values(self) -> None:
+        updates = {axis: sld.value() for axis, sld in self._sliders.items()
+                   if axis not in self._displayed_axes}
+        # Pass our own UUID so the resulting DimsChangedEvent carries it.
+        self._controller.update_slice_indices(
+            self._scene_id, updates, source_id=self._id
         )
-
-    def _on_camera_changed(self, event: CameraChangedEvent) -> None:
-        if event.source_id == self._id:
-            return  # we emitted this; do not re-apply
-        self._applying_model_state = True
-        try:
-            self._camera.world.position = event.camera_state.position
-            # ... additional setters for rotation, fov, depth_range, etc.
-        finally:
-            self._applying_model_state = False
-
-    def _on_controller_event(self, event) -> None:
-        # Fired by pygfx on every user interaction.
-        if self._applying_model_state:
-            return  # guard: we are applying a remote state; do not echo
-        self._bus.emit(CameraChangedEvent(
-            source_id=self._id,
-            scene_id=self._scene_id,
-            camera_state=self._capture_camera_state(),
-        ))
 ```
+
+Both guards are necessary and serve different roles:
+
+- **`source_id` check** — prevents the originating widget from processing its own
+  echo (redundant work, since the model already reflects the new value).
+- **`blockSignals`** — prevents a programmatically updated widget from re-broadcasting
+  the change into the system. Without it, widget B being updated in response to
+  widget A's change would fire widget B's `valueChanged`, triggering another
+  `update_slice_indices`, producing another bus event, updating widget A — an
+  infinite loop. `blockSignals` is the guard that breaks that cycle.
 
 ---
 
@@ -912,24 +887,10 @@ is documented in every such handler's docstring.
 class SliceCoordinator:
 
     def _on_dims_changed(self, event: DimsChangedEvent) -> None:
-        """Synchronous entry point — schedules async reslice via create_task."""
-        if event.scene_id not in self._scene_managers:
-            logger.warning(
-                "SliceCoordinator received DimsChangedEvent for unregistered "
-                "scene %s — ignoring.", event.scene_id
-            )
-            return
-        self._cancel_scene(event.scene_id)
-        asyncio.create_task(
-            self._submit_async(event.scene_id, event.dims_state)
-        )
-
-    async def _submit_async(
-        self, scene_id: UUID, dims_state: DimsState
-    ) -> None:
-        requests = self._scene_managers[scene_id].build_slice_requests(...)
-        for visual_id, chunk_requests in requests.items():
-            await self._slicer.submit(chunk_requests, ...)
+        """Synchronous entry point — invalidates stale caches."""
+        # Synchronous work only. Any async submission is the controller's
+        # responsibility via reslice_scene().
+        ...
 ```
 
 ---
@@ -937,83 +898,36 @@ class SliceCoordinator:
 ## How the controller bridges psygnal to the bus
 
 The controller is the only place where psygnal models and the EventBus coexist. When a
-psygnal field event fires on a model — e.g. `visual.appearance.color_map = "plasma"`
-triggers `appearance.events.color_map.emit()` — the controller converts it into a typed
+psygnal field event fires on a model — e.g. `visual.appearance.clim = (0.0, 1.0)`
+triggers `appearance.events.clim.emit(...)` — the controller converts it into a typed
 bus event and calls `bus.emit()`.
 
-This bridging is done by ordinary private methods on the controller — plain psygnal
-callbacks that read signal information and call `bus.emit()`. The bus has no psygnal
-dependency and no knowledge of model types. There is nothing architecturally special
-here; it is just the controller doing its job of connecting the two systems.
+This bridging is done by private factory methods on the controller. Each factory
+captures an entity ID by value and returns a closure that psygnal calls. The factory
+pattern is required because Python loop closures bind by reference — without it, all
+handlers wired in a loop would share the last iteration's variable.
 
-The only subtlety is Python's loop closure semantics. When the controller registers
-callbacks for multiple entities in a loop (e.g. wiring a handler for each scene's
-`DimsManager`), all closures in the loop would share the same loop variable binding
-without a factory function. Every handler would end up using the last entity's ID.
-A factory that takes the entity ID as an argument and returns a closure fixes this by
-capturing the value at call time.
+### Reading the new value from `EmissionInfo`
 
-```python
-# WRONG — all scene handlers capture the same `scene` reference from the loop
-for scene in self._scenes.values():
-    scene.dims.events.connect(lambda info: self._on_dims_psygnal(info, scene.id))
-
-# CORRECT — factory captures scene_id by value at call time
-def _make_dims_handler(self, scene_id: UUID) -> Callable:
-    def _handler(info: EmissionInfo) -> None:
-        self._on_dims_psygnal(info, scene_id)
-    return _handler
-
-for scene in self._scenes.values():
-    scene.dims.events.connect(self._make_dims_handler(scene.id))
-```
-
-### DimsManager wiring
+The bridge handlers read the new field value from `info.args[0]`, which psygnal
+populates with the emitted value. They do not call `Signal.current_emitter()` or
+re-read from the model object.
 
 ```python
-def _wire_dims_model(self, scene: Scene) -> None:
-    """Connect a scene's DimsManager psygnal events to the bus."""
-    self._dims_cache[scene.id] = scene.dims.displayed_axes
-    scene.dims.events.connect(self._make_dims_handler(scene.id))
-
-def _make_dims_handler(self, scene_id: UUID) -> Callable:
-    def _on_dims_psygnal(info: EmissionInfo) -> None:
-        dims: DimsManager = Signal.sender()
-        new_state = dims.to_state()
-        prev_axes = self._dims_cache[scene_id]
-        displayed_axes_changed = (prev_axes != new_state.displayed_axes)
-        self._dims_cache[scene_id] = new_state.displayed_axes
-        self._event_bus.emit(DimsChangedEvent(
-            source_id=self._id,
-            scene_id=scene_id,
-            dims_state=new_state,
-            displayed_axes_changed=displayed_axes_changed,
-        ))
-    return _on_dims_psygnal
-```
-
-### ImageAppearance wiring
-
-```python
-_RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
-
-def _wire_appearance(self, visual: BaseVisual) -> None:
-    """Connect a visual's appearance psygnal events to the bus."""
-    visual.appearance.events.connect(self._make_appearance_handler(visual.id))
-
 def _make_appearance_handler(self, visual_id: UUID) -> Callable:
     def _on_appearance_psygnal(info: EmissionInfo) -> None:
-        field_name = info.signal.name
-        new_value = getattr(Signal.sender(), field_name)
+        field_name: str = info.signal.name
+        new_value = info.args[0]            # new value from psygnal args
+        resolved_source_id = _source_id_override.get() or self._id
         if field_name == "visible":
             self._event_bus.emit(VisualVisibilityChangedEvent(
-                source_id=self._id,
+                source_id=resolved_source_id,
                 visual_id=visual_id,
                 visible=new_value,
             ))
         else:
             self._event_bus.emit(AppearanceChangedEvent(
-                source_id=self._id,
+                source_id=resolved_source_id,
                 visual_id=visual_id,
                 field_name=field_name,
                 new_value=new_value,
@@ -1022,10 +936,114 @@ def _make_appearance_handler(self, visual_id: UUID) -> Callable:
     return _on_appearance_psygnal
 ```
 
-The pattern scales to any new model type. The factory always captures the entity's ID
-by value. The psygnal callback always reads from `Signal.sender()` and `EmissionInfo`.
-The result is always a typed bus event emitted with `self._id` as `source_id`, because
-these changes originate from application code, not from the render layer.
+### Handler storage for teardown
+
+The controller stores every psygnal bridge handler it connects so that they can be
+explicitly disconnected during visual teardown.  psygnal's `disconnect()` requires
+the exact handler object — closures are not equality-comparable by value, so the
+reference must be retained.
+
+```python
+# On the controller instance
+self._visual_psygnal_handlers: dict[UUID, list[tuple]] = {}
+# Each value is a list of (signal, handler) pairs — one per _wire_* call.
+```
+
+The `(signal, handler)` pair form is used rather than storing the handler alone so
+that teardown can call `signal.disconnect(handler)` without branching on visual type.
+Handlers are appended in wiring order:
+
+| Visual type | Wired signals (in order) |
+|---|---|
+| `MultiscaleImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
+| `ImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
+| `MeshVisual`, `PointsVisual`, `LinesVisual` | `appearance.events`, `events.transform` |
+
+Each `_wire_*` method creates the handler, connects it, and appends the pair:
+
+```python
+def _wire_appearance(self, visual) -> None:
+    handler = self._make_appearance_handler(visual.id)
+    visual.appearance.events.connect(handler)
+    self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+        (visual.appearance.events, handler)
+    )
+```
+
+### DimsManager wiring
+
+The dims bridge reads the full state from the model rather than from `EmissionInfo`,
+because `DimsState` is a composite snapshot of the entire `DimsManager` — not a single
+field value.
+
+```python
+def _wire_dims_model(self, scene: Scene) -> None:
+    self._dims_cache[scene.id] = scene.dims.selection.displayed_axes
+    scene.dims.events.connect(self._make_dims_handler(scene.id))
+
+def _make_dims_handler(self, scene_id: UUID) -> Callable:
+    def _on_dims_psygnal(info: EmissionInfo) -> None:
+        new_state = self._model.scenes[scene_id].dims.to_state()
+        prev_axes = self._dims_cache[scene_id]
+        displayed_axes_changed = prev_axes != new_state.selection.displayed_axes
+        self._dims_cache[scene_id] = new_state.selection.displayed_axes
+        if displayed_axes_changed:
+            self._rebuild_visuals_geometry(scene_id, new_state.selection.displayed_axes)
+            self._switch_canvas_cameras(scene_id, new_state.selection.displayed_axes)
+        resolved_source_id = _source_id_override.get() or self._id
+        self._event_bus.emit(DimsChangedEvent(
+            source_id=resolved_source_id,
+            scene_id=scene_id,
+            dims_state=new_state,
+            displayed_axes_changed=displayed_axes_changed,
+        ))
+    return _on_dims_psygnal
+```
+
+Note that `_rebuild_visuals_geometry` and `_switch_canvas_cameras` are called
+synchronously inside the bridge handler, before the bus event is emitted. Camera
+switching and visual geometry rebuilding happen as a direct consequence of the dims
+change, not through bus subscriptions.
+
+### AABB wiring
+
+```python
+def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
+    visual.aabb.events.connect(self._make_aabb_handler(visual.id))
+
+def _make_aabb_handler(self, visual_id: UUID) -> Callable:
+    def _on_aabb_psygnal(info: EmissionInfo) -> None:
+        field_name: str = info.signal.name
+        new_value = info.args[0]
+        resolved_source_id = _aabb_source_id_override.get() or self._id
+        self._event_bus.emit(AABBChangedEvent(
+            source_id=resolved_source_id,
+            visual_id=visual_id,
+            field_name=field_name,
+            new_value=new_value,
+        ))
+    return _on_aabb_psygnal
+```
+
+### Transform wiring
+
+Transform changes do not use the ContextVar pattern because transforms are not driven
+by GUI sliders — they come from application code via `set_visual_transform`. The
+`source_id` is always the controller's own ID.
+
+```python
+def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
+    def _on_transform(new_transform: AffineTransform) -> None:
+        self._event_bus.emit(TransformChangedEvent(
+            source_id=self._id,
+            scene_id=scene_id,
+            visual_id=visual_id,
+            transform=new_transform,
+        ))
+        if not self._suppress_reslice:
+            self.reslice_scene(scene_id)
+    return _on_transform
+```
 
 ---
 
@@ -1044,10 +1062,10 @@ bus.subscribe(
     owner_id=visual_id,
 )
 bus.subscribe(
-    DataStoreContentsChangedEvent,
-    gfx_visual.on_data_store_contents_changed,
-    entity_id=data_store_id,
-    owner_id=visual_id,       # owned by the visual, not by the data store
+    AABBChangedEvent,
+    gfx_visual.on_aabb_changed,
+    entity_id=visual_id,
+    owner_id=visual_id,
 )
 bus.subscribe(
     VisualVisibilityChangedEvent,
@@ -1055,77 +1073,114 @@ bus.subscribe(
     entity_id=visual_id,
     owner_id=visual_id,
 )
+bus.subscribe(
+    TransformChangedEvent,
+    gfx_visual.on_transform_changed,
+    entity_id=visual_id,
+    owner_id=visual_id,
+)
 
 # Controller: removing the visual
-bus.unsubscribe_all(owner_id=visual_id)  # removes all three in one call
+bus.unsubscribe_all(owner_id=visual_id)  # removes all four in one call
 ```
 
-External callbacks registered by the application developer are owned by the controller:
+### Visual teardown sequence
+
+A visual has two independent sets of subscriptions that must both be cleaned up:
+
+1. **psygnal side** — the bridge closures stored in `_visual_psygnal_handlers`.
+   These live on psygnal `EventedModel` signals (`appearance.events`,
+   `aabb.events`, `events.transform`) and are disconnected by calling
+   `signal.disconnect(handler)` for each stored `(signal, handler)` pair.
+
+2. **bus side** — the GFX-layer subscriptions registered with `owner_id=visual_id`
+   (appearance, AABB, visibility, transform handlers on `GFX*Visual`).
+   Removed atomically with `bus.unsubscribe_all(visual_id)`.
+
+The teardown order inside `remove_visual` is:
+
+```
+1. scene.visuals.remove(visual_model)          # model layer
+2. signal.disconnect(handler) for each pair    # psygnal bridge: stop emitting events
+3. bus.unsubscribe_all(visual_id)              # bus: stop receiving events in GFX layer
+4. _visual_to_scene.pop(visual_id)             # controller map
+5. render_manager.remove_visual(visual_id)     # scene graph + GPU ref release
+6. bus.emit(VisualRemovedEvent(...))            # notify external observers
+```
+
+Psygnal is disconnected **before** the bus so that no new bus events can be emitted
+from stale bridge closures during or after step 5.  The bus is unsubscribed before
+render-layer removal so that the GFX handlers cannot fire on a node that is already
+removed from the scene graph.
+
+`remove_scene` cascades: it calls `remove_visual` for every child visual before
+tearing down the scene-level maps, then delegates to
+`render_manager.remove_scene(scene_id)` which drops references to the `gfx.Scene`
+and all `CanvasView` objects (GC then reclaims GPU resources — pygfx has no
+explicit destroy API).
+
+External callbacks registered by the application developer receive the full event
+object, not a stripped-down state payload:
 
 ```python
 # Application code
-controller.on_dims_changed(scene_id, my_callback)
+handle = controller.on_dims_changed(scene_id, my_callback, owner_id=my_id)
 
-# Controller internal
-def on_dims_changed(self, scene_id: UUID, callback: Callable) -> None:
-    handle = self._bus.subscribe(
-        DimsChangedEvent,
-        lambda e: callback(e.dims_state),
-        entity_id=scene_id,
-        owner_id=self._id,
-    )
-    self._external_handles.append(handle)
+# my_callback receives the full DimsChangedEvent:
+def my_callback(event: DimsChangedEvent) -> None:
+    print(event.source_id, event.dims_state.selection.displayed_axes)
 ```
 
 ---
 
 ## Subscription matrix
 
-Canonical specification for what the controller wires at construction time.
+Canonical specification for what the controller wires at construction time or at
+object registration time.
 
 | Subscriber | Event type | `entity_id` filter | Action |
 |---|---|---|---|
-| `CanvasView` | `DimsChangedEvent` | `scene_id` | Switch active camera if `displayed_axes_changed` |
-| `CanvasView` | `CameraChangedEvent` | `scene_id` | Apply camera state; skip if `source_id == self._id` |
-| `SliceCoordinator` | `DimsChangedEvent` | *(none — all scenes)* | Schedule async reslice for the changed scene |
-| `SliceCoordinator` | `AppearanceChangedEvent` | *(none — all visuals)* | Schedule async reslice for the visual if `requires_reslice` |
-| `SliceCoordinator` | `DataStoreMetadataChangedEvent` | *(none)* | Evict all; reslice all visuals using this store |
-| `SliceCoordinator` | `DataStoreContentsChangedEvent` | *(none)* | Evict dirty bricks; reslice affected visuals |
+| `SliceCoordinator` | `DimsChangedEvent` | *(none — all scenes)* | Invalidate stale 2D caches |
+| Controller | `DimsChangedEvent` | *(none — all scenes)* | Call `reslice_scene` for the changed scene |
+| Controller | `CameraChangedEvent` | *(none — all canvases)* | Update camera model; schedule debounced reslice |
 | `GFX*Visual` | `AppearanceChangedEvent` | `visual_id` | Apply material / shader parameter |
-| `GFX*Visual` | `VisualVisibilityChangedEvent` | `visual_id` | Show / hide node |
-| `GFX*Visual` | `DataStoreMetadataChangedEvent` | `data_store_id` | Rebuild `VolumeGeometry`; evict `BrickCache` |
-| `GFX*Visual` | `DataStoreContentsChangedEvent` | `data_store_id` | Evict dirty bricks from `BrickCache` |
-| `DimsSliderWidget` | `DimsChangedEvent` | `scene_id` | Update slider position; skip if `source_id == self._id` |
-| Controller ext. callbacks | `DimsChangedEvent` | `scene_id` | Fire `on_dims_changed` user callback |
-| Controller ext. callbacks | `CameraChangedEvent` | `scene_id` | Fire `on_camera_changed` user callback |
-| Controller ext. callbacks | `AppearanceChangedEvent` | `visual_id` | Fire `on_visual_changed` user callback |
+| `GFX*Visual` | `AABBChangedEvent` | `visual_id` | Update bounding-box display |
+| `GFX*Visual` | `VisualVisibilityChangedEvent` | `visual_id` | Show / hide scene-graph node |
+| `GFX*Visual` | `TransformChangedEvent` | `visual_id` | Update scene-graph node matrix |
+| External callback | `DimsChangedEvent` | `scene_id` | Fire `on_dims_changed` user callback |
+| External callback | `CameraChangedEvent` | `scene_id` | Fire `on_camera_changed` user callback |
+| External callback | `AppearanceChangedEvent` | `visual_id` | Fire `on_visual_changed` user callback |
+| External callback | `AABBChangedEvent` | `visual_id` | Fire `on_aabb_changed` user callback |
+| External callback | `ResliceStartedEvent` | `scene_id` | Fire `on_reslice_started` user callback |
+| External callback | `ResliceCompletedEvent` | `visual_id` | Fire `on_reslice_completed` user callback |
 
-`SliceCoordinator` subscribes without `entity_id` filters because it manages all scenes
-centrally. It resolves the correct `SceneManager` from `event.scene_id` or
-`event.visual_id` internally.
+`SliceCoordinator` and the controller subscribe without `entity_id` filters because
+they manage all scenes centrally. Camera switching and visual geometry rebuilding on
+dims changes happen synchronously inside the controller's psygnal bridge handler
+(`_make_dims_handler`), not through bus subscriptions.
+
+`CanvasView` is not a bus subscriber. It emits `CameraChangedEvent` (detected by
+comparing a cached `CameraState` snapshot each frame) but does not subscribe to any
+event type. The controller receives `CameraChangedEvent` and handles model sync and
+reslice scheduling.
 
 ---
 
 ## End-to-end example: appearance change propagation
 
-This example traces a single line of application code — a colormap change — from the
-developer's mutation through every layer of the system to the rendered frame. It covers
-both the GPU-only path (`color_map`, `clim`) and the reslice path (`lod_bias`,
-`force_level`, `frustum_cull`), using the multiscale volume viewer from
-`scripts/v2/lut_texture_multiscale_frustum_async_cellier/example_cellier.py` as
-the concrete context.
+This example traces a single colormap change through the full system.
 
 ```
 Application code
       ↓
-psygnal EventedModel          ← color_map signal fires
+psygnal EventedModel          ← clim signal fires
       ↓
-Controller adapter            ← emits AppearanceChangedEvent
+Controller bridge             ← reads ContextVar; emits AppearanceChangedEvent
       ↓
 EventBus.emit()               ← dispatches to subscribers
       ↙ requires_reslice=False          requires_reslice=True ↘
-GFXImageVisual               SliceCoordinator
-on_appearance_changed()       asyncio.create_task()
+GFX*Visual                   Controller
+on_appearance_changed()       reslice_scene() → RenderManager
       ↓                                ↓
 pygfx renderer               AsyncSlicer
 deferred GPU upload           concurrent brick reads
@@ -1133,182 +1188,65 @@ deferred GPU upload           concurrent brick reads
 
 ### The trigger
 
-The developer holds a live `MultiscaleImageVisual` model reference returned by
-`controller.add_image()`. A single property mutation is all that is needed:
-
 ```python
-# Application code — nothing else required
-self._visual.appearance.color_map = "plasma"
+controller.update_appearance_field(visual_id, "clim", (0.0, 1.0), source_id=widget._id)
 ```
 
-Everything below happens automatically. The developer never interacts with the EventBus,
-the `GFXMultiscaleImageVisual`, or any render-layer object.
+### Stage 1 — ContextVar is set; model is mutated; psygnal fires
 
-### Stage 1 — psygnal detects the mutation
+`update_appearance_field` sets `_source_id_override` to `widget._id`, then sets
+`visual.appearance.clim = (0.0, 1.0)`. psygnal fires `_on_appearance_psygnal`
+synchronously before `setattr` returns.
 
-`ImageAppearance` is a psygnal `EventedModel`. Setting `color_map` causes psygnal to
-fire the signal for that field synchronously. The controller connected a callback to
-this signal during `_wire_appearance()`:
-
-```python
-# Inside psygnal — not code we write; shown for clarity
-appearance.events.color_map.emit(Colormap("plasma"))
-# → calls the closure returned by controller._make_appearance_handler(visual_id)
-```
-
-### Stage 2 — Controller adapter converts to a bus event
-
-The closure produced by `_make_appearance_handler` runs. It reads the changed field name
-from `EmissionInfo` and the new value from `Signal.sender()`, determines
-`requires_reslice=False` (because `"color_map"` is not in `_RESLICE_FIELDS`), and emits
-a typed event:
+### Stage 2 — Bridge handler reads ContextVar and emits bus event
 
 ```python
-# Inside the controller closure — _on_appearance_psygnal
 def _on_appearance_psygnal(info: EmissionInfo) -> None:
-    field_name = info.signal.name          # "color_map"
-    new_value = getattr(Signal.sender(), field_name)  # Colormap("plasma")
+    field_name = info.signal.name          # "clim"
+    new_value = info.args[0]               # (0.0, 1.0)
+    resolved_source_id = _source_id_override.get() or self._id  # widget._id
     self._event_bus.emit(AppearanceChangedEvent(
-        source_id=self._id,                # controller's UUID
-        visual_id=visual_id,               # captured by the factory
-        field_name="color_map",
-        new_value=Colormap("plasma"),
-        requires_reslice=False,            # not in _RESLICE_FIELDS
+        source_id=resolved_source_id,
+        visual_id=visual_id,
+        field_name="clim",
+        new_value=(0.0, 1.0),
+        requires_reslice=False,
     ))
 ```
 
+`_source_id_override` is reset by `update_appearance_field`'s `finally` block after
+`setattr` returns.
+
 ### Stage 3 — EventBus dispatches to subscribers
 
-`emit()` looks up `AppearanceChangedEvent` in `_subscriptions`. Two entries have
-`entity_id == visual_id` and both fire:
+`emit()` dispatches `AppearanceChangedEvent` to all matching subscriptions. Two fire:
 
-1. `GFXMultiscaleImageVisual.on_appearance_changed` (registered with `entity_id=visual_id`)
-2. `SliceCoordinator._on_appearance_changed` (registered with no `entity_id` filter)
+1. `GFXMultiscaleImageVisual.on_appearance_changed` — registered with
+   `entity_id=visual_id`
+2. Any external `on_visual_changed` callback registered by the application
 
-An external `on_visual_changed` callback fires too, if the application registered one.
+The widget that triggered the change also has a subscription to
+`AppearanceChangedEvent`. It checks `if event.source_id == self._id: return` and
+skips the event. `blockSignals` is not needed here — the widget is only reading
+the event, not driving a Qt signal.
 
-### Stage 4 — `GFXMultiscaleImageVisual.on_appearance_changed` (render layer)
+### Stage 4 — `GFXMultiscaleImageVisual.on_appearance_changed`
 
-This handler — **not yet implemented**, specified here — receives the event and applies
-the change directly to the pygfx material. The conversion from `cmap.Colormap` to
-`gfx.TextureMap` uses the existing `cmap_to_gfx_colormap()` utility in
-`src/cellier/v2/render/pygfx_utils.py`. The `if node is not None` guards handle visuals
-built with only `render_modes={"2d"}` or only `render_modes={"3d"}`:
+The render-layer handler updates the pygfx material directly. No async work is
+initiated — that is the controller's responsibility for `requires_reslice=True` fields.
 
-```python
-# In GFXMultiscaleImageVisual
-_RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
+### Stage 5 — pygfx deferred GPU upload
 
-def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
-    """Handle AppearanceChangedEvent — update GPU-side material parameters.
-
-    Notes
-    -----
-    This handler must NOT block or await.  Async work is never initiated
-    here; that is the SliceCoordinator's responsibility.
-    """
-    if event.field_name == "color_map":
-        new_map = cmap_to_gfx_colormap(event.new_value)
-        if self.material_3d is not None:
-            self.material_3d.map = new_map
-        if self.material_2d is not None:
-            self.material_2d.map = new_map
-
-    elif event.field_name == "clim":
-        if self.material_3d is not None:
-            self.material_3d.clim = event.new_value
-        if self.material_2d is not None:
-            self.material_2d.clim = event.new_value
-
-    elif event.field_name == "visible":
-        pass  # handled by on_visibility_changed via VisualVisibilityChangedEvent
-
-    elif event.field_name in _RESLICE_FIELDS:
-        # lod_bias, force_level, frustum_cull: no GPU state to update here.
-        # The SliceCoordinator schedules the async reslice; the new bricks
-        # that arrive will reflect the updated planning parameters.
-        pass
-```
-
-Setting `material_3d.map` marks the material dirty in pygfx. No GPU work happens yet.
-
-### Stage 5 — `SliceCoordinator._on_appearance_changed`
-
-The coordinator also receives the event. It checks `requires_reslice` and returns
-immediately for `color_map` changes — no async work is scheduled:
-
-```python
-# In SliceCoordinator
-def _on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
-    if event.visual_id not in self._visual_to_scene:
-        logger.warning(
-            "SliceCoordinator received AppearanceChangedEvent for "
-            "unregistered visual %s — ignoring.", event.visual_id
-        )
-        return
-    if not event.requires_reslice:
-        return  # color_map and clim: GPU-only change, no reslice needed
-    scene_id = self._visual_to_scene[event.visual_id]
-    self._cancel_visual(scene_id, event.visual_id)
-    asyncio.create_task(
-        self._submit_async(
-            scene_id,
-            target_visual_ids=frozenset({event.visual_id}),
-        )
-    )
-```
-
-### Stage 6 — pygfx deferred GPU upload
-
-On the next call to `renderer.render()` — which happens in `CanvasView._draw_frame()`
-on the rendercanvas repaint callback — pygfx detects the dirty material and uploads the
-new colormap texture to the GPU:
-
-```python
-# In CanvasView._draw_frame — already exists, no changes needed
-def _draw_frame(self) -> None:
-    self._renderer.render(self._scene, self._camera, flush=True)
-    # ↑ pygfx sees material_3d.map is dirty, uploads the new TextureMap.
-    # The rendered frame uses the new colormap from this point forward.
-```
+On the next call to `renderer.render()` in `CanvasView._draw_frame`, pygfx detects the
+dirty material and uploads the updated parameters to the GPU.
 
 ### The reslice path: `lod_bias`, `force_level`, `frustum_cull`
 
-When a field that requires reslicing changes, the path diverges at Stage 2:
-
-```python
-# lod_bias, force_level, frustum_cull → requires_reslice=True
-self._visual.appearance.lod_bias = 2.0
-```
-
-The `AppearanceChangedEvent` is emitted with `requires_reslice=True`. The
-`GFXMultiscaleImageVisual` handler does nothing (the `elif event.field_name in
-_RESLICE_FIELDS: pass` branch). The `SliceCoordinator` handler cancels any in-flight
-task for this visual and schedules a new async reslice via `asyncio.create_task()`. The
-new `lod_bias` value is read from the `ImageAppearance` model at planning time, inside
-`GFXMultiscaleImageVisual.build_slice_request()` — the event payload itself does not
-need to carry planning parameters.
-
-### Key observations
-
-**Conversion responsibility.** `AppearanceChangedEvent.new_value` carries a
-`cmap.Colormap`. The render layer converts it to `gfx.TextureMap` using
-`cmap_to_gfx_colormap()`. The bus and controller never import pygfx types.
-
-**`requires_reslice=False` costs nothing async.** The `SliceCoordinator` returns
-immediately. No tasks are created, no bricks are invalidated, and the existing brick
-cache remains fully valid. A colormap change is pure GPU state.
-
-**Both subscribers always receive the event.** The EventBus does not route to one
-or the other based on `requires_reslice`. Both `GFXMultiscaleImageVisual` and
-`SliceCoordinator` always receive `AppearanceChangedEvent` for the visual they're
-interested in. The `requires_reslice` flag is checked inside each subscriber, not by
-the bus.
-
-**The `if node is not None` guard is load-bearing.** A visual constructed with
-`render_modes={"2d"}` has `material_3d = None`. The handler must check before every
-material assignment. This is not defensive programming — it is the correct behaviour
-for 2D-only visuals.
+When a field in `_RESLICE_FIELDS` changes, `AppearanceChangedEvent` carries
+`requires_reslice=True`. The `GFX*Visual` handler does nothing for these fields. The
+controller's `_on_dims_changed_bus` analogue for appearance changes triggers a reslice.
+The updated field value is read from the live model at planning time — the event payload
+itself does not need to carry planning parameters.
 
 ---
 
@@ -1332,8 +1270,9 @@ for 2D-only visuals.
 ```python
 # src/cellier/v2/events/__init__.py
 
-from cellier.v2.events._bus import EventBus, SubscriptionHandle, make_weak_callback
+from cellier.v2.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.v2.events._events import (
+    AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
     CellierEventTypes,
@@ -1346,35 +1285,13 @@ from cellier.v2.events._events import (
     ResliceStartedEvent,
     SceneAddedEvent,
     SceneRemovedEvent,
+    TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
 # Re-export shared state types — single import location for all subscribers
 from cellier.v2._state import CameraState, DimsState
-
-__all__ = [
-    "CameraState",
-    "CellierEventTypes",
-    "DimsState",
-    "EventBus",
-    "make_weak_callback",
-    "SubscriptionHandle",
-    "AppearanceChangedEvent",
-    "CameraChangedEvent",
-    "DataStoreContentsChangedEvent",
-    "DataStoreMetadataChangedEvent",
-    "DimsChangedEvent",
-    "FrameRenderedEvent",
-    "ResliceCancelledEvent",
-    "ResliceCompletedEvent",
-    "ResliceStartedEvent",
-    "SceneAddedEvent",
-    "SceneRemovedEvent",
-    "VisualAddedEvent",
-    "VisualRemovedEvent",
-    "VisualVisibilityChangedEvent",
-]
 ```
 
 ---

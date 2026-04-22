@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from cellier.v2.events import AABBUpdateEvent
+
 
 class QtAABBWidget:
     """Bidirectional AABB parameter controls wired to the cellier v2 bus.
@@ -131,13 +133,23 @@ class QtAABBWidget:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_enabled_changed(self, value: bool) -> None:
-        self._controller.update_aabb_field(
-            self._visual_id, "enabled", value, source_id=self._id
+        self._controller.incoming_events.emit(
+            AABBUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="enabled",
+                value=value,
+            )
         )
 
     def _on_line_width_changed(self, value: float) -> None:
-        self._controller.update_aabb_field(
-            self._visual_id, "line_width", value, source_id=self._id
+        self._controller.incoming_events.emit(
+            AABBUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="line_width",
+                value=value,
+            )
         )
 
     def _on_color_btn_clicked(self) -> None:
@@ -149,8 +161,13 @@ class QtAABBWidget:
         if not color.isValid():
             return  # user cancelled
         css = color.name()  # e.g. "#ff00ff"
-        self._controller.update_aabb_field(
-            self._visual_id, "color", css, source_id=self._id
+        self._controller.incoming_events.emit(
+            AABBUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="color",
+                value=css,
+            )
         )
         # update local cache and swatch immediately (no bus round-trip needed
         # since echo filtering will suppress the incoming event)

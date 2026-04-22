@@ -237,6 +237,8 @@ class GFXImageMemoryVisual:
         Which nodes to build: ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
     """
 
+    cancellable: bool = True
+
     def __init__(
         self,
         visual_model: ImageVisual,
@@ -333,6 +335,17 @@ class GFXImageMemoryVisual:
             self.node_3d = gfx.Group()
             self.node_3d.add(self._inner_node_3d)
             self.node_3d.add(self._aabb_line_3d)
+
+        if self.node_2d is not None:
+            self.node_2d.render_order = visual_model.appearance.render_order
+        if self.node_3d is not None:
+            self.node_3d.render_order = visual_model.appearance.render_order
+
+        for inner in (self._inner_node_2d, self._inner_node_3d):
+            if inner is not None:
+                inner.material.depth_test = appearance.depth_test
+                inner.material.depth_write = appearance.depth_write
+                inner.material.depth_compare = appearance.depth_compare
 
         # Node matrix is set lazily on first build_slice_request when we
         # know the displayed axes.  Identity is fine as a placeholder.
@@ -674,6 +687,13 @@ class GFXImageMemoryVisual:
                 material.map = _make_colormap(event.new_value)
             elif event.field_name == "interpolation":
                 material.interpolation = event.new_value
+            elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
+                setattr(material, event.field_name, event.new_value)
+        if event.field_name == "render_order":
+            if self.node_2d is not None:
+                self.node_2d.render_order = event.new_value
+            if self.node_3d is not None:
+                self.node_3d.render_order = event.new_value
         # "visible" is handled by on_visibility_changed; ignore here.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
@@ -716,3 +736,10 @@ class GFXImageMemoryVisual:
             for line in (self._aabb_line_2d, self._aabb_line_3d):
                 if line is not None:
                     line.material.thickness = event.new_value
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass

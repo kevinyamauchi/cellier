@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from cellier.v2.events import DimsChangedEvent, EventBus
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
-from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
@@ -20,6 +20,20 @@ if TYPE_CHECKING:
 
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.render._requests import DimsState
+    from cellier.v2.render.visuals._canvas_overlay import GFXCanvasOverlay
+    from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+    from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
+    from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
+
+    _GFXVisual = (
+        GFXMultiscaleImageVisual
+        | GFXImageMemoryVisual
+        | GFXPointsMemoryVisual
+        | GFXLinesMemoryVisual
+        | GFXMeshMemoryVisual
+    )
 
 
 class RenderManager:
@@ -51,7 +65,18 @@ class RenderManager:
             slicer=self._slicer,
             data_stores=self._data_stores,
         )
-        self._temporal_pass = TemporalAccumulationPass(alpha=config.temporal.alpha)
+
+    def connect_event_bus(self, event_bus: EventBus) -> None:
+        """Subscribe internal components to *event_bus*.
+
+        Must be called before the caller registers its own DimsChangedEvent
+        handler so the SliceCoordinator invalidates stale 2D caches first.
+        """
+        event_bus.subscribe(
+            DimsChangedEvent,
+            self._slice_coordinator._on_dims_changed,
+            owner_id=self._slice_coordinator.id,
+        )
 
     @property
     def config(self) -> RenderManagerConfig:
@@ -70,7 +95,8 @@ class RenderManager:
     @temporal_alpha.setter
     def temporal_alpha(self, value: float) -> None:
         self._config.temporal.alpha = value
-        self._temporal_pass.alpha = value
+        for canvas in self._canvases.values():
+            canvas._accum_pass.alpha = value
 
     @property
     def temporal_enabled(self) -> bool:
@@ -80,8 +106,8 @@ class RenderManager:
     @temporal_enabled.setter
     def temporal_enabled(self, value: bool) -> None:
         self._config.temporal.enabled = value
-        if not value:
-            self._temporal_pass.reset()
+        for canvas in self._canvases.values():
+            canvas._accum_pass.enabled = value
 
     def add_scene(self, scene_id: UUID, lighting: str = "none") -> SceneManager:
         """Create and register a new scene.
@@ -103,6 +129,10 @@ class RenderManager:
         scene_manager = SceneManager(scene_id=scene_id, lighting=lighting)
         self._scenes[scene_id] = scene_manager
         return scene_manager
+
+    def scene_has_lighting(self, scene_id: UUID) -> bool:
+        """Return True if *scene_id* was created with lighting enabled."""
+        return self._scenes[scene_id].has_lighting
 
     def add_canvas(
         self,
@@ -139,6 +169,10 @@ class RenderManager:
             parent=parent,
             **canvas_view_kwargs,
         )
+        # Apply temporal config to the canvas's accumulation pass.
+        canvas_view._accum_pass.alpha = self._config.temporal.alpha
+        if not self._config.temporal.enabled:
+            canvas_view._accum_pass.enabled = False
         # Wire up per-frame tick for visuals (e.g. jitter seed advance).
         canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
         self._canvases[canvas_id] = canvas_view
@@ -148,7 +182,7 @@ class RenderManager:
     def add_visual(
         self,
         scene_id: UUID,
-        visual: Any,
+        visual: _GFXVisual,
         data_store: BaseDataStore,
         displayed_axes: tuple[int, ...],
     ) -> None:
@@ -158,7 +192,7 @@ class RenderManager:
         ----------
         scene_id : UUID
             ID of the scene to add the visual to.
-        visual : GFXMultiscaleImageVisual | GFXImageMemoryVisual
+        visual : _GFXVisual
             The render-layer visual object.
         data_store : BaseDataStore
             The data store that will serve chunk data for this visual.
@@ -170,6 +204,64 @@ class RenderManager:
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
 
+    def add_canvas_overlay(
+        self,
+        canvas_id: UUID,
+        gfx_overlay: GFXCanvasOverlay,
+    ) -> None:
+        """Attach a pre-built GFX overlay to *canvas_id*.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas that should receive the overlay.
+        gfx_overlay : GFXCanvasOverlay
+            The fully-constructed render-layer overlay.
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        """
+        self._canvases[canvas_id].add_overlay(gfx_overlay)
+
+    def remove_visual(self, visual_id: UUID) -> None:
+        """Remove a visual from its scene and deregister it.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to remove.
+        """
+        scene_id = self._visual_to_scene.pop(visual_id)
+        self._data_stores.pop(visual_id)
+        self._scenes[scene_id].remove_visual(visual_id)
+
+    def remove_scene(self, scene_id: UUID) -> None:
+        """Remove a scene and all its visuals and canvases.
+
+        Drops all Python references so GC can reclaim GPU resources.
+        pygfx has no explicit destroy API; reference dropping is sufficient.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to remove.
+        """
+        scene_manager = self._scenes.pop(scene_id)
+        for vid in scene_manager.visual_ids:
+            self._visual_to_scene.pop(vid, None)
+            self._data_stores.pop(vid, None)
+        # scene_manager goes out of scope here; GC drops gfx.Scene + all nodes.
+
+        canvas_ids = [
+            cid for cid, sid in self._canvas_to_scene.items() if sid == scene_id
+        ]
+        for cid in canvas_ids:
+            self._canvas_to_scene.pop(cid)
+            self._canvases.pop(cid)
+        # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
+
     def _make_tick_fn(self, scene_id: UUID):
         """Return a callable that ticks all visuals in *scene_id*."""
 
@@ -179,17 +271,12 @@ class RenderManager:
                 return
             for vid in sm.visual_ids:
                 vis = sm.get_visual(vid)
-                if hasattr(vis, "tick"):
-                    vis.tick()
+                vis.tick()
 
         return _tick
 
     def get_scene(self, scene_id: UUID) -> gfx.Scene:
         """Return the pygfx Scene for ``scene_id``.
-
-        Passed as a callable to ``CanvasView`` at construction time so
-        ``CanvasView`` can render the scene without holding a direct
-        ``SceneManager`` reference.
 
         Parameters
         ----------
@@ -202,31 +289,6 @@ class RenderManager:
         """
         return self._scenes[scene_id].scene
 
-    def trigger_update(
-        self,
-        dims_state: DimsState,
-        visual_configs: dict[UUID, VisualRenderConfig] | None = None,
-    ) -> None:
-        """Reslice all visuals across all scenes.
-
-        Builds one ``ReslicingRequest`` per canvas using the current camera
-        state, then submits each to the ``SliceCoordinator``.
-
-        Parameters
-        ----------
-        dims_state : DimsState
-            Current dimension display state.
-        visual_configs : dict[UUID, VisualRenderConfig] or None
-            Per-visual render configuration.  ``None`` falls back to defaults
-            for all visuals.
-        """
-        if visual_configs is None:
-            visual_configs = {}
-        for canvas_id, _scene_id in self._canvas_to_scene.items():
-            canvas = self._canvases[canvas_id]
-            request = canvas.capture_reslicing_request(dims_state)
-            self._slice_coordinator.submit(request, visual_configs)
-
     def reslice_scene(
         self,
         scene_id: UUID,
@@ -235,6 +297,9 @@ class RenderManager:
         target_visual_ids: frozenset[UUID] | None = None,
     ) -> None:
         """Reslice all visuals in one scene.
+
+        One reslicing request is submitted per registered canvas so that each
+        canvas uses its own camera state for LOD and frustum-culling decisions.
 
         Parameters
         ----------
@@ -249,13 +314,12 @@ class RenderManager:
         """
         if visual_configs is None:
             visual_configs = {}
-        canvas = self._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            return
-        request = canvas.capture_reslicing_request(
-            dims_state, target_visual_ids=target_visual_ids
-        )
-        self._slice_coordinator.submit(request, visual_configs)
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=target_visual_ids
+            )
+            self._slice_coordinator.submit(request, visual_configs)
 
     def reslice_visual(
         self,
@@ -265,9 +329,9 @@ class RenderManager:
     ) -> None:
         """Reslice one visual.
 
-        Looks up which scene owns ``visual_id``, builds a
-        ``ReslicingRequest`` with ``target_visual_ids={visual_id}``, and
-        submits it.
+        Looks up which scene owns ``visual_id``, then submits one
+        ``ReslicingRequest`` per registered canvas so that each canvas uses
+        its own camera state.
 
         Parameters
         ----------
@@ -280,16 +344,70 @@ class RenderManager:
         """
         cfg = visual_config if visual_config is not None else VisualRenderConfig()
         scene_id = self._visual_to_scene[visual_id]
-        canvas = self._find_canvas_for_scene(scene_id)
-        if canvas is None:
-            return
-        request = canvas.capture_reslicing_request(
-            dims_state, target_visual_ids=frozenset({visual_id})
-        )
-        self._slice_coordinator.submit(request, {visual_id: cfg})
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=frozenset({visual_id})
+            )
+            self._slice_coordinator.submit(request, {visual_id: cfg})
 
-    def _find_canvas_for_scene(self, scene_id: UUID) -> CanvasView | None:
-        for canvas_id, s_id in self._canvas_to_scene.items():
-            if s_id == scene_id:
-                return self._canvases[canvas_id]
-        return None
+    def look_at_visual(
+        self,
+        visual_id: UUID,
+        canvas_id: UUID,
+        view_direction: tuple[float, float, float] = (-1, -1, -1),
+        up: tuple[float, float, float] = (0, 0, 1),
+    ) -> None:
+        """Fit a canvas camera to a visual's bounding box.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the target visual.
+        canvas_id : UUID
+            ID of the canvas whose camera should be fitted.
+        view_direction : tuple[float, float, float]
+            Camera look direction vector (need not be normalized).
+        up : tuple[float, float, float]
+            Camera up vector.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        gfx_scene = self.get_scene(scene_id)
+        self._canvases[canvas_id]._camera.show_object(
+            gfx_scene, view_dir=view_direction, up=up
+        )
+
+    def set_camera_depth_range(
+        self,
+        canvas_id: UUID,
+        depth_range: tuple[float, float],
+    ) -> None:
+        """Set the near/far clip distances for a canvas camera.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the target canvas.
+        depth_range : tuple[float, float]
+            ``(near, far)`` clip distances in world units.
+        """
+        self._canvases[canvas_id].set_depth_range(depth_range)
+
+    def _find_canvases_for_scene(self, scene_id: UUID) -> list[CanvasView]:
+        """Return all canvases registered for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to look up.
+
+        Returns
+        -------
+        list[CanvasView]
+            All canvas views rendering the scene.  Empty if none registered.
+        """
+        return [
+            self._canvases[cid]
+            for cid, sid in self._canvas_to_scene.items()
+            if sid == scene_id
+        ]

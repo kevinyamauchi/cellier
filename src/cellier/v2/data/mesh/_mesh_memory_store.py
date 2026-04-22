@@ -18,6 +18,39 @@ _PLACEHOLDER_INDICES = np.array([[0, 1, 2]], dtype=np.int32)
 _PLACEHOLDER_NORMALS = np.tile([0.0, 0.0, 1.0], (3, 1)).astype(np.float32)
 
 
+def _compute_vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
+    """Compute area-weighted per-vertex normals from triangle soup.
+
+    Parameters
+    ----------
+    positions : np.ndarray
+        (n_vertices, 3) float32 vertex positions.
+    indices : np.ndarray
+        (n_faces, 3) int32 triangle face indices.
+
+    Returns
+    -------
+    np.ndarray
+        (n_vertices, 3) float32 unit normals.  Degenerate vertices
+        (zero accumulated normal) get [0, 0, 1].
+    """
+    e1 = positions[indices[:, 1]] - positions[indices[:, 0]]
+    e2 = positions[indices[:, 2]] - positions[indices[:, 0]]
+    face_normals = np.cross(e1, e2)  # area-weighted, (n_faces, 3)
+
+    vertex_normals = np.zeros_like(positions)
+    np.add.at(vertex_normals, indices[:, 0], face_normals)
+    np.add.at(vertex_normals, indices[:, 1], face_normals)
+    np.add.at(vertex_normals, indices[:, 2], face_normals)
+
+    norms = np.linalg.norm(vertex_normals, axis=1, keepdims=True)
+    safe = norms > 0
+    vertex_normals = np.where(
+        safe, vertex_normals / np.where(safe, norms, 1.0), [0.0, 0.0, 1.0]
+    )
+    return vertex_normals.astype(np.float32)
+
+
 class MeshMemoryStore(BaseDataStore):
     """In-memory triangle mesh data store.
 
@@ -70,12 +103,9 @@ class MeshMemoryStore(BaseDataStore):
         if raw_pos is None or raw_idx is None:
             return data  # missing fields — let field validators error
 
-        import pygfx.utils as gu
-
         pos = np.asarray(raw_pos, dtype=np.float32)
         idx = np.asarray(raw_idx, dtype=np.int32)
-        normals = gu.normals_from_vertices(pos, idx)
-        data["normals"] = normals.astype(np.float32)
+        data["normals"] = _compute_vertex_normals(pos, idx)
         return data
 
     @field_validator("positions", mode="before")

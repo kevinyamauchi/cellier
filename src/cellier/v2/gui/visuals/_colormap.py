@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from cellier.v2.events import AppearanceUpdateEvent
+
 
 class QtColormapComboBox:
     """Bidirectional colormap selector wired to the cellier v2 bus.
@@ -75,8 +77,13 @@ class QtColormapComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, colormap) -> None:
-        self._controller.update_appearance_field(
-            self._visual_id, "color_map", colormap, source_id=self._id
+        self._controller.incoming_events.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="color_map",
+                value=colormap,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing currentColormapChanged ────────

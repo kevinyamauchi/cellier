@@ -39,9 +39,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
 from superqt import QLabeledSlider
+
+from cellier.v2.events import DimsUpdateEvent
 
 SLIDER_STYLE = """
 QSlider::groove:horizontal {
@@ -131,12 +133,22 @@ class QtDimsSliders:
         *,
         initial_slice_indices: dict[int, int] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
+        debounce_ms: int = 50,
         parent: QWidget | None = None,
     ) -> None:
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
         self._controller = controller
         self._scene_id = scene_id
+
+        # Single-shot QTimer for rate-limiting rapid slider moves.
+        # Fires at most once per interval; a dirty flag ensures the final
+        # position is always submitted even if it landed between ticks.
+        self._rate_limit_timer = QTimer()
+        self._rate_limit_timer.setSingleShot(True)
+        self._rate_limit_timer.setInterval(debounce_ms)
+        self._rate_limit_timer.timeout.connect(self._on_rate_limit_tick)
+        self._slider_dirty = False
 
         # ── Qt seam 1: build container and sliders ───────────────────────────
         self._container = QWidget(parent)
@@ -148,6 +160,7 @@ class QtDimsSliders:
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._sliders: dict[int, QLabeledSlider] = {}
+        self._displayed_axes: tuple[int, ...] = initial_displayed_axes
         _initial = initial_slice_indices or {}
 
         for axis, (min_val, max_val) in axis_ranges.items():
@@ -202,8 +215,31 @@ class QtDimsSliders:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, axis: int, value: int) -> None:
-        self._controller.update_slice_indices(
-            self._scene_id, {axis: value}, source_id=self._id
+        self._slider_dirty = True
+        if not self._rate_limit_timer.isActive():
+            self._submit_slider_values()
+            self._rate_limit_timer.start()
+
+    def _on_rate_limit_tick(self) -> None:
+        if self._slider_dirty:
+            self._submit_slider_values()
+            self._rate_limit_timer.start()
+
+    def _submit_slider_values(self) -> None:
+        """Submit current slider values for all sliced (non-displayed) axes."""
+        self._slider_dirty = False
+        updates = {
+            axis: sld.value()
+            for axis, sld in self._sliders.items()
+            if axis not in self._displayed_axes
+        }
+        self._controller.incoming_events.emit(
+            DimsUpdateEvent(
+                source_id=self._id,
+                scene_id=self._scene_id,
+                slice_indices=updates,
+                displayed_axes=None,
+            )
         )
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
@@ -217,6 +253,7 @@ class QtDimsSliders:
     # ── Visibility helper ────────────────────────────────────────────────────
 
     def _update_visibility(self, displayed_axes: tuple[int, ...]) -> None:
+        self._displayed_axes = displayed_axes
         layout: QFormLayout = self._container.layout()
         for axis, sld in self._sliders.items():
             layout.setRowVisible(sld, axis not in displayed_axes)

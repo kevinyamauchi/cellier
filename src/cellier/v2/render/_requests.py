@@ -43,6 +43,10 @@ class ReslicingRequest(NamedTuple):
         Unique identifier per trigger; used for cancellation.
     scene_id : UUID
         Which scene this camera belongs to.
+    canvas_id : UUID
+        Which canvas produced this request.  Used by ``SliceCoordinator``
+        to key cancellation entries so that requests from different canvases
+        rendering the same scene can be tracked and cancelled independently.
     target_visual_ids : frozenset[UUID] or None
         ``None`` means reslice all visuals in the scene (camera-moved case).
         A non-None set means reslice only those specific visuals
@@ -58,4 +62,5 @@ class ReslicingRequest(NamedTuple):
     dims_state: DimsState
     request_id: UUID
     scene_id: UUID
+    canvas_id: UUID
     target_visual_ids: frozenset[UUID] | None

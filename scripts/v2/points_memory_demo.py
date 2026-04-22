@@ -90,6 +90,7 @@ def main() -> None:
     controller.set_widget_parent(root)
 
     canvas_widget = controller.add_canvas(scene_id=scene.id)
+    canvas_id = next(iter(scene.canvases))
     outer.addWidget(canvas_widget)
 
     # Controls row
@@ -168,7 +169,7 @@ def main() -> None:
         if "3d" not in _camera_fitted:
             _camera_fitted.add("3d")
             controller.look_at_visual(
-                visual.id, view_direction=(-1, -1, -1), up=(0, 0, 1)
+                visual.id, canvas_id, view_direction=(-1, -1, -1), up=(0, 0, 1)
             )
 
     gfx_vis.on_data_ready = _patched_3d
@@ -180,7 +181,7 @@ def main() -> None:
         if "2d" not in _camera_fitted:
             _camera_fitted.add("2d")
             controller.look_at_visual(
-                visual.id, view_direction=(0, 0, -1), up=(0, 1, 0)
+                visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
             )
 
     gfx_vis.on_data_ready_2d = _patched_2d

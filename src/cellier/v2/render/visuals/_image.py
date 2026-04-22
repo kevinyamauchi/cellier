@@ -131,6 +131,80 @@ def _extract_scale_and_translation(
 
 
 # ---------------------------------------------------------------------------
+# Brick-shader transform helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_transform_no_rotation(transform: AffineTransform) -> None:
+    """Raise ValueError if the transform contains rotation or shear.
+
+    The brick shader only supports scale and translation.  A transform with
+    off-diagonal entries in the linear submatrix (i.e. rotation or shear)
+    would require ``norm_to_voxel`` to be a full affine inverse, which the
+    current WGSL does not implement.
+
+    Parameters
+    ----------
+    transform : AffineTransform
+        The data-to-world transform to validate.
+
+    Raises
+    ------
+    ValueError
+        If the linear part of the transform is not diagonal.
+    """
+    nd = transform.ndim
+    linear = transform.matrix[:nd, :nd]
+    diagonal_only = np.diag(np.diag(linear))
+    if not np.allclose(linear, diagonal_only, atol=1e-5):
+        raise ValueError(
+            "The brick shader only supports scale and translation transforms. "
+            "The provided transform contains rotation or shear components. "
+            "Support for general affine transforms requires changes to the "
+            "WGSL norm_to_voxel function and is not yet implemented."
+        )
+
+
+def _norm_size_from_transform(
+    transform: AffineTransform,
+    dataset_size_xyz: np.ndarray,
+) -> np.ndarray:
+    """Compute normalised physical size from a scale+translation transform.
+
+    Extracts per-axis physical scale factors from the column norms of the
+    linear submatrix (data-axis order: z, y, x for 3-D), converts to shader
+    order (x=W, y=H, z=D), multiplies by ``dataset_size_xyz``, and
+    normalises so the longest axis equals 1.0.
+
+    For a pure diagonal (scale-only) transform the column norms equal the
+    absolute diagonal values, so this is exact.
+
+    Parameters
+    ----------
+    transform : AffineTransform
+        The data-to-world transform.  Must be scale + translation only
+        (validated separately by ``_check_transform_no_rotation``).
+    dataset_size_xyz : ndarray, shape (3,)
+        Finest-level voxel counts in shader order (x=W, y=H, z=D).
+
+    Returns
+    -------
+    ndarray, shape (3,)
+        Normalised physical size in shader order, with the longest axis
+        equal to 1.0.
+    """
+    nd = transform.ndim
+    linear = transform.matrix[:nd, :nd]  # data order: (z, y, x) for 3-D
+    # Column norms give the physical scale factor for each data axis.
+    col_norms = np.array(
+        [np.linalg.norm(linear[:, i]) for i in range(nd)], dtype=np.float64
+    )
+    # col_norms is in data order (sz, sy, sx); shader order is (sx, sy, sz).
+    per_axis_scale_xyz = col_norms[::-1]
+    return compute_normalized_size(dataset_size_xyz, per_axis_scale_xyz)
+
+
+# ---------------------------------------------------------------------------
 # VolumeGeometry
 # ---------------------------------------------------------------------------
 
@@ -412,6 +486,8 @@ class GFXMultiscaleImageVisual:
         Maximum GPU memory for the 2D tile cache texture.
     """
 
+    cancellable: bool = True
+
     def __init__(
         self,
         visual_model_id: UUID,
@@ -429,10 +505,10 @@ class GFXMultiscaleImageVisual:
         full_level_transforms: list[AffineTransform] | None = None,
         full_level_shapes: list[tuple[int, ...]] | None = None,
         use_brick_shader: bool = False,
-        voxel_spacing: np.ndarray | None = None,
         aabb_enabled: bool = False,
         aabb_color: str = "#ffffff",
         aabb_line_width: float = 2.0,
+        render_order: int = 0,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -484,7 +560,6 @@ class GFXMultiscaleImageVisual:
         self._gpu_budget_bytes = gpu_budget_bytes_3d
         self._frame_number = 0
         self._use_brick_shader = use_brick_shader
-        self._voxel_spacing = voxel_spacing
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
         self._pending_slot_map_2d: dict[UUID, tuple[BlockKey2D, TileSlot2D]] = {}
         self._last_plan_stats: dict = {}
@@ -530,6 +605,10 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_2d: LutIndirectionManager2D | None = None
         self._lut_params_buffer_2d = None
         self._block_scales_buffer_2d = None
+        # Sorted (axis_index, world_value) pairs for the most-recently-requested slice.
+        # Used by the two-phase LUT rebuild to separate current-slice tiles from
+        # old-slice fallback tiles.
+        self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
@@ -559,15 +638,10 @@ class GFXMultiscaleImageVisual:
             self._dataset_size = np.array(
                 [float(ds[2]), float(ds[1]), float(ds[0])], dtype=np.float64
             )
-            # voxel_spacing in shader order.
-            if voxel_spacing is not None:
-                self._norm_size = compute_normalized_size(
-                    self._dataset_size, voxel_spacing
-                )
-            else:
-                self._norm_size = compute_normalized_size(
-                    self._dataset_size, np.ones(3, dtype=np.float64)
-                )
+            _check_transform_no_rotation(self._transform)
+            self._norm_size = _norm_size_from_transform(
+                self._transform, self._dataset_size
+            )
             self._vol_params_buffer = build_vol_params_buffer(
                 norm_size=self._norm_size,
                 dataset_size=self._dataset_size,
@@ -609,7 +683,6 @@ class GFXMultiscaleImageVisual:
             # Build AABB line with known geometry (geometry available at construction).
             self._aabb_line_3d = self._build_aabb_line_3d()
             self.node_3d.add(self._aabb_line_3d)
-            # Node matrix set lazily on first build_slice_request.
 
         # ── 2D node ─────────────────────────────────────────────────────
         self.node_2d: gfx.Group | None = None
@@ -627,7 +700,17 @@ class GFXMultiscaleImageVisual:
             # Build AABB line with known geometry (geometry available at construction).
             self._aabb_line_2d = self._build_aabb_line_2d()
             self.node_2d.add(self._aabb_line_2d)
-            # Node matrix set lazily on first build_slice_request_2d.
+
+        if self.node_3d is not None:
+            self.node_3d.render_order = render_order
+        if self.node_2d is not None:
+            self.node_2d.render_order = render_order
+
+        # Apply node matrices now if displayed_axes are already known.
+        # Without this, the matrices stay at identity until the first
+        # displayed-axes change, which may never happen in a fixed viewer.
+        if self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
 
     @classmethod
     def from_cellier_model(
@@ -636,20 +719,16 @@ class GFXMultiscaleImageVisual:
         level_shapes: list[tuple[int, ...]],
         render_modes: set[str],
         displayed_axes: tuple[int, ...],
-        block_size: int = 32,
-        gpu_budget_bytes: int = 1 * 1024**3,
-        gpu_budget_bytes_2d: int = 64 * 1024**2,
-        threshold: float | None = None,
-        interpolation: str = "linear",
-        use_brick_shader: bool = False,
-        voxel_spacing: np.ndarray | None = None,
     ) -> GFXMultiscaleImageVisual:
         """Build a ``GFXMultiscaleImageVisual`` from a ``MultiscaleImageVisual`` model.
+
+        All render-layer parameters (block size, GPU budgets, interpolation,
+        brick shader flag) are read from ``model.render_config``.
 
         Parameters
         ----------
         model : MultiscaleImageVisual
-            Source visual model.
+            Source visual model.  Must have a ``render_config`` field.
         level_shapes : list[tuple[int, ...]]
             Full nD shape per level, finest first.
         render_modes : set[str]
@@ -659,30 +738,19 @@ class GFXMultiscaleImageVisual:
             is 3D; ``len == 2`` means 2D.  In dual-mode (``{"2d", "3d"}``),
             when starting in 3D the 2D geometry is built from
             ``displayed_axes[-2:]``.
-        block_size : int
-            Rendering brick side length in voxels.
-        gpu_budget_bytes : int
-            Maximum GPU memory for the 3D brick cache.
-        gpu_budget_bytes_2d : int
-            Maximum GPU memory for the 2D tile cache.  Defaults to 64 MiB,
-            which is sufficient for typical 2D slice viewing.
-        threshold : float or None
-            Deprecated. Use ``model.appearance.iso_threshold`` instead.
-            When provided, overrides the appearance value.
-        interpolation : str
-            Sampler filter (``"linear"`` or ``"nearest"``).
-        use_brick_shader : bool
-            When ``True``, use the Kiln-style ``MultiscaleVolumeBrickShader``
-            for 3D rendering instead of the default ``VolumeBlockShader``.
-        voxel_spacing : ndarray, shape (3,), optional
-            Physical voxel size in shader order ``(x, y, z)``.  Required
-            when ``use_brick_shader=True`` and voxels are anisotropic.
-            Defaults to ``[1, 1, 1]`` if not provided.
 
         Returns
         -------
         GFXMultiscaleImageVisual
         """
+        render_config = model.render_config
+        block_size = render_config.block_size
+        interpolation = render_config.interpolation
+        use_brick_shader = render_config.use_brick_shader
+        gpu_budget_bytes = render_config.gpu_budget_bytes
+        gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
+        threshold = model.appearance.iso_threshold
+
         if len(displayed_axes) == 3:
             axes_3d: tuple[int, ...] | None = displayed_axes
             axes_2d: tuple[int, ...] = displayed_axes[-2:]
@@ -716,11 +784,8 @@ class GFXMultiscaleImageVisual:
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
         clim = model.appearance.clim
-        effective_threshold = (
-            threshold if threshold is not None else model.appearance.iso_threshold
-        )
 
-        return cls(
+        instance = cls(
             visual_model_id=model.id,
             volume_geometry=volume_geometry,
             image_geometry_2d=image_geometry_2d,
@@ -728,19 +793,25 @@ class GFXMultiscaleImageVisual:
             displayed_axes=displayed_axes,
             colormap=colormap,
             clim=clim,
-            threshold=effective_threshold,
+            threshold=threshold,
             interpolation=interpolation,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             aabb_enabled=model.aabb.enabled,
             aabb_color=model.aabb.color,
             aabb_line_width=model.aabb.line_width,
+            render_order=model.appearance.render_order,
             transform=model.transform,
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
             use_brick_shader=use_brick_shader,
-            voxel_spacing=voxel_spacing,
         )
+        for mat in (instance.material_3d, instance.material_2d):
+            if mat is not None:
+                mat.depth_test = model.appearance.depth_test
+                mat.depth_write = model.appearance.depth_write
+                mat.depth_compare = model.appearance.depth_compare
+        return instance
 
     # ── Properties ─────────────────────────────────────────────────────
 
@@ -1297,6 +1368,12 @@ class GFXMultiscaleImageVisual:
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
+
+        # Record the current slice coordinate for two-phase LUT rebuild (Step 3).
+        self._current_slice_coord = tuple(
+            sorted(dims_state.selection.slice_indices.items())
+        )
+
         geo2d = self._image_geometry_2d
         block_size = geo2d.block_size
         n_levels = geo2d.n_levels
@@ -1400,8 +1477,8 @@ class GFXMultiscaleImageVisual:
         )
         distance_sort_ms = (time.perf_counter() - t0) * 1000
 
-        # Convert to dict
-        required = arr_to_block_keys_2d(tile_arr)
+        # Convert to dict (embed current slice coord into every key).
+        required = arr_to_block_keys_2d(tile_arr, slice_coord=self._current_slice_coord)
         n_total = len(required)
 
         # 3. Viewport culling
@@ -1427,12 +1504,27 @@ class GFXMultiscaleImageVisual:
             keys_to_keep = list(required.keys())[:n_budget]
             required = {k: required[k] for k in keys_to_keep}
 
-        # 5. Stage
+        # 5. Evict finer-than-target tiles, then stage.
+        # Evicting first returns slots to free_slots so the incoming coarser
+        # tiles can claim them without triggering unnecessary LRU evictions.
+        target_level = int(tile_arr[0, 0]) if len(tile_arr) > 0 else 1
+
+        n_evicted = self._block_cache_2d.tile_manager.evict_finer_than(target_level)
+
         t0 = time.perf_counter()
         fill_plan = self._block_cache_2d.tile_manager.stage(
             required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
+
+        # When tiles were evicted but all required coarse tiles are cache hits,
+        # on_data_ready_2d never fires so the LUT would remain stale (still
+        # pointing to freed slots).  Rebuild immediately in that case.
+        if n_evicted > 0 and not fill_plan:
+            self._lut_manager_2d.rebuild(
+                self._block_cache_2d.tile_manager,
+                current_slice_coord=self._current_slice_coord,
+            )
 
         # 6. Build ChunkRequests
         slice_id = uuid4()
@@ -1557,7 +1649,10 @@ class GFXMultiscaleImageVisual:
             n_resident,
         )
 
-        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+        self._lut_manager_2d.rebuild(
+            self._block_cache_2d.tile_manager,
+            current_slice_coord=self._current_slice_coord,
+        )
 
         _GPU_LOGGER.info(
             "lut_rebuilt  resident=%d  frame=%d",
@@ -1578,25 +1673,42 @@ class GFXMultiscaleImageVisual:
         self._pending_slot_map_2d = {}
 
     def invalidate_2d_cache(self) -> None:
-        """Evict all committed 2D tiles and rebuild the LUT indirection table.
+        """Cancel in-flight 2D requests when the slice position changes.
 
-        Call this when the slice position changes so that stale tiles from the
-        previous Z plane are not blended with newly loaded tiles.  This is a
-        lighter operation than ``_rebuild_2d_resources``, which also tears down
-        and recreates the GPU geometry; here only the tile occupancy state is
-        reset.
+        Old committed tiles are intentionally kept alive as a visible fallback
+        while new tiles load.  Because ``BlockKey2D`` now encodes
+        ``slice_coord``, tiles from different slice positions cannot collide, so
+        keeping them does not cause rendering artefacts.
+
+        A full LUT rebuild is not needed here — the LUT remains current from
+        the last ``on_data_ready_2d`` call and old tiles are the correct thing
+        to display until new ones arrive.
         """
         if self._block_cache_2d is None or self._lut_manager_2d is None:
             return
-        self._block_cache_2d.tile_manager.clear()
-        self._lut_manager_2d.rebuild(self._block_cache_2d.tile_manager)
+        self.cancel_pending_2d()
 
     # ── EventBus handler methods ─────────────────────────────────────────
 
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
-        """Update stored transform and pygfx node matrix."""
+        """Update stored transform, norm_size uniform, and pygfx node matrix."""
         self._transform = event.transform
         self._world_to_level_transforms = self._build_world_to_level_transforms()
+
+        # Recompute norm_size and push the updated uniform buffer so the
+        # proxy cube shape stays consistent with the new transform.
+        if self._use_brick_shader and self._dataset_size is not None:
+            _check_transform_no_rotation(self._transform)
+            self._norm_size = _norm_size_from_transform(
+                self._transform, self._dataset_size
+            )
+            if self._vol_params_buffer is not None:
+                buf_data = self._vol_params_buffer.data
+                buf_data["norm_size_x"] = float(self._norm_size[0])
+                buf_data["norm_size_y"] = float(self._norm_size[1])
+                buf_data["norm_size_z"] = float(self._norm_size[2])
+                self._vol_params_buffer.update_full()
+
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
 
@@ -1626,6 +1738,15 @@ class GFXMultiscaleImageVisual:
         elif event.field_name == "render_mode":
             if self.material_3d is not None:
                 self.material_3d.render_mode = event.new_value
+        elif event.field_name == "render_order":
+            if self.node_3d is not None:
+                self.node_3d.render_order = event.new_value
+            if self.node_2d is not None:
+                self.node_2d.render_order = event.new_value
+        elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
+            for mat in (self.material_3d, self.material_2d):
+                if mat is not None:
+                    setattr(mat, event.field_name, event.new_value)
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""

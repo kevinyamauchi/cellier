@@ -11,7 +11,6 @@ from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
 
 if TYPE_CHECKING:
     from cellier.v2._state import DimsState
-    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.mesh._mesh_requests import MeshData
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
@@ -28,18 +27,10 @@ _PLACEHOLDER_INDICES = np.array([[0, 1, 2]], dtype=np.int32)
 _PLACEHOLDER_NORMALS = np.tile([0.0, 0.0, 1.0], (3, 1)).astype(np.float32)
 
 
-def _apply_transparency_state_3d(
-    material: gfx.MeshAbstractMaterial, opacity: float
-) -> None:
-    """Configure transparent-vs-opaque state for 3D mesh rendering.
-
-    For translucent meshes we use explicit alpha blending and disable depth
-    writes so objects behind remain visible through the mesh.
-    """
+def _apply_alpha_mode(material: gfx.MeshAbstractMaterial, opacity: float) -> None:
+    """Set alpha_mode based on opacity."""
     transparent = float(opacity) < 1.0 - 1e-6
     material.alpha_mode = "blend" if transparent else "solid"
-    material.depth_test = True
-    material.depth_write = not transparent
 
 
 def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
@@ -80,7 +71,10 @@ def _build_material_3d(appearance) -> gfx.MeshAbstractMaterial:
             flat_shading=appearance.flat_shading,
             side=side,
         )
-    _apply_transparency_state_3d(material, appearance.opacity)
+    _apply_alpha_mode(material, appearance.opacity)
+    material.depth_test = appearance.depth_test
+    material.depth_write = appearance.depth_write
+    material.depth_compare = appearance.depth_compare
     return material
 
 
@@ -89,17 +83,21 @@ def _build_material_2d(appearance) -> gfx.MeshBasicMaterial:
 
     Always both-sided in 2D to avoid winding confusion after projection.
     """
-    return gfx.MeshBasicMaterial(
+    material = gfx.MeshBasicMaterial(
         color=appearance.color,
         color_mode=appearance.color_mode,
         wireframe=False,
         opacity=appearance.opacity,
         side="both",
     )
+    material.depth_test = appearance.depth_test
+    material.depth_write = appearance.depth_write
+    material.depth_compare = appearance.depth_compare
+    return material
 
 
 class GFXMeshMemoryVisual:
-    """Render-layer visual for one MeshVisual backed by MeshMemoryStore.
+    """Render-layer visual for one MeshVisual backed by in-memory mesh data.
 
     Uses a single gfx.Mesh node for both 2D and 3D.
     get_node_for_dims always returns self.node; SceneManager.swap_node
@@ -111,20 +109,21 @@ class GFXMeshMemoryVisual:
     ----------
     visual_model : MeshVisual
         Associated model-layer visual.
-    data_store : MeshMemoryStore
-        Backing data store.
     render_modes : set[str]
         ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform | None
-        Data-to-world transform.  Identity used if None.
+    transform : AffineTransform
+        Data-to-world transform. Must cover all data axes.
     """
+
+    #: In-memory visuals are cheap to reslice and must never be cancelled.
+    #: SliceCoordinator.submit() reads this flag before calling cancel_visual.
+    cancellable: bool = False
 
     def __init__(
         self,
         visual_model: MeshVisual,
-        data_store: MeshMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: AffineTransform,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -135,14 +134,6 @@ class GFXMeshMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._data_store = data_store
-
-        if transform is None:
-            from cellier.v2.transform import AffineTransform as _AT
-
-            transform = _AT.identity(ndim=data_store.positions.shape[1])
-        elif transform.ndim < data_store.positions.shape[1]:
-            transform = transform.expand_dims(data_store.positions.shape[1])
         self._transform: AffineTransform = transform
         self._last_displayed_axes: tuple[int, ...] | None = None
 
@@ -160,6 +151,7 @@ class GFXMeshMemoryVisual:
             normals=_PLACEHOLDER_NORMALS.copy(),
         )
         self.node = gfx.Mesh(geom, self._empty_material)
+        self.node.render_order = appearance.render_order
 
         # Both attributes point to the same node.
         # swap_node's old_node is new_node guard makes dim-toggling a no-op.
@@ -239,22 +231,10 @@ class GFXMeshMemoryVisual:
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
         thresholds: list[float] | None,
-        dims_state: DimsState | None = None,
+        dims_state: DimsState,
         force_level: int | None = None,
     ) -> list[MeshSliceRequest]:
         """3-D planning path — returns one MeshSliceRequest."""
-        if dims_state is None:
-            ndim = self._data_store.positions.shape[1]
-            from cellier.v2._state import AxisAlignedSelectionState
-            from cellier.v2._state import DimsState as _DS
-
-            dims_state = _DS(
-                axis_labels=tuple(str(i) for i in range(ndim)),
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=tuple(range(ndim)),
-                    slice_indices={},
-                ),
-            )
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
@@ -379,7 +359,16 @@ class GFXMeshMemoryVisual:
             elif name == "side":
                 mat.side = val
         if name == "opacity":
-            _apply_transparency_state_3d(self._material_3d, float(val))
+            _apply_alpha_mode(self._material_3d, float(val))
+        if name == "depth_test":
+            self._material_3d.depth_test = val
+            self._material_2d.depth_test = val
+        elif name == "depth_write":
+            self._material_3d.depth_write = val
+            self._material_2d.depth_write = val
+        elif name == "depth_compare":
+            self._material_3d.depth_compare = val
+            self._material_2d.depth_compare = val
         # Flat-only fields.
         if name == "wireframe" and hasattr(self._material_3d, "wireframe"):
             self._material_3d.wireframe = val
@@ -392,6 +381,15 @@ class GFXMeshMemoryVisual:
             self._material_3d.shininess = val
         elif name == "flat_shading" and hasattr(self._material_3d, "flat_shading"):
             self._material_3d.flat_shading = val
+        if name == "render_order":
+            self.node.render_order = val
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass

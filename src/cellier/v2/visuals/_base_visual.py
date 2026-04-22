@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from psygnal import EventedModel
@@ -34,9 +34,16 @@ class BaseAppearance(EventedModel):
     visible : bool
         If True, the visual is visible.
         Default value is True.
+    render_order : int
+        Pygfx node render order.  Objects with higher values are drawn later
+        and therefore appear on top when depth values are equal.  Default 0.
     """
 
     visible: bool = True
+    render_order: int = 0
+    depth_test: bool = True
+    depth_write: bool = True
+    depth_compare: Literal["<", "<=", "==", "!=", ">=", ">"] = "<"
 
 
 class BaseVisual(EventedModel):

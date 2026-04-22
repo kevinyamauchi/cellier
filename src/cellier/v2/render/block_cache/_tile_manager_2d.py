@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class BlockKey2D:
-    """Identifier for a tile at a specific LOD level.
+    """Identifier for a tile at a specific LOD level and slice position.
 
     Attributes
     ----------
@@ -43,11 +43,17 @@ class BlockKey2D:
         1-indexed LOD level (1 = finest).
     gy, gx : int
         Grid position at this level's resolution.
+    slice_coord : tuple of (axis_index, world_value) pairs
+        Sorted tuple encoding the sliced-axis positions at the time this
+        tile was requested.  Tiles from different slice positions will have
+        distinct keys, allowing the cache to hold tiles from multiple slices
+        simultaneously during a transition.
     """
 
     level: int
     gy: int
     gx: int
+    slice_coord: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass
@@ -235,6 +241,35 @@ class TileManager2D:
             return slot_idx
 
         raise RuntimeError("_evict_lru: heap exhausted with no valid victim")
+
+    def evict_finer_than(self, min_level: int) -> int:
+        """Evict all committed tiles with level < min_level.
+
+        Removes entries from tilemap and returns their slots to free_slots.
+        In-flight slots are unaffected (they are handled by
+        ``release_all_in_flight``).
+
+        Parameters
+        ----------
+        min_level : int
+            Evict tiles whose level is strictly less than this value
+            (i.e. finer than the current target LOD).
+
+        Returns
+        -------
+        int
+            Number of tiles evicted.
+        """
+        to_evict = [key for key in self.tilemap if key.level < min_level]
+        for key in to_evict:
+            slot = self.tilemap.pop(key)
+            self.slot_index[slot.index] = None
+            self.free_slots.append(slot.index)
+        if to_evict:
+            _CACHE_LOGGER.debug(
+                "evict_finer_than  min_level=%d  evicted=%d", min_level, len(to_evict)
+            )
+        return len(to_evict)
 
     def clear(self) -> None:
         """Remove all resident tiles (reset to empty cache)."""

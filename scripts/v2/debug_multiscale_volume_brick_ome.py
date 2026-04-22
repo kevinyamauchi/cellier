@@ -200,6 +200,8 @@ class OmeBrickViewer:
     # ── Toggle ────────────────────────────────────────────────────────
 
     def _on_toggle_clicked(self) -> None:
+        from cellier.v2.events import DimsUpdateEvent
+
         coordinator = self._controller._render_manager._slice_coordinator
         if self._active_mode == "3d":
             coordinator.cancel_scene(self._scene.id)
@@ -209,20 +211,30 @@ class OmeBrickViewer:
             # state is consistent when the geometry-rebuild event fires.
             # Read the last Z value the slider stored (retained even while hidden).
             current_z = self._dims_sliders.current_index().get(0, self._z_max // 2)
-            self._scene.dims.selection.slice_indices = {0: current_z}
-            self._scene.dims.selection.displayed_axes = (1, 2)
+            self._controller.incoming_events.emit(
+                DimsUpdateEvent(
+                    source_id=self._controller._id,
+                    scene_id=self._scene.id,
+                    slice_indices={0: current_z},
+                    displayed_axes=(1, 2),
+                )
+            )
             for w in self._widget_3d:
                 w.setVisible(False)
         else:
             coordinator.cancel_scene(self._scene.id)
             self._active_mode = "3d"
             self._mode_label.setText("Mode: 3D")
-            # Clear slice_indices before changing displayed_axes.
-            self._scene.dims.selection.slice_indices = {}
-            self._scene.dims.selection.displayed_axes = (0, 1, 2)
+            self._controller.incoming_events.emit(
+                DimsUpdateEvent(
+                    source_id=self._controller._id,
+                    scene_id=self._scene.id,
+                    slice_indices={},
+                    displayed_axes=(0, 1, 2),
+                )
+            )
             for w in self._widget_3d:
                 w.setVisible(True)
-        self._controller.reslice_scene(self._scene.id)
 
     # ── Shared callbacks ──────────────────────────────────────────────
 
@@ -231,28 +243,36 @@ class OmeBrickViewer:
         self._controller.reslice_scene(self._scene.id)
 
     def _on_lod_bias_changed(self, value: float) -> None:
-        self._visual_model.appearance.lod_bias = value
         print(f"[DEBUG] LOD bias changed to {value}")
-        self._controller.reslice_scene(self._scene.id)
+        self._controller.update_appearance_field(
+            self._visual_model.id, "lod_bias", value
+        )
 
     # ── 3D-only callbacks ─────────────────────────────────────────────
 
     def _on_pipeline_mode_toggle(self, lod_active: bool) -> None:
         if lod_active:
-            self._visual_model.appearance.force_level = None
-            self._visual_model.appearance.frustum_cull = True
+            self._controller.update_appearance_field(
+                self._visual_model.id, "force_level", None
+            )
+            self._controller.update_appearance_field(
+                self._visual_model.id, "frustum_cull", True
+            )
             self._status_label.setText("Mode: LOD + frustum culling")
         else:
             coarsest = self._n_levels - 1
-            self._visual_model.appearance.force_level = coarsest
-            self._visual_model.appearance.frustum_cull = False
+            self._controller.update_appearance_field(
+                self._visual_model.id, "force_level", coarsest
+            )
+            self._controller.update_appearance_field(
+                self._visual_model.id, "frustum_cull", False
+            )
             self._status_label.setText(f"Mode: Level {coarsest} all bricks (flat)")
         print(
             f"[DEBUG] Pipeline mode changed: "
             f"force_level={self._visual_model.appearance.force_level}, "
             f"frustum_cull={self._visual_model.appearance.frustum_cull}"
         )
-        self._controller.reslice_scene(self._scene.id)
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +295,114 @@ def _dtype_decimals(dtype: np.dtype) -> int:
 
 
 # ---------------------------------------------------------------------------
+# ViewerModel builder
+# ---------------------------------------------------------------------------
+
+
+def _build_viewer_model(
+    data_store,
+    cs,
+    voxel_to_world,
+    initial_clim_max: float,
+    depth_range: tuple[float, float],
+    z_depth: int,
+):
+    """Construct the ViewerModel for the brick viewer (no render layer).
+
+    Parameters
+    ----------
+    data_store : OMEZarrImageDataStore
+        The opened OME-Zarr data store.
+    cs : CoordinateSystem
+        The world coordinate system (also used for axis_labels display).
+    voxel_to_world : AffineTransform
+        Level-0 voxel-to-world transform derived from physical scale.
+    initial_clim_max : float
+        Upper contrast-limit bound for the initial clim.
+    depth_range : tuple[float, float]
+        (near, far) clipping planes for the perspective camera.
+    z_depth : int
+        Number of Z voxels at level 0; used to set the initial Z slice index.
+
+    Returns
+    -------
+    viewer_model : ViewerModel
+        Fully assembled model, ready for CellierController.from_model.
+    visual_model : MultiscaleImageVisual
+        The single image visual, for post-construction access.
+    """
+    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.v2.scene.canvas import Canvas
+    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.v2.scene.scene import Scene
+    from cellier.v2.viewer_model import DataManager, ViewerModel
+    from cellier.v2.visuals._image import (
+        ImageAppearance,
+        MultiscaleImageRenderConfig,
+        MultiscaleImageVisual,
+    )
+
+    visual_model = MultiscaleImageVisual(
+        name="volume",
+        data_store_id=str(data_store.id),
+        level_transforms=data_store.level_transforms,
+        appearance=ImageAppearance(
+            color_map="grays",
+            clim=(0.0, initial_clim_max),
+            lod_bias=1.0,
+            force_level=None,
+            frustum_cull=True,
+            iso_threshold=0.2,
+            render_mode="iso",
+        ),
+        render_config=MultiscaleImageRenderConfig(
+            block_size=32,
+            gpu_budget_bytes=4096 * 1024**2,
+            gpu_budget_bytes_2d=64 * 1024**2,
+            use_brick_shader=True,
+        ),
+        transform=voxel_to_world,
+    )
+    visual_model.aabb.color = "#ff00ff"
+    visual_model.aabb.enabled = True
+
+    # Single scene supporting both 2D and 3D; starts in 3D mode.
+    # Pre-set the Z slice index for when the user toggles to 2D.
+    scene = Scene(
+        name="main",
+        dims=DimsManager(
+            coordinate_system=cs,
+            selection=AxisAlignedSelection(
+                displayed_axes=(0, 1, 2),
+                slice_indices={0: z_depth // 2},
+            ),
+        ),
+        render_modes={"2d", "3d"},
+        lighting="none",
+        visuals=[visual_model],
+        canvases={},
+    )
+    canvas = Canvas(
+        cameras={
+            "3d": PerspectiveCamera(
+                fov=70.0,
+                near_clipping_plane=depth_range[0],
+                far_clipping_plane=depth_range[1],
+                controller=OrbitCameraController(enabled=True),
+            )
+        }
+    )
+    scene.canvases[canvas.id] = canvas
+
+    viewer_model = ViewerModel(
+        data=DataManager(stores={data_store.id: data_store}),
+        scenes={scene.id: scene},
+    )
+
+    return viewer_model, visual_model
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -292,7 +420,6 @@ async def async_main(zarr_uri: str):
     )
     from cellier.v2.scene.dims import CoordinateSystem
     from cellier.v2.transform import AffineTransform
-    from cellier.v2.visuals._image import ImageAppearance
 
     # ── Open the OME-Zarr store ───────────────────────────────────────
     print(f"Opening OME-Zarr store: {zarr_uri}")
@@ -313,8 +440,6 @@ async def async_main(zarr_uri: str):
 
     print(f"\n  Level-0 physical scale (ZYX): {level_0_scale_zyx}")
 
-    voxel_spacing_xyz = level_0_scale_zyx[::-1].copy()
-
     # ── Compute world extents for AABB and depth range ────────────────
     vox_shape_zyx = np.array(data_store.level_shapes[0], dtype=np.float64)
     world_extents_zyx = vox_shape_zyx * level_0_scale_zyx
@@ -327,14 +452,6 @@ async def async_main(zarr_uri: str):
         f"  Depth range:         near={depth_range[0]:.2f}  far={depth_range[1]:.0f}\n"
     )
 
-    # ── Controller ────────────────────────────────────────────────────
-    controller = CellierController(
-        widget_parent=None,
-        render_config=RenderManagerConfig(
-            slicing=SlicingConfig(batch_size=32, render_every=4),
-            camera=CameraConfig(reslice_enabled=False),
-        ),
-    )
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
     # ── Voxel-to-world transform ──────────────────────────────────────
@@ -347,46 +464,34 @@ async def async_main(zarr_uri: str):
     slider_decimals = _dtype_decimals(data_store.dtype)
     _DEBUG_MODE = "none"
 
-    # ── Single scene supporting both 2D and 3D ────────────────────────
     z_depth = data_store.level_shapes[0][0]
-    scene = controller.add_scene(
-        dim="3d",
-        coordinate_system=cs,
-        name="main",
-        render_modes={"2d", "3d"},
-    )
-    # Pre-set the Z slice position for when we toggle to 2D.
-    scene.dims.selection.slice_indices = {0: z_depth // 2}
 
-    visual_model = controller.add_image(
-        data=data_store,
-        scene_id=scene.id,
-        appearance=ImageAppearance(
-            color_map="grays",
-            clim=(0.0, initial_clim_max),
-            lod_bias=1.0,
-            force_level=None,
-            frustum_cull=True,
-            iso_threshold=0.2,
-            render_mode="iso",
-        ),
-        name="volume",
-        block_size=32,
-        gpu_budget_bytes=4096 * 1024**2,
-        gpu_budget_bytes_2d=64 * 1024**2,
-        threshold=0.2,
-        use_brick_shader=True,
-        voxel_spacing=voxel_spacing_xyz,
+    # ── Build ViewerModel (no render layer) ───────────────────────────
+    viewer_model, visual_model = _build_viewer_model(
+        data_store=data_store,
+        cs=cs,
+        voxel_to_world=voxel_to_world,
+        initial_clim_max=initial_clim_max,
+        depth_range=depth_range,
+        z_depth=z_depth,
     )
-    visual_model.transform = voxel_to_world
+
+    # ── Construct controller from model ───────────────────────────────
+    controller = CellierController.from_model(
+        viewer_model,
+        render_config=RenderManagerConfig(
+            slicing=SlicingConfig(batch_size=32, render_every=4),
+            camera=CameraConfig(reslice_enabled=False),
+        ),
+        widget_parent=None,
+    )
+
+    # ── Retrieve scene by name ────────────────────────────────────────
+    scene = controller.get_scene_by_name("main")
 
     # ── Set debug mode on the 3D material ────────────────────────────
     vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)
     vis.material_3d.debug_mode = _DEBUG_MODE
-
-    # ── AABB colour and default visibility ───────────────────────────────
-    visual_model.aabb.color = "#ff00ff"
-    visual_model.aabb.enabled = True
 
     # ── Print diagnostics ─────────────────────────────────────────────
     print(f"[DEBUG] debug_mode     = {_DEBUG_MODE}")
@@ -394,11 +499,12 @@ async def async_main(zarr_uri: str):
     print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
     print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
 
-    # ── Canvas + dims sliders ─────────────────────────────────────────
-    controller.add_canvas(scene.id, depth_range=depth_range)
-    canvas_view = controller._render_manager._find_canvas_for_scene(scene.id)
+    # ── Canvas view ───────────────────────────────────────────────────
+    canvas_view = controller.get_canvas_view(controller.get_canvas_ids(scene.id)[0])
 
     # Axis ranges derived from the finest level's voxel shape (ZYX order).
+    # These use voxel indices (not world coords) because slice_indices in this
+    # script are in voxel space.
     level0_shape = data_store.level_shapes[0]
     axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
 

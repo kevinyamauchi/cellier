@@ -308,13 +308,19 @@ def viewport_cull_2d(
     return culled, n_culled
 
 
-def arr_to_block_keys_2d(arr: np.ndarray) -> dict[BlockKey2D, int]:
+def arr_to_block_keys_2d(
+    arr: np.ndarray,
+    slice_coord: tuple[tuple[int, int], ...] = (),
+) -> dict[BlockKey2D, int]:
     """Convert array rows to a BlockKey2D dict.
 
     Parameters
     ----------
     arr : ndarray
         Array of shape ``(M, 3)`` with columns ``(level, gy, gx)``.
+    slice_coord : tuple of (axis_index, world_value) pairs
+        Sorted slice-position encoding to embed in every key.  Pass the
+        value of ``_current_slice_coord`` from the visual.
 
     Returns
     -------
@@ -324,6 +330,11 @@ def arr_to_block_keys_2d(arr: np.ndarray) -> dict[BlockKey2D, int]:
     required: dict[BlockKey2D, int] = {}
     for row in arr:
         level = int(row[0])
-        key = BlockKey2D(level=level, gy=int(row[1]), gx=int(row[2]))
+        key = BlockKey2D(
+            level=level,
+            gy=int(row[1]),
+            gx=int(row[2]),
+            slice_coord=slice_coord,
+        )
         required[key] = level
     return required

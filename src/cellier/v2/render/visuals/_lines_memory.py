@@ -11,7 +11,6 @@ from cellier.v2.data.lines._lines_requests import LinesSliceRequest
 
 if TYPE_CHECKING:
     from cellier.v2._state import DimsState
-    from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.v2.data.lines._lines_requests import LinesData
     from cellier.v2.events._events import (
         AppearanceChangedEvent,
@@ -52,11 +51,14 @@ def _build_material(appearance: LinesMemoryAppearance) -> gfx.LineSegmentMateria
         color=appearance.color,
         color_mode=appearance.color_mode,
         opacity=appearance.opacity,
+        depth_test=appearance.depth_test,
+        depth_write=appearance.depth_write,
+        depth_compare=appearance.depth_compare,
     )
 
 
 class GFXLinesMemoryVisual:
-    """Render-layer visual for one LinesVisual backed by LinesMemoryStore.
+    """Render-layer visual for one LinesVisual backed by in-memory lines data.
 
     Uses a single ``gfx.Line`` node with ``gfx.LineSegmentMaterial`` for
     both 2D and 3D modes.  ``get_node_for_dims`` always returns ``self.node``;
@@ -86,20 +88,21 @@ class GFXLinesMemoryVisual:
     ----------
     visual_model : LinesVisual
         Associated model-layer visual.
-    data_store : LinesMemoryStore
-        Backing data store.
     render_modes : set[str]
         ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform | None
-        Data-to-world transform.  Identity used if None.
+    transform : AffineTransform
+        Data-to-world transform. Must cover all data axes.
     """
+
+    #: In-memory visuals are cheap to reslice and must never be cancelled.
+    #: SliceCoordinator.submit() reads this flag before calling cancel_visual.
+    cancellable: bool = False
 
     def __init__(
         self,
         visual_model: LinesVisual,
-        data_store: LinesMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: AffineTransform,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -110,14 +113,6 @@ class GFXLinesMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._data_store = data_store
-
-        if transform is None:
-            from cellier.v2.transform import AffineTransform as _AT
-
-            transform = _AT.identity(ndim=data_store.ndim)
-        elif transform.ndim < data_store.ndim:
-            transform = transform.expand_dims(data_store.ndim)
         self._transform: AffineTransform = transform
         self._last_displayed_axes: tuple[int, ...] | None = None
 
@@ -131,6 +126,7 @@ class GFXLinesMemoryVisual:
 
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Line(geom, self._empty_material)
+        self.node.render_order = appearance.render_order
 
         # Both attributes point to the same node.
         # SceneManager.swap_node's old_node is new_node guard makes dim-toggling
@@ -201,21 +197,10 @@ class GFXLinesMemoryVisual:
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
         thresholds: list[float] | None,
-        dims_state: DimsState | None = None,
+        dims_state: DimsState,
         force_level: int | None = None,
     ) -> list[LinesSliceRequest]:
         """3-D planning path — returns one LinesSliceRequest."""
-        if dims_state is None:
-            from cellier.v2._state import AxisAlignedSelectionState
-            from cellier.v2._state import DimsState as _DS
-
-            dims_state = _DS(
-                axis_labels=tuple(str(i) for i in range(self._data_store.ndim)),
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=tuple(range(self._data_store.ndim)),
-                    slice_indices={},
-                ),
-            )
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
@@ -339,6 +324,14 @@ class GFXLinesMemoryVisual:
             self._material.opacity = val
         elif name == "thickness":
             self._material.thickness = val
+        elif name == "depth_test":
+            self._material.depth_test = val
+        elif name == "depth_write":
+            self._material.depth_write = val
+        elif name == "depth_compare":
+            self._material.depth_compare = val
+        elif name == "render_order":
+            self.node.render_order = val
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
@@ -352,3 +345,10 @@ class GFXLinesMemoryVisual:
 
     def cancel_pending_2d(self) -> None:
         """No-op — in-memory visuals have no reserved GPU brick slots."""
+
+    def tick(self) -> None:
+        """Called once per rendered frame. No per-frame state to advance.
+
+        If any per-frame state, implement it here (e.g., temporal jitter seed).
+        """
+        pass
