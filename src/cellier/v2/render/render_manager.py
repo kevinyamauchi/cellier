@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from cellier.v2.events import DimsChangedEvent, EventBus
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
@@ -53,6 +54,18 @@ class RenderManager:
             scenes=self._scenes,
             slicer=self._slicer,
             data_stores=self._data_stores,
+        )
+
+    def connect_event_bus(self, event_bus: EventBus) -> None:
+        """Subscribe internal components to *event_bus*.
+
+        Must be called before the caller registers its own DimsChangedEvent
+        handler so the SliceCoordinator invalidates stale 2D caches first.
+        """
+        event_bus.subscribe(
+            DimsChangedEvent,
+            self._slice_coordinator._on_dims_changed,
+            owner_id=self._slice_coordinator.id,
         )
 
     @property

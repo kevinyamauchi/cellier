@@ -135,14 +135,10 @@ class CellierController:
             self._on_camera_changed,
             owner_id=self._id,
         )
-        # Wire SliceCoordinator to DimsChangedEvent first so it invalidates
-        # stale 2D caches before the controller submits new slice requests.
-        coordinator = self._render_manager._slice_coordinator
-        self._event_bus.subscribe(
-            DimsChangedEvent,
-            coordinator._on_dims_changed,
-            owner_id=coordinator.id,
-        )
+        # Must be called before subscribing _on_dims_changed_bus below so the
+        # SliceCoordinator invalidates stale 2D caches before the controller
+        # submits new slice requests.
+        self._render_manager.connect_event_bus(self._event_bus)
         # Controller's own dims handler: reslice the affected scene.
         self._event_bus.subscribe(
             DimsChangedEvent,
