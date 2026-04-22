@@ -23,14 +23,106 @@ how the controller bridges psygnal signals to bus events, and the registration l
 ```
 src/cellier/v2/
 ├── _state.py          # DimsState, CameraState — shared by events and render layer
-└── events/
-    ├── __init__.py    # exports EventBus, SubscriberInfo, SubscriptionHandle, all event types
-    ├── _bus.py        # EventBus, SubscriptionHandle, SubscriberInfo, _Subscription
-    └── _events.py     # all event NamedTuples
+├── events/
+│   ├── __init__.py    # exports EventBus, SubscriptionSpec, SubscriberInfo,
+│   │                  #   SubscriptionHandle, and all event types
+│   ├── _bus.py        # EventBus, SubscriptionHandle, SubscriberInfo, _Subscription
+│   ├── _events.py     # all outgoing event NamedTuples
+│   └── _update_events.py  # AppearanceUpdateEvent, DimsUpdateEvent,
+│                          # AABBUpdateEvent, SubscriptionSpec
+└── gui/
+    ├── _scene.py           # QtDimsSliders, QtCanvasWidget
+    └── visuals/
+        ├── _contrast_limits.py
+        ├── _colormap.py
+        ├── _image.py
+        └── _aabb.py
 ```
+
+**GUI widgets import only from `cellier.v2.events`. No widget imports
+`cellier.v2.controller`.**
 
 Nothing outside `src/cellier/v2/` imports from this package. The controller is the only
 production caller of `EventBus`.
+
+---
+
+## Widget integration
+
+### The widget contract
+
+Every reusable cellier widget that connects to the event bus must expose:
+
+- `_id: UUID` — a stable UUID generated at construction (one per widget instance).
+- `changed: Signal = Signal(object)` — psygnal signal emitted when the widget's value
+  changes.  The payload is an `*UpdateEvent` (`AppearanceUpdateEvent`,
+  `DimsUpdateEvent`, or `AABBUpdateEvent`).
+- `closed: Signal = Signal()` — psygnal signal emitted when the widget closes, so the
+  controller can clean up its bus subscriptions automatically.
+- `subscription_specs() -> list[SubscriptionSpec]` — declares which bus events the
+  widget wants to receive.  Returns an empty list for write-only widgets.
+
+Widgets never import `cellier.v2.controller` and never hold a controller reference.
+They are pure UI components that communicate only through signals and
+`SubscriptionSpec` declarations.  This makes them distributable as reusable plugins
+in separate packages that depend only on `cellier.v2.events`.
+
+### `SubscriptionSpec`
+
+```python
+class SubscriptionSpec(NamedTuple):
+    """One inbound event subscription declared by a cellier widget."""
+
+    event_type: type
+    handler: Callable[..., None]
+    entity_id: UUID | None = None
+    weak: bool = False
+```
+
+`SubscriptionSpec` lives in `src/cellier/v2/events/_update_events.py` and is
+re-exported from `cellier.v2.events`.  Placing it in the `events` package means
+widgets can import it without creating a circular dependency on any render-layer or
+controller module.
+
+### `CellierController.connect_widget`
+
+```python
+def connect_widget(
+    self,
+    widget: Any,
+    *,
+    subscription_specs: list[SubscriptionSpec] | None = None,
+) -> None:
+```
+
+`connect_widget` does three things:
+
+1. Connects `widget.changed → self._incoming_events.emit` so that `*UpdateEvent`
+   payloads enter the controller's incoming-event pipeline.
+2. Connects `widget.closed → self.unsubscribe_owner(widget._id)` so that bus
+   subscriptions are cleaned up automatically when the widget closes.
+3. Registers each `SubscriptionSpec` on the outgoing event bus with
+   `owner_id=widget._id`.
+
+Typical call site after construction:
+
+```python
+slider = QtClimRangeSlider(visual_id, clim_range=(0, 255), initial_clim=(0, 200))
+controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+```
+
+Write-only widgets (no inbound subscriptions) omit `subscription_specs`:
+
+```python
+controller.connect_widget(my_button)
+```
+
+### Application code exception
+
+Script-local closures and callbacks that live in the same file as the controller
+instantiation may call `controller.incoming_events.emit()` directly rather than
+wrapping themselves in the widget contract.  The widget contract exists to enable
+reusable components distributed in separate packages.
 
 ---
 
@@ -841,9 +933,20 @@ but `ContextVar` is the more principled choice and matches the intended use case
 
 ```python
 class QtDimsSliders:
-    def __init__(self, controller, scene_id, ...):
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
+    def __init__(self, scene_id, ...):
         self._id = uuid4()
-        controller.on_dims_changed(scene_id, self._on_dims_changed, owner_id=self._id)
+        self._scene_id = scene_id
+        # No controller reference — wired externally via connect_widget.
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        return [SubscriptionSpec(
+            event_type=DimsChangedEvent,
+            handler=self._on_dims_changed,
+            entity_id=self._scene_id,
+        )]
 
     def _on_dims_changed(self, event: DimsChangedEvent) -> None:
         if event.source_id == self._id:
@@ -856,10 +959,13 @@ class QtDimsSliders:
     def _submit_slider_values(self) -> None:
         updates = {axis: sld.value() for axis, sld in self._sliders.items()
                    if axis not in self._displayed_axes}
-        # Pass our own UUID so the resulting DimsChangedEvent carries it.
-        self._controller.update_slice_indices(
-            self._scene_id, updates, source_id=self._id
-        )
+        # Emit on changed; connect_widget has wired this to _incoming_events.emit.
+        self.changed.emit(DimsUpdateEvent(
+            source_id=self._id,
+            scene_id=self._scene_id,
+            slice_indices=updates,
+            displayed_axes=None,
+        ))
 ```
 
 Both guards are necessary and serve different roles:
@@ -1168,12 +1274,19 @@ reslice scheduling.
 
 ## End-to-end example: appearance change propagation
 
-This example traces a single colormap change through the full system.
+This example traces a single colormap change through the full system, starting from
+a widget that follows the decoupled widget contract.
 
 ```
-Application code
+QtClimRangeSlider
+      ↓  changed.emit(AppearanceUpdateEvent(source_id=slider._id, field="clim", ...))
+controller._incoming_events   ← connect_widget wired slider.changed → this bus
       ↓
-psygnal EventedModel          ← clim signal fires
+_on_appearance_update()       ← incoming bus subscriber; calls update_appearance_field
+      ↓
+update_appearance_field()     ← sets ContextVar; mutates visual.appearance.clim
+      ↓
+psygnal EventedModel          ← clim signal fires synchronously
       ↓
 Controller bridge             ← reads ContextVar; emits AppearanceChangedEvent
       ↓
@@ -1188,13 +1301,36 @@ deferred GPU upload           concurrent brick reads
 
 ### The trigger
 
+The slider emits its `changed` signal with an `AppearanceUpdateEvent` payload.
+`connect_widget` has already wired `slider.changed → controller._incoming_events.emit`,
+so the event enters the controller's incoming pipeline without any direct controller
+call in widget code:
+
 ```python
-controller.update_appearance_field(visual_id, "clim", (0.0, 1.0), source_id=widget._id)
+# Inside QtClimRangeSlider._on_slider_changed — no controller import required:
+self.changed.emit(
+    AppearanceUpdateEvent(
+        source_id=self._id,
+        visual_id=self._visual_id,
+        field="clim",
+        value=value,
+    )
+)
 ```
 
-### Stage 1 — ContextVar is set; model is mutated; psygnal fires
+### Stage 1 — Incoming bus dispatches to `_on_appearance_update`; model is mutated
 
-`update_appearance_field` sets `_source_id_override` to `widget._id`, then sets
+`_on_appearance_update` receives the `AppearanceUpdateEvent` and forwards it to
+`update_appearance_field`, preserving `source_id`:
+
+```python
+def _on_appearance_update(self, event: AppearanceUpdateEvent) -> None:
+    self.update_appearance_field(
+        event.visual_id, event.field, event.value, source_id=event.source_id
+    )
+```
+
+`update_appearance_field` sets `_source_id_override` to `slider._id`, then sets
 `visual.appearance.clim = (0.0, 1.0)`. psygnal fires `_on_appearance_psygnal`
 synchronously before `setattr` returns.
 
@@ -1289,6 +1425,12 @@ from cellier.v2.events._events import (
     VisualAddedEvent,
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
+)
+from cellier.v2.events._update_events import (
+    AABBUpdateEvent,
+    AppearanceUpdateEvent,
+    DimsUpdateEvent,
+    SubscriptionSpec,
 )
 # Re-export shared state types — single import location for all subscribers
 from cellier.v2._state import CameraState, DimsState

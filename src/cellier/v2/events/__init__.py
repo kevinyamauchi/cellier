@@ -26,6 +26,7 @@ from cellier.v2.events._update_events import (
     AppearanceUpdateEvent,
     CellierUpdateEventTypes,
     DimsUpdateEvent,
+    SubscriptionSpec,
 )
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "SceneRemovedEvent",
     "SubscriberInfo",
     "SubscriptionHandle",
+    "SubscriptionSpec",
     "TransformChangedEvent",
     "VisualAddedEvent",
     "VisualRemovedEvent",

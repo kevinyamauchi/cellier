@@ -769,12 +769,14 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         canvas_view = _get_canvas_view(scene.id)
         axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
         dims_sliders = QtDimsSliders(
-            controller=controller,
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
             initial_slice_indices=dict(scene.dims.selection.slice_indices),
             initial_displayed_axes=scene.dims.selection.displayed_axes,
+        )
+        controller.connect_widget(
+            dims_sliders, subscription_specs=dims_sliders.subscription_specs()
         )
         dims_sliders.widget.setStyleSheet(slider_style)
         return QtCanvasWidget(canvas_view=canvas_view, dims_sliders=dims_sliders)
@@ -787,13 +789,17 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         "xy": _make_2d_canvas_widget(xy_scene, SLIDER_STYLE_XY),
         "xz": _make_2d_canvas_widget(xz_scene, SLIDER_STYLE_XZ),
         "yz": _make_2d_canvas_widget(yz_scene, SLIDER_STYLE_YZ),
-        "vol": QtCanvasWidget.from_scene_and_canvas(
-            controller,
-            vol_scene,
-            _get_canvas_view(vol_scene.id),
-            axis_ranges=axis_ranges,
-        ),
     }
+    _vol_cw = QtCanvasWidget.from_scene_and_canvas(
+        vol_scene,
+        _get_canvas_view(vol_scene.id),
+        axis_ranges=axis_ranges,
+    )
+    controller.connect_widget(
+        _vol_cw.dims_sliders,
+        subscription_specs=_vol_cw.dims_sliders.subscription_specs(),
+    )
+    canvas_widgets["vol"] = _vol_cw
 
     # ── Collect visual models for the viewer UI ───────────────────────────────
     def _visuals_by_name_prefix(prefix: str) -> dict:

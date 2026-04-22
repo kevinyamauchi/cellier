@@ -24,6 +24,7 @@ from cellier.v2.events import (
     SceneAddedEvent,
     SceneRemovedEvent,
     SubscriptionHandle,
+    SubscriptionSpec,
     TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
@@ -2495,3 +2496,49 @@ class CellierController:
             registered (typically the widget's own ``self._id``).
         """
         self._event_bus.unsubscribe_all(owner_id)
+
+    def connect_widget(
+        self,
+        widget: Any,
+        *,
+        subscription_specs: list[SubscriptionSpec] | None = None,
+    ) -> None:
+        """Wire a widget's psygnal signals to the bus and register subscriptions.
+
+        Widgets declare their intent through two psygnal signals and an optional
+        list of ``SubscriptionSpec`` objects, so they never import or hold a
+        reference to ``CellierController``.
+
+        The caller is responsible for constructing the widget and passing the
+        specs — typically obtained from ``widget.subscription_specs()``.
+
+        Parameters
+        ----------
+        widget :
+            Any object exposing:
+
+            * ``widget._id`` — a ``UUID`` identifying the widget.
+            * ``widget.changed`` — a psygnal ``Signal`` that emits a
+              ``CellierUpdateEventTypes`` instance when the user changes a
+              value.  Connected to ``incoming_events.emit``.
+            * ``widget.closed`` — a psygnal ``Signal`` (no arguments) emitted
+              when the widget is closed.  Triggers
+              ``unsubscribe_owner(widget._id)``.
+
+        subscription_specs :
+            Optional list of ``SubscriptionSpec`` entries describing which
+            outgoing bus events the widget wants to receive.  Pass ``None``
+            (or omit the argument) for pure-output widgets that do not need
+            model-driven updates.
+        """
+        widget.changed.connect(self._incoming_events.emit)
+        owner_id = widget._id
+        widget.closed.connect(lambda: self.unsubscribe_owner(owner_id))
+        for spec in subscription_specs or []:
+            self._event_bus.subscribe(
+                spec.event_type,
+                spec.handler,
+                entity_id=spec.entity_id,
+                owner_id=owner_id,
+                weak=spec.weak,
+            )

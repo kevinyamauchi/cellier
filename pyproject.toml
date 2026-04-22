@@ -130,6 +130,8 @@ ignore = [
 "src/cellier/v2/scene/*.py" = ["TCH001", "TCH003"]
 "src/cellier/v2/viewer_model.py" = ["TCH001", "TCH003"]
 "src/cellier/v2/visuals/_base_visual.py" = ["TCH001", "TCH003"]
+# docstring-code-format collapses wrapped examples; E501 fires on indent+content
+"src/cellier/v2/gui/**/*.py" = ["E501"]
 
 # https://docs.astral.sh/ruff/formatter/
 [tool.ruff.format]

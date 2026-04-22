@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from cellier.v2.events import AABBUpdateEvent
+from psygnal import Signal
+
+from cellier.v2.events import AABBChangedEvent, AABBUpdateEvent, SubscriptionSpec
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 class QtAABBWidget:
@@ -17,10 +23,13 @@ class QtAABBWidget:
     widget, source-ID echo filtering, and signal blocking when applying
     model-driven updates.
 
+    Wire to the controller after construction::
+
+        aabb = QtAABBWidget(visual_id, initial_enabled=True, ...)
+        controller.connect_widget(aabb, subscription_specs=aabb.subscription_specs())
+
     Parameters
     ----------
-    controller :
-        The ``CellierController`` instance.
     visual_id :
         UUID of the visual whose ``aabb`` params this widget controls.
     initial_enabled :
@@ -33,10 +42,12 @@ class QtAABBWidget:
         Optional Qt parent widget.
     """
 
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
     def __init__(
         self,
-        controller,
-        visual_id,
+        visual_id: UUID,
         *,
         initial_enabled: bool = False,
         initial_line_width: float = 2.0,
@@ -55,7 +66,6 @@ class QtAABBWidget:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._controller = controller
         self._visual_id = visual_id
         self._current_color = initial_color
 
@@ -93,7 +103,7 @@ class QtAABBWidget:
         self._color_swatch.setFixedSize(24, 24)
         self._color_swatch.setToolTip("Current AABB color")
         color_layout.addWidget(self._color_swatch)
-        self._color_btn = QPushButton("Choose…")
+        self._color_btn = QPushButton("Choose...")
         self._color_btn.clicked.connect(self._on_color_btn_clicked)
         color_layout.addWidget(self._color_btn)
         color_layout.addStretch()
@@ -101,8 +111,6 @@ class QtAABBWidget:
 
         # apply initial swatch color (no signal to block)
         self._apply_swatch(initial_color)
-
-        controller.on_aabb_changed(visual_id, self._on_aabb_changed, owner_id=self._id)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -115,8 +123,21 @@ class QtAABBWidget:
         return self._container
 
     def close(self) -> None:
-        """Unsubscribe from the bus.  Call when the owning window closes."""
-        self._controller.unsubscribe_owner(self._id)
+        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        self.closed.emit()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """Return the inbound subscription this widget requires.
+
+        Pass the result to ``CellierController.connect_widget``.
+        """
+        return [
+            SubscriptionSpec(
+                event_type=AABBChangedEvent,
+                handler=self._on_aabb_changed,
+                entity_id=self._visual_id,
+            )
+        ]
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -133,7 +154,7 @@ class QtAABBWidget:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_enabled_changed(self, value: bool) -> None:
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AABBUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -143,7 +164,7 @@ class QtAABBWidget:
         )
 
     def _on_line_width_changed(self, value: float) -> None:
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AABBUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -161,7 +182,7 @@ class QtAABBWidget:
         if not color.isValid():
             return  # user cancelled
         css = color.name()  # e.g. "#ff00ff"
-        self._controller.incoming_events.emit(
+        self.changed.emit(
             AABBUpdateEvent(
                 source_id=self._id,
                 visual_id=self._visual_id,
@@ -169,8 +190,8 @@ class QtAABBWidget:
                 value=css,
             )
         )
-        # update local cache and swatch immediately (no bus round-trip needed
-        # since echo filtering will suppress the incoming event)
+        # Update local cache and swatch immediately — echo filtering will
+        # suppress the round-tripped AABBChangedEvent.
         self._current_color = css
         self._apply_swatch(css)
 
@@ -192,7 +213,7 @@ class QtAABBWidget:
         self._apply_swatch(value)
 
     def _apply_swatch(self, css_color: str) -> None:
-        """Update the color swatch's background without touching any signals."""
+        """Update the color swatch background without touching any signals."""
         self._color_swatch.setStyleSheet(
             f"background-color: {css_color}; border: 1px solid #888;"
         )

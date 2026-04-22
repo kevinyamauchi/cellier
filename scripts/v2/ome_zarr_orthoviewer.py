@@ -242,9 +242,13 @@ SLIDER_STYLE_YZ = _make_slider_style("#fdb", "#c60")
 class _MultiVisualClimSlider:
     """Contrast-limits range slider that updates multiple visuals at once."""
 
+    from psygnal import Signal
+
+    changed = Signal(object)
+    closed = Signal()
+
     def __init__(
         self,
-        controller,
         visual_ids: list,
         *,
         clim_range: tuple[float, float],
@@ -258,7 +262,6 @@ class _MultiVisualClimSlider:
         from cellier.v2.events import AppearanceUpdateEvent
 
         self._id = uuid4()
-        self._controller = controller
         self._visual_ids = visual_ids
         self._AppearanceUpdateEvent = AppearanceUpdateEvent
 
@@ -270,7 +273,7 @@ class _MultiVisualClimSlider:
 
     def _on_changed(self, value: tuple[float, float]) -> None:
         for vid in self._visual_ids:
-            self._controller.incoming_events.emit(
+            self.changed.emit(
                 self._AppearanceUpdateEvent(
                     source_id=self._id,
                     visual_id=vid,
@@ -284,15 +287,19 @@ class _MultiVisualClimSlider:
         return self._slider
 
     def close(self) -> None:
-        pass
+        self.closed.emit()
 
 
 class _MultiVisualColormapCombo:
     """Colormap combo box that updates multiple visuals at once."""
 
+    from psygnal import Signal
+
+    changed = Signal(object)
+    closed = Signal()
+
     def __init__(
         self,
-        controller,
         visual_ids: list,
         *,
         initial_colormap,
@@ -303,7 +310,6 @@ class _MultiVisualColormapCombo:
         from cellier.v2.events import AppearanceUpdateEvent
 
         self._id = uuid4()
-        self._controller = controller
         self._visual_ids = visual_ids
         self._AppearanceUpdateEvent = AppearanceUpdateEvent
 
@@ -313,7 +319,7 @@ class _MultiVisualColormapCombo:
 
     def _on_changed(self, colormap) -> None:
         for vid in self._visual_ids:
-            self._controller.incoming_events.emit(
+            self.changed.emit(
                 self._AppearanceUpdateEvent(
                     source_id=self._id,
                     visual_id=vid,
@@ -327,7 +333,7 @@ class _MultiVisualColormapCombo:
         return self._combo
 
     def close(self) -> None:
-        pass
+        self.closed.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -373,38 +379,44 @@ class OmeZarrOrthoViewer:
 
         # ── 2D controls (shared across all three 2D views) ────────────────────
         self._2d_clim = _MultiVisualClimSlider(
-            controller,
             [xy_id, xz_id, yz_id],
             clim_range=clim_range,
             initial_clim=visuals["xy"].appearance.clim,
             decimals=slider_decimals,
         )
+        controller.connect_widget(self._2d_clim)
         self._2d_colormap = _MultiVisualColormapCombo(
-            controller,
             [xy_id, xz_id, yz_id],
             initial_colormap=visuals["xy"].appearance.color_map,
         )
+        controller.connect_widget(self._2d_colormap)
 
         # ── 3D controls ───────────────────────────────────────────────────────
         self._3d_clim = QtClimRangeSlider(
-            controller,
             vol_id,
             clim_range=clim_range,
             initial_clim=visuals["vol"].appearance.clim,
             decimals=slider_decimals,
         )
+        controller.connect_widget(
+            self._3d_clim, subscription_specs=self._3d_clim.subscription_specs()
+        )
         self._3d_colormap = QtColormapComboBox(
-            controller,
             vol_id,
             initial_colormap=visuals["vol"].appearance.color_map,
         )
+        controller.connect_widget(
+            self._3d_colormap, subscription_specs=self._3d_colormap.subscription_specs()
+        )
         self._3d_render = QtVolumeRenderControls(
-            controller,
             vol_id,
             dtype_max=clim_range[1],
             initial_render_mode=visuals["vol"].appearance.render_mode,
             initial_threshold=visuals["vol"].appearance.iso_threshold,
             decimals=slider_decimals,
+        )
+        controller.connect_widget(
+            self._3d_render, subscription_specs=self._3d_render.subscription_specs()
         )
 
         # ── Main window ───────────────────────────────────────────────────────
@@ -1682,23 +1694,30 @@ async def async_main(zarr_uri: str) -> None:
         axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
         selection = scene.dims.selection
         dims_sliders = QtDimsSliders(
-            controller=controller,
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
             initial_slice_indices=dict(getattr(selection, "slice_indices", {})),
             initial_displayed_axes=getattr(selection, "displayed_axes", ()),
         )
+        controller.connect_widget(
+            dims_sliders, subscription_specs=dims_sliders.subscription_specs()
+        )
         dims_sliders.widget.setStyleSheet(slider_style)
         return QtCanvasWidget(canvas_view=canvas_view, dims_sliders=dims_sliders)
 
+    _vol_cw = QtCanvasWidget.from_scene_and_canvas(
+        vol_scene, _canvas_view(vol_scene.id), axis_ranges=axis_ranges
+    )
+    controller.connect_widget(
+        _vol_cw.dims_sliders,
+        subscription_specs=_vol_cw.dims_sliders.subscription_specs(),
+    )
     canvas_widgets = {
         "xy": _make_canvas_widget(xy_scene, SLIDER_STYLE_XY),
         "xz": _make_canvas_widget(xz_scene, SLIDER_STYLE_XZ),
         "yz": _make_canvas_widget(yz_scene, SLIDER_STYLE_YZ),
-        "vol": QtCanvasWidget.from_scene_and_canvas(
-            controller, vol_scene, _canvas_view(vol_scene.id), axis_ranges=axis_ranges
-        ),
+        "vol": _vol_cw,
     }
 
     # ── Screen-space 2D axis overlays ─────────────────────────────────────
