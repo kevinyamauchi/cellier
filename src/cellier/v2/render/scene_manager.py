@@ -39,11 +39,17 @@ class SceneManager:
         self._visuals: dict[UUID, Any] = {}
         self._active_nodes: dict[UUID, Any] = {}  # visual_id → active node
 
-        if lighting == "default":
+        self._has_lighting = lighting == "default"
+        if self._has_lighting:
             self._scene.add(gfx.AmbientLight(intensity=0.4))
             dir_light = gfx.DirectionalLight(intensity=3.0)
             dir_light.local.position = np.array([500, 500, 1000], dtype=np.float32)
             self._scene.add(dir_light)
+
+    @property
+    def has_lighting(self) -> bool:
+        """True if this scene was created with lighting enabled."""
+        return self._has_lighting
 
     @property
     def scene_id(self) -> UUID:

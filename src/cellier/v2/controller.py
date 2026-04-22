@@ -990,14 +990,7 @@ class CellierController:
 
         # Warn if Phong requested but no lights in scene.
         if isinstance(visual_model.appearance, MeshPhongAppearance):
-            import pygfx as gfx
-
-            scene_manager = self._render_manager._scenes[scene_id]
-            has_light = any(
-                isinstance(child, (gfx.AmbientLight, gfx.DirectionalLight))
-                for child in scene_manager.scene.children
-            )
-            if not has_light:
+            if not self._render_manager.scene_has_lighting(scene_id):
                 warnings.warn(
                     "MeshPhongAppearance requires lights in the scene. "
                     "Pass lighting='default' to the Scene model, otherwise "

@@ -107,6 +107,10 @@ class RenderManager:
         self._scenes[scene_id] = scene_manager
         return scene_manager
 
+    def scene_has_lighting(self, scene_id: UUID) -> bool:
+        """Return True if *scene_id* was created with lighting enabled."""
+        return self._scenes[scene_id].has_lighting
+
     def add_canvas(
         self,
         canvas_id: UUID,
