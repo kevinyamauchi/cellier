@@ -32,6 +32,7 @@ from cellier.v2.events import (
 from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
+from cellier.v2.render.visuals._canvas_overlay import GFXCenteredAxes2D
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
@@ -49,6 +50,7 @@ from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsMa
 from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
+from cellier.v2.visuals._canvas_overlay import CenteredAxes2D
 from cellier.v2.visuals._image import (
     ImageAppearance,
     MultiscaleImageRenderConfig,
@@ -1047,6 +1049,43 @@ class CellierController:
         return visual_model
 
     # ------------------------------------------------------------------
+    # Overlay construction
+    # ------------------------------------------------------------------
+
+    def _build_gfx_overlay(
+        self,
+        canvas_id: UUID,
+        overlay_model: CanvasOverlay,
+    ):
+        """Construct the render-layer overlay for *overlay_model*.
+
+        Mirrors the ``_add_*_visual`` pattern: the controller is responsible
+        for constructing GFX objects; the render manager is a passive registrar.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas that will own the overlay.
+        overlay_model : CanvasOverlay
+            Model-layer overlay description.
+
+        Raises
+        ------
+        TypeError
+            If *overlay_model* has an unrecognised type.
+        """
+        canvas_view = self._render_manager._canvases[canvas_id]
+        if isinstance(overlay_model, CenteredAxes2D):
+            return GFXCenteredAxes2D(
+                model=overlay_model,
+                camera=canvas_view.camera,
+            )
+        raise TypeError(
+            f"Unrecognised overlay type {type(overlay_model)!r}. "
+            "Register a handler in _build_gfx_overlay."
+        )
+
+    # ------------------------------------------------------------------
     # Canvas management
     # ------------------------------------------------------------------
 
@@ -1214,11 +1253,11 @@ class CellierController:
         # (overlays=[]).  For canvases restored from a serialized ViewerModel
         # the overlays list is already populated, so this call is sufficient —
         # from_model needs no additional overlay-restoration step.
-        # _render_manager.add_canvas_overlay is called directly rather than
-        # self.add_canvas_overlay to avoid re-appending models that are already
-        # in canvas_model.overlays.
+        # _build_gfx_overlay is called directly rather than add_canvas_overlay_model
+        # to avoid re-appending models that are already in canvas_model.overlays.
         for overlay_model in canvas_model.overlays:
-            self._render_manager.add_canvas_overlay(canvas_model.id, overlay_model)
+            gfx_overlay = self._build_gfx_overlay(canvas_model.id, overlay_model)
+            self._render_manager.add_canvas_overlay(canvas_model.id, gfx_overlay)
 
         self._canvas_to_scene[canvas_model.id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_model.id)
@@ -1296,7 +1335,8 @@ class CellierController:
         canvas_model = self._model.scenes[scene_id].canvases[canvas_id]
         canvas_model.overlays.append(overlay)
 
-        self._render_manager.add_canvas_overlay(canvas_id, overlay)
+        gfx_overlay = self._build_gfx_overlay(canvas_id, overlay)
+        self._render_manager.add_canvas_overlay(canvas_id, gfx_overlay)
 
         return overlay
 

@@ -258,6 +258,11 @@ class CanvasView:
             self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
         self._fitted.add(self._dim)
 
+    @property
+    def camera(self) -> gfx.Camera:
+        """The active pygfx camera for this canvas."""
+        return self._camera
+
     def add_overlay(self, overlay: GFXCanvasOverlay) -> None:
         """Attach a screen-space overlay to this canvas.
 

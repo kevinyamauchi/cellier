@@ -10,9 +10,7 @@ from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
-from cellier.v2.render.visuals._canvas_overlay import GFXCenteredAxes2D
 from cellier.v2.slicer import AsyncSlicer
-from cellier.v2.visuals._canvas_overlay import CenteredAxes2D
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
     from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
-    from cellier.v2.visuals._canvas_overlay import CanvasOverlay
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
@@ -210,65 +207,23 @@ class RenderManager:
     def add_canvas_overlay(
         self,
         canvas_id: UUID,
-        overlay_model: CanvasOverlay,
+        gfx_overlay: GFXCanvasOverlay,
     ) -> None:
-        """Build a GFX overlay and attach it to *canvas_id*.
-
-        The GFX overlay is constructed from *overlay_model* and wired to the
-        main camera of the canvas so that direction vectors are computed
-        correctly.
+        """Attach a pre-built GFX overlay to *canvas_id*.
 
         Parameters
         ----------
         canvas_id : UUID
             ID of the canvas that should receive the overlay.
-        overlay_model : CanvasOverlay
-            Model-layer description of the overlay.
+        gfx_overlay : GFXCanvasOverlay
+            The fully-constructed render-layer overlay.
 
         Raises
         ------
         KeyError
             If *canvas_id* is not registered.
-        ValueError
-            If *overlay_model* has an unrecognised type.
         """
-        canvas = self._canvases[canvas_id]
-        gfx_overlay = self._build_gfx_overlay(overlay_model, canvas)
-        canvas.add_overlay(gfx_overlay)
-
-    @staticmethod
-    def _build_gfx_overlay(
-        overlay_model: CanvasOverlay,
-        canvas_view: CanvasView,
-    ) -> GFXCanvasOverlay:
-        """Construct the render-layer overlay for *overlay_model*.
-
-        Parameters
-        ----------
-        overlay_model : CanvasOverlay
-            Model-layer overlay description.  Dispatched on ``overlay_type``.
-        canvas_view : CanvasView
-            The canvas view that will own the overlay.  Provides the main
-            camera reference.
-
-        Returns
-        -------
-        GFXCanvasOverlay
-
-        Raises
-        ------
-        ValueError
-            If ``overlay_model.overlay_type`` is not recognised.
-        """
-        if isinstance(overlay_model, CenteredAxes2D):
-            return GFXCenteredAxes2D(
-                model=overlay_model,
-                camera=canvas_view._camera,
-            )
-        raise ValueError(
-            f"Unrecognised overlay_type: {overlay_model!r}.  "
-            "Register the type in RenderManager._build_gfx_overlay."
-        )
+        self._canvases[canvas_id].add_overlay(gfx_overlay)
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.
