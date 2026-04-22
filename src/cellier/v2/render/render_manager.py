@@ -280,31 +280,6 @@ class RenderManager:
         """
         return self._scenes[scene_id].scene
 
-    def trigger_update(
-        self,
-        dims_state: DimsState,
-        visual_configs: dict[UUID, VisualRenderConfig] | None = None,
-    ) -> None:
-        """Reslice all visuals across all scenes.
-
-        Builds one ``ReslicingRequest`` per canvas using the current camera
-        state, then submits each to the ``SliceCoordinator``.
-
-        Parameters
-        ----------
-        dims_state : DimsState
-            Current dimension display state.
-        visual_configs : dict[UUID, VisualRenderConfig] or None
-            Per-visual render configuration.  ``None`` falls back to defaults
-            for all visuals.
-        """
-        if visual_configs is None:
-            visual_configs = {}
-        for canvas_id, _scene_id in self._canvas_to_scene.items():
-            canvas = self._canvases[canvas_id]
-            request = canvas.capture_reslicing_request(dims_state)
-            self._slice_coordinator.submit(request, visual_configs)
-
     def reslice_scene(
         self,
         scene_id: UUID,
