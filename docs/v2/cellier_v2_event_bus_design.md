@@ -936,6 +936,40 @@ def _make_appearance_handler(self, visual_id: UUID) -> Callable:
     return _on_appearance_psygnal
 ```
 
+### Handler storage for teardown
+
+The controller stores every psygnal bridge handler it connects so that they can be
+explicitly disconnected during visual teardown.  psygnal's `disconnect()` requires
+the exact handler object — closures are not equality-comparable by value, so the
+reference must be retained.
+
+```python
+# On the controller instance
+self._visual_psygnal_handlers: dict[UUID, list[tuple]] = {}
+# Each value is a list of (signal, handler) pairs — one per _wire_* call.
+```
+
+The `(signal, handler)` pair form is used rather than storing the handler alone so
+that teardown can call `signal.disconnect(handler)` without branching on visual type.
+Handlers are appended in wiring order:
+
+| Visual type | Wired signals (in order) |
+|---|---|
+| `MultiscaleImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
+| `ImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
+| `MeshVisual`, `PointsVisual`, `LinesVisual` | `appearance.events`, `events.transform` |
+
+Each `_wire_*` method creates the handler, connects it, and appends the pair:
+
+```python
+def _wire_appearance(self, visual) -> None:
+    handler = self._make_appearance_handler(visual.id)
+    visual.appearance.events.connect(handler)
+    self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+        (visual.appearance.events, handler)
+    )
+```
+
 ### DimsManager wiring
 
 The dims bridge reads the full state from the model rather than from `EmissionInfo`,
@@ -1049,6 +1083,41 @@ bus.subscribe(
 # Controller: removing the visual
 bus.unsubscribe_all(owner_id=visual_id)  # removes all four in one call
 ```
+
+### Visual teardown sequence
+
+A visual has two independent sets of subscriptions that must both be cleaned up:
+
+1. **psygnal side** — the bridge closures stored in `_visual_psygnal_handlers`.
+   These live on psygnal `EventedModel` signals (`appearance.events`,
+   `aabb.events`, `events.transform`) and are disconnected by calling
+   `signal.disconnect(handler)` for each stored `(signal, handler)` pair.
+
+2. **bus side** — the GFX-layer subscriptions registered with `owner_id=visual_id`
+   (appearance, AABB, visibility, transform handlers on `GFX*Visual`).
+   Removed atomically with `bus.unsubscribe_all(visual_id)`.
+
+The teardown order inside `remove_visual` is:
+
+```
+1. scene.visuals.remove(visual_model)          # model layer
+2. signal.disconnect(handler) for each pair    # psygnal bridge: stop emitting events
+3. bus.unsubscribe_all(visual_id)              # bus: stop receiving events in GFX layer
+4. _visual_to_scene.pop(visual_id)             # controller map
+5. render_manager.remove_visual(visual_id)     # scene graph + GPU ref release
+6. bus.emit(VisualRemovedEvent(...))            # notify external observers
+```
+
+Psygnal is disconnected **before** the bus so that no new bus events can be emitted
+from stale bridge closures during or after step 5.  The bus is unsubscribed before
+render-layer removal so that the GFX handlers cannot fire on a node that is already
+removed from the scene graph.
+
+`remove_scene` cascades: it calls `remove_visual` for every child visual before
+tearing down the scene-level maps, then delegates to
+`render_manager.remove_scene(scene_id)` which drops references to the `gfx.Scene`
+and all `CanvasView` objects (GC then reclaims GPU resources — pygfx has no
+explicit destroy API).
 
 External callbacks registered by the application developer receive the full event
 object, not a stripped-down state payload:

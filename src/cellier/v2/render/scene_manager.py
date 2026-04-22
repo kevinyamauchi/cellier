@@ -142,16 +142,21 @@ class SceneManager:
     def remove_visual(self, visual_id: UUID) -> None:
         """Unregister a visual and remove its node from the scene graph.
 
+        Uses ``_active_nodes`` to identify which node is currently in the
+        scene and removes only that one.  Dropping the visual from
+        ``_visuals`` releases references to both ``node_3d`` and ``node_2d``
+        so GC can collect both nodes' GPU resources (pygfx has no explicit
+        destroy API).
+
         Parameters
         ----------
         visual_id : UUID
             ID of the visual to remove.
         """
-        visual = self._visuals.pop(visual_id)
-        if visual.node_3d is not None and visual.node_3d.parent is not None:
-            self._scene.remove(visual.node_3d)
-        elif visual.node_2d is not None and visual.node_2d.parent is not None:
-            self._scene.remove(visual.node_2d)
+        active_node = self._active_nodes.pop(visual_id, None)
+        if active_node is not None:
+            self._scene.remove(active_node)
+        self._visuals.pop(visual_id)
 
     def get_visual(self, visual_id: UUID) -> Any:
         """Return the registered visual for ``visual_id``.

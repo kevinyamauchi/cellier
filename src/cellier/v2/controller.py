@@ -22,9 +22,11 @@ from cellier.v2.events import (
     ResliceCompletedEvent,
     ResliceStartedEvent,
     SceneAddedEvent,
+    SceneRemovedEvent,
     SubscriptionHandle,
     TransformChangedEvent,
     VisualAddedEvent,
+    VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
 from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
@@ -125,6 +127,13 @@ class CellierController:
         self._scene_render_modes: dict[UUID, set[Literal["2d", "3d"]]] = {}
         # Camera settle
         self._settle_tasks: dict[UUID, asyncio.Task] = {}
+        # Stored psygnal bridge handlers keyed by visual_id.
+        # Each entry is a list of (signal, handler) pairs.  psygnal
+        # disconnect() requires the exact handler object; closures are not
+        # equality-comparable by value, so references must be retained.
+        # Storing the signal alongside the handler avoids branching on visual
+        # type during teardown.
+        self._visual_psygnal_handlers: dict[UUID, list[tuple]] = {}
         # When True, transform-change handlers skip reslice_scene.  Managed
         # by the suppress_reslice context manager.  This is a flat boolean, so
         # nested suppress_reslice calls or concurrent async transform mutations
@@ -1460,8 +1469,10 @@ class CellierController:
         scene_id: UUID,
     ) -> None:
         """Subscribe to transform field changes on a visual model."""
-        visual.events.transform.connect(
-            self._make_transform_handler(visual.id, scene_id)
+        handler = self._make_transform_handler(visual.id, scene_id)
+        visual.events.transform.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (visual.events.transform, handler)
         )
 
     def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
@@ -1494,11 +1505,19 @@ class CellierController:
         | LinesVisual,
     ) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
-        visual.appearance.events.connect(self._make_appearance_handler(visual.id))
+        handler = self._make_appearance_handler(visual.id)
+        visual.appearance.events.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (visual.appearance.events, handler)
+        )
 
     def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
         """Subscribe to all field changes on a visual's aabb model."""
-        visual.aabb.events.connect(self._make_aabb_handler(visual.id))
+        handler = self._make_aabb_handler(visual.id)
+        visual.aabb.events.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (visual.aabb.events, handler)
+        )
 
     def _make_aabb_handler(self, visual_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a visual's AABBParams."""
@@ -1987,34 +2006,134 @@ class CellierController:
         raise NotImplementedError("add_labels is not implemented in Phase 1.")
 
     def remove_scene(self, scene_id: UUID) -> None:
-        """Clean up bus subscriptions for a scene and its canvases.
+        """Remove a scene and all its visuals and canvases.
 
-        Render-layer teardown is not yet implemented.
+        Teardown order mirrors ``remove_visual`` for each child visual, then
+        cleans up the scene-level maps and render layer.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``scene_id`` is not registered.
         """
+        scene = self._model.scenes[scene_id]
+
+        # 1. Tear down all child visuals (psygnal + bus + render layer each).
+        for visual_model in list(scene.visuals):
+            self.remove_visual(visual_model.id)
+
+        # 2. Cancel any pending camera-settle tasks for this scene's canvases.
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            task = self._settle_tasks.pop(canvas_id, None)
+            if task is not None and not task.done():
+                task.cancel()
+
+        # 3. Bus cleanup for canvases and the scene itself.
         for canvas_id in self._scene_to_canvases.pop(scene_id, []):
             self._event_bus.unsubscribe_all(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
         self._event_bus.unsubscribe_all(scene_id)
-        raise NotImplementedError(
-            "Scene render-layer teardown not yet implemented. "
-            "Bus subscriptions have been cleaned up."
-        )
+
+        # 4. Clean up controller-side scene maps.
+        self._dims_cache.pop(scene_id, None)
+        self._scene_render_modes.pop(scene_id, None)
+
+        # 5. Remove from model layer.
+        self._model.scenes.pop(scene_id)
+
+        # 6. Render-layer teardown (drops gfx.Scene, canvas widgets, GPU refs).
+        self._render_manager.remove_scene(scene_id)
+
+        # 7. Notify external observers.
+        self._event_bus.emit(SceneRemovedEvent(source_id=self._id, scene_id=scene_id))
 
     def remove_visual(self, visual_id: UUID) -> None:
-        """Clean up bus subscriptions for a visual.
+        """Remove a visual from its scene, disconnecting all wiring.
 
-        Render-layer teardown is not yet implemented.
+        Teardown order:
+        1. Psygnal bridge handlers disconnected first — prevents the
+           bridge closures from firing during any subsequent model access.
+        2. Bus subscriptions removed — prevents dangling GFX-layer handlers
+           from receiving events after the node is gone from the scene graph.
+        3. Render-layer removal — drops scene-graph node and GPU references.
+        4. ``VisualRemovedEvent`` emitted for external observers.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``visual_id`` is not registered.
         """
+        scene_id = self._visual_to_scene[visual_id]
+        scene = self._model.scenes[scene_id]
+        visual_model = self.get_visual_model(visual_id)
+
+        # 1. Remove from model layer.
+        scene.visuals.remove(visual_model)
+
+        # 2. Disconnect psygnal bridge handlers.
+        for signal, handler in self._visual_psygnal_handlers.pop(visual_id, []):
+            signal.disconnect(handler)
+
+        # 3. Remove bus subscriptions for this visual's GFX handlers.
         self._event_bus.unsubscribe_all(visual_id)
-        self._visual_to_scene.pop(visual_id, None)
-        raise NotImplementedError(
-            "Visual render-layer teardown not yet implemented. "
-            "Bus subscriptions have been cleaned up."
+
+        # 4. Remove from controller lookup maps.
+        self._visual_to_scene.pop(visual_id)
+
+        # 5. Render-layer teardown.
+        self._render_manager.remove_visual(visual_id)
+
+        # 6. Notify external observers.
+        self._event_bus.emit(
+            VisualRemovedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_id,
+            )
         )
 
     def remove_data_store(self, data_store_id: UUID) -> None:
-        """Not implemented in Phase 1."""
-        raise NotImplementedError("remove_data_store is not implemented in Phase 1.")
+        """Remove a data store from the model.
+
+        Raises ``ValueError`` if any live visual still references the store.
+        Call ``remove_visual`` for each referencing visual first.
+
+        Parameters
+        ----------
+        data_store_id : UUID
+            ID of the data store to remove.
+
+        Raises
+        ------
+        ValueError
+            If one or more visuals still reference the store.  The error
+            message names each visual so the caller can identify them.
+        KeyError
+            If ``data_store_id`` is not registered.
+        """
+        referencing = [
+            v
+            for scene in self._model.scenes.values()
+            for v in scene.visuals
+            if UUID(v.data_store_id) == data_store_id
+        ]
+        if referencing:
+            names = ", ".join(f"{v.name!r} ({v.id})" for v in referencing)
+            raise ValueError(
+                f"Cannot remove data store {data_store_id}: "
+                f"still referenced by visuals: {names}"
+            )
+        self._model.data.stores.pop(data_store_id)
 
     def get_dims_widget(self, scene_id: UUID, parent: QWidget | None = None):
         """Return a dims slider widget for a scene.

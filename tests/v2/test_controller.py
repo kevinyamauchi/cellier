@@ -301,8 +301,6 @@ def test_to_file_roundtrip(tmp_path, small_zarr_store):
 def test_stubs_raise():
     controller = CellierController()
     with pytest.raises(NotImplementedError):
-        controller.remove_scene(uuid4())
-    with pytest.raises(NotImplementedError):
         controller.get_dims_widget(uuid4())
 
 
@@ -773,3 +771,166 @@ def test_transform_change_triggers_reslice(small_zarr_store):
 
     assert len(reslice_calls) == 1
     assert reslice_calls[0] == scene.id
+
+
+# ---------------------------------------------------------------------------
+# remove_* tests
+# ---------------------------------------------------------------------------
+
+
+def _make_scene_with_visual(controller, small_zarr_store):
+    """Add a scene, data store, and image visual; return (scene, visual, store)."""
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    store = _make_store(small_zarr_store)
+    visual = controller.add_image_multiscale(
+        data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
+    )
+    return scene, visual, store
+
+
+# -- remove_visual -----------------------------------------------------------
+
+
+def test_remove_visual_cleans_model(small_zarr_store):
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    controller.remove_visual(visual.id)
+
+    assert visual not in controller._model.scenes[scene.id].visuals
+    assert visual.id not in controller._visual_to_scene
+    assert visual.id not in controller._visual_psygnal_handlers
+
+
+def test_remove_visual_cleans_render_layer(small_zarr_store):
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    controller.remove_visual(visual.id)
+
+    scene_manager = controller._render_manager._scenes[scene.id]
+    assert visual.id not in scene_manager._visuals
+    assert visual.id not in controller._render_manager._visual_to_scene
+
+
+def test_remove_visual_disconnects_psygnal_bridge(small_zarr_store):
+    """After removal, mutating appearance must not fire any bus event."""
+    from cellier.v2.events import AppearanceChangedEvent
+
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    fired = []
+    controller._event_bus.subscribe(
+        AppearanceChangedEvent, fired.append, entity_id=visual.id
+    )
+
+    controller.remove_visual(visual.id)
+    visual.appearance.color_map = "plasma"
+
+    assert fired == []
+
+
+def test_remove_visual_emits_event(small_zarr_store):
+    from cellier.v2.events import VisualRemovedEvent
+
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    events = []
+    controller._event_bus.subscribe(VisualRemovedEvent, events.append)
+
+    controller.remove_visual(visual.id)
+
+    assert len(events) == 1
+    assert events[0].visual_id == visual.id
+    assert events[0].scene_id == scene.id
+
+
+# -- remove_scene ------------------------------------------------------------
+
+
+def test_remove_scene_cleans_model(small_zarr_store):
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    controller.remove_scene(scene.id)
+
+    assert scene.id not in controller._model.scenes
+    assert scene.id not in controller._dims_cache
+    assert scene.id not in controller._scene_render_modes
+    assert scene.id not in controller._scene_to_canvases
+
+
+def test_remove_scene_cascades_to_visuals(small_zarr_store):
+    """Removing a scene must also tear down its child visual."""
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    controller.remove_scene(scene.id)
+
+    assert visual.id not in controller._visual_to_scene
+    assert visual.id not in controller._render_manager._visual_to_scene
+
+
+async def test_remove_scene_cancels_settle_task(small_zarr_store):
+    controller, scene, visual, canvas_id, _ = _make_settle_controller(
+        small_zarr_store, threshold_s=10.0
+    )
+
+    # Register the fake canvas so remove_scene can find it in _scene_to_canvases.
+    # This mirrors what add_canvas_model does in real usage.
+    controller._scene_to_canvases[scene.id].append(canvas_id)
+    controller._canvas_to_scene[canvas_id] = scene.id
+
+    event = _make_camera_event(canvas_id, scene.id)
+    controller._on_camera_changed(event)
+    task = controller._settle_tasks.get(canvas_id)
+    assert task is not None and not task.done()
+
+    controller.remove_scene(scene.id)
+    assert canvas_id not in controller._settle_tasks
+
+    # Yield to the event loop so the CancelledError is processed.
+    await asyncio.sleep(0)
+    assert task.cancelled()
+
+
+def test_remove_scene_emits_event(small_zarr_store):
+    from cellier.v2.events import SceneRemovedEvent
+
+    controller = CellierController()
+    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+
+    events = []
+    controller._event_bus.subscribe(SceneRemovedEvent, events.append)
+
+    controller.remove_scene(scene.id)
+
+    assert len(events) == 1
+    assert events[0].scene_id == scene.id
+
+
+# -- remove_data_store -------------------------------------------------------
+
+
+def test_remove_data_store_happy_path(small_zarr_store):
+    controller = CellierController()
+    scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
+
+    controller.remove_visual(visual.id)
+    controller.remove_data_store(store.id)
+
+    assert store.id not in controller._model.data.stores
+
+
+def test_remove_data_store_raises_when_referenced(small_zarr_store):
+    controller = CellierController()
+    scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
+
+    with pytest.raises(ValueError) as exc_info:
+        controller.remove_data_store(store.id)
+
+    msg = str(exc_info.value)
+    assert visual.name in msg
+    assert str(visual.id) in msg

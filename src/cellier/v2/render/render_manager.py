@@ -261,6 +261,43 @@ class RenderManager:
             "Register the type in RenderManager._build_gfx_overlay."
         )
 
+    def remove_visual(self, visual_id: UUID) -> None:
+        """Remove a visual from its scene and deregister it.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to remove.
+        """
+        scene_id = self._visual_to_scene.pop(visual_id)
+        self._data_stores.pop(visual_id)
+        self._scenes[scene_id].remove_visual(visual_id)
+
+    def remove_scene(self, scene_id: UUID) -> None:
+        """Remove a scene and all its visuals and canvases.
+
+        Drops all Python references so GC can reclaim GPU resources.
+        pygfx has no explicit destroy API; reference dropping is sufficient.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to remove.
+        """
+        scene_manager = self._scenes.pop(scene_id)
+        for vid in scene_manager.visual_ids:
+            self._visual_to_scene.pop(vid, None)
+            self._data_stores.pop(vid, None)
+        # scene_manager goes out of scope here; GC drops gfx.Scene + all nodes.
+
+        canvas_ids = [
+            cid for cid, sid in self._canvas_to_scene.items() if sid == scene_id
+        ]
+        for cid in canvas_ids:
+            self._canvas_to_scene.pop(cid)
+            self._canvases.pop(cid)
+        # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
+
     def _make_tick_fn(self, scene_id: UUID):
         """Return a callable that ticks all visuals in *scene_id*."""
 
