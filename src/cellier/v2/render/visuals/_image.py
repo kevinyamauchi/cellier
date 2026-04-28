@@ -509,6 +509,7 @@ class GFXMultiscaleImageVisual:
         aabb_color: str = "#ffffff",
         aabb_line_width: float = 2.0,
         render_order: int = 0,
+        pick_write: bool = True,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -669,6 +670,7 @@ class GFXMultiscaleImageVisual:
                     colormap=colormap,
                     clim=clim,
                     threshold=threshold,
+                    pick_write=pick_write,
                 )
             else:
                 inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
@@ -676,6 +678,7 @@ class GFXMultiscaleImageVisual:
                     clim=clim,
                     threshold=threshold,
                     interpolation=interpolation,
+                    pick_write=pick_write,
                 )
             self._inner_node_3d = inner
             self.node_3d = gfx.Group()
@@ -692,7 +695,10 @@ class GFXMultiscaleImageVisual:
         self._aabb_line_2d: gfx.Line | None = None
         if "2d" in render_modes and image_geometry_2d is not None:
             inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
-                colormap=colormap, clim=clim, interpolation=interpolation
+                colormap=colormap,
+                clim=clim,
+                interpolation=interpolation,
+                pick_write=pick_write,
             )
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
@@ -805,6 +811,7 @@ class GFXMultiscaleImageVisual:
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
             use_brick_shader=use_brick_shader,
+            pick_write=model.pick_write,
         )
         for mat in (instance.material_3d, instance.material_2d):
             if mat is not None:
@@ -1688,6 +1695,50 @@ class GFXMultiscaleImageVisual:
             return
         self.cancel_pending_2d()
 
+    def invalidate_painted_tiles_2d(
+        self, dirty_grid_coords: set[tuple[int, int]]
+    ) -> int:
+        """Evict committed finest-level tiles whose ``(gy, gx)`` is dirty.
+
+        Used by ``MultiscalePaintController`` to drop the visible cached
+        copy of a tile after a brush write so the next reslice re-fetches
+        through the open paint transaction (read-your-writes).
+
+        Only level-1 tiles (== finest-data level == level 0) are evicted.
+        Coarser levels show pre-paint data until the next paint-pyramid
+        rebuild (deferred to a follow-up).  In-flight slots are also
+        released so any pending stale fetches don't overwrite freshly
+        painted state.
+
+        Parameters
+        ----------
+        dirty_grid_coords :
+            Set of ``(gy, gx)`` finest-level tile-grid coordinates whose
+            corresponding tiles should be evicted.  Coordinates that
+            don't currently have a committed tile are silently ignored.
+
+        Returns
+        -------
+        int
+            Number of tiles evicted from the committed tilemap.
+        """
+        if self._block_cache_2d is None:
+            return 0
+        tm = self._block_cache_2d.tile_manager
+        # Always release in-flight to avoid races with stale fetches.
+        tm.release_all_in_flight()
+        self._pending_slot_map_2d = {}
+        evicted = 0
+        for key in list(tm.tilemap.keys()):
+            if key.level != 1:
+                continue
+            if (key.gy, key.gx) in dirty_grid_coords:
+                slot = tm.tilemap.pop(key)
+                tm.slot_index[slot.index] = None
+                tm.free_slots.append(slot.index)
+                evicted += 1
+        return evicted
+
     # ── EventBus handler methods ─────────────────────────────────────────
 
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
@@ -1848,6 +1899,7 @@ class GFXMultiscaleImageVisual:
         clim: tuple[float, float],
         threshold: float,
         interpolation: str,
+        pick_write: bool = True,
     ) -> tuple[gfx.Volume, VolumeBlockMaterial, gfx.Texture]:
         """Construct the proxy texture, material, and Volume node."""
         geo = self._volume_geometry
@@ -1865,6 +1917,7 @@ class GFXMultiscaleImageVisual:
             map=colormap,
             interpolation=interpolation,
             threshold=threshold,
+            pick_write=pick_write,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
@@ -1882,6 +1935,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap,
         clim: tuple[float, float],
         threshold: float,
+        pick_write: bool = True,
     ) -> tuple[gfx.Volume, MultiscaleVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, brick material, and Volume node.
 
@@ -1903,6 +1957,7 @@ class GFXMultiscaleImageVisual:
             clim=clim,
             map=colormap,
             threshold=threshold,
+            pick_write=pick_write,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
@@ -1916,6 +1971,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap,
         clim: tuple[float, float],
         interpolation: str,
+        pick_write: bool = True,
     ) -> tuple[gfx.Image, ImageBlockMaterial, gfx.Texture]:
         gh, gw = self._image_geometry_2d.base_layout.grid_dims
 
@@ -1929,6 +1985,7 @@ class GFXMultiscaleImageVisual:
             block_scales_buffer=self._block_scales_buffer_2d,
             clim=clim,
             map=colormap,
+            pick_write=pick_write,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)

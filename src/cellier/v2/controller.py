@@ -2169,6 +2169,10 @@ class CellierController:
             If the data store type has no registered paint controller.
         """
         from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+        from cellier.v2.data.image._ome_zarr_image_store import OMEZarrImageDataStore
+        from cellier.v2.data.image._zarr_multiscale_store import (
+            MultiscaleZarrDataStore,
+        )
 
         scene_id = self._visual_to_scene[visual_id]
         scene = self._model.scenes[scene_id]
@@ -2188,10 +2192,38 @@ class CellierController:
                 brush_radius_voxels=brush_radius_voxels,
                 history_depth=history_depth,
             )
+
+        if isinstance(data_store, (OMEZarrImageDataStore, MultiscaleZarrDataStore)):
+            from cellier.v2.paint import MultiscalePaintController
+
+            displayed_axes = scene.dims.selection.displayed_axes
+            if len(displayed_axes) != 2:
+                raise NotImplementedError(
+                    "MultiscalePaintController currently only supports 2-D "
+                    f"displayed-axis configurations; scene {scene_id} has "
+                    f"displayed_axes={displayed_axes!r}.  3-D paint "
+                    "feedback is a Phase 3 follow-up."
+                )
+
+            block_size = visual_model.render_config.block_size
+            return MultiscalePaintController(
+                cellier_controller=self,
+                visual_id=visual_id,
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                data_store=data_store,
+                visual_block_size=block_size,
+                displayed_axes=displayed_axes,
+                brush_value=brush_value,
+                brush_radius_voxels=brush_radius_voxels,
+                history_depth=history_depth,
+            )
+
         raise TypeError(
             f"No PaintController implementation for data store type "
             f"{type(data_store).__name__!r}.  "
-            f"Supported in Phase 2: ImageMemoryStore."
+            f"Supported: ImageMemoryStore, OMEZarrImageDataStore, "
+            f"MultiscaleZarrDataStore."
         )
 
     def remove_scene(self, scene_id: UUID) -> None:
@@ -2552,6 +2584,42 @@ class CellierController:
                 f"caller={caller.filename.split('/')[-1]}:{caller.lineno}"
             )
         self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
+
+    def invalidate_painted_tiles_2d(
+        self, visual_id: UUID, dirty_grid_coords: set[tuple[int, int]]
+    ) -> int:
+        """Evict the visible 2D-cache tiles for *visual_id* listed in dirty grid coords.
+
+        Used by :class:`MultiscalePaintController` after staging level-0
+        writes so the next reslice re-fetches through the open paint
+        transaction.  No-op for visuals that don't own a 2D tile cache.
+
+        Parameters
+        ----------
+        visual_id :
+            The painted multiscale visual.
+        dirty_grid_coords :
+            Set of ``(gy, gx)`` tile-grid coordinates whose finest-level
+            tiles should be evicted.
+
+        Returns
+        -------
+        int
+            Number of tiles evicted (0 if the visual has no 2D cache or
+            no entries matched).
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "invalidate_painted_tiles_2d"):
+            return 0
+        n = gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG ctrl] invalidate_painted_tiles_2d visual={visual_id} "
+                f"dirty_bricks={len(dirty_grid_coords)} evicted_tiles={n}"
+            )
+        return n
 
     def on_visual_changed(
         self,
