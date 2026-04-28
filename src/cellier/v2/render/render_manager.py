@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from cellier.v2.events import DimsChangedEvent, EventBus
+from cellier.v2.events._events import _CanvasRawPointerEvent
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
@@ -36,6 +39,9 @@ if TYPE_CHECKING:
     )
 
 
+_PAINT_DEBUG = True
+
+
 class RenderManager:
     """Single top-level render-layer object.
 
@@ -56,6 +62,7 @@ class RenderManager:
         self._canvas_to_scene: dict[UUID, UUID] = {}
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
+        self._event_bus: EventBus | None = None
         self._slicer = AsyncSlicer(
             batch_size=config.slicing.batch_size,
             render_every=config.slicing.render_every,
@@ -72,6 +79,7 @@ class RenderManager:
         Must be called before the caller registers its own DimsChangedEvent
         handler so the SliceCoordinator invalidates stale 2D caches first.
         """
+        self._event_bus = event_bus
         event_bus.subscribe(
             DimsChangedEvent,
             self._slice_coordinator._on_dims_changed,
@@ -177,6 +185,12 @@ class RenderManager:
         canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
         self._canvases[canvas_id] = canvas_view
         self._canvas_to_scene[canvas_id] = scene_id
+        canvas_view._renderer.add_event_handler(
+            lambda ev, cid=canvas_id: self._on_canvas_pointer_event(ev, cid),
+            "pointer_down",
+            "pointer_up",
+            "pointer_move",
+        )
         return canvas_view
 
     def add_visual(
@@ -224,6 +238,88 @@ class RenderManager:
             If *canvas_id* is not registered.
         """
         self._canvases[canvas_id].add_overlay(gfx_overlay)
+
+    def _on_canvas_pointer_event(
+        self, event: gfx.PointerEvent, canvas_id: UUID
+    ) -> None:
+        """Translate a pygfx pointer event to a model-layer internal event.
+
+        Performs three render-layer operations:
+          1. NDC computation from screen pixel coordinates.
+          2. Camera unprojection of NDC to 2D world position.
+          3. gfx.WorldObject -> visual_id lookup via SceneManager.
+
+        The resulting _CanvasRawPointerEvent contains no gfx.* types.
+        """
+        if self._event_bus is None:
+            return
+
+        scene_id = self._canvas_to_scene[canvas_id]
+        canvas_view = self._canvases[canvas_id]
+
+        w, h = canvas_view._canvas.get_logical_size()
+        ndc_x = event.x / w * 2.0 - 1.0
+        ndc_y = -(event.y / h * 2.0 - 1.0)
+
+        cam = canvas_view._camera
+        # OrthographicCamera with maintain_aspect=True stretches one axis to
+        # match the canvas aspect; cam.width / cam.height alone are the
+        # *minimum* visible extent.  Mirror the logic in
+        # CanvasView._capture_orthographic to recover the true visible extent
+        # before unprojecting NDC coordinates.
+        vw = float(w) if w > 0 else 800.0
+        vh = float(h) if h > 0 else 600.0
+        canvas_aspect = vw / vh
+        cam_w = float(cam.width) if cam.width > 0 else 1.0
+        cam_h = float(cam.height) if cam.height > 0 else 1.0
+        cam_aspect = cam_w / cam_h
+        if canvas_aspect >= cam_aspect:
+            world_height = cam_h
+            world_width = cam_h * canvas_aspect
+        else:
+            world_width = cam_w
+            world_height = cam_w / canvas_aspect
+
+        position_2d = np.array(
+            [
+                cam.local.position[0] + ndc_x * (world_width / 2.0),
+                cam.local.position[1] + ndc_y * (world_height / 2.0),
+            ],
+            dtype=np.float64,
+        )
+
+        hit_object = event.pick_info.get("world_object")
+        hit_visual_id: UUID | None = None
+        if hit_object is not None:
+            hit_visual_id = self._scenes[scene_id].get_visual_id_for_node(hit_object)
+
+        if _PAINT_DEBUG and event.type in ("pointer_down", "pointer_up"):
+            print(
+                f"[PAINT-DBG render] type={event.type} px=({event.x:.1f},{event.y:.1f})"
+                f"size=({w:.1f},{h:.1f}) ndc=({ndc_x:.3f},{ndc_y:.3f}) "
+                f"cam_pos=({float(cam.local.position[0]):.2f},"
+                f"{float(cam.local.position[1]):.2f}) "
+                f"cam_extent=({cam.width:.2f},{cam.height:.2f}) "
+                f"position_2d=({position_2d[0]:.2f},{position_2d[1]:.2f}) "
+                f"hit={hit_visual_id}"
+            )
+
+        _ACTION = {
+            "pointer_down": "press",
+            "pointer_up": "release",
+            "pointer_move": "move",
+        }
+        self._event_bus.emit(
+            _CanvasRawPointerEvent(
+                canvas_id=canvas_id,
+                scene_id=scene_id,
+                action=_ACTION[event.type],
+                position_2d=position_2d,
+                hit_visual_id=hit_visual_id,
+                button=event.button,
+                modifiers=tuple(event.modifiers),
+            )
+        )
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.

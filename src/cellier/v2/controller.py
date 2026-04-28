@@ -30,6 +30,12 @@ from cellier.v2.events import (
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.v2.events._events import (
+    CanvasMouseMoveEvent,
+    CanvasMousePressEvent,
+    CanvasMouseReleaseEvent,
+    _CanvasRawPointerEvent,
+)
 from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
@@ -83,6 +89,8 @@ if TYPE_CHECKING:
     from cellier.v2.visuals._canvas_overlay import CanvasOverlay
     from cellier.v2.visuals._types import VisualType
 
+
+_PAINT_DEBUG = True
 
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
@@ -156,6 +164,12 @@ class CellierController:
         self._event_bus.subscribe(
             DimsChangedEvent,
             self._on_dims_changed_bus,
+            owner_id=self._id,
+        )
+        # Subscribe to internal raw pointer events emitted by RenderManager.
+        self._event_bus.subscribe(
+            _CanvasRawPointerEvent,
+            self._on_raw_pointer_event,
             owner_id=self._id,
         )
         # Incoming bus: GUI update events dispatched to update_* methods.
@@ -2108,6 +2122,78 @@ class CellierController:
         """Not implemented in Phase 1."""
         raise NotImplementedError("add_labels is not implemented in Phase 1.")
 
+    def add_paint_controller(
+        self,
+        visual_id: UUID,
+        canvas_id: UUID,
+        brush_value: float = 1.0,
+        brush_radius_voxels: float = 2.0,
+        history_depth: int = 100,
+        autosave_interval_seconds: float = 30.0,
+        rebuild_debounce_ms: int = 500,
+    ):
+        """Create and wire a paint controller for the visual's data store.
+
+        Phase 2 only wires :class:`ImageMemoryStore`.  Other store types
+        raise :class:`TypeError`.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            Visual to paint on.
+        canvas_id : UUID
+            Canvas to bind to.  Its camera controller is disabled for
+            the session.  Pass ``controller.get_canvas_ids(scene_id)[0]``
+            for the common single-canvas case.
+        brush_value : float
+            Scalar written to every painted voxel.
+        brush_radius_voxels : float
+            Brush radius in level-0 voxel units.
+        history_depth : int
+            Maximum undoable strokes.
+        autosave_interval_seconds : float
+            Auto-save interval for ``MultiscalePaintController`` (Phase 3).
+            Ignored for ``SyncPaintController``.
+        rebuild_debounce_ms : int
+            Pyramid rebuild debounce for ``MultiscalePaintController``
+            (Phase 3).  Ignored for ``SyncPaintController``.
+
+        Returns
+        -------
+        SyncPaintController
+            Fully wired; caller owns the object.
+
+        Raises
+        ------
+        TypeError
+            If the data store type has no registered paint controller.
+        """
+        from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+
+        scene_id = self._visual_to_scene[visual_id]
+        scene = self._model.scenes[scene_id]
+        visual_model = next(v for v in scene.visuals if v.id == visual_id)
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+
+        if isinstance(data_store, ImageMemoryStore):
+            from cellier.v2.paint import SyncPaintController
+
+            return SyncPaintController(
+                cellier_controller=self,
+                visual_id=visual_id,
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                data_store=data_store,
+                brush_value=brush_value,
+                brush_radius_voxels=brush_radius_voxels,
+                history_depth=history_depth,
+            )
+        raise TypeError(
+            f"No PaintController implementation for data store type "
+            f"{type(data_store).__name__!r}.  "
+            f"Supported in Phase 2: ImageMemoryStore."
+        )
+
     def remove_scene(self, scene_id: UUID) -> None:
         """Remove a scene and all its visuals and canvases.
 
@@ -2328,6 +2414,144 @@ class CellierController:
             owner_id=owner_id,
             weak=weak,
         )
+
+    def _on_raw_pointer_event(self, event: _CanvasRawPointerEvent) -> None:
+        """Embed the 2D camera position in N-dimensional world space.
+
+        Reads displayed_axes and slice_indices from the scene model to fill
+        the full world coordinate, then emits the public canvas mouse event.
+        No render-layer access occurs here.
+        """
+        from cellier.v2.events._events import CanvasPickInfo
+
+        scene_model = self._model.scenes[event.scene_id]
+        dims = scene_model.dims
+        displayed_axes = dims.selection.displayed_axes
+        slice_indices = dims.selection.slice_indices
+        axis_labels = dims.coordinate_system.axis_labels
+        n_dims = len(axis_labels)
+
+        world_coord = np.empty(n_dims, dtype=np.float64)
+        # The image visual renders data[r, c] at pygfx world (x=r, y=c) —
+        # data axis 0 → pygfx-x, axis 1 → pygfx-y, no swap.  Embed
+        # position_2d into displayed_axes in natural order so that a click
+        # at pygfx (x, y) writes to data[x, y].  (Points/lines/mesh apply
+        # their own axis swap on upload; this controller follows the image
+        # convention, which is what the paint controller targets.)
+        for i, axis in enumerate(displayed_axes):
+            world_coord[axis] = event.position_2d[i]
+        for axis, idx in slice_indices.items():
+            world_coord[axis] = float(idx)
+
+        if _PAINT_DEBUG and event.action in ("press", "release"):
+            print(
+                f"[PAINT-DBG ctrl] action={event.action} "
+                f"axis_labels={axis_labels} displayed_axes={displayed_axes} "
+                f"position_2d=({event.position_2d[0]:.2f},{event.position_2d[1]:.2f}) "
+                f"world_coord={np.round(world_coord, 2).tolist()} "
+                f"hit={event.hit_visual_id}"
+            )
+
+        pick_info = CanvasPickInfo(hit_visual_id=event.hit_visual_id)
+        _CLS = {
+            "press": CanvasMousePressEvent,
+            "move": CanvasMouseMoveEvent,
+            "release": CanvasMouseReleaseEvent,
+        }
+        self._event_bus.emit(
+            _CLS[event.action](
+                source_id=event.canvas_id,
+                scene_id=event.scene_id,
+                world_coordinate=world_coord,
+                pick_info=pick_info,
+            )
+        )
+
+    def on_mouse_press(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMousePressEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-down event for *canvas_id*.
+
+        Parameters
+        ----------
+        canvas_id :
+            The canvas to watch.
+        callback :
+            Called with the CanvasMousePressEvent on each press.
+        owner_id :
+            UUID under which this subscription is registered for bulk
+            removal via unsubscribe_all(owner_id).
+        weak :
+            If True, hold only a weak reference to *callback*.
+        """
+        return self._event_bus.subscribe(
+            CanvasMousePressEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_move(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseMoveEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-move event for *canvas_id*."""
+        return self._event_bus.subscribe(
+            CanvasMouseMoveEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_release(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseReleaseEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-up event for *canvas_id*."""
+        return self._event_bus.subscribe(
+            CanvasMouseReleaseEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def set_camera_controller_enabled(self, canvas_id: UUID, enabled: bool) -> None:
+        """Enable or disable the camera controller for one canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose controller state should change.
+        enabled : bool
+            False disables the controller (paint session active).
+            True restores normal camera interaction (session ended).
+        """
+        if _PAINT_DEBUG:
+            import traceback
+
+            caller = traceback.extract_stack(limit=3)[0]
+            print(
+                f"[PAINT-DBG ctrl] set_camera_controller_enabled "
+                f"canvas={canvas_id} enabled={enabled} "
+                f"caller={caller.filename.split('/')[-1]}:{caller.lineno}"
+            )
+        self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
 
     def on_visual_changed(
         self,

@@ -305,6 +305,21 @@ class CanvasView:
         """Wire the EventBus after construction."""
         self._event_bus = event_bus
 
+    def set_controller_enabled(self, enabled: bool) -> None:
+        """Enable or disable the active camera controller for this canvas.
+
+        ``self._controller`` already points to the currently active
+        controller (``_controller_2d`` or ``_controller_3d`` depending on
+        the canvas dim), so this correctly targets whichever type is in use.
+
+        Parameters
+        ----------
+        enabled : bool
+            False disables the controller (paint mode active).
+            True restores normal camera interaction.
+        """
+        self._controller.enabled = enabled
+
     def switch_dim(self, new_dim: str) -> bool:
         """Switch the canvas between ``"2d"`` and ``"3d"`` rendering modes.
 
