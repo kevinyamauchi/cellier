@@ -2621,6 +2621,66 @@ class CellierController:
             )
         return n
 
+    def patch_painted_tiles_2d(
+        self,
+        visual_id: UUID,
+        voxel_indices: np.ndarray,
+        values: np.ndarray,
+        displayed_axes: tuple[int, int],
+    ) -> int:
+        """Write paint into the visual's GPU paint cache (Phase-2 fast path).
+
+        Used by :class:`MultiscalePaintController._write_values` for
+        sub-frame visible feedback in 2-D paint sessions.  Mirrors the
+        architectural pattern of :meth:`invalidate_painted_tiles_2d`.
+
+        Parameters
+        ----------
+        visual_id :
+            The painted multiscale visual.
+        voxel_indices :
+            Shape ``(N, ndim)`` int64.  Level-0 voxel indices in
+            data-array axis order.
+        values :
+            Shape ``(N,)`` float32.  Brush values.
+        displayed_axes :
+            ``(row_axis, col_axis)`` for the 2-D display.
+
+        Returns
+        -------
+        int
+            Number of tiles successfully patched.  Returns 0 if the visual
+            has no 2-D paint resources or every tile was rejected by the
+            slot manager.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "patch_paint_texture"):
+            return 0
+        n = gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG ctrl] patch_painted_tiles_2d visual={visual_id} "
+                f"n_voxels={voxel_indices.shape[0]} tiles_patched={n}"
+            )
+        return n
+
+    def clear_painted_tiles_2d(self, visual_id: UUID) -> None:
+        """Clear the GPU paint textures for *visual_id*.
+
+        Called by :class:`MultiscalePaintController.commit` and ``abort`` at
+        session end.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "clear_paint_textures"):
+            return
+        gfx_visual.clear_paint_textures()
+        if _PAINT_DEBUG:
+            print(f"[PAINT-DBG ctrl] clear_painted_tiles_2d visual={visual_id}")
+
     def on_visual_changed(
         self,
         visual_id: UUID,

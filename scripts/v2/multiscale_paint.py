@@ -6,16 +6,24 @@ data store on disk and using :class:`MultiscalePaintController`.
 What happens when you paint
 ---------------------------
 - ``_apply_brush`` stages the new voxel values into a tensorstore
-  transaction (RAM only).
-- The paint controller marks the dirty level-0 bricks and evicts the
-  matching tiles from the visible 2-D tile cache.
-- ``reslice_visual`` is fired; the async slicer re-fetches the evicted
-  tiles **through the open transaction**, so the freshly painted voxels
-  are immediately visible after one event-loop tick.
+  transaction (RAM only, owned by the WriteBuffer).
+- The paint controller marks the dirty level-0 bricks and writes the
+  values directly into the visual's GPU paint cache + paint LUT via
+  ``controller.patch_painted_tiles_2d``.
+- The image shader composites the paint cache over the base sample,
+  so painted voxels are visible on the very next frame — no slicer
+  round-trip required.
 
-Click **Commit** to flush staged paints to the on-disk zarr.  Click
-**Abort** to discard them.  Both clear the undo history and re-enable
-the camera controller.
+Click **Commit** to flush staged paints to the on-disk zarr (then
+the visible base cache is repopulated from disk on the post-commit
+reslice, and the GPU paint textures are cleared).  Click **Abort**
+to discard staged paint; the GPU paint textures are cleared and the
+on-disk zarr is untouched.
+
+The OME-Zarr store lives next to this script (``multiscale_paint_labels.ome.zarr``)
+and persists across runs so you can confirm commits actually reach
+disk: paint, commit, quit, re-launch — your strokes should reappear.
+Delete the directory to start from a blank canvas.
 
 Run with::
 
@@ -24,9 +32,7 @@ Run with::
 
 from __future__ import annotations
 
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -60,18 +66,19 @@ _DEMO_BLOCK_SIZE = 32
 _DEMO_CHUNK = (64, 64)
 
 
-def _make_demo_ome_zarr(target_dir: Path) -> Path:
-    """Create a single-level 2-D OME-Zarr float32 store at *target_dir*.
+def _ensure_demo_ome_zarr(target_dir: Path) -> Path:
+    """Return the demo OME-Zarr at *target_dir*, creating it if missing.
 
-    The store is initialised with all zeros so painted voxels are
-    unambiguously visible against the empty background.  A single
-    multiscale level is sufficient — the goal of this demo is paint
-    feedback, not LOD selection.
+    The store lives next to this script so commits persist between runs:
+    if the directory already exists, it is loaded as-is so you can verify
+    that previously committed paint survives on disk.  To start fresh,
+    delete the directory before running.
     """
     if target_dir.exists():
-        shutil.rmtree(target_dir)
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
+        print(f"  Loading existing demo OME-Zarr from {target_dir}")
+        return target_dir
 
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
     root = zarr.open_group(str(target_dir), mode="w")
     arr = root.create_array(
         "s0",
@@ -110,11 +117,12 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # ── 1. Demo data on disk ────────────────────────────────────────────
-    # Fresh per-run temp dir so the demo always starts blank.  When
-    # ``QtAsyncio.run`` returns, the dir is cleaned up on shutdown.
-    tmp_root = Path(tempfile.mkdtemp(prefix="cellier_multiscale_paint_"))
-    zarr_path = tmp_root / "labels.ome.zarr"
-    _make_demo_ome_zarr(zarr_path)
+    # The store lives next to this script and persists between runs so
+    # you can verify that committed paint actually reaches disk: paint +
+    # commit, quit, re-run — the painted voxels should reappear.  Delete
+    # the directory by hand if you want to start fresh.
+    zarr_path = Path(__file__).resolve().parent / "multiscale_paint_labels.ome.zarr"
+    _ensure_demo_ome_zarr(zarr_path)
 
     # OMEZarrImageDataStore.from_path requires a file:// URI.
     zarr_uri = f"file://{zarr_path.resolve()}"
@@ -274,11 +282,7 @@ def main() -> None:
     abort_btn.clicked.connect(_on_abort_clicked)
 
     root.show()
-    try:
-        QtAsyncio.run(handle_sigint=True)
-    finally:
-        # Clean up the temp directory on shutdown.
-        shutil.rmtree(tmp_root, ignore_errors=True)
+    QtAsyncio.run(handle_sigint=True)
 
 
 if __name__ == "__main__":

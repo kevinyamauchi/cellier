@@ -68,6 +68,13 @@ class MultiscaleImageRenderConfig(EventedModel):
     use_brick_shader : bool
         When True, use the Kiln-style MultiscaleVolumeBrickShader for 3-D
         rendering instead of the default VolumeBlockShader. Default False.
+    paint_max_tiles : int
+        Maximum number of finest-level tiles that can be simultaneously
+        painted on during one paint session.  Each slot consumes
+        ``block_size**2 * 2 * 4`` bytes of GPU memory (e.g. 8 KB at
+        block_size=32).  Default 512 = 4 MB.  When exhausted during a
+        session, further paint is staged to the WriteBuffer (and persisted
+        on commit) but invisible until commit.
     """
 
     block_size: int = 32
@@ -75,6 +82,7 @@ class MultiscaleImageRenderConfig(EventedModel):
     gpu_budget_bytes_2d: int = 64 * 1024**2
     interpolation: Literal["linear", "nearest"] = "linear"
     use_brick_shader: bool = False
+    paint_max_tiles: int = 512
 
 
 class MultiscaleImageVisual(BaseVisual):

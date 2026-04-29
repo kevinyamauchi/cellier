@@ -67,6 +67,9 @@ from cellier.v2.render.visuals._image_memory import (
     _pygfx_matrix,
     _rect_wireframe_positions,
 )
+from cellier.v2.render.visuals._paint_tile_slot_manager import (
+    PaintTileSlotManager,
+)
 from cellier.v2.transform import AffineTransform
 
 if TYPE_CHECKING:
@@ -510,6 +513,7 @@ class GFXMultiscaleImageVisual:
         aabb_line_width: float = 2.0,
         render_order: int = 0,
         pick_write: bool = True,
+        paint_max_tiles: int = 512,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -627,6 +631,14 @@ class GFXMultiscaleImageVisual:
             self._block_scales_buffer_2d = build_block_scales_buffer_2d(
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
             )
+
+        # ── 2D paint resources (Phase 2 GPU fast path) ──────────────────
+        self._paint_slot_manager: PaintTileSlotManager | None = None
+        self._t_paint_cache: gfx.Texture | None = None
+        self._t_paint_lut: gfx.Texture | None = None
+        self._paint_max_tiles: int = int(paint_max_tiles)
+        if image_geometry_2d is not None:
+            self._allocate_paint_resources_2d()
 
         # ── Brick-shader-specific buffers (3D only) ──────────────────────
         self._vol_params_buffer: Buffer | None = None
@@ -812,6 +824,7 @@ class GFXMultiscaleImageVisual:
             full_level_shapes=list(level_shapes),
             use_brick_shader=use_brick_shader,
             pick_write=model.pick_write,
+            paint_max_tiles=render_config.paint_max_tiles,
         )
         for mat in (instance.material_3d, instance.material_2d):
             if mat is not None:
@@ -973,6 +986,8 @@ class GFXMultiscaleImageVisual:
         self._block_scales_buffer_2d = build_block_scales_buffer_2d(
             level_scale_vecs_data=geo2d._scale_vecs_data,
         )
+        # Re-allocate paint resources so they track the new geometry.
+        self._allocate_paint_resources_2d()
         # Rebuild node preserving current appearance
         if self.node_2d is not None:
             colormap = self.material_2d.map
@@ -1695,6 +1710,171 @@ class GFXMultiscaleImageVisual:
             return
         self.cancel_pending_2d()
 
+    def _allocate_paint_resources_2d(self) -> None:
+        """Allocate the 2D paint cache + LUT textures and the slot manager.
+
+        Called from ``__init__`` and from ``_rebuild_2d_resources`` so the
+        paint resources track the underlying 2D image geometry.
+        """
+        if self._image_geometry_2d is None:
+            return
+        bs = self._image_geometry_2d.block_size
+        gh, gw = self._image_geometry_2d.base_layout.grid_dims
+
+        # Stripes-of-tiles layout: row-stripe per slot of height bs.
+        # Two channels: (value, alpha).  Alpha=0 ⇒ this voxel is unpainted.
+        paint_cache_data = np.zeros(
+            (self._paint_max_tiles * bs, bs, 2), dtype=np.float32
+        )
+        self._t_paint_cache = gfx.Texture(paint_cache_data, dim=2, format="2xf4")
+
+        # Same grid as base LUT: per-tile (slot_index, alpha).
+        # alpha=0 ⇒ no slot allocated for this tile (skip the cache lookup).
+        paint_lut_data = np.zeros((gh, gw, 2), dtype=np.float32)
+        self._t_paint_lut = gfx.Texture(paint_lut_data, dim=2, format="2xf4")
+
+        self._paint_slot_manager = PaintTileSlotManager(self._paint_max_tiles)
+
+    def patch_paint_texture(
+        self,
+        voxel_indices: np.ndarray,
+        values: np.ndarray,
+        displayed_axes: tuple[int, int],
+    ) -> int:
+        """Write painted voxels into the GPU paint cache + LUT.
+
+        Used by ``MultiscalePaintController._write_values`` for sub-frame
+        paint feedback in 2-D.  No-op if the visual has no 2-D paint
+        resources (e.g. 3-D-only visual).
+
+        Parameters
+        ----------
+        voxel_indices :
+            Shape ``(N, ndim)`` int64.  Level-0 voxel indices in
+            data-array axis order.
+        values :
+            Shape ``(N,)`` float32.  Brush values to write.
+        displayed_axes :
+            Two-element tuple ``(row_axis, col_axis)`` describing which
+            data-array axes correspond to the displayed (row, col) of
+            the 2-D tile grid.  ``row_axis`` ↔ pygfx-y, ``col_axis`` ↔
+            pygfx-x; this matches the upload convention of the multiscale
+            2-D image (no transpose on upload).
+
+        Returns
+        -------
+        int
+            Number of distinct tiles successfully patched.  Tiles that
+            could not be allocated a slot (pool exhaustion) are silently
+            skipped; check ``self._paint_slot_manager.exhausted`` to
+            detect this.
+        """
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+            or self._image_geometry_2d is None
+        ):
+            return 0
+        if voxel_indices.shape[0] == 0:
+            return 0
+
+        bs = int(self._image_geometry_2d.block_size)
+        ax_row, ax_col = displayed_axes
+
+        rows = voxel_indices[:, ax_row].astype(np.int64)
+        cols = voxel_indices[:, ax_col].astype(np.int64)
+        vals = values.astype(np.float32, copy=False)
+
+        gy = rows // bs
+        gx = cols // bs
+        ty = rows % bs
+        tx = cols % bs
+
+        cache_data = self._t_paint_cache.data
+        lut_data = self._t_paint_lut.data
+
+        cache_y_min = cache_data.shape[0]
+        cache_y_max = 0
+        cache_x_min = cache_data.shape[1]
+        cache_x_max = 0
+        lut_y_min = lut_data.shape[0]
+        lut_y_max = 0
+        lut_x_min = lut_data.shape[1]
+        lut_x_max = 0
+        n_tiles_patched = 0
+
+        # Group voxels by (gy, gx) so each tile gets one slot allocation.
+        pairs = np.stack([gy, gx], axis=1)
+        unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
+
+        for tile_i in range(unique_pairs.shape[0]):
+            gy_t = int(unique_pairs[tile_i, 0])
+            gx_t = int(unique_pairs[tile_i, 1])
+            slot = self._paint_slot_manager.get_or_allocate((gy_t, gx_t))
+            if slot is None:
+                continue
+            n_tiles_patched += 1
+
+            sel = inverse == tile_i
+            ty_sel = ty[sel]
+            tx_sel = tx[sel]
+            v_sel = vals[sel]
+
+            # Stripes layout: this slot's pixel rows are
+            # cache_data[slot*bs : (slot+1)*bs, :, :]
+            slot_y0 = slot * bs
+            cache_data[slot_y0 + ty_sel, tx_sel, 0] = v_sel
+            cache_data[slot_y0 + ty_sel, tx_sel, 1] = 1.0
+
+            lut_data[gy_t, gx_t, 0] = float(slot)
+            lut_data[gy_t, gx_t, 1] = 1.0
+
+            cache_y_min = min(cache_y_min, slot_y0)
+            cache_y_max = max(cache_y_max, slot_y0 + bs)
+            cache_x_min = 0
+            cache_x_max = bs
+            lut_y_min = min(lut_y_min, gy_t)
+            lut_y_max = max(lut_y_max, gy_t + 1)
+            lut_x_min = min(lut_x_min, gx_t)
+            lut_x_max = max(lut_x_max, gx_t + 1)
+
+        if n_tiles_patched == 0:
+            return 0
+
+        # pygfx Texture.update_range takes (offset, size) in (x, y, z) order.
+        self._t_paint_cache.update_range(
+            (cache_x_min, cache_y_min, 0),
+            (cache_x_max - cache_x_min, cache_y_max - cache_y_min, 1),
+        )
+        self._t_paint_lut.update_range(
+            (lut_x_min, lut_y_min, 0),
+            (lut_x_max - lut_x_min, lut_y_max - lut_y_min, 1),
+        )
+        return n_tiles_patched
+
+    def clear_paint_textures(self) -> None:
+        """Reset all paint-cache slots and LUT entries to "no paint".
+
+        Called by ``MultiscalePaintController.commit`` and ``abort`` at
+        session end.
+        """
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+        ):
+            return
+        self._t_paint_cache.data[:] = 0.0
+        self._t_paint_lut.data[:] = 0.0
+        # data.shape[:2] is (rows, cols); update_range size is (x, y, z)
+        # = (cols, rows, 1).
+        cache_h, cache_w = self._t_paint_cache.data.shape[:2]
+        lut_h, lut_w = self._t_paint_lut.data.shape[:2]
+        self._t_paint_cache.update_range((0, 0, 0), (cache_w, cache_h, 1))
+        self._t_paint_lut.update_range((0, 0, 0), (lut_w, lut_h, 1))
+        self._paint_slot_manager.clear()
+
     def invalidate_painted_tiles_2d(
         self, dirty_grid_coords: set[tuple[int, int]]
     ) -> int:
@@ -1983,6 +2163,8 @@ class GFXMultiscaleImageVisual:
             lut_texture=self._lut_manager_2d.lut_tex,
             lut_params_buffer=self._lut_params_buffer_2d,
             block_scales_buffer=self._block_scales_buffer_2d,
+            paint_cache_texture=self._t_paint_cache,
+            paint_lut_texture=self._t_paint_lut,
             clim=clim,
             map=colormap,
             pick_write=pick_write,

@@ -1,25 +1,32 @@
 """Paint controller for multiscale (zarr-backed) image data stores.
 
-Architecture (Phase 3, pass 1)
-------------------------------
+Architecture (Phase 2 — GPU paint-texture fast path)
+----------------------------------------------------
 Each brush application:
 
 1. Reads pre-paint values from the open ``WriteBuffer`` (read-your-writes
-   through a tensorstore transaction).
+   through a private tensorstore transaction).
 2. Stages the new values into the same buffer.
 3. Marks the dirty level-0 bricks in the :class:`WriteLayer`.
-4. Evicts visible cached level-1 tiles for those bricks via the render
-   layer.
-5. Triggers a visual reslice — the slicer re-fetches the evicted tiles
-   through the open transaction, observing the staged paint.
+4. Writes the new values into the GPU paint cache + LUT via
+   :meth:`CellierController.patch_painted_tiles_2d`.
 
-This gives correct visible feedback at one async-slicer round-trip per
-brush step, without requiring shader changes.  A follow-up will add a
-GPU paint-texture fast path for sub-frame feedback.
+The shader composites the paint cache over the base sample, so painted
+voxels are visible on the next frame.  No reslice or eviction occurs
+during a brush step.
+
+On commit: ``WriteBuffer`` flushes the transaction to disk; the GPU
+paint textures are cleared; the visible cache is evicted for dirty
+bricks; ``reslice_visual`` repopulates the base cache from disk so the
+post-session display reflects the now-persisted state.
+
+On abort: ``WriteBuffer`` discards the transaction; the GPU paint
+textures are cleared.  No reslice is needed because the base cache is
+still pre-paint.
 
 The controller is N-dim agnostic at the storage layer (``WriteLayer`` /
-``WriteBuffer``).  Visible feedback is currently only wired for 2D
-displayed-axis configurations; 3D paint feedback raises
+``WriteBuffer``).  Visible feedback is currently only wired for 2-D
+displayed-axis configurations; 3-D paint feedback raises
 ``NotImplementedError`` at construction.
 """
 
@@ -28,7 +35,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import tensorstore as ts
 
 from cellier.v2.paint._abstract import AbstractPaintController
 from cellier.v2.paint._write_buffer import TensorStoreWriteBuffer
@@ -111,18 +117,11 @@ class MultiscalePaintController(AbstractPaintController):
         )
         self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
 
-        # Open one transaction and share it between the staged-write buffer
-        # AND the data store's level-0 handle.  Without the swap, the async
-        # slicer's get_data() reads the underlying disk state and never
-        # observes staged paint — the screen never updates.
-        self._txn: ts.Transaction = ts.Transaction()
-        self._original_level0_store = data_store._ts_stores[0]
-        txn_view = self._original_level0_store.with_transaction(self._txn)
-        # Replace the data store's level-0 handle so all reads (slicer,
-        # buffer) flow through the same transaction.  Restored on commit/abort.
-        data_store._ts_stores[0] = txn_view
+        # The buffer's internal transaction is private to it — the slicer
+        # reads from the unwrapped data store and never sees staged paint.
+        # Visible feedback comes from the GPU paint texture instead.
         self._write_buffer: TensorStoreWriteBuffer = TensorStoreWriteBuffer(
-            self._original_level0_store, transaction=self._txn
+            data_store._ts_stores[0]
         )
 
         # Sparse dirty-brick tracker.
@@ -210,25 +209,17 @@ class MultiscalePaintController(AbstractPaintController):
         return old_values
 
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
-        """Stage writes, mark dirty bricks, evict tiles, and reslice."""
+        """Stage writes, mark dirty bricks, patch the GPU paint texture."""
         if voxel_indices.shape[0] == 0:
             return
         self._write_buffer.stage(voxel_indices, values)
 
-        # Track dirty bricks at level 0.
         new_dirty = self._write_layer.voxels_to_brick_keys(voxel_indices)
         for key in new_dirty:
             self._write_layer.mark_dirty(key)
 
-        # Evict matching tiles in the visible 2D cache so the next reslice
-        # re-fetches through the transaction.  Project the full-ndim brick
-        # grid_coords onto the displayed axes to match BlockKey2D's (gy, gx).
-        ax_y, ax_x = self._displayed_axes
-        dirty_grid_coords_2d = {
-            (key.grid_coords[ax_y], key.grid_coords[ax_x]) for key in new_dirty
-        }
-        evicted = self._controller.invalidate_painted_tiles_2d(
-            self._visual_id, dirty_grid_coords_2d
+        n_patched = self._controller.patch_painted_tiles_2d(
+            self._visual_id, voxel_indices, values, self._displayed_axes
         )
 
         if _PAINT_DEBUG:
@@ -236,11 +227,8 @@ class MultiscalePaintController(AbstractPaintController):
                 f"[PAINT-DBG paint] _write_values n={voxel_indices.shape[0]} "
                 f"new_dirty_bricks={len(new_dirty)} "
                 f"dirty_total={len(self._write_layer.dirty_keys())} "
-                f"evicted_tiles={evicted}"
+                f"tiles_patched={n_patched}"
             )
-
-        # Trigger one-visual reslice — async slicer fills the evicted slots.
-        self._controller.reslice_visual(self._visual_id)
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:
         """No background work — visible feedback already happened in _write_values.
@@ -253,7 +241,7 @@ class MultiscalePaintController(AbstractPaintController):
     # ------------------------------------------------------------------
 
     def commit(self) -> None:
-        """Flush staged paint to disk, evict caches, restore the camera.
+        """Flush staged paint to disk, clear GPU paint, repopulate base cache.
 
         Blocks the calling thread until the tensorstore transaction has
         been written to disk.  For typical session sizes (tens of
@@ -267,73 +255,47 @@ class MultiscalePaintController(AbstractPaintController):
                 f"dirty_bricks={len(self._write_layer.dirty_keys())} "
                 f"history_depth={len(self._history._undo_stack)}"
             )
-        # Commit the open transaction (write-through).
+        # 1. Flush to disk via the buffer's transaction.
         self._write_buffer.commit()
-        # Restore the original (non-transactional) level-0 handle so the
-        # next reslice reads from disk.  Must happen *before* reslice.
-        self._restore_data_store_handle()
 
-        # After commit, future reads come from disk.  Evict any remaining
-        # tiles for dirty bricks so the post-session display reflects the
-        # committed state.
+        # 2. Drop the GPU paint textures — paint is now on disk.
+        self._controller.clear_painted_tiles_2d(self._visual_id)
+
+        # 3. Evict the base cache for dirty bricks; reslice repopulates from
+        #    disk so the post-session display matches the persisted state.
         self._evict_dirty_visible_tiles()
 
         self._write_layer.clear()
         self._history._undo_stack.clear()
         self._history._redo_stack.clear()
 
-        # Trigger one final reslice so evicted tiles are repopulated from disk.
         self._controller.reslice_visual(self._visual_id)
         self._teardown()
 
     def abort(self) -> None:
-        """Discard staged paint and restore the camera.
-
-        Aborting the open transaction throws away every voxel staged this
-        session.  No undo/redo replay is needed because the underlying
-        store was never modified.
-        """
+        """Discard staged paint and clear the GPU paint textures."""
         if _PAINT_DEBUG:
             print(
                 f"[PAINT-DBG paint] abort() begin "
                 f"dirty_bricks={len(self._write_layer.dirty_keys())} "
                 f"history_depth={len(self._history._undo_stack)}"
             )
+        # 1. Discard staged writes (disk untouched).
         self._write_buffer.abort()
-        # Restore the original handle before reslicing so the slicer reads
-        # the (unchanged) on-disk state instead of a dead transaction.
-        self._restore_data_store_handle()
 
-        # Evict cached tiles that may carry the now-discarded paint.
-        self._evict_dirty_visible_tiles()
+        # 2. Drop the GPU paint textures.
+        self._controller.clear_painted_tiles_2d(self._visual_id)
 
+        # 3. NO reslice — the base cache already shows pre-paint data.
         self._write_layer.clear()
         self._history._undo_stack.clear()
         self._history._redo_stack.clear()
 
-        self._controller.reslice_visual(self._visual_id)
         self._teardown()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _restore_data_store_handle(self) -> None:
-        """Put the original (non-transactional) level-0 handle back.
-
-        Idempotent: safe to call twice (e.g. if commit fails midway and
-        abort is called as a fallback).
-        """
-        if self._original_level0_store is None:
-            return
-        # Only restore if the swap is still in place.
-        if self._data_store._ts_stores[0] is not self._original_level0_store:
-            self._data_store._ts_stores[0] = self._original_level0_store
-            if _PAINT_DEBUG:
-                print(
-                    "[PAINT-DBG paint] restored data_store._ts_stores[0] to "
-                    "non-transactional handle"
-                )
 
     def _evict_dirty_visible_tiles(self) -> int:
         """Drop visible cache tiles for every brick currently marked dirty."""
