@@ -11,10 +11,11 @@ separate rendering controls for the 2D views and the 3D view.
 
 Usage
 -----
-    uv run scripts/v2/ome_zarr_orthoviewer.py --zarr-file-path /path/to/data.ome.zarr
-
-    # Create a synthetic anisotropic test dataset (ExpA-like scale) then open it:
+    # Create a synthetic anisotropic test dataset then open it:
     uv run scripts/v2/ome_zarr_orthoviewer.py --make-example
+
+    # Run with ome-zarr v0.5 file
+    uv run scripts/v2/ome_zarr_orthoviewer.py --zarr-file-path /path/to/data.ome.zarr    
 """
 
 from __future__ import annotations
