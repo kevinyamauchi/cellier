@@ -154,20 +154,14 @@ class MultiscalePaintController(AbstractPaintController):
     # ------------------------------------------------------------------
 
     def _apply_brush(self, world_coord: np.ndarray) -> None:
-        """Re-order world_coord for the multiscale 2-D upload convention.
+        """Re-order world_coord from pygfx (x, y) to data (row, col) order.
 
-        ``GFXImageMemoryVisual.on_data_ready_2d`` transposes the array on
-        upload, so its convention is "data axis 0 ↔ pygfx-x"; the
-        coordinate embedding in
-        ``CellierController._on_raw_pointer_event`` matches that.
-
-        ``GFXMultiscaleImageVisual._build_2d_node`` does **not** transpose:
-        the 2-D ``gfx.Image`` is sized with ``local.scale = (W, H, 1)``
-        and the LUT shader maps ``texcoord.x → vol_size_x = W``.  Net
-        effect: ``data[r, c]`` is rendered at pygfx world ``(x=c, y=r)``
-        — i.e. data axis 0 ↔ pygfx-y, the opposite of the in-memory
-        visual.  Without the swap below, painting at upper-left would
-        place paint at lower-right (a transpose).
+        Both image visuals render ``data[r, c]`` at pygfx world ``(x=c, y=r)``.
+        ``CellierController._on_raw_pointer_event`` embeds the mouse position
+        verbatim: ``world_coord[ax_row] = pygfx_x`` (column index),
+        ``world_coord[ax_col] = pygfx_y`` (row index).  Swapping them here
+        produces the correct voxel address before the identity
+        ``imap_coordinates`` call in the base.
 
         For 2-D the fix is to swap the two displayed-axis components of
         ``world_coord`` once, here, before delegating to the shared
@@ -176,7 +170,7 @@ class MultiscalePaintController(AbstractPaintController):
         need no further changes.
 
         3-D paint feedback (a Phase 3 follow-up) needs its own check:
-        the multiscale 3-D upload uses the standard pygfx ``(x, y, z)``
+        the 3-D upload convention uses standard pygfx ``(x, y, z)``
         order over data ``(z, y, x)``, so the equivalent fix there is a
         full ``[::-1]`` reversal of the displayed-axis components, not
         just a 2-axis swap.  Guarded against in ``__init__`` for now.

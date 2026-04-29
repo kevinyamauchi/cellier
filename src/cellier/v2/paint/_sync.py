@@ -33,6 +33,9 @@ class SyncPaintController(AbstractPaintController):
     canvas_id : UUID
     data_store : ImageMemoryStore
         The store whose ``.data`` array is painted directly.
+    displayed_axes : tuple[int, int]
+        The two data-array axes currently displayed in 2D for the bound
+        canvas, in ``(row_axis, col_axis)`` order.
     brush_value : float
     brush_radius_voxels : float
     history_depth : int
@@ -45,12 +48,14 @@ class SyncPaintController(AbstractPaintController):
         scene_id: UUID,
         canvas_id: UUID,
         data_store: ImageMemoryStore,
+        displayed_axes: tuple[int, ...],
         brush_value: float = 1.0,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
     ) -> None:
         self._data_store = data_store
         self._data_shape = data_store.shape
+        self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
         super().__init__(
             cellier_controller=cellier_controller,
             visual_id=visual_id,
@@ -61,6 +66,24 @@ class SyncPaintController(AbstractPaintController):
             brush_radius_voxels=brush_radius_voxels,
             history_depth=history_depth,
         )
+
+    def _apply_brush(self, world_coord: np.ndarray) -> None:
+        """Swap displayed axes before delegating to the base brush logic.
+
+        ``CellierController._on_raw_pointer_event`` embeds the mouse position
+        as ``world_coord[0] = pygfx_x``, ``world_coord[1] = pygfx_y``.
+        ``GFXImageMemoryVisual`` renders ``data[r, c]`` at pygfx ``(x=c, y=r)``,
+        so the row index arrives in ``world_coord[ax_col]`` and the column index
+        in ``world_coord[ax_row]``.  Swapping them here produces the correct
+        voxel address before the identity ``imap_coordinates`` call in the base.
+        """
+        ax_row, ax_col = self._displayed_axes
+        swapped = world_coord.copy()
+        swapped[ax_row], swapped[ax_col] = (
+            float(world_coord[ax_col]),
+            float(world_coord[ax_row]),
+        )
+        super()._apply_brush(swapped)
 
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read directly from the backing numpy array."""

@@ -2182,12 +2182,20 @@ class CellierController:
         if isinstance(data_store, ImageMemoryStore):
             from cellier.v2.paint import SyncPaintController
 
+            displayed_axes = scene.dims.selection.displayed_axes
+            if len(displayed_axes) != 2:
+                raise NotImplementedError(
+                    "SyncPaintController currently only supports 2-D "
+                    f"displayed-axis configurations; scene {scene_id} has "
+                    f"displayed_axes={displayed_axes!r}."
+                )
             return SyncPaintController(
                 cellier_controller=self,
                 visual_id=visual_id,
                 scene_id=scene_id,
                 canvas_id=canvas_id,
                 data_store=data_store,
+                displayed_axes=displayed_axes,
                 brush_value=brush_value,
                 brush_radius_voxels=brush_radius_voxels,
                 history_depth=history_depth,
@@ -2464,12 +2472,14 @@ class CellierController:
         n_dims = len(axis_labels)
 
         world_coord = np.empty(n_dims, dtype=np.float64)
-        # The image visual renders data[r, c] at pygfx world (x=r, y=c) —
-        # data axis 0 → pygfx-x, axis 1 → pygfx-y, no swap.  Embed
-        # position_2d into displayed_axes in natural order so that a click
-        # at pygfx (x, y) writes to data[x, y].  (Points/lines/mesh apply
-        # their own axis swap on upload; this controller follows the image
-        # convention, which is what the paint controller targets.)
+        # Embed pygfx position_2d into world_coord verbatim:
+        #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
+        #   world_coord[displayed_axes[1]] = position_2d[1]  (pygfx-y)
+        # Both image visuals render data[r, c] at pygfx (x=c, y=r), so
+        # world_coord[ax_row] == pygfx_x (column) and
+        # world_coord[ax_col] == pygfx_y (row) after this assignment.
+        # Paint controllers swap ax_row ↔ ax_col to recover (row, col)
+        # voxel order before calling imap_coordinates.
         for i, axis in enumerate(displayed_axes):
             world_coord[axis] = event.position_2d[i]
         for axis, idx in slice_indices.items():
