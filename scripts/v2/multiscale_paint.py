@@ -14,16 +14,42 @@ What happens when you paint
   so painted voxels are visible on the very next frame — no slicer
   round-trip required.
 
-Click **Commit** to flush staged paints to the on-disk zarr (then
-the visible base cache is repopulated from disk on the post-commit
-reslice, and the GPU paint textures are cleared).  Click **Abort**
-to discard staged paint; the GPU paint textures are cleared and the
-on-disk zarr is untouched.
+Autosave (every 30 seconds, when dirty)
+----------------------------------------
+- The WriteBuffer flushes the current transaction to disk.
+- The pyramid is rebuilt bottom-up (s0 → s1 → s2) for dirty bricks
+  only using stride-2 decimation — all writes share the same transaction
+  so the whole pyramid is atomic.
+- A fresh WriteBuffer (new transaction) replaces the old one for
+  continued staging.  Undo history is preserved.
+- The GPU paint textures are cleared and the base cache is evicted +
+  resliced from disk.  All GPU paint slots are freed for the next
+  interval.
 
-The OME-Zarr store lives next to this script (``multiscale_paint_labels.ome.zarr``)
-and persists across runs so you can confirm commits actually reach
-disk: paint, commit, quit, re-launch — your strokes should reappear.
-Delete the directory to start from a blank canvas.
+Commit
+-------
+Same as autosave, but also clears undo history and tears down the
+session (re-enables camera, unsubscribes events).  After commit, the
+buttons are disabled — paint is done.
+
+Abort
+------
+Discards the transaction without rebuilding the pyramid or touching
+disk.  GPU paint textures are cleared; the base cache already shows
+pre-paint data so no reslice is needed.
+
+Verifying pyramid rebuild
+--------------------------
+1. Paint a visible stroke.
+2. Click Commit (or wait for autosave).
+3. Scroll-wheel to zoom out beyond the level-1 LOD threshold.
+   The stroke should still be visible in the downsampled tiles.
+4. Zoom further to level-2 tiles; the stroke should remain visible.
+5. If the stroke disappears at coarser zoom, pyramid rebuild is broken.
+
+The demo OME-Zarr persists between runs — paint, commit, quit,
+re-launch and the strokes reappear.  Delete
+``multiscale_paint_labels_pyramid.ome.zarr`` to start fresh.
 
 Run with::
 
@@ -61,18 +87,19 @@ from cellier.v2.visuals._image import (
     MultiscaleImageVisual,
 )
 
-_DEMO_SHAPE = (256, 256)  # (y, x) — single-level 2-D float32 store
 _DEMO_BLOCK_SIZE = 32
 _DEMO_CHUNK = (64, 64)
+
+# Three-level pyramid: s0=256×256, s1=128×128, s2=64×64.
+_LEVEL_SHAPES = [(256, 256), (128, 128), (64, 64)]
+_LEVEL_SCALES = [[1.0, 1.0], [2.0, 2.0], [4.0, 4.0]]
 
 
 def _ensure_demo_ome_zarr(target_dir: Path) -> Path:
     """Return the demo OME-Zarr at *target_dir*, creating it if missing.
 
-    The store lives next to this script so commits persist between runs:
-    if the directory already exists, it is loaded as-is so you can verify
-    that previously committed paint survives on disk.  To start fresh,
-    delete the directory before running.
+    The store persists between runs so you can verify that committed paint
+    survives on disk.  To start fresh, delete the directory before running.
     """
     if target_dir.exists():
         print(f"  Loading existing demo OME-Zarr from {target_dir}")
@@ -80,15 +107,19 @@ def _ensure_demo_ome_zarr(target_dir: Path) -> Path:
 
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     root = zarr.open_group(str(target_dir), mode="w")
-    arr = root.create_array(
-        "s0",
-        shape=_DEMO_SHAPE,
-        chunks=_DEMO_CHUNK,
-        dtype=np.float32,
-    )
-    arr[:] = np.zeros(_DEMO_SHAPE, dtype=np.float32)
 
-    # OME-NGFF v0.5 metadata.  Only y and x — 2-D.
+    datasets = []
+    for i, (shape, scale) in enumerate(zip(_LEVEL_SHAPES, _LEVEL_SCALES)):
+        path = f"s{i}"
+        arr = root.create_array(path, shape=shape, chunks=_DEMO_CHUNK, dtype=np.float32)
+        arr[:] = np.zeros(shape, dtype=np.float32)
+        datasets.append(
+            {
+                "path": path,
+                "coordinateTransformations": [{"type": "scale", "scale": scale}],
+            }
+        )
+
     root.attrs["ome"] = {
         "version": "0.5",
         "multiscales": [
@@ -97,19 +128,12 @@ def _ensure_demo_ome_zarr(target_dir: Path) -> Path:
                     {"name": "y", "type": "space", "unit": "micrometer"},
                     {"name": "x", "type": "space", "unit": "micrometer"},
                 ],
-                "datasets": [
-                    {
-                        "path": "s0",
-                        "coordinateTransformations": [
-                            {"type": "scale", "scale": [1.0, 1.0]}
-                        ],
-                    }
-                ],
+                "datasets": datasets,
                 "name": "demo_labels",
             }
         ],
     }
-    print(f"  Created demo OME-Zarr at {target_dir}")
+    print(f"  Created demo OME-Zarr (3 levels) at {target_dir}")
     return target_dir
 
 
@@ -117,20 +141,19 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # ── 1. Demo data on disk ────────────────────────────────────────────
-    # The store lives next to this script and persists between runs so
-    # you can verify that committed paint actually reaches disk: paint +
-    # commit, quit, re-run — the painted voxels should reappear.  Delete
-    # the directory by hand if you want to start fresh.
-    zarr_path = Path(__file__).resolve().parent / "multiscale_paint_labels.ome.zarr"
+    zarr_path = (
+        Path(__file__).resolve().parent / "multiscale_paint_labels_pyramid.ome.zarr"
+    )
     _ensure_demo_ome_zarr(zarr_path)
 
-    # OMEZarrImageDataStore.from_path requires a file:// URI.
     zarr_uri = f"file://{zarr_path.resolve()}"
     data_store = OMEZarrImageDataStore.from_path(zarr_uri, name="labels")
     print(
         f"  Opened data store: levels={data_store.n_levels} "
-        f"shape={data_store.level_shapes[0]} dtype={data_store.dtype}"
+        f"dtype={data_store.dtype}"
     )
+    for i, shape in enumerate(data_store.level_shapes):
+        print(f"    s{i}: {shape}")
 
     # ── 2. Controller and 2-D scene ─────────────────────────────────────
     controller = CellierController()
@@ -163,7 +186,7 @@ def main() -> None:
 
     # ── 3. Qt window ─────────────────────────────────────────────────────
     root = QWidget()
-    root.setWindowTitle("Multiscale paint demo (OME-Zarr)")
+    root.setWindowTitle("Multiscale paint demo (OME-Zarr, pyramid rebuild)")
     layout = QVBoxLayout(root)
 
     toolbar = QWidget(root)
@@ -185,6 +208,9 @@ def main() -> None:
     commit_btn = QPushButton("Commit")
     abort_btn = QPushButton("Abort")
 
+    autosave_title = QLabel("Autosave:")
+    autosave_label = QLabel("never")
+
     for w in (
         brush_value_label,
         brush_value_spin,
@@ -193,6 +219,8 @@ def main() -> None:
         undo_btn,
         commit_btn,
         abort_btn,
+        autosave_title,
+        autosave_label,
     ):
         toolbar_layout.addWidget(w)
     toolbar_layout.addStretch(1)
@@ -228,6 +256,8 @@ def main() -> None:
         canvas_id=canvas_id,
         brush_value=float(brush_value_spin.value()),
         brush_radius_voxels=float(brush_radius_spin.value()),
+        autosave_interval_s=30.0,
+        downsample_mode="decimate",
     )
     print(f"  Paint controller: {paint_ctrl!r}")
 
@@ -237,43 +267,69 @@ def main() -> None:
         return bool(canvas_view._controller.enabled)
 
     def _on_brush_value_changed(value: float) -> None:
-        print(f"[PAINT-DBG demo] brush_value before={_enabled()}")
         paint_ctrl.brush_value = float(value)
-        print(f"[PAINT-DBG demo] brush_value after={_enabled()}")
 
     def _on_brush_radius_changed(value: int) -> None:
-        print(f"[PAINT-DBG demo] brush_radius before={_enabled()}")
         paint_ctrl.brush_radius_voxels = float(value)
-        print(f"[PAINT-DBG demo] brush_radius after={_enabled()}")
 
     def _on_undo_clicked() -> None:
-        print(f"[PAINT-DBG demo] undo before={_enabled()}")
         paint_ctrl.undo()
-        print(f"[PAINT-DBG demo] undo after={_enabled()}")
 
     def _on_commit_clicked() -> None:
-        print(f"[PAINT-DBG demo] commit before={_enabled()}")
+        print(
+            f"[PAINT-DBG demo] commit clicked "
+            f"dirty_bricks={len(paint_ctrl._write_layer.dirty_keys())}"
+        )
         paint_ctrl.commit()
-        print(f"[PAINT-DBG demo] commit after={_enabled()}")
+        status_timer.stop()
         QMessageBox.information(
             root,
             "Commit",
-            f"Stroke history cleared and paint flushed to:\n{zarr_path}",
+            f"Paint and pyramid flushed to disk.\n"
+            f"All {data_store.n_levels} LOD levels updated.\n\n"
+            f"Zoom out to verify painted values appear at coarser zoom levels.\n\n"
+            f"Path: {zarr_path}",
         )
         commit_btn.setEnabled(False)
         abort_btn.setEnabled(False)
         undo_btn.setEnabled(False)
 
     def _on_abort_clicked() -> None:
-        print(f"[PAINT-DBG demo] abort before={_enabled()}")
+        print(
+            f"[PAINT-DBG demo] abort clicked "
+            f"dirty_bricks={len(paint_ctrl._write_layer.dirty_keys())}"
+        )
         paint_ctrl.abort()
-        print(f"[PAINT-DBG demo] abort after={_enabled()}")
+        status_timer.stop()
         QMessageBox.information(
             root, "Abort", "All staged paint discarded; on-disk zarr unchanged."
         )
         commit_btn.setEnabled(False)
         abort_btn.setEnabled(False)
         undo_btn.setEnabled(False)
+
+    # ── 6. 5-second status timer ─────────────────────────────────────────
+    def _print_status() -> None:
+        dirty = len(paint_ctrl._write_layer.dirty_keys())
+        staged = paint_ctrl._write_buffer._n_staged_writes
+        last_save = (
+            paint_ctrl.last_autosave_time.strftime("%H:%M:%S")
+            if paint_ctrl.last_autosave_time
+            else "never"
+        )
+        print(
+            f"[PAINT-DBG demo] status: dirty_bricks={dirty} "
+            f"staged_voxels={staged} "
+            f"autosaves={paint_ctrl.autosave_count} "
+            f"last_autosave={last_save}"
+        )
+        if paint_ctrl.last_autosave_time:
+            autosave_label.setText(f"{last_save} ({paint_ctrl.autosave_count} saves)")
+
+    status_timer = QTimer()
+    status_timer.setInterval(5000)
+    status_timer.timeout.connect(_print_status)
+    status_timer.start()
 
     brush_value_spin.valueChanged.connect(_on_brush_value_changed)
     brush_radius_spin.valueChanged.connect(_on_brush_radius_changed)

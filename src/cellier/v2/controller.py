@@ -2129,13 +2129,10 @@ class CellierController:
         brush_value: float = 1.0,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
-        autosave_interval_seconds: float = 30.0,
-        rebuild_debounce_ms: int = 500,
+        autosave_interval_s: float | None = None,
+        downsample_mode: str = "decimate",
     ):
         """Create and wire a paint controller for the visual's data store.
-
-        Phase 2 only wires :class:`ImageMemoryStore`.  Other store types
-        raise :class:`TypeError`.
 
         Parameters
         ----------
@@ -2151,16 +2148,17 @@ class CellierController:
             Brush radius in level-0 voxel units.
         history_depth : int
             Maximum undoable strokes.
-        autosave_interval_seconds : float
-            Auto-save interval for ``MultiscalePaintController`` (Phase 3).
-            Ignored for ``SyncPaintController``.
-        rebuild_debounce_ms : int
-            Pyramid rebuild debounce for ``MultiscalePaintController``
-            (Phase 3).  Ignored for ``SyncPaintController``.
+        autosave_interval_s : float | None
+            Seconds between automatic flushes for ``MultiscalePaintController``.
+            Each autosave rebuilds the pyramid and resets GPU paint textures.
+            ``None`` disables autosave.  Ignored for ``SyncPaintController``.
+        downsample_mode : str
+            ``"decimate"`` (default) for label stores; ``"mean"`` for
+            intensity images.  Ignored for ``SyncPaintController``.
 
         Returns
         -------
-        SyncPaintController
+        AbstractPaintController
             Fully wired; caller owns the object.
 
         Raises
@@ -2225,6 +2223,8 @@ class CellierController:
                 brush_value=brush_value,
                 brush_radius_voxels=brush_radius_voxels,
                 history_depth=history_depth,
+                autosave_interval_s=autosave_interval_s,
+                downsample_mode=downsample_mode,
             )
 
         raise TypeError(

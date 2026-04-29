@@ -1,7 +1,7 @@
 """Paint controller for multiscale (zarr-backed) image data stores.
 
-Architecture (Phase 2 — GPU paint-texture fast path)
-----------------------------------------------------
+Architecture (Phase 3 — pyramid rebuild + autosave loop)
+---------------------------------------------------------
 Each brush application:
 
 1. Reads pre-paint values from the open ``WriteBuffer`` (read-your-writes
@@ -15,10 +15,13 @@ The shader composites the paint cache over the base sample, so painted
 voxels are visible on the next frame.  No reslice or eviction occurs
 during a brush step.
 
-On commit: ``WriteBuffer`` flushes the transaction to disk; the GPU
-paint textures are cleared; the visible cache is evicted for dirty
-bricks; ``reslice_visual`` repopulates the base cache from disk so the
-post-session display reflects the now-persisted state.
+On commit: coarser LOD bricks are rebuilt bottom-up within the open
+transaction, then the transaction is flushed atomically; the GPU paint
+textures are cleared; the visible cache is evicted for dirty bricks;
+``reslice_visual`` repopulates the base cache from disk.
+
+On autosave: same as commit but undo history is preserved and the
+session continues with a fresh transaction.
 
 On abort: ``WriteBuffer`` discards the transaction; the GPU paint
 textures are cleared.  No reslice is needed because the base cache is
@@ -32,7 +35,9 @@ displayed-axis configurations; 3-D paint feedback raises
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import time
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -42,6 +47,8 @@ from cellier.v2.paint._write_layer import BrickKey, WriteLayer
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+    import tensorstore as ts
 
     from cellier.v2.controller import CellierController
     from cellier.v2.paint._history import PaintStrokeCommand
@@ -54,10 +61,9 @@ class MultiscalePaintController(AbstractPaintController):
 
     Stages all writes in a tensorstore transaction (RAM-only) until the
     user commits or aborts the session.  Visible feedback is provided by
-    evicting the affected tiles from the GPU tile cache and triggering
-    a visual reslice — the slicer re-fetches the evicted tiles through
-    the open transaction so painted voxels are visible immediately
-    after one async round-trip.
+    writing directly into the GPU paint cache; the shader composites paint
+    over the base sample so painted voxels are visible immediately without
+    a slicer round-trip.
 
     Parameters
     ----------
@@ -72,9 +78,7 @@ class MultiscalePaintController(AbstractPaintController):
     visual_block_size :
         Tile / brick side length used by the visual's render config.
         Must match the ``MultiscaleImageRenderConfig.block_size`` of the
-        rendered visual; the paint controller uses it to map level-0
-        voxels to brick keys for both the write layer and the cache
-        eviction step.
+        rendered visual.
     displayed_axes :
         The two data-array axes currently displayed in 2D for the bound
         canvas, in ``(row_axis, col_axis)`` order.  3D paint feedback is
@@ -82,6 +86,13 @@ class MultiscalePaintController(AbstractPaintController):
     brush_value :
     brush_radius_voxels :
     history_depth :
+    autosave_interval_s :
+        If set, a ``QTimer`` fires every this many seconds to flush staged
+        paint to disk, rebuild the pyramid, and reset the GPU paint
+        textures.  ``None`` disables autosave.
+    downsample_mode :
+        ``"decimate"`` (default) — stride-2 pick for label stores.
+        ``"mean"`` — per-stride average for intensity images.
     """
 
     def __init__(
@@ -96,6 +107,8 @@ class MultiscalePaintController(AbstractPaintController):
         brush_value: float = 1.0,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
+        autosave_interval_s: float | None = None,
+        downsample_mode: Literal["decimate", "mean"] = "decimate",
     ) -> None:
         if len(displayed_axes) != 2:
             raise NotImplementedError(
@@ -110,21 +123,19 @@ class MultiscalePaintController(AbstractPaintController):
             )
 
         self._data_store = data_store
-        # Level-0 ndim and shape — used by AbstractPaintController._voxels_in_radius
-        # and by the brick-key map.
         self._data_shape: tuple[int, ...] = tuple(
             int(d) for d in data_store.level_shapes[0]
         )
         self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
+        self._downsample_mode: str = downsample_mode
+        self._autosave_count: int = 0
+        self._autosave_interval_s: float | None = autosave_interval_s
+        self._last_autosave_time: datetime | None = None
+        self._autosave_timer = None  # typed below after QTimer import
 
-        # The buffer's internal transaction is private to it — the slicer
-        # reads from the unwrapped data store and never sees staged paint.
-        # Visible feedback comes from the GPU paint texture instead.
         self._write_buffer: TensorStoreWriteBuffer = TensorStoreWriteBuffer(
             data_store._ts_stores[0]
         )
-
-        # Sparse dirty-brick tracker.
         self._write_layer = WriteLayer(
             data_store_id=data_store.id, block_size=int(visual_block_size)
         )
@@ -140,13 +151,27 @@ class MultiscalePaintController(AbstractPaintController):
             history_depth=history_depth,
         )
 
+        if autosave_interval_s is not None and autosave_interval_s > 0:
+            from PySide6.QtCore import QTimer
+
+            self._autosave_timer = QTimer()
+            self._autosave_timer.setInterval(int(autosave_interval_s * 1000))
+            self._autosave_timer.timeout.connect(self._do_autosave)
+            self._autosave_timer.start()
+            if _PAINT_DEBUG:
+                print(
+                    f"[PAINT-DBG paint] autosave timer started "
+                    f"interval={autosave_interval_s}s"
+                )
+
         if _PAINT_DEBUG:
             print(
                 f"[PAINT-DBG paint] MultiscalePaintController init "
                 f"visual={visual_id} canvas={canvas_id} "
                 f"data_shape={self._data_shape} "
                 f"block_size={self._write_layer.block_size} "
-                f"displayed_axes={self._displayed_axes}"
+                f"displayed_axes={self._displayed_axes} "
+                f"downsample_mode={downsample_mode}"
             )
 
     # ------------------------------------------------------------------
@@ -162,18 +187,6 @@ class MultiscalePaintController(AbstractPaintController):
         ``world_coord[ax_col] = pygfx_y`` (row index).  Swapping them here
         produces the correct voxel address before the identity
         ``imap_coordinates`` call in the base.
-
-        For 2-D the fix is to swap the two displayed-axis components of
-        ``world_coord`` once, here, before delegating to the shared
-        brush logic.  The voxel-radius computation, dirty-brick mapping,
-        and tile invalidation all run in voxel space after the swap and
-        need no further changes.
-
-        3-D paint feedback (a Phase 3 follow-up) needs its own check:
-        the 3-D upload convention uses standard pygfx ``(x, y, z)``
-        order over data ``(z, y, x)``, so the equivalent fix there is a
-        full ``[::-1]`` reversal of the displayed-axis components, not
-        just a 2-axis swap.  Guarded against in ``__init__`` for now.
         """
         ax_row, ax_col = self._displayed_axes
         swapped = world_coord.copy()
@@ -225,45 +238,46 @@ class MultiscalePaintController(AbstractPaintController):
             )
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:
-        """No background work — visible feedback already happened in _write_values.
-
-        Pyramid rebuild and autosave are deferred to a follow-up.
-        """
+        """No background work — visible feedback already happened in _write_values."""
 
     # ------------------------------------------------------------------
     # Session lifecycle
     # ------------------------------------------------------------------
 
     def commit(self) -> None:
-        """Flush staged paint to disk, clear GPU paint, repopulate base cache.
+        """Flush staged paint + rebuild pyramid, clear GPU, repopulate cache."""
+        if self._autosave_timer is not None:
+            self._autosave_timer.stop()
 
-        Blocks the calling thread until the tensorstore transaction has
-        been written to disk.  For typical session sizes (tens of
-        kilobytes to a few megabytes) this is fast; large sessions may
-        stall the UI for hundreds of milliseconds.  Adding an autosave
-        loop is a Phase 3 follow-up.
-        """
         if _PAINT_DEBUG:
             print(
                 f"[PAINT-DBG paint] commit() begin "
                 f"dirty_bricks={len(self._write_layer.dirty_keys())} "
-                f"history_depth={len(self._history._undo_stack)}"
+                f"history_depth={len(self._history._undo_stack)} "
+                f"autosave_count={self._autosave_count}"
             )
-        # 1. Flush to disk via the buffer's transaction.
+
+        # 1. Rebuild coarser LOD levels within the open transaction.
+        rebuild_stats = self._rebuild_pyramid(self._write_buffer.transaction)
+
+        # 2. Flush level-0 + all rebuilt levels atomically.
         self._write_buffer.commit()
 
-        # 2. Drop the GPU paint textures — paint is now on disk.
+        # 3. Drop GPU paint textures — paint is now on disk.
         self._controller.clear_painted_tiles_2d(self._visual_id)
 
-        # 3. Evict the base cache for dirty bricks; reslice repopulates from
-        #    disk so the post-session display matches the persisted state.
+        # 4. Evict + reslice so base cache reflects the committed state.
         self._evict_dirty_visible_tiles()
-
         self._write_layer.clear()
         self._history._undo_stack.clear()
         self._history._redo_stack.clear()
-
         self._controller.reslice_visual(self._visual_id)
+
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG paint] commit() complete " f"pyramid_stats={rebuild_stats}"
+            )
+
         self._teardown()
 
     def abort(self) -> None:
@@ -286,6 +300,263 @@ class MultiscalePaintController(AbstractPaintController):
         self._history._redo_stack.clear()
 
         self._teardown()
+
+    def _teardown(self) -> None:
+        """Stop autosave timer, unsubscribe bus events, re-enable camera."""
+        if self._autosave_timer is not None:
+            self._autosave_timer.stop()
+            self._autosave_timer = None
+            if _PAINT_DEBUG:
+                print("[PAINT-DBG paint] autosave timer stopped")
+        super()._teardown()
+
+    # ------------------------------------------------------------------
+    # Autosave
+    # ------------------------------------------------------------------
+
+    def _do_autosave(self) -> None:
+        """Flush staged paint to disk, rebuild pyramid, reset GPU textures.
+
+        Called automatically by the autosave timer.  Does NOT clear undo
+        history or tear down the session — the session continues with a
+        fresh transaction.
+        """
+        dirty_count = len(self._write_layer.dirty_keys())
+        if dirty_count == 0:
+            if _PAINT_DEBUG:
+                print("[PAINT-DBG paint] _do_autosave() — no dirty bricks, skipping")
+            return
+
+        t0 = time.perf_counter()
+
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG paint] _do_autosave() begin "
+                f"dirty_bricks={dirty_count} "
+                f"autosave_count_before={self._autosave_count}"
+            )
+
+        # 1. Rebuild coarser LOD levels within the open transaction.
+        rebuild_stats = self._rebuild_pyramid(self._write_buffer.transaction)
+
+        # 2. Flush level-0 + rebuilt levels atomically.
+        self._write_buffer.commit()
+
+        # 3. Create a fresh transaction for continued staging.
+        self._write_buffer = TensorStoreWriteBuffer(self._data_store._ts_stores[0])
+
+        # 4. Drop GPU paint textures — frees the entire slot pool.
+        self._controller.clear_painted_tiles_2d(self._visual_id)
+
+        # 5. Evict base cache for dirty bricks; reslice repopulates from disk.
+        self._evict_dirty_visible_tiles()
+        self._write_layer.clear()
+        self._controller.reslice_visual(self._visual_id)
+
+        self._autosave_count += 1
+        self._last_autosave_time = datetime.now()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG paint] _do_autosave() complete "
+                f"autosave_count={self._autosave_count} "
+                f"pyramid_stats={rebuild_stats} "
+                f"elapsed={elapsed_ms:.1f}ms"
+            )
+
+    # ------------------------------------------------------------------
+    # Autosave state accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def autosave_count(self) -> int:
+        """Number of autosaves completed this session."""
+        return self._autosave_count
+
+    @property
+    def last_autosave_time(self) -> datetime | None:
+        """Datetime of the most recent autosave, or None if none yet."""
+        return self._last_autosave_time
+
+    # ------------------------------------------------------------------
+    # Pyramid rebuild
+    # ------------------------------------------------------------------
+
+    def _rebuild_pyramid(self, txn: ts.Transaction | None) -> dict[int, int]:
+        """Rebuild coarser LOD bricks for all dirty level-0 bricks.
+
+        Operates within *txn* so the rebuild is atomic with the level-0
+        writes.  Reads level k-1 through the transaction (read-your-writes)
+        to build level k.
+
+        Parameters
+        ----------
+        txn :
+            The active tensorstore transaction from ``self._write_buffer``.
+            Must still be open (before ``commit_sync``).
+
+        Returns
+        -------
+        dict[int, int]
+            Mapping ``level → n_bricks_rebuilt`` for each level k >= 1.
+            Empty if the store has only one level or txn is None.
+        """
+        if txn is None:
+            return {}
+
+        n_levels = self._data_store.n_levels
+        if n_levels < 2:
+            if _PAINT_DEBUG:
+                print("[PAINT-DBG pyramid] n_levels=1 — nothing to rebuild")
+            return {}
+
+        level_shapes = self._data_store.level_shapes
+        level_transforms = self._data_store.level_transforms
+        stores = self._data_store._ts_stores
+        ax_y, ax_x = self._displayed_axes
+
+        stats: dict[int, int] = {}
+
+        dirty_by_level: dict[int, set[tuple[int, ...]]] = {
+            0: {key.grid_coords for key in self._write_layer.dirty_keys()}
+        }
+
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG pyramid] rebuild start "
+                f"n_levels={n_levels} "
+                f"dirty_bricks_level0={len(dirty_by_level[0])}"
+            )
+
+        t0 = time.perf_counter()
+
+        for k in range(1, n_levels):
+            stride_y = max(
+                1,
+                round(
+                    level_transforms[k].matrix[ax_y, ax_y]
+                    / level_transforms[k - 1].matrix[ax_y, ax_y]
+                ),
+            )
+            stride_x = max(
+                1,
+                round(
+                    level_transforms[k].matrix[ax_x, ax_x]
+                    / level_transforms[k - 1].matrix[ax_x, ax_x]
+                ),
+            )
+
+            parent_dirty = dirty_by_level.get(k - 1, set())
+            dirty_k: set[tuple[int, ...]] = set()
+            for gc in parent_dirty:
+                dirty_k.add(
+                    tuple(
+                        c // stride_y
+                        if i == ax_y
+                        else c // stride_x
+                        if i == ax_x
+                        else c
+                        for i, c in enumerate(gc)
+                    )
+                )
+            dirty_by_level[k] = dirty_k
+
+            if not dirty_k:
+                stats[k] = 0
+                continue
+
+            bs = self._write_layer.block_size
+            src_store = stores[k - 1].with_transaction(txn)
+            dst_store = stores[k].with_transaction(txn)
+
+            shape_km1 = level_shapes[k - 1]
+            shape_k = level_shapes[k]
+
+            if _PAINT_DEBUG:
+                print(
+                    f"[PAINT-DBG pyramid] level {k}: "
+                    f"stride=({stride_y},{stride_x}) "
+                    f"n_bricks={len(dirty_k)} "
+                    f"shape_src={shape_km1} shape_dst={shape_k}"
+                )
+
+            n_rebuilt = 0
+            for gc in dirty_k:
+                gy_k, gx_k = gc[ax_y], gc[ax_x]
+
+                src_y0 = gy_k * bs * stride_y
+                src_y1 = min((gy_k + 1) * bs * stride_y, shape_km1[ax_y])
+                src_x0 = gx_k * bs * stride_x
+                src_x1 = min((gx_k + 1) * bs * stride_x, shape_km1[ax_x])
+
+                if src_y0 >= shape_km1[ax_y] or src_x0 >= shape_km1[ax_x]:
+                    continue
+
+                dst_y0 = gy_k * bs
+                dst_y1 = min((gy_k + 1) * bs, shape_k[ax_y])
+                dst_x0 = gx_k * bs
+                dst_x1 = min((gx_k + 1) * bs, shape_k[ax_x])
+
+                if dst_y0 >= shape_k[ax_y] or dst_x0 >= shape_k[ax_x]:
+                    continue
+
+                src_slices = [slice(None)] * len(shape_km1)
+                src_slices[ax_y] = slice(src_y0, src_y1)
+                src_slices[ax_x] = slice(src_x0, src_x1)
+                block = np.array(
+                    src_store[tuple(src_slices)].read().result(),
+                    dtype=np.float32,
+                )
+
+                if self._downsample_mode == "decimate":
+                    dec_slices = [slice(None)] * block.ndim
+                    dec_slices[ax_y] = slice(None, None, stride_y)
+                    dec_slices[ax_x] = slice(None, None, stride_x)
+                    downsampled = block[tuple(dec_slices)]
+                else:  # "mean"
+                    h, w = block.shape[ax_y], block.shape[ax_x]
+                    h_trim = (h // stride_y) * stride_y
+                    w_trim = (w // stride_x) * stride_x
+                    trim_slices = [slice(None)] * block.ndim
+                    trim_slices[ax_y] = slice(0, h_trim)
+                    trim_slices[ax_x] = slice(0, w_trim)
+                    block = block[tuple(trim_slices)]
+                    downsampled = (
+                        block.reshape(
+                            h_trim // stride_y,
+                            stride_y,
+                            w_trim // stride_x,
+                            stride_x,
+                        )
+                        .mean(axis=(1, 3))
+                        .astype(np.float32)
+                    )
+
+                actual_h = dst_y1 - dst_y0
+                actual_w = dst_x1 - dst_x0
+                clip_slices = [slice(None)] * downsampled.ndim
+                clip_slices[ax_y] = slice(0, actual_h)
+                clip_slices[ax_x] = slice(0, actual_w)
+                downsampled = downsampled[tuple(clip_slices)]
+
+                dst_slices = [slice(None)] * len(shape_k)
+                dst_slices[ax_y] = slice(dst_y0, dst_y1)
+                dst_slices[ax_x] = slice(dst_x0, dst_x1)
+                dst_store[tuple(dst_slices)].write(downsampled).result()
+                n_rebuilt += 1
+
+            stats[k] = n_rebuilt
+            if _PAINT_DEBUG:
+                print(f"[PAINT-DBG pyramid] level {k}: rebuilt {n_rebuilt} bricks")
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if _PAINT_DEBUG:
+            print(
+                f"[PAINT-DBG pyramid] rebuild complete "
+                f"stats={stats} elapsed={elapsed_ms:.1f}ms"
+            )
+        return stats
 
     # ------------------------------------------------------------------
     # Helpers
