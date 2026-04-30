@@ -93,8 +93,6 @@ if TYPE_CHECKING:
     from cellier.v2.visuals._types import VisualType
 
 
-_PAINT_DEBUG = True
-
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
 
@@ -2505,15 +2503,6 @@ class CellierController:
                 )
             )
         else:
-            if _PAINT_DEBUG and event.action in ("press", "release"):
-                print(
-                    f"[PAINT-DBG ctrl] action={event.action} "
-                    f"axis_labels={axis_labels} displayed_axes={displayed_axes} "
-                    f"ray_origin={np.round(event.ray.origin, 2).tolist()} "  # type: ignore[union-attr]
-                    f"ray_dir={np.round(event.ray.direction, 3).tolist()} "  # type: ignore[union-attr]
-                    f"hit={event.hit_visual_id}"
-                )
-
             _CLS_3D = {
                 "press": CanvasMousePress3DEvent,
                 "move": CanvasMouseMove3DEvent,
@@ -2667,15 +2656,6 @@ class CellierController:
             False disables the controller (paint session active).
             True restores normal camera interaction (session ended).
         """
-        if _PAINT_DEBUG:
-            import traceback
-
-            caller = traceback.extract_stack(limit=3)[0]
-            print(
-                f"[PAINT-DBG ctrl] set_camera_controller_enabled "
-                f"canvas={canvas_id} enabled={enabled} "
-                f"caller={caller.filename.split('/')[-1]}:{caller.lineno}"
-            )
         self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
 
     def invalidate_painted_tiles_2d(
@@ -2706,13 +2686,7 @@ class CellierController:
         gfx_visual = scene_manager.get_visual(visual_id)
         if not hasattr(gfx_visual, "invalidate_painted_tiles_2d"):
             return 0
-        n = gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG ctrl] invalidate_painted_tiles_2d visual={visual_id} "
-                f"dirty_bricks={len(dirty_grid_coords)} evicted_tiles={n}"
-            )
-        return n
+        return gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
 
     def patch_painted_tiles_2d(
         self,
@@ -2751,13 +2725,7 @@ class CellierController:
         gfx_visual = scene_manager.get_visual(visual_id)
         if not hasattr(gfx_visual, "patch_paint_texture"):
             return 0
-        n = gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG ctrl] patch_painted_tiles_2d visual={visual_id} "
-                f"n_voxels={voxel_indices.shape[0]} tiles_patched={n}"
-            )
-        return n
+        return gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
 
     def clear_painted_tiles_2d(self, visual_id: UUID) -> None:
         """Clear the GPU paint textures for *visual_id*.
@@ -2771,8 +2739,6 @@ class CellierController:
         if not hasattr(gfx_visual, "clear_paint_textures"):
             return
         gfx_visual.clear_paint_textures()
-        if _PAINT_DEBUG:
-            print(f"[PAINT-DBG ctrl] clear_painted_tiles_2d visual={visual_id}")
 
     def on_visual_changed(
         self,

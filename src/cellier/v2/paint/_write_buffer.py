@@ -16,8 +16,6 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 import tensorstore as ts
 
-_PAINT_DEBUG = True
-
 
 def _voxel_indices_to_vindex(
     voxel_indices: np.ndarray,
@@ -121,13 +119,7 @@ class TensorStoreWriteBuffer:
             transaction = ts.Transaction()
         self._txn: ts.Transaction | None = transaction
         self._store: ts.TensorStore | None = store.with_transaction(transaction)
-        # Track per-voxel stage count so debug output is meaningful.
         self._n_staged_writes: int = 0
-        if _PAINT_DEBUG:
-            print(
-                "[PAINT-DBG paint] TensorStoreWriteBuffer opened "
-                f"shape={tuple(store.domain.shape)} dtype={store.dtype}"
-            )
 
     @property
     def transaction(self) -> ts.Transaction | None:
@@ -159,11 +151,6 @@ class TensorStoreWriteBuffer:
         # in-memory write buffer has accepted the data.
         self._store.vindex[idx].write(cast_values).result()
         self._n_staged_writes += int(voxel_indices.shape[0])
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] write_buffer.stage n={voxel_indices.shape[0]} "
-                f"running_total={self._n_staged_writes}"
-            )
 
     def read_staged(self, voxel_indices: np.ndarray) -> np.ndarray:
         if self._store is None:
@@ -181,11 +168,6 @@ class TensorStoreWriteBuffer:
     def commit(self) -> None:
         if self._txn is None:
             return
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] write_buffer.commit "
-                f"staged_voxels={self._n_staged_writes}"
-            )
         self._txn.commit_sync()
         self._txn = None
         self._store = None
@@ -193,11 +175,6 @@ class TensorStoreWriteBuffer:
     def abort(self) -> None:
         if self._txn is None:
             return
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] write_buffer.abort "
-                f"staged_voxels={self._n_staged_writes}"
-            )
         self._txn.abort()
         self._txn = None
         self._store = None

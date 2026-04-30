@@ -169,39 +169,24 @@ def main() -> None:
         brush_radius_voxels=float(brush_radius_spin.value()),
     )
 
-    canvas_view = controller._render_manager._canvases[canvas_id]
-
-    def _enabled() -> bool:
-        return bool(canvas_view._controller.enabled)
-
     def _on_brush_value_changed(value: float) -> None:
-        print(f"[PAINT-DBG demo] brush_value before={_enabled()}")
         paint_ctrl.brush_value = float(value)
-        print(f"[PAINT-DBG demo] brush_value after={_enabled()}")
 
     def _on_brush_radius_changed(value: int) -> None:
-        print(f"[PAINT-DBG demo] brush_radius before={_enabled()}")
         paint_ctrl.brush_radius_voxels = float(value)
-        print(f"[PAINT-DBG demo] brush_radius after={_enabled()}")
 
     def _on_undo_clicked() -> None:
-        print(f"[PAINT-DBG demo] undo before={_enabled()}")
         paint_ctrl.undo()
-        print(f"[PAINT-DBG demo] undo after={_enabled()}")
 
     def _on_commit_clicked() -> None:
-        print(f"[PAINT-DBG demo] commit before={_enabled()}")
         paint_ctrl.commit()
-        print(f"[PAINT-DBG demo] commit after={_enabled()}")
         QMessageBox.information(root, "Commit", "Stroke history cleared.")
         commit_btn.setEnabled(False)
         abort_btn.setEnabled(False)
         undo_btn.setEnabled(False)
 
     def _on_abort_clicked() -> None:
-        print(f"[PAINT-DBG demo] abort before={_enabled()}")
         paint_ctrl.abort()
-        print(f"[PAINT-DBG demo] abort after={_enabled()}")
         QMessageBox.information(root, "Abort", "All strokes reverted.")
         commit_btn.setEnabled(False)
         abort_btn.setEnabled(False)

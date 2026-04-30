@@ -35,7 +35,6 @@ displayed-axis configurations; 3-D paint feedback raises
 
 from __future__ import annotations
 
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -52,8 +51,6 @@ if TYPE_CHECKING:
 
     from cellier.v2.controller import CellierController
     from cellier.v2.paint._history import PaintStrokeCommand
-
-_PAINT_DEBUG = True
 
 
 class MultiscalePaintController(AbstractPaintController):
@@ -158,21 +155,6 @@ class MultiscalePaintController(AbstractPaintController):
             self._autosave_timer.setInterval(int(autosave_interval_s * 1000))
             self._autosave_timer.timeout.connect(self._do_autosave)
             self._autosave_timer.start()
-            if _PAINT_DEBUG:
-                print(
-                    f"[PAINT-DBG paint] autosave timer started "
-                    f"interval={autosave_interval_s}s"
-                )
-
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] MultiscalePaintController init "
-                f"visual={visual_id} canvas={canvas_id} "
-                f"data_shape={self._data_shape} "
-                f"block_size={self._write_layer.block_size} "
-                f"displayed_axes={self._displayed_axes} "
-                f"downsample_mode={downsample_mode}"
-            )
 
     # ------------------------------------------------------------------
     # AbstractPaintController hooks
@@ -194,13 +176,6 @@ class MultiscalePaintController(AbstractPaintController):
             float(world_coord[ax_col]),
             float(world_coord[ax_row]),
         )
-        if _PAINT_DEBUG:
-            print(
-                "[PAINT-DBG paint] _apply_brush swap "
-                f"world_in={np.round(world_coord, 2).tolist()} "
-                f"swapped={np.round(swapped, 2).tolist()} "
-                f"displayed_axes={self._displayed_axes}"
-            )
         super()._apply_brush(swapped)
 
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
@@ -208,11 +183,6 @@ class MultiscalePaintController(AbstractPaintController):
         if voxel_indices.shape[0] == 0:
             return np.zeros((0,), dtype=np.float32)
         old_values = self._write_buffer.read_staged(voxel_indices)
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _read_old_values n={voxel_indices.shape[0]} "
-                f"sample={old_values[:5].tolist()}"
-            )
         return old_values
 
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
@@ -225,17 +195,9 @@ class MultiscalePaintController(AbstractPaintController):
         for key in new_dirty:
             self._write_layer.mark_dirty(key)
 
-        n_patched = self._controller.patch_painted_tiles_2d(
+        self._controller.patch_painted_tiles_2d(
             self._visual_id, voxel_indices, values, self._displayed_axes
         )
-
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _write_values n={voxel_indices.shape[0]} "
-                f"new_dirty_bricks={len(new_dirty)} "
-                f"dirty_total={len(self._write_layer.dirty_keys())} "
-                f"tiles_patched={n_patched}"
-            )
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:
         """No background work — visible feedback already happened in _write_values."""
@@ -249,16 +211,8 @@ class MultiscalePaintController(AbstractPaintController):
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
 
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] commit() begin "
-                f"dirty_bricks={len(self._write_layer.dirty_keys())} "
-                f"history_depth={len(self._history._undo_stack)} "
-                f"autosave_count={self._autosave_count}"
-            )
-
         # 1. Rebuild coarser LOD levels within the open transaction.
-        rebuild_stats = self._rebuild_pyramid(self._write_buffer.transaction)
+        self._rebuild_pyramid(self._write_buffer.transaction)
 
         # 2. Flush level-0 + all rebuilt levels atomically.
         self._write_buffer.commit()
@@ -273,21 +227,10 @@ class MultiscalePaintController(AbstractPaintController):
         self._history._redo_stack.clear()
         self._controller.reslice_visual(self._visual_id)
 
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] commit() complete " f"pyramid_stats={rebuild_stats}"
-            )
-
         self._teardown()
 
     def abort(self) -> None:
         """Discard staged paint and clear the GPU paint textures."""
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] abort() begin "
-                f"dirty_bricks={len(self._write_layer.dirty_keys())} "
-                f"history_depth={len(self._history._undo_stack)}"
-            )
         # 1. Discard staged writes (disk untouched).
         self._write_buffer.abort()
 
@@ -306,8 +249,6 @@ class MultiscalePaintController(AbstractPaintController):
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
             self._autosave_timer = None
-            if _PAINT_DEBUG:
-                print("[PAINT-DBG paint] autosave timer stopped")
         super()._teardown()
 
     # ------------------------------------------------------------------
@@ -323,21 +264,10 @@ class MultiscalePaintController(AbstractPaintController):
         """
         dirty_count = len(self._write_layer.dirty_keys())
         if dirty_count == 0:
-            if _PAINT_DEBUG:
-                print("[PAINT-DBG paint] _do_autosave() — no dirty bricks, skipping")
             return
 
-        t0 = time.perf_counter()
-
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _do_autosave() begin "
-                f"dirty_bricks={dirty_count} "
-                f"autosave_count_before={self._autosave_count}"
-            )
-
         # 1. Rebuild coarser LOD levels within the open transaction.
-        rebuild_stats = self._rebuild_pyramid(self._write_buffer.transaction)
+        self._rebuild_pyramid(self._write_buffer.transaction)
 
         # 2. Flush level-0 + rebuilt levels atomically.
         self._write_buffer.commit()
@@ -355,15 +285,6 @@ class MultiscalePaintController(AbstractPaintController):
 
         self._autosave_count += 1
         self._last_autosave_time = datetime.now()
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _do_autosave() complete "
-                f"autosave_count={self._autosave_count} "
-                f"pyramid_stats={rebuild_stats} "
-                f"elapsed={elapsed_ms:.1f}ms"
-            )
 
     # ------------------------------------------------------------------
     # Autosave state accessors
@@ -407,8 +328,6 @@ class MultiscalePaintController(AbstractPaintController):
 
         n_levels = self._data_store.n_levels
         if n_levels < 2:
-            if _PAINT_DEBUG:
-                print("[PAINT-DBG pyramid] n_levels=1 — nothing to rebuild")
             return {}
 
         level_shapes = self._data_store.level_shapes
@@ -421,15 +340,6 @@ class MultiscalePaintController(AbstractPaintController):
         dirty_by_level: dict[int, set[tuple[int, ...]]] = {
             0: {key.grid_coords for key in self._write_layer.dirty_keys()}
         }
-
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG pyramid] rebuild start "
-                f"n_levels={n_levels} "
-                f"dirty_bricks_level0={len(dirty_by_level[0])}"
-            )
-
-        t0 = time.perf_counter()
 
         for k in range(1, n_levels):
             stride_y = max(
@@ -472,14 +382,6 @@ class MultiscalePaintController(AbstractPaintController):
 
             shape_km1 = level_shapes[k - 1]
             shape_k = level_shapes[k]
-
-            if _PAINT_DEBUG:
-                print(
-                    f"[PAINT-DBG pyramid] level {k}: "
-                    f"stride=({stride_y},{stride_x}) "
-                    f"n_bricks={len(dirty_k)} "
-                    f"shape_src={shape_km1} shape_dst={shape_k}"
-                )
 
             n_rebuilt = 0
             for gc in dirty_k:
@@ -547,15 +449,7 @@ class MultiscalePaintController(AbstractPaintController):
                 n_rebuilt += 1
 
             stats[k] = n_rebuilt
-            if _PAINT_DEBUG:
-                print(f"[PAINT-DBG pyramid] level {k}: rebuilt {n_rebuilt} bricks")
 
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG pyramid] rebuild complete "
-                f"stats={stats} elapsed={elapsed_ms:.1f}ms"
-            )
         return stats
 
     # ------------------------------------------------------------------

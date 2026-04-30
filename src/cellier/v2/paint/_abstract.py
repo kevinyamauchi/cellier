@@ -22,8 +22,6 @@ from cellier.v2.paint._history import (
 if TYPE_CHECKING:
     from cellier.v2.controller import CellierController
 
-_PAINT_DEBUG = True
-
 
 class AbstractPaintController(ABC):
     """Minimal shared base for paint controllers.
@@ -133,12 +131,6 @@ class AbstractPaintController(ABC):
     # ------------------------------------------------------------------
 
     def _on_mouse_press(self, event: CanvasMousePress2DEvent) -> None:
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _on_mouse_press "
-                f"hit={event.pick_info.hit_visual_id} target={self._visual_id} "
-                f"match={event.pick_info.hit_visual_id == self._visual_id}"
-            )
         if event.pick_info.hit_visual_id != self._visual_id:
             return
         self._active_stroke = ActiveStroke(
@@ -153,26 +145,11 @@ class AbstractPaintController(ABC):
         self._apply_brush(event.world_coordinate)
 
     def _on_mouse_release(self, event: CanvasMouseRelease2DEvent) -> None:
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _on_mouse_release "
-                f"active_stroke={self._active_stroke is not None}"
-            )
         if self._active_stroke is None:
             return
         self._apply_brush(event.world_coordinate)
         command = self._active_stroke.finalise()
         self._active_stroke = None
-        if _PAINT_DEBUG:
-            n_total = command.voxel_indices.shape[0]
-            n_unique = (
-                np.unique(command.voxel_indices, axis=0).shape[0] if n_total else 0
-            )
-            print(
-                f"[PAINT-DBG paint] stroke finalised "
-                f"n_voxels={n_total} n_unique={n_unique} "
-                f"duplicates={n_total - n_unique}"
-            )
         self._history.push(command)
         self._on_stroke_completed(command)
 
@@ -189,15 +166,6 @@ class AbstractPaintController(ABC):
         )[0]
         voxel_center = np.round(voxel_coord).astype(np.int64)
         voxel_indices = self._voxels_in_radius(voxel_center, self._brush_radius)
-        if _PAINT_DEBUG:
-            print(
-                f"[PAINT-DBG paint] _apply_brush "
-                f"world={np.round(world_coord, 2).tolist()} "
-                f"transform.ndim={visual_model.transform.ndim} "
-                f"voxel_coord={np.round(voxel_coord, 2).tolist()} "
-                f"voxel_center={voxel_center.tolist()} "
-                f"n_voxels={voxel_indices.shape[0]}"
-            )
         if voxel_indices.shape[0] == 0:
             return
         old_values = self._read_old_values(voxel_indices)
@@ -240,29 +208,14 @@ class AbstractPaintController(ABC):
         """Undo the most recent stroke."""
         command = self._history.undo()
         if command is None:
-            if _PAINT_DEBUG:
-                print("[PAINT-DBG paint] undo() — history empty")
             return
-        if _PAINT_DEBUG:
-            n = command.voxel_indices.shape[0]
-            n_unique = np.unique(command.voxel_indices, axis=0).shape[0] if n else 0
-            print(
-                f"[PAINT-DBG paint] undo() reverting "
-                f"n_voxels={n} n_unique={n_unique} "
-                f"old_values_sample={command.old_values[:5].tolist()}"
-            )
         self._write_values(command.voxel_indices, command.old_values)
 
     def redo(self) -> None:
         """Redo the most recently undone stroke."""
         command = self._history.redo()
         if command is None:
-            if _PAINT_DEBUG:
-                print("[PAINT-DBG paint] redo() — redo stack empty")
             return
-        if _PAINT_DEBUG:
-            n = command.voxel_indices.shape[0]
-            print(f"[PAINT-DBG paint] redo() reapplying n_voxels={n}")
         self._write_values(command.voxel_indices, command.new_values)
 
     # ------------------------------------------------------------------

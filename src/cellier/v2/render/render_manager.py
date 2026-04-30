@@ -39,9 +39,6 @@ if TYPE_CHECKING:
     )
 
 
-_PAINT_DEBUG = True
-
-
 class RenderManager:
     """Single top-level render-layer object.
 

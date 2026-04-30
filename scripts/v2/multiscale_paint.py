@@ -275,10 +275,6 @@ def main() -> None:
         paint_ctrl.undo()
 
     def _on_commit_clicked() -> None:
-        print(
-            f"[PAINT-DBG demo] commit clicked "
-            f"dirty_bricks={len(paint_ctrl._write_layer.dirty_keys())}"
-        )
         paint_ctrl.commit()
         status_timer.stop()
         QMessageBox.information(
@@ -294,10 +290,6 @@ def main() -> None:
         undo_btn.setEnabled(False)
 
     def _on_abort_clicked() -> None:
-        print(
-            f"[PAINT-DBG demo] abort clicked "
-            f"dirty_bricks={len(paint_ctrl._write_layer.dirty_keys())}"
-        )
         paint_ctrl.abort()
         status_timer.stop()
         QMessageBox.information(
@@ -309,18 +301,10 @@ def main() -> None:
 
     # ── 6. 5-second status timer ─────────────────────────────────────────
     def _print_status() -> None:
-        dirty = len(paint_ctrl._write_layer.dirty_keys())
-        staged = paint_ctrl._write_buffer._n_staged_writes
         last_save = (
             paint_ctrl.last_autosave_time.strftime("%H:%M:%S")
             if paint_ctrl.last_autosave_time
             else "never"
-        )
-        print(
-            f"[PAINT-DBG demo] status: dirty_bricks={dirty} "
-            f"staged_voxels={staged} "
-            f"autosaves={paint_ctrl.autosave_count} "
-            f"last_autosave={last_save}"
         )
         if paint_ctrl.last_autosave_time:
             autosave_label.setText(f"{last_save} ({paint_ctrl.autosave_count} saves)")
