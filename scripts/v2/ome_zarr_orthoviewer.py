@@ -1400,7 +1400,6 @@ def _build_viewer_model(
         block_size=32,
         gpu_budget_bytes=512 * 1024**2,
         gpu_budget_bytes_2d=64 * 1024**2,
-        use_brick_shader=True,
     )
 
     def _make_2d_visual(name: str) -> MultiscaleImageVisual:
@@ -1488,7 +1487,6 @@ def _build_viewer_model(
             block_size=32,
             gpu_budget_bytes=2048 * 1024**2,
             gpu_budget_bytes_2d=64 * 1024**2,
-            use_brick_shader=True,
         ),
         transform=voxel_to_world,
     )

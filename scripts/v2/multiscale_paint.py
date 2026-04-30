@@ -170,7 +170,6 @@ def main() -> None:
         block_size=_DEMO_BLOCK_SIZE,
         gpu_budget_bytes_2d=64 * 1024**2,
         interpolation="nearest",
-        use_brick_shader=False,
     )
     image_visual_model = MultiscaleImageVisual(
         name="labels",

@@ -65,9 +65,6 @@ class MultiscaleImageRenderConfig(EventedModel):
         Maximum GPU memory for the 2-D tile cache. Default 64 MiB.
     interpolation : Literal["linear", "nearest"]
         Sampler filter for the block shader. Default ``"linear"``.
-    use_brick_shader : bool
-        When True, use the Kiln-style MultiscaleVolumeBrickShader for 3-D
-        rendering instead of the default VolumeBlockShader. Default False.
     paint_max_tiles : int
         Maximum number of finest-level tiles that can be simultaneously
         painted on during one paint session.  Each slot consumes
@@ -81,7 +78,6 @@ class MultiscaleImageRenderConfig(EventedModel):
     gpu_budget_bytes: int = 1 * 1024**3
     gpu_budget_bytes_2d: int = 64 * 1024**2
     interpolation: Literal["linear", "nearest"] = "linear"
-    use_brick_shader: bool = False
     paint_max_tiles: int = 512
 
 

@@ -486,7 +486,6 @@ def _build_viewer_model(
         block_size=32,
         gpu_budget_bytes=256 * 1024**2,
         gpu_budget_bytes_2d=64 * 1024**2,
-        use_brick_shader=True,
     )
 
     vol_image_appearance = ImageAppearance(
@@ -502,7 +501,6 @@ def _build_viewer_model(
         block_size=32,
         gpu_budget_bytes=512 * 1024**2,
         gpu_budget_bytes_2d=64 * 1024**2,
-        use_brick_shader=True,
     )
 
     # ── Points appearance ─────────────────────────────────────────────────

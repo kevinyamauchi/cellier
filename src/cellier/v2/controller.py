@@ -2471,6 +2471,11 @@ class CellierController:
         axis_labels = dims.coordinate_system.axis_labels
         n_dims = len(axis_labels)
 
+        if len(displayed_axes) != 2:
+            # 3D scenes have no unambiguous world coordinate from a 2D pointer
+            # position without raycasting. Skip emitting the event.
+            return
+
         world_coord = np.empty(n_dims, dtype=np.float64)
         # Embed pygfx position_2d into world_coord verbatim:
         #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
