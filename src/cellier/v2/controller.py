@@ -31,9 +31,12 @@ from cellier.v2.events import (
     VisualVisibilityChangedEvent,
 )
 from cellier.v2.events._events import (
-    CanvasMouseMoveEvent,
-    CanvasMousePressEvent,
-    CanvasMouseReleaseEvent,
+    CanvasMouseMove2DEvent,
+    CanvasMouseMove3DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMousePress3DEvent,
+    CanvasMouseRelease2DEvent,
+    CanvasMouseRelease3DEvent,
     _CanvasRawPointerEvent,
 )
 from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
@@ -2471,65 +2474,76 @@ class CellierController:
         axis_labels = dims.coordinate_system.axis_labels
         n_dims = len(axis_labels)
 
-        if len(displayed_axes) != 2:
-            # 3D scenes have no unambiguous world coordinate from a 2D pointer
-            # position without raycasting. Skip emitting the event.
-            return
-
-        world_coord = np.empty(n_dims, dtype=np.float64)
-        # Embed pygfx position_2d into world_coord verbatim:
-        #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
-        #   world_coord[displayed_axes[1]] = position_2d[1]  (pygfx-y)
-        # Both image visuals render data[r, c] at pygfx (x=c, y=r), so
-        # world_coord[ax_row] == pygfx_x (column) and
-        # world_coord[ax_col] == pygfx_y (row) after this assignment.
-        # Paint controllers swap ax_row ↔ ax_col to recover (row, col)
-        # voxel order before calling imap_coordinates.
-        for i, axis in enumerate(displayed_axes):
-            world_coord[axis] = event.position_2d[i]
-        for axis, idx in slice_indices.items():
-            world_coord[axis] = float(idx)
-
-        if _PAINT_DEBUG and event.action in ("press", "release"):
-            print(
-                f"[PAINT-DBG ctrl] action={event.action} "
-                f"axis_labels={axis_labels} displayed_axes={displayed_axes} "
-                f"position_2d=({event.position_2d[0]:.2f},{event.position_2d[1]:.2f}) "
-                f"world_coord={np.round(world_coord, 2).tolist()} "
-                f"hit={event.hit_visual_id}"
-            )
-
         pick_info = CanvasPickInfo(hit_visual_id=event.hit_visual_id)
-        _CLS = {
-            "press": CanvasMousePressEvent,
-            "move": CanvasMouseMoveEvent,
-            "release": CanvasMouseReleaseEvent,
-        }
-        self._event_bus.emit(
-            _CLS[event.action](
-                source_id=event.canvas_id,
-                scene_id=event.scene_id,
-                world_coordinate=world_coord,
-                pick_info=pick_info,
-            )
-        )
 
-    def on_mouse_press(
+        if event.camera_type == "2d":
+            world_coord = np.empty(n_dims, dtype=np.float64)
+            # Embed pygfx position_2d into world_coord verbatim:
+            #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
+            #   world_coord[displayed_axes[1]] = position_2d[1]  (pygfx-y)
+            # Both image visuals render data[r, c] at pygfx (x=c, y=r), so
+            # world_coord[ax_row] == pygfx_x (column) and
+            # world_coord[ax_col] == pygfx_y (row) after this assignment.
+            # Paint controllers swap ax_row ↔ ax_col to recover (row, col)
+            # voxel order before calling imap_coordinates.
+            for i, axis in enumerate(displayed_axes):
+                world_coord[axis] = event.position_2d[i]  # type: ignore[index]
+            for axis, idx in slice_indices.items():
+                world_coord[axis] = float(idx)
+
+            _CLS_2D = {
+                "press": CanvasMousePress2DEvent,
+                "move": CanvasMouseMove2DEvent,
+                "release": CanvasMouseRelease2DEvent,
+            }
+            self._event_bus.emit(
+                _CLS_2D[event.action](
+                    source_id=event.canvas_id,
+                    scene_id=event.scene_id,
+                    world_coordinate=world_coord,
+                    pick_info=pick_info,
+                )
+            )
+        else:
+            if _PAINT_DEBUG and event.action in ("press", "release"):
+                print(
+                    f"[PAINT-DBG ctrl] action={event.action} "
+                    f"axis_labels={axis_labels} displayed_axes={displayed_axes} "
+                    f"ray_origin={np.round(event.ray.origin, 2).tolist()} "  # type: ignore[union-attr]
+                    f"ray_dir={np.round(event.ray.direction, 3).tolist()} "  # type: ignore[union-attr]
+                    f"hit={event.hit_visual_id}"
+                )
+
+            _CLS_3D = {
+                "press": CanvasMousePress3DEvent,
+                "move": CanvasMouseMove3DEvent,
+                "release": CanvasMouseRelease3DEvent,
+            }
+            self._event_bus.emit(
+                _CLS_3D[event.action](
+                    source_id=event.canvas_id,
+                    scene_id=event.scene_id,
+                    ray=event.ray,
+                    pick_info=pick_info,
+                )
+            )
+
+    def on_mouse_press_2d(
         self,
         canvas_id: UUID,
-        callback: Callable[[CanvasMousePressEvent], None],
+        callback: Callable[[CanvasMousePress2DEvent], None],
         *,
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-down event for *canvas_id*.
+        """Register a callback fired on every pointer-down event on a 2D canvas.
 
         Parameters
         ----------
         canvas_id :
             The canvas to watch.
         callback :
-            Called with the CanvasMousePressEvent on each press.
+            Called with the CanvasMousePress2DEvent on each press.
         owner_id :
             UUID under which this subscription is registered for bulk
             removal via unsubscribe_all(owner_id).
@@ -2537,41 +2551,105 @@ class CellierController:
             If True, hold only a weak reference to *callback*.
         """
         return self._event_bus.subscribe(
-            CanvasMousePressEvent,
+            CanvasMousePress2DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
 
-    def on_mouse_move(
+    def on_mouse_move_2d(
         self,
         canvas_id: UUID,
-        callback: Callable[[CanvasMouseMoveEvent], None],
+        callback: Callable[[CanvasMouseMove2DEvent], None],
         *,
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-move event for *canvas_id*."""
+        """Register a callback fired on every pointer-move event on a 2D canvas."""
         return self._event_bus.subscribe(
-            CanvasMouseMoveEvent,
+            CanvasMouseMove2DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
 
-    def on_mouse_release(
+    def on_mouse_release_2d(
         self,
         canvas_id: UUID,
-        callback: Callable[[CanvasMouseReleaseEvent], None],
+        callback: Callable[[CanvasMouseRelease2DEvent], None],
         *,
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-up event for *canvas_id*."""
+        """Register a callback fired on every pointer-up event on a 2D canvas."""
         return self._event_bus.subscribe(
-            CanvasMouseReleaseEvent,
+            CanvasMouseRelease2DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_press_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMousePress3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-down event on a 3D canvas.
+
+        Parameters
+        ----------
+        canvas_id :
+            The canvas to watch.
+        callback :
+            Called with the CanvasMousePress3DEvent on each press.
+        owner_id :
+            UUID under which this subscription is registered for bulk
+            removal via unsubscribe_all(owner_id).
+        weak :
+            If True, hold only a weak reference to *callback*.
+        """
+        return self._event_bus.subscribe(
+            CanvasMousePress3DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_move_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseMove3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-move event on a 3D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseMove3DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_release_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseRelease3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-up event on a 3D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseRelease3DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,

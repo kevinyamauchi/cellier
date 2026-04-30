@@ -130,8 +130,25 @@ class CanvasPickInfo(NamedTuple):
     hit_visual_id: UUID | None
 
 
-class CanvasMousePressEvent(NamedTuple):
-    """Emitted when the primary pointer button is pressed on a canvas."""
+class ViewRay(NamedTuple):
+    """A view ray from the camera through a screen-space point.
+
+    Used by 3D canvas mouse events in place of a single world coordinate.
+
+    Attributes
+    ----------
+    origin : np.ndarray
+        Near-plane world position where the ray starts.  Shape (3,), float64.
+    direction : np.ndarray
+        Unit vector in world space giving the ray direction.  Shape (3,), float64.
+    """
+
+    origin: np.ndarray
+    direction: np.ndarray
+
+
+class CanvasMousePress2DEvent(NamedTuple):
+    """Emitted when the primary pointer button is pressed on a 2D canvas."""
 
     source_id: UUID
     scene_id: UUID
@@ -139,8 +156,8 @@ class CanvasMousePressEvent(NamedTuple):
     pick_info: CanvasPickInfo
 
 
-class CanvasMouseMoveEvent(NamedTuple):
-    """Emitted on every pointer-move event (button up or down)."""
+class CanvasMouseMove2DEvent(NamedTuple):
+    """Emitted on every pointer-move event on a 2D canvas (button up or down)."""
 
     source_id: UUID
     scene_id: UUID
@@ -148,12 +165,39 @@ class CanvasMouseMoveEvent(NamedTuple):
     pick_info: CanvasPickInfo
 
 
-class CanvasMouseReleaseEvent(NamedTuple):
-    """Emitted when the primary pointer button is released on a canvas."""
+class CanvasMouseRelease2DEvent(NamedTuple):
+    """Emitted when the primary pointer button is released on a 2D canvas."""
 
     source_id: UUID
     scene_id: UUID
     world_coordinate: np.ndarray
+    pick_info: CanvasPickInfo
+
+
+class CanvasMousePress3DEvent(NamedTuple):
+    """Emitted when the primary pointer button is pressed on a 3D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseMove3DEvent(NamedTuple):
+    """Emitted on every pointer-move event on a 3D canvas (button up or down)."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseRelease3DEvent(NamedTuple):
+    """Emitted when the primary pointer button is released on a 3D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
     pick_info: CanvasPickInfo
 
 
@@ -170,9 +214,16 @@ class _CanvasRawPointerEvent(NamedTuple):
         Filled by RenderManager from _canvas_to_scene.
     action : str
         One of ``"press"``, ``"move"``, ``"release"``.
-    position_2d : np.ndarray
-        2D world position for the displayed axes, already unprojected
-        through the active camera.  Shape (2,), float64.
+    camera_type : str
+        ``"2d"`` or ``"3d"``.  Determines which of ``position_2d`` / ``ray``
+        is populated.
+    position_2d : np.ndarray or None
+        2D world position for the displayed axes, already unprojected through
+        the active orthographic camera.  Shape (2,), float64.
+        Set iff ``camera_type == "2d"``.
+    ray : ViewRay or None
+        View ray unprojected through the active perspective camera.
+        Set iff ``camera_type == "3d"``.
     hit_visual_id : UUID or None
         Visual ID translated from the pick-buffer world object via
         SceneManager.get_visual_id_for_node.  None on background hits.
@@ -185,7 +236,9 @@ class _CanvasRawPointerEvent(NamedTuple):
     canvas_id: UUID
     scene_id: UUID
     action: str
-    position_2d: np.ndarray
+    camera_type: str
+    position_2d: np.ndarray | None
+    ray: ViewRay | None
     hit_visual_id: UUID | None
     button: int
     modifiers: tuple
@@ -208,7 +261,10 @@ CellierEventTypes = (
     | TransformChangedEvent
     | SceneAddedEvent
     | SceneRemovedEvent
-    | CanvasMousePressEvent
-    | CanvasMouseMoveEvent
-    | CanvasMouseReleaseEvent
+    | CanvasMousePress2DEvent
+    | CanvasMouseMove2DEvent
+    | CanvasMouseRelease2DEvent
+    | CanvasMousePress3DEvent
+    | CanvasMouseMove3DEvent
+    | CanvasMouseRelease3DEvent
 )

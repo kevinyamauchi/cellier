@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 import numpy as np
 
 from cellier.v2.events._events import (
-    CanvasMouseMoveEvent,
-    CanvasMousePressEvent,
-    CanvasMouseReleaseEvent,
+    CanvasMouseMove2DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMouseRelease2DEvent,
 )
 from cellier.v2.paint._history import (
     ActiveStroke,
@@ -84,19 +84,19 @@ class AbstractPaintController(ABC):
 
         bus = cellier_controller._event_bus
         bus.subscribe(
-            CanvasMousePressEvent,
+            CanvasMousePress2DEvent,
             self._on_mouse_press,
             entity_id=canvas_id,
             owner_id=self._id,
         )
         bus.subscribe(
-            CanvasMouseMoveEvent,
+            CanvasMouseMove2DEvent,
             self._on_mouse_move,
             entity_id=canvas_id,
             owner_id=self._id,
         )
         bus.subscribe(
-            CanvasMouseReleaseEvent,
+            CanvasMouseRelease2DEvent,
             self._on_mouse_release,
             entity_id=canvas_id,
             owner_id=self._id,
@@ -132,7 +132,7 @@ class AbstractPaintController(ABC):
     # Mouse event handlers (shared)
     # ------------------------------------------------------------------
 
-    def _on_mouse_press(self, event: CanvasMousePressEvent) -> None:
+    def _on_mouse_press(self, event: CanvasMousePress2DEvent) -> None:
         if _PAINT_DEBUG:
             print(
                 f"[PAINT-DBG paint] _on_mouse_press "
@@ -147,12 +147,12 @@ class AbstractPaintController(ABC):
         )
         self._apply_brush(event.world_coordinate)
 
-    def _on_mouse_move(self, event: CanvasMouseMoveEvent) -> None:
+    def _on_mouse_move(self, event: CanvasMouseMove2DEvent) -> None:
         if self._active_stroke is None:
             return
         self._apply_brush(event.world_coordinate)
 
-    def _on_mouse_release(self, event: CanvasMouseReleaseEvent) -> None:
+    def _on_mouse_release(self, event: CanvasMouseRelease2DEvent) -> None:
         if _PAINT_DEBUG:
             print(
                 f"[PAINT-DBG paint] _on_mouse_release "

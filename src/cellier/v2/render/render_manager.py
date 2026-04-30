@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from cellier.v2.events import DimsChangedEvent, EventBus
-from cellier.v2.events._events import _CanvasRawPointerEvent
+from cellier.v2.events._events import ViewRay, _CanvasRawPointerEvent
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
@@ -262,64 +262,87 @@ class RenderManager:
         ndc_y = -(event.y / h * 2.0 - 1.0)
 
         cam = canvas_view._camera
-        # OrthographicCamera with maintain_aspect=True stretches one axis to
-        # match the canvas aspect; cam.width / cam.height alone are the
-        # *minimum* visible extent.  Mirror the logic in
-        # CanvasView._capture_orthographic to recover the true visible extent
-        # before unprojecting NDC coordinates.
-        vw = float(w) if w > 0 else 800.0
-        vh = float(h) if h > 0 else 600.0
-        canvas_aspect = vw / vh
-        cam_w = float(cam.width) if cam.width > 0 else 1.0
-        cam_h = float(cam.height) if cam.height > 0 else 1.0
-        cam_aspect = cam_w / cam_h
-        if canvas_aspect >= cam_aspect:
-            world_height = cam_h
-            world_width = cam_h * canvas_aspect
-        else:
-            world_width = cam_w
-            world_height = cam_w / canvas_aspect
-
-        position_2d = np.array(
-            [
-                cam.local.position[0] + ndc_x * (world_width / 2.0),
-                cam.local.position[1] + ndc_y * (world_height / 2.0),
-            ],
-            dtype=np.float64,
-        )
-
         hit_object = event.pick_info.get("world_object")
         hit_visual_id: UUID | None = None
         if hit_object is not None:
             hit_visual_id = self._scenes[scene_id].get_visual_id_for_node(hit_object)
-
-        if _PAINT_DEBUG and event.type in ("pointer_down", "pointer_up"):
-            print(
-                f"[PAINT-DBG render] type={event.type} px=({event.x:.1f},{event.y:.1f})"
-                f"size=({w:.1f},{h:.1f}) ndc=({ndc_x:.3f},{ndc_y:.3f}) "
-                f"cam_pos=({float(cam.local.position[0]):.2f},"
-                f"{float(cam.local.position[1]):.2f}) "
-                f"cam_extent=({cam.width:.2f},{cam.height:.2f}) "
-                f"position_2d=({position_2d[0]:.2f},{position_2d[1]:.2f}) "
-                f"hit={hit_visual_id}"
-            )
 
         _ACTION = {
             "pointer_down": "press",
             "pointer_up": "release",
             "pointer_move": "move",
         }
-        self._event_bus.emit(
-            _CanvasRawPointerEvent(
-                canvas_id=canvas_id,
-                scene_id=scene_id,
-                action=_ACTION[event.type],
-                position_2d=position_2d,
-                hit_visual_id=hit_visual_id,
-                button=event.button,
-                modifiers=tuple(event.modifiers),
+
+        if canvas_view._dim == "2d":
+            # OrthographicCamera with maintain_aspect=True stretches one axis
+            # to match the canvas aspect; cam.width / cam.height alone are the
+            # *minimum* visible extent.  Mirror the logic in
+            # CanvasView._capture_orthographic to recover the true visible
+            # extent before unprojecting NDC coordinates.
+            vw = float(w) if w > 0 else 800.0
+            vh = float(h) if h > 0 else 600.0
+            canvas_aspect = vw / vh
+            cam_w = float(cam.width) if cam.width > 0 else 1.0
+            cam_h = float(cam.height) if cam.height > 0 else 1.0
+            cam_aspect = cam_w / cam_h
+            if canvas_aspect >= cam_aspect:
+                world_height = cam_h
+                world_width = cam_h * canvas_aspect
+            else:
+                world_width = cam_w
+                world_height = cam_w / canvas_aspect
+
+            position_2d = np.array(
+                [
+                    cam.local.position[0] + ndc_x * (world_width / 2.0),
+                    cam.local.position[1] + ndc_y * (world_height / 2.0),
+                ],
+                dtype=np.float64,
             )
-        )
+
+            self._event_bus.emit(
+                _CanvasRawPointerEvent(
+                    canvas_id=canvas_id,
+                    scene_id=scene_id,
+                    action=_ACTION[event.type],
+                    camera_type="2d",
+                    position_2d=position_2d,
+                    ray=None,
+                    hit_visual_id=hit_visual_id,
+                    button=event.button,
+                    modifiers=tuple(event.modifiers),
+                )
+            )
+        else:
+            # Perspective camera: bilinearly interpolate the near-plane frustum
+            # corners at (ndc_x, ndc_y) to get the ray origin, then compute the
+            # unit direction from the camera world position through that point.
+            # pygfx frustum[0] = near plane corners: [left-bottom, right-bottom,
+            # right-top, left-top] in world space.
+            near_corners = np.asarray(cam.frustum[0], dtype=np.float64)
+            tx = (ndc_x + 1.0) / 2.0  # 0 = left, 1 = right
+            ty = (ndc_y + 1.0) / 2.0  # 0 = bottom, 1 = top
+            bottom = near_corners[0] + tx * (near_corners[1] - near_corners[0])
+            top = near_corners[3] + tx * (near_corners[2] - near_corners[3])
+            origin = bottom + ty * (top - bottom)
+            cam_pos = np.array(cam.world.position, dtype=np.float64)
+            d = origin - cam_pos
+            direction = d / np.linalg.norm(d)
+            ray = ViewRay(origin=origin, direction=direction)
+
+            self._event_bus.emit(
+                _CanvasRawPointerEvent(
+                    canvas_id=canvas_id,
+                    scene_id=scene_id,
+                    action=_ACTION[event.type],
+                    camera_type="3d",
+                    position_2d=None,
+                    ray=ray,
+                    hit_visual_id=hit_visual_id,
+                    button=event.button,
+                    modifiers=tuple(event.modifiers),
+                )
+            )
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.

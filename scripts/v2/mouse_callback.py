@@ -29,9 +29,9 @@ from cellier.v2.controller import CellierController
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.events._events import (
-    CanvasMouseMoveEvent,
-    CanvasMousePressEvent,
-    CanvasMouseReleaseEvent,
+    CanvasMouseMove2DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMouseRelease2DEvent,
 )
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.visuals._image_memory import ImageMemoryAppearance
@@ -134,26 +134,26 @@ def main() -> None:
             return "points"
         return f"unknown ({hit_visual_id})"
 
-    def on_press(event: CanvasMousePressEvent) -> None:
+    def on_press(event: CanvasMousePress2DEvent) -> None:
         name = _hit_name(event.pick_info.hit_visual_id)
         msg = f"PRESS  world={np.round(event.world_coordinate, 2)}  hit={name}"
         print(msg)
         status_label.setText(msg)
 
-    def on_move(event: CanvasMouseMoveEvent) -> None:
+    def on_move(event: CanvasMouseMove2DEvent) -> None:
         name = _hit_name(event.pick_info.hit_visual_id)
         msg = f"MOVE   world={np.round(event.world_coordinate, 2)}  hit={name}"
         status_label.setText(msg)
 
-    def on_release(event: CanvasMouseReleaseEvent) -> None:
+    def on_release(event: CanvasMouseRelease2DEvent) -> None:
         name = _hit_name(event.pick_info.hit_visual_id)
         msg = f"RELEASE world={np.round(event.world_coordinate, 2)}  hit={name}"
         print(msg)
         status_label.setText(msg)
 
-    controller.on_mouse_press(canvas_id, on_press, owner_id=owner_id)
-    controller.on_mouse_move(canvas_id, on_move, owner_id=owner_id)
-    controller.on_mouse_release(canvas_id, on_release, owner_id=owner_id)
+    controller.on_mouse_press_2d(canvas_id, on_press, owner_id=owner_id)
+    controller.on_mouse_move_2d(canvas_id, on_move, owner_id=owner_id)
+    controller.on_mouse_release_2d(canvas_id, on_release, owner_id=owner_id)
 
     root.show()
     QtAsyncio.run(handle_sigint=True)
