@@ -71,7 +71,6 @@ def test_multiscale_render_config_roundtrip():
     render_config = MultiscaleImageRenderConfig(
         block_size=64,
         gpu_budget_bytes=512 * 1024**2,
-        use_brick_shader=True,
         interpolation="nearest",
     )
     appearance = ImageAppearance(color_map=Colormap("viridis"), clim=(0.0, 1.0))
@@ -84,5 +83,4 @@ def test_multiscale_render_config_roundtrip():
     )
     reloaded = MultiscaleImageVisual.model_validate_json(visual.model_dump_json())
     assert reloaded.render_config.block_size == 64
-    assert reloaded.render_config.use_brick_shader is True
     assert reloaded.render_config.interpolation == "nearest"

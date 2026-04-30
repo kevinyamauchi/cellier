@@ -627,8 +627,8 @@ class GFXImageMemoryVisual:
 
         _request, data = batch[0]
 
-        # pygfx Image expects (W, H, 1) -- transpose H<->W and add channel dim.
-        data_wgpu = np.ascontiguousarray(data.T[:, :, np.newaxis])
+        # pygfx Image expects (H, W, 1) -- add channel dim, no transpose.
+        data_wgpu = np.ascontiguousarray(data[:, :, np.newaxis])
         tex = gfx.Texture(data_wgpu, dim=2, format="1xf4")
         self._inner_node_2d.geometry = gfx.Geometry(grid=tex)
 

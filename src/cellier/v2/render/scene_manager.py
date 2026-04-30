@@ -170,6 +170,28 @@ class SceneManager:
             self._scene.remove(active_node)
         self._visuals.pop(visual_id)
 
+    def get_visual_id_for_node(self, node: gfx.WorldObject) -> UUID | None:
+        """Return the visual_id whose active scene-graph node is *node*.
+
+        The pick buffer returns leaf nodes (e.g. ``gfx.Image`` inside a
+        ``gfx.Group``), while ``_active_nodes`` stores the top-level group.
+        This method walks up the parent chain of *node* until it finds a
+        registered active node, then returns its visual_id.  Returns None
+        if no ancestor belongs to any registered visual.
+
+        Parameters
+        ----------
+        node : gfx.WorldObject
+            The pygfx object returned by the pick buffer.
+        """
+        candidate = node
+        while candidate is not None:
+            for visual_id, active_node in self._active_nodes.items():
+                if active_node is candidate:
+                    return visual_id
+            candidate = candidate.parent
+        return None
+
     def get_visual(self, visual_id: UUID) -> _GFXVisual:
         """Return the registered visual for ``visual_id``.
 

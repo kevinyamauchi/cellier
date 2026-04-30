@@ -30,6 +30,15 @@ from cellier.v2.events import (
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.v2.events._events import (
+    CanvasMouseMove2DEvent,
+    CanvasMouseMove3DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMousePress3DEvent,
+    CanvasMouseRelease2DEvent,
+    CanvasMouseRelease3DEvent,
+    _CanvasRawPointerEvent,
+)
 from cellier.v2.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.render_manager import RenderManager
@@ -156,6 +165,12 @@ class CellierController:
         self._event_bus.subscribe(
             DimsChangedEvent,
             self._on_dims_changed_bus,
+            owner_id=self._id,
+        )
+        # Subscribe to internal raw pointer events emitted by RenderManager.
+        self._event_bus.subscribe(
+            _CanvasRawPointerEvent,
+            self._on_raw_pointer_event,
             owner_id=self._id,
         )
         # Incoming bus: GUI update events dispatched to update_* methods.
@@ -2108,6 +2123,118 @@ class CellierController:
         """Not implemented in Phase 1."""
         raise NotImplementedError("add_labels is not implemented in Phase 1.")
 
+    def add_paint_controller(
+        self,
+        visual_id: UUID,
+        canvas_id: UUID,
+        brush_value: float = 1.0,
+        brush_radius_voxels: float = 2.0,
+        history_depth: int = 100,
+        autosave_interval_s: float | None = None,
+        downsample_mode: str = "decimate",
+    ):
+        """Create and wire a paint controller for the visual's data store.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            Visual to paint on.
+        canvas_id : UUID
+            Canvas to bind to.  Its camera controller is disabled for
+            the session.  Pass ``controller.get_canvas_ids(scene_id)[0]``
+            for the common single-canvas case.
+        brush_value : float
+            Scalar written to every painted voxel.
+        brush_radius_voxels : float
+            Brush radius in level-0 voxel units.
+        history_depth : int
+            Maximum undoable strokes.
+        autosave_interval_s : float | None
+            Seconds between automatic flushes for ``MultiscalePaintController``.
+            Each autosave rebuilds the pyramid and resets GPU paint textures.
+            ``None`` disables autosave.  Ignored for ``SyncPaintController``.
+        downsample_mode : str
+            ``"decimate"`` (default) for label stores; ``"mean"`` for
+            intensity images.  Ignored for ``SyncPaintController``.
+
+        Returns
+        -------
+        AbstractPaintController
+            Fully wired; caller owns the object.
+
+        Raises
+        ------
+        TypeError
+            If the data store type has no registered paint controller.
+        """
+        from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+        from cellier.v2.data.image._ome_zarr_image_store import OMEZarrImageDataStore
+        from cellier.v2.data.image._zarr_multiscale_store import (
+            MultiscaleZarrDataStore,
+        )
+
+        scene_id = self._visual_to_scene[visual_id]
+        scene = self._model.scenes[scene_id]
+        visual_model = next(v for v in scene.visuals if v.id == visual_id)
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+
+        if isinstance(data_store, ImageMemoryStore):
+            from cellier.v2.paint import SyncPaintController
+
+            displayed_axes = scene.dims.selection.displayed_axes
+            if len(displayed_axes) != 2:
+                raise NotImplementedError(
+                    "SyncPaintController currently only supports 2-D "
+                    f"displayed-axis configurations; scene {scene_id} has "
+                    f"displayed_axes={displayed_axes!r}."
+                )
+            return SyncPaintController(
+                cellier_controller=self,
+                visual_id=visual_id,
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                data_store=data_store,
+                displayed_axes=displayed_axes,
+                brush_value=brush_value,
+                brush_radius_voxels=brush_radius_voxels,
+                history_depth=history_depth,
+            )
+
+        if isinstance(data_store, (OMEZarrImageDataStore, MultiscaleZarrDataStore)):
+            from cellier.v2.paint import MultiscalePaintController
+
+            displayed_axes = scene.dims.selection.displayed_axes
+            if len(displayed_axes) != 2:
+                raise NotImplementedError(
+                    "MultiscalePaintController currently only supports 2-D "
+                    f"displayed-axis configurations; scene {scene_id} has "
+                    f"displayed_axes={displayed_axes!r}.  3-D paint "
+                    "feedback is a Phase 3 follow-up."
+                )
+
+            block_size = visual_model.render_config.block_size
+            return MultiscalePaintController(
+                cellier_controller=self,
+                visual_id=visual_id,
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                data_store=data_store,
+                visual_block_size=block_size,
+                displayed_axes=displayed_axes,
+                brush_value=brush_value,
+                brush_radius_voxels=brush_radius_voxels,
+                history_depth=history_depth,
+                autosave_interval_s=autosave_interval_s,
+                downsample_mode=downsample_mode,
+            )
+
+        raise TypeError(
+            f"No PaintController implementation for data store type "
+            f"{type(data_store).__name__!r}.  "
+            f"Supported: ImageMemoryStore, OMEZarrImageDataStore, "
+            f"MultiscaleZarrDataStore."
+        )
+
     def remove_scene(self, scene_id: UUID) -> None:
         """Remove a scene and all its visuals and canvases.
 
@@ -2328,6 +2455,290 @@ class CellierController:
             owner_id=owner_id,
             weak=weak,
         )
+
+    def _on_raw_pointer_event(self, event: _CanvasRawPointerEvent) -> None:
+        """Embed the 2D camera position in N-dimensional world space.
+
+        Reads displayed_axes and slice_indices from the scene model to fill
+        the full world coordinate, then emits the public canvas mouse event.
+        No render-layer access occurs here.
+        """
+        from cellier.v2.events._events import CanvasPickInfo
+
+        scene_model = self._model.scenes[event.scene_id]
+        dims = scene_model.dims
+        displayed_axes = dims.selection.displayed_axes
+        slice_indices = dims.selection.slice_indices
+        axis_labels = dims.coordinate_system.axis_labels
+        n_dims = len(axis_labels)
+
+        pick_info = CanvasPickInfo(hit_visual_id=event.hit_visual_id)
+
+        if event.camera_type == "2d":
+            world_coord = np.empty(n_dims, dtype=np.float64)
+            # Embed pygfx position_2d into world_coord verbatim:
+            #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
+            #   world_coord[displayed_axes[1]] = position_2d[1]  (pygfx-y)
+            # Both image visuals render data[r, c] at pygfx (x=c, y=r), so
+            # world_coord[ax_row] == pygfx_x (column) and
+            # world_coord[ax_col] == pygfx_y (row) after this assignment.
+            # Paint controllers swap ax_row ↔ ax_col to recover (row, col)
+            # voxel order before calling imap_coordinates.
+            for i, axis in enumerate(displayed_axes):
+                world_coord[axis] = event.position_2d[i]  # type: ignore[index]
+            for axis, idx in slice_indices.items():
+                world_coord[axis] = float(idx)
+
+            _CLS_2D = {
+                "press": CanvasMousePress2DEvent,
+                "move": CanvasMouseMove2DEvent,
+                "release": CanvasMouseRelease2DEvent,
+            }
+            self._event_bus.emit(
+                _CLS_2D[event.action](
+                    source_id=event.canvas_id,
+                    scene_id=event.scene_id,
+                    world_coordinate=world_coord,
+                    pick_info=pick_info,
+                )
+            )
+        else:
+            _CLS_3D = {
+                "press": CanvasMousePress3DEvent,
+                "move": CanvasMouseMove3DEvent,
+                "release": CanvasMouseRelease3DEvent,
+            }
+            self._event_bus.emit(
+                _CLS_3D[event.action](
+                    source_id=event.canvas_id,
+                    scene_id=event.scene_id,
+                    ray=event.ray,
+                    pick_info=pick_info,
+                )
+            )
+
+    def on_mouse_press_2d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMousePress2DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-down event on a 2D canvas.
+
+        Parameters
+        ----------
+        canvas_id :
+            The canvas to watch.
+        callback :
+            Called with the CanvasMousePress2DEvent on each press.
+        owner_id :
+            UUID under which this subscription is registered for bulk
+            removal via unsubscribe_all(owner_id).
+        weak :
+            If True, hold only a weak reference to *callback*.
+        """
+        return self._event_bus.subscribe(
+            CanvasMousePress2DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_move_2d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseMove2DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-move event on a 2D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseMove2DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_release_2d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseRelease2DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-up event on a 2D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseRelease2DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_press_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMousePress3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-down event on a 3D canvas.
+
+        Parameters
+        ----------
+        canvas_id :
+            The canvas to watch.
+        callback :
+            Called with the CanvasMousePress3DEvent on each press.
+        owner_id :
+            UUID under which this subscription is registered for bulk
+            removal via unsubscribe_all(owner_id).
+        weak :
+            If True, hold only a weak reference to *callback*.
+        """
+        return self._event_bus.subscribe(
+            CanvasMousePress3DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_move_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseMove3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-move event on a 3D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseMove3DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_mouse_release_3d(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[CanvasMouseRelease3DEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired on every pointer-up event on a 3D canvas."""
+        return self._event_bus.subscribe(
+            CanvasMouseRelease3DEvent,
+            callback,
+            entity_id=canvas_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def set_camera_controller_enabled(self, canvas_id: UUID, enabled: bool) -> None:
+        """Enable or disable the camera controller for one canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose controller state should change.
+        enabled : bool
+            False disables the controller (paint session active).
+            True restores normal camera interaction (session ended).
+        """
+        self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
+
+    def invalidate_painted_tiles_2d(
+        self, visual_id: UUID, dirty_grid_coords: set[tuple[int, int]]
+    ) -> int:
+        """Evict the visible 2D-cache tiles for *visual_id* listed in dirty grid coords.
+
+        Used by :class:`MultiscalePaintController` after staging level-0
+        writes so the next reslice re-fetches through the open paint
+        transaction.  No-op for visuals that don't own a 2D tile cache.
+
+        Parameters
+        ----------
+        visual_id :
+            The painted multiscale visual.
+        dirty_grid_coords :
+            Set of ``(gy, gx)`` tile-grid coordinates whose finest-level
+            tiles should be evicted.
+
+        Returns
+        -------
+        int
+            Number of tiles evicted (0 if the visual has no 2D cache or
+            no entries matched).
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "invalidate_painted_tiles_2d"):
+            return 0
+        return gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
+
+    def patch_painted_tiles_2d(
+        self,
+        visual_id: UUID,
+        voxel_indices: np.ndarray,
+        values: np.ndarray,
+        displayed_axes: tuple[int, int],
+    ) -> int:
+        """Write paint into the visual's GPU paint cache (Phase-2 fast path).
+
+        Used by :class:`MultiscalePaintController._write_values` for
+        sub-frame visible feedback in 2-D paint sessions.  Mirrors the
+        architectural pattern of :meth:`invalidate_painted_tiles_2d`.
+
+        Parameters
+        ----------
+        visual_id :
+            The painted multiscale visual.
+        voxel_indices :
+            Shape ``(N, ndim)`` int64.  Level-0 voxel indices in
+            data-array axis order.
+        values :
+            Shape ``(N,)`` float32.  Brush values.
+        displayed_axes :
+            ``(row_axis, col_axis)`` for the 2-D display.
+
+        Returns
+        -------
+        int
+            Number of tiles successfully patched.  Returns 0 if the visual
+            has no 2-D paint resources or every tile was rejected by the
+            slot manager.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "patch_paint_texture"):
+            return 0
+        return gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
+
+    def clear_painted_tiles_2d(self, visual_id: UUID) -> None:
+        """Clear the GPU paint textures for *visual_id*.
+
+        Called by :class:`MultiscalePaintController.commit` and ``abort`` at
+        session end.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        gfx_visual = scene_manager.get_visual(visual_id)
+        if not hasattr(gfx_visual, "clear_paint_textures"):
+            return
+        gfx_visual.clear_paint_textures()
 
     def on_visual_changed(
         self,

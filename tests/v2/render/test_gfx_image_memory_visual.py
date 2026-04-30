@@ -323,7 +323,7 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
 def test_on_data_ready_2d_transposes_correctly(mock_gfx):
-    """Data (H=20, W=30) must be transposed to (W=30, H=20, 1) for pygfx."""
+    """Data (H=20, W=30) must be uploaded as (H=20, W=30, 1) — no transpose."""
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
@@ -346,8 +346,8 @@ def test_on_data_ready_2d_transposes_correctly(mock_gfx):
 
     assert len(captured_arrays) == 1
     arr = captured_arrays[0]
-    assert arr.shape == (30, 20, 1)
-    np.testing.assert_array_equal(arr[:, :, 0], data.T)
+    assert arr.shape == (20, 30, 1)
+    np.testing.assert_array_equal(arr[:, :, 0], data)
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
