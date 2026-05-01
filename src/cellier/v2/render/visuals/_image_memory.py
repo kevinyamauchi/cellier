@@ -506,7 +506,9 @@ class GFXImageMemoryVisual:
         self,
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
-        thresholds: list[float] | None,
+        fov_y_rad: float,
+        screen_height_px: float,
+        lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
@@ -521,7 +523,11 @@ class GFXImageMemoryVisual:
             Unused. Accepted for interface compatibility.
         frustum_corners_world : np.ndarray or None
             Unused. Accepted for interface compatibility.
-        thresholds : list[float] or None
+        fov_y_rad : float
+            Unused. Accepted for interface compatibility.
+        screen_height_px : float
+            Unused. Accepted for interface compatibility.
+        lod_bias : float
             Unused. Accepted for interface compatibility.
         dims_state : DimsState or None
             Current dimension state. If ``None`` (e.g. during headless

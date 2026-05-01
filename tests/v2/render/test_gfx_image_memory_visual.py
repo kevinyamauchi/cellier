@@ -104,7 +104,8 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
 
@@ -125,7 +126,8 @@ def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=None,
     )
     assert requests[0].axis_selections == ((0, 5), (0, 6), (0, 7))
@@ -213,7 +215,8 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     req = requests[0]
@@ -422,7 +425,8 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     assert visual._last_displayed_axes == (0, 1, 2)
@@ -491,7 +495,8 @@ def test_identity_transform_is_noop_3d(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     assert len(requests) == 1

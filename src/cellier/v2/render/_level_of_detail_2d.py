@@ -107,7 +107,7 @@ def select_lod_2d(
     level_grids: list[dict],
     n_levels: int,
     viewport_width_px: float,
-    world_width: float,
+    voxel_width: float,
     lod_bias: float = 1.0,
     force_level: int | None = None,
     level_scale_factors: list[float] | None = None,
@@ -126,8 +126,10 @@ def select_lod_2d(
         Number of LOD levels.
     viewport_width_px : float
         Viewport width in logical pixels.
-    world_width : float
-        Visible world width in world units.
+    voxel_width : float
+        Visible width in level-0 voxels.  The caller is responsible for
+        converting from world units using the visual's world-to-data
+        transform before passing this value.
     lod_bias : float
         Multiplicative bias. 1.0 = neutral (default).
     force_level : int or None
@@ -145,11 +147,11 @@ def select_lod_2d(
         level = min(max(force_level, 1), n_levels)
         return level_grids[level - 1]["arr"].copy()
 
-    if world_width <= 0 or viewport_width_px <= 0:
+    if voxel_width <= 0 or viewport_width_px <= 0:
         return level_grids[0]["arr"].copy()
 
-    # World units per screen pixel.
-    screen_pixel_size = world_width / viewport_width_px
+    # Level-0 voxels per screen pixel.
+    screen_pixel_size = voxel_width / viewport_width_px
     biased = screen_pixel_size * max(lod_bias, 1e-6)
 
     if level_scale_factors is not None:

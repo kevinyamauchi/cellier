@@ -254,6 +254,11 @@ class VolumeGeometry:
         self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
         self._translation_arr_shader = np.stack(self._translation_vecs_shader, axis=0)
 
+        # Scalar LOD factor per level (geometric mean of the 3 per-axis scales).
+        self._level_scale_factors = [
+            float(np.prod(sv) ** (1.0 / len(sv))) for sv in sv_data
+        ]
+
         self._rebuild(level_shapes)
 
     def _rebuild(self, level_shapes: list[tuple[int, ...]]) -> None:
@@ -1006,7 +1011,9 @@ class GFXMultiscaleImageVisual:
         self,
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
-        thresholds: list[float] | None,
+        fov_y_rad: float,
+        screen_height_px: float,
+        lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
@@ -1024,8 +1031,13 @@ class GFXMultiscaleImageVisual:
         frustum_corners_world : np.ndarray or None
             Frustum corner points in world coordinates. ``None`` disables
             frustum culling.
-        thresholds : list[float] or None
-            LOD distance thresholds.
+        fov_y_rad : float
+            Vertical field-of-view in radians (perspective camera).
+        screen_height_px : float
+            Viewport height in logical pixels.
+        lod_bias : float
+            Multiplier on the computed LOD thresholds. Values > 1 favour
+            coarser levels; values < 1 favour finer levels.
         dims_state : DimsState or None
             Current dimension state.
         force_level : int or None
@@ -1058,6 +1070,24 @@ class GFXMultiscaleImageVisual:
         cam_zyx = camera_pos_world[[2, 1, 0]]
         cam_data_zyx = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()
         camera_pos_data = cam_data_zyx[[2, 1, 0]]  # back to shader (x,y,z)
+
+        # Compute LOD thresholds in level-0 voxel space.
+        # Derivation: a level-k brick is (block_size x scale_k) voxels wide =
+        # (block_size x scale_k x voxel_world_size) world units wide.  At
+        # voxel-space distance d, the world distance is (d x voxel_world_size),
+        # so apparent pixels = (block_size x scale_k x voxel_world_size) /
+        # (d x voxel_world_size) x focal_half_height_world.  The voxel_world_size
+        # terms cancel, leaving threshold = scale_k x focal_half_height_world.
+        # focal_half_height_world is therefore used directly as a voxel-space
+        # distance with no unit conversion required.
+        if force_level is None and fov_y_rad > 0:
+            focal_half_height_world = (screen_height_px / 2.0) / np.tan(fov_y_rad / 2.0)
+            thresholds: list[float] | None = [
+                geo._level_scale_factors[k - 1] * focal_half_height_world * lod_bias
+                for k in range(1, geo.n_levels)
+            ]
+        else:
+            thresholds = None
 
         if frustum_corners_world is not None:
             corners_flat = frustum_corners_world.reshape(-1, 3)
@@ -1371,6 +1401,18 @@ class GFXMultiscaleImageVisual:
         # expect (gx, gy) = (second-displayed, first-displayed) order.
         # So we swap the input and swap the output.
         sub_2d = self._transform.set_slice(displayed)
+
+        # Convert world_width to level-0 voxels using the geometric mean of
+        # the per-axis world-to-voxel scale from the forward (data→world)
+        # transform.  sub_2d.matrix diagonal = world_units/voxel per axis;
+        # the inverse geometric mean gives voxels/world_unit.
+        nd2 = sub_2d.ndim
+        world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
+        world_to_voxel_scale_2d = float(
+            np.prod(1.0 / world_units_per_voxel_2d) ** (1.0 / nd2)
+        )
+        voxel_width = world_width * world_to_voxel_scale_2d
+
         # camera_pos_world[:2] is (X_world, Y_world); imap expects (Y_world, X_world).
         camera_pos_2d = sub_2d.imap_coordinates(
             camera_pos_world[[1, 0]].reshape(1, -1)
@@ -1435,7 +1477,7 @@ class GFXMultiscaleImageVisual:
             geo2d._level_grids,
             n_levels,
             viewport_width_px=viewport_width_px,
-            world_width=world_width,
+            voxel_width=voxel_width,
             lod_bias=lod_bias,
             force_level=force_level,
             level_scale_factors=geo2d._level_scale_factors,

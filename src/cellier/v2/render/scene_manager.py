@@ -244,6 +244,7 @@ class SceneManager:
     ) -> dict[UUID, list[ChunkRequest]]:
         """3D planning path using perspective camera and frustum culling."""
         result: dict[UUID, list[ChunkRequest]] = {}
+        _, screen_height_px = request.screen_size_px
         for visual_id, visual in self._visuals.items():
             if (
                 request.target_visual_ids is not None
@@ -257,13 +258,12 @@ class SceneManager:
                 request.frustum_corners if cfg.frustum_cull else None
             )
 
-            n_levels = visual.n_levels
-            thresholds = self._compute_thresholds_3d(request, n_levels, cfg.lod_bias)
-
             chunk_requests = visual.build_slice_request(
                 camera_pos_world=request.camera_pos,
                 frustum_corners_world=frustum_corners_world,
-                thresholds=thresholds,
+                fov_y_rad=request.fov_y_rad,
+                screen_height_px=screen_height_px,
+                lod_bias=cfg.lod_bias,
                 dims_state=request.dims_state,
                 force_level=cfg.force_level,
             )
@@ -315,28 +315,3 @@ class SceneManager:
                 result[visual_id] = chunk_requests
 
         return result
-
-    def _compute_thresholds_3d(
-        self, request: ReslicingRequest, n_levels: int, lod_bias: float
-    ) -> list[float]:
-        """Compute LOD distance thresholds from perspective camera parameters.
-
-        Parameters
-        ----------
-        request : ReslicingRequest
-            The reslicing request providing FOV and screen height.
-        n_levels : int
-            Number of LOD levels for this visual.
-        lod_bias : float
-            Multiplier on the computed thresholds.
-
-        Returns
-        -------
-        list[float]
-            One threshold per level boundary (length ``n_levels - 1``).
-        """
-        _, screen_height_px = request.screen_size_px
-        focal_half_height = (screen_height_px / 2.0) / np.tan(request.fov_y_rad / 2.0)
-        return [
-            (2 ** (k - 1)) * focal_half_height * lod_bias for k in range(1, n_levels)
-        ]

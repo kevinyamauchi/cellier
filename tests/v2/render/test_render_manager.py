@@ -461,32 +461,21 @@ def test_visual_render_config_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_lod_bias_scales_thresholds() -> None:
-    """lod_bias=2.0 must double every threshold value."""
+def test_lod_bias_forwarded_to_visual() -> None:
+    """lod_bias from VisualRenderConfig must be passed to build_slice_request."""
     scene_id = uuid4()
     sm = SceneManager(scene_id=scene_id)
-    req = _make_reslicing_request(scene_id=scene_id, screen_size_px=(1200.0, 800.0))
-    n_levels = 3
+    visual = _make_mock_visual()
+    visual.build_slice_request.return_value = []
+    sm.add_visual(visual, (0, 1, 2))
 
-    t_default = sm._compute_thresholds_3d(req, n_levels, 1.0)
-    t_biased = sm._compute_thresholds_3d(req, n_levels, 2.0)
-
-    assert len(t_default) == len(t_biased) == n_levels - 1
-    for td, tb in zip(t_default, t_biased):
-        assert abs(tb - 2.0 * td) < 1e-9
-
-
-def test_lod_bias_one_is_identity() -> None:
-    """lod_bias=1.0 must leave thresholds unchanged."""
-    scene_id = uuid4()
-    sm = SceneManager(scene_id=scene_id)
     req = _make_reslicing_request(scene_id=scene_id)
-    n_levels = 3
+    sm.build_slice_requests(
+        req, {visual.visual_model_id: VisualRenderConfig(lod_bias=2.0)}
+    )
 
-    t1 = sm._compute_thresholds_3d(req, n_levels, 1.0)
-    t2 = sm._compute_thresholds_3d(req, n_levels, 1.0)
-
-    assert t1 == t2
+    _, kwargs = visual.build_slice_request.call_args
+    assert kwargs.get("lod_bias") == 2.0
 
 
 def test_force_level_forwarded_to_visual() -> None:
