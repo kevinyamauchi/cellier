@@ -61,7 +61,7 @@ class ImageBlockMaterial(gfx.ImageBasicMaterial):
         paint_lut_texture: gfx.Texture | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         map: gfx.TextureMap | None = None,
-        interpolation: str = "linear",
+        interpolation: str = "nearest",
         **kwargs,
     ) -> None:
         super().__init__(

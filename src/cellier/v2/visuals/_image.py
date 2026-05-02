@@ -77,7 +77,7 @@ class MultiscaleImageRenderConfig(EventedModel):
     block_size: int = 32
     gpu_budget_bytes: int = 1 * 1024**3
     gpu_budget_bytes_2d: int = 64 * 1024**2
-    interpolation: Literal["linear", "nearest"] = "linear"
+    interpolation: Literal["linear", "nearest"] = "nearest"
     paint_max_tiles: int = 512
 
 

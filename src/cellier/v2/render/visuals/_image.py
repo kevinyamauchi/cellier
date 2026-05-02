@@ -500,7 +500,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
-        interpolation: str = "linear",
+        interpolation: str = "nearest",
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
         transform: AffineTransform | None = None,
