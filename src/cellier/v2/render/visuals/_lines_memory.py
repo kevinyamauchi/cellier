@@ -196,8 +196,10 @@ class GFXLinesMemoryVisual:
         self,
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
-        thresholds: list[float] | None,
-        dims_state: DimsState,
+        fov_y_rad: float,
+        screen_height_px: float,
+        lod_bias: float = 1.0,
+        dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[LinesSliceRequest]:
         """3-D planning path — returns one LinesSliceRequest."""
