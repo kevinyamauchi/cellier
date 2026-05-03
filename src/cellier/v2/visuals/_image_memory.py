@@ -26,7 +26,7 @@ class ImageMemoryAppearance(BaseAppearance):
 
     color_map: Colormap
     clim: tuple[float, float] = (0.0, 1.0)
-    interpolation: Literal["linear", "nearest"] = "linear"
+    interpolation: Literal["linear", "nearest"] = "nearest"
 
 
 class ImageVisual(BaseVisual):

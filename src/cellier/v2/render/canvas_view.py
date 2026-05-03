@@ -202,7 +202,8 @@ class CanvasView:
         canvas aspect ratio.  The OrthographicCamera exposes ``width``
         and ``height`` which define the *minimum* visible extent; the
         actual extent is expanded in one dimension to match the canvas
-        aspect ratio.
+        aspect ratio. This is because maintain_aspect is set to True.
+        (see pygfx OrthographicCamera docstring)
         """
         cam = self._camera
         vw = screen_w if screen_w > 0 else 800.0
@@ -304,6 +305,21 @@ class CanvasView:
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
         self._event_bus = event_bus
+
+    def set_controller_enabled(self, enabled: bool) -> None:
+        """Enable or disable the active camera controller for this canvas.
+
+        ``self._controller`` already points to the currently active
+        controller (``_controller_2d`` or ``_controller_3d`` depending on
+        the canvas dim), so this correctly targets whichever type is in use.
+
+        Parameters
+        ----------
+        enabled : bool
+            False disables the controller (paint mode active).
+            True restores normal camera interaction.
+        """
+        self._controller.enabled = enabled
 
     def switch_dim(self, new_dim: str) -> bool:
         """Switch the canvas between ``"2d"`` and ``"3d"`` rendering modes.

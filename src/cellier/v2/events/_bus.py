@@ -12,6 +12,12 @@ from cellier.v2.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
+    CanvasMouseMove2DEvent,
+    CanvasMouseMove3DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMousePress3DEvent,
+    CanvasMouseRelease2DEvent,
+    CanvasMouseRelease3DEvent,
     DataStoreContentsChangedEvent,
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
@@ -45,6 +51,12 @@ _ENTITY_FIELD: dict[type, str] = {
     TransformChangedEvent: "visual_id",
     SceneAddedEvent: "scene_id",
     SceneRemovedEvent: "scene_id",
+    CanvasMousePress2DEvent: "source_id",
+    CanvasMouseMove2DEvent: "source_id",
+    CanvasMouseRelease2DEvent: "source_id",
+    CanvasMousePress3DEvent: "source_id",
+    CanvasMouseMove3DEvent: "source_id",
+    CanvasMouseRelease3DEvent: "source_id",
 }
 
 

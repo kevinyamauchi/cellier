@@ -49,11 +49,6 @@ from cellier.v2.render.lut_indirection._lut_indirection_manager_2d import (
     LutIndirectionManager2D,
 )
 from cellier.v2.render.shaders._block_image import ImageBlockMaterial
-from cellier.v2.render.shaders._block_volume import (
-    VolumeBlockMaterial,
-    build_block_scales_buffer_3d,
-    build_lut_params_buffer_3d,
-)
 from cellier.v2.render.shaders._multiscale_volume_brick import (
     MultiscaleVolumeBrickMaterial,
     build_brick_scales_buffer,
@@ -66,6 +61,9 @@ from cellier.v2.render.visuals._image_memory import (
     _make_aabb_line,
     _pygfx_matrix,
     _rect_wireframe_positions,
+)
+from cellier.v2.render.visuals._paint_tile_slot_manager import (
+    PaintTileSlotManager,
 )
 from cellier.v2.transform import AffineTransform
 
@@ -89,9 +87,8 @@ if TYPE_CHECKING:
     )
     from cellier.v2.visuals._image import MultiscaleImageVisual
 
-# Importing these modules registers shader classes with pygfx via the
+# Importing this module registers the shader class with pygfx via the
 # @register_wgpu_render_function decorator.
-import cellier.v2.render.shaders._block_volume as _shader_reg  # noqa: F401
 import cellier.v2.render.shaders._multiscale_volume_brick as _brick_reg  # noqa: F401
 
 # ---------------------------------------------------------------------------
@@ -256,6 +253,11 @@ class VolumeGeometry:
         # (n_levels, 3) arrays for vectorised hot-path lookups.
         self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
         self._translation_arr_shader = np.stack(self._translation_vecs_shader, axis=0)
+
+        # Scalar LOD factor per level (geometric mean of the 3 per-axis scales).
+        self._level_scale_factors = [
+            float(np.prod(sv) ** (1.0 / len(sv))) for sv in sv_data
+        ]
 
         self._rebuild(level_shapes)
 
@@ -498,17 +500,18 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
-        interpolation: str = "linear",
+        interpolation: str = "nearest",
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
         transform: AffineTransform | None = None,
         full_level_transforms: list[AffineTransform] | None = None,
         full_level_shapes: list[tuple[int, ...]] | None = None,
-        use_brick_shader: bool = False,
         aabb_enabled: bool = False,
         aabb_color: str = "#ffffff",
         aabb_line_width: float = 2.0,
         render_order: int = 0,
+        pick_write: bool = True,
+        paint_max_tiles: int = 512,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -559,7 +562,6 @@ class GFXMultiscaleImageVisual:
         self._last_displayed_axes: tuple[int, ...] | None = displayed_axes
         self._gpu_budget_bytes = gpu_budget_bytes_3d
         self._frame_number = 0
-        self._use_brick_shader = use_brick_shader
         self._pending_slot_map: dict[UUID, tuple[BlockKey3D, TileSlot]] = {}
         self._pending_slot_map_2d: dict[UUID, tuple[BlockKey2D, TileSlot2D]] = {}
         self._last_plan_stats: dict = {}
@@ -577,8 +579,6 @@ class GFXMultiscaleImageVisual:
         # ── 3D GPU resources (only when volume_geometry is provided) ───
         self._block_cache_3d: BlockCache3D | None = None
         self._lut_manager_3d: LutIndirectionManager3D | None = None
-        self._lut_params_buffer_3d = None
-        self._block_scales_buffer_3d = None
         if volume_geometry is not None:
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
@@ -590,14 +590,6 @@ class GFXMultiscaleImageVisual:
                 base_layout=volume_geometry.base_layout,
                 n_levels=volume_geometry.n_levels,
                 level_scale_vecs_data=volume_geometry._scale_vecs_data,
-            )
-            self._lut_params_buffer_3d = build_lut_params_buffer_3d(
-                volume_geometry.base_layout,
-                cache_parameters_3d,
-                proxy_voxels_per_brick=volume_geometry.block_size,
-            )
-            self._block_scales_buffer_3d = build_block_scales_buffer_3d(
-                volume_geometry._scale_vecs_data
             )
 
         # ── 2D GPU resources (only when image_geometry_2d is provided) ─
@@ -627,12 +619,20 @@ class GFXMultiscaleImageVisual:
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
             )
 
+        # ── 2D paint resources (Phase 2 GPU fast path) ──────────────────
+        self._paint_slot_manager: PaintTileSlotManager | None = None
+        self._t_paint_cache: gfx.Texture | None = None
+        self._t_paint_lut: gfx.Texture | None = None
+        self._paint_max_tiles: int = int(paint_max_tiles)
+        if image_geometry_2d is not None:
+            self._allocate_paint_resources_2d()
+
         # ── Brick-shader-specific buffers (3D only) ──────────────────────
         self._vol_params_buffer: Buffer | None = None
         self._brick_scales_buffer: Buffer | None = None
         self._norm_size: np.ndarray | None = None
         self._dataset_size: np.ndarray | None = None
-        if use_brick_shader and volume_geometry is not None:
+        if volume_geometry is not None:
             # dataset_size in shader order (x=W, y=H, z=D).
             ds = volume_geometry.level_shapes[0]  # (D, H, W)
             self._dataset_size = np.array(
@@ -658,25 +658,16 @@ class GFXMultiscaleImageVisual:
         # ── 3D node ─────────────────────────────────────────────────────
         self.node_3d: gfx.Group | None = None
         self._inner_node_3d: gfx.Volume | None = None
-        self.material_3d: VolumeBlockMaterial | MultiscaleVolumeBrickMaterial | None = (
-            None
-        )
+        self.material_3d: MultiscaleVolumeBrickMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
         self._aabb_line_3d: gfx.Line | None = None
         if "3d" in render_modes and volume_geometry is not None:
-            if use_brick_shader:
-                inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node_brick(
-                    colormap=colormap,
-                    clim=clim,
-                    threshold=threshold,
-                )
-            else:
-                inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
-                    colormap=colormap,
-                    clim=clim,
-                    threshold=threshold,
-                    interpolation=interpolation,
-                )
+            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+                colormap=colormap,
+                clim=clim,
+                threshold=threshold,
+                pick_write=pick_write,
+            )
             self._inner_node_3d = inner
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
@@ -692,7 +683,10 @@ class GFXMultiscaleImageVisual:
         self._aabb_line_2d: gfx.Line | None = None
         if "2d" in render_modes and image_geometry_2d is not None:
             inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
-                colormap=colormap, clim=clim, interpolation=interpolation
+                colormap=colormap,
+                clim=clim,
+                interpolation=interpolation,
+                pick_write=pick_write,
             )
             self._inner_node_2d = inner
             self.node_2d = gfx.Group()
@@ -746,7 +740,6 @@ class GFXMultiscaleImageVisual:
         render_config = model.render_config
         block_size = render_config.block_size
         interpolation = render_config.interpolation
-        use_brick_shader = render_config.use_brick_shader
         gpu_budget_bytes = render_config.gpu_budget_bytes
         gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
         threshold = model.appearance.iso_threshold
@@ -804,7 +797,8 @@ class GFXMultiscaleImageVisual:
             transform=model.transform,
             full_level_transforms=list(model.level_transforms),
             full_level_shapes=list(level_shapes),
-            use_brick_shader=use_brick_shader,
+            pick_write=model.pick_write,
+            paint_max_tiles=render_config.paint_max_tiles,
         )
         for mat in (instance.material_3d, instance.material_2d):
             if mat is not None:
@@ -918,26 +912,15 @@ class GFXMultiscaleImageVisual:
             n_levels=geo.n_levels,
             level_scale_vecs_data=geo._scale_vecs_data,
         )
-        # Rebuild param buffers
-        self._lut_params_buffer_3d = build_lut_params_buffer_3d(
-            geo.base_layout,
-            self._block_cache_3d.info,
-            proxy_voxels_per_brick=geo.block_size,
-        )
-        self._block_scales_buffer_3d = build_block_scales_buffer_3d(
-            geo._scale_vecs_data
-        )
         # Rebuild node preserving current appearance
         if self.node_3d is not None:
             colormap = self.material_3d.map
             clim = self.material_3d.clim
             threshold = self.material_3d.threshold
-            interpolation = self.material_3d.interpolation
-            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(  # type: ignore[assignment]
+            inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
-                interpolation=interpolation,
             )
             self._inner_node_3d = inner
             self._aabb_line_3d = self._build_aabb_line_3d()
@@ -966,6 +949,8 @@ class GFXMultiscaleImageVisual:
         self._block_scales_buffer_2d = build_block_scales_buffer_2d(
             level_scale_vecs_data=geo2d._scale_vecs_data,
         )
+        # Re-allocate paint resources so they track the new geometry.
+        self._allocate_paint_resources_2d()
         # Rebuild node preserving current appearance
         if self.node_2d is not None:
             colormap = self.material_2d.map
@@ -988,15 +973,11 @@ class GFXMultiscaleImageVisual:
         self._last_displayed_axes = displayed_axes
         sub = self._transform.set_slice(displayed_axes)
 
-        if self._use_brick_shader and self.node_3d is not None:
-            # Brick shader: compose normalized → data → world.
+        if self.node_3d is not None:
             data_to_world = _pygfx_matrix(sub)
             m = compose_world_transform(
                 data_to_world, self._dataset_size, self._norm_size
             )
-            self.node_3d.local.matrix = m
-        elif self.node_3d is not None:
-            m = _pygfx_matrix(sub)
             self.node_3d.local.matrix = m
 
         if self.node_2d is not None:
@@ -1030,7 +1011,9 @@ class GFXMultiscaleImageVisual:
         self,
         camera_pos_world: np.ndarray,
         frustum_corners_world: np.ndarray | None,
-        thresholds: list[float] | None,
+        fov_y_rad: float,
+        screen_height_px: float,
+        lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
     ) -> list[ChunkRequest]:
@@ -1048,8 +1031,13 @@ class GFXMultiscaleImageVisual:
         frustum_corners_world : np.ndarray or None
             Frustum corner points in world coordinates. ``None`` disables
             frustum culling.
-        thresholds : list[float] or None
-            LOD distance thresholds.
+        fov_y_rad : float
+            Vertical field-of-view in radians (perspective camera).
+        screen_height_px : float
+            Viewport height in logical pixels.
+        lod_bias : float
+            Multiplier on the computed LOD thresholds. Values > 1 favour
+            coarser levels; values < 1 favour finer levels.
         dims_state : DimsState or None
             Current dimension state.
         force_level : int or None
@@ -1082,6 +1070,24 @@ class GFXMultiscaleImageVisual:
         cam_zyx = camera_pos_world[[2, 1, 0]]
         cam_data_zyx = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()
         camera_pos_data = cam_data_zyx[[2, 1, 0]]  # back to shader (x,y,z)
+
+        # Compute LOD thresholds in level-0 voxel space.
+        # Derivation: a level-k brick is (block_size x scale_k) voxels wide =
+        # (block_size x scale_k x voxel_world_size) world units wide.  At
+        # voxel-space distance d, the world distance is (d x voxel_world_size),
+        # so apparent pixels = (block_size x scale_k x voxel_world_size) /
+        # (d x voxel_world_size) x focal_half_height_world.  The voxel_world_size
+        # terms cancel, leaving threshold = scale_k x focal_half_height_world.
+        # focal_half_height_world is therefore used directly as a voxel-space
+        # distance with no unit conversion required.
+        if force_level is None and fov_y_rad > 0:
+            focal_half_height_world = (screen_height_px / 2.0) / np.tan(fov_y_rad / 2.0)
+            thresholds: list[float] | None = [
+                geo._level_scale_factors[k - 1] * focal_half_height_world * lod_bias
+                for k in range(1, geo.n_levels)
+            ]
+        else:
+            thresholds = None
 
         if frustum_corners_world is not None:
             corners_flat = frustum_corners_world.reshape(-1, 3)
@@ -1395,6 +1401,18 @@ class GFXMultiscaleImageVisual:
         # expect (gx, gy) = (second-displayed, first-displayed) order.
         # So we swap the input and swap the output.
         sub_2d = self._transform.set_slice(displayed)
+
+        # Convert world_width to level-0 voxels using the geometric mean of
+        # the per-axis world-to-voxel scale from the forward (data→world)
+        # transform.  sub_2d.matrix diagonal = world_units/voxel per axis;
+        # the inverse geometric mean gives voxels/world_unit.
+        nd2 = sub_2d.ndim
+        world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
+        world_to_voxel_scale_2d = float(
+            np.prod(1.0 / world_units_per_voxel_2d) ** (1.0 / nd2)
+        )
+        voxel_width = world_width * world_to_voxel_scale_2d
+
         # camera_pos_world[:2] is (X_world, Y_world); imap expects (Y_world, X_world).
         camera_pos_2d = sub_2d.imap_coordinates(
             camera_pos_world[[1, 0]].reshape(1, -1)
@@ -1459,7 +1477,7 @@ class GFXMultiscaleImageVisual:
             geo2d._level_grids,
             n_levels,
             viewport_width_px=viewport_width_px,
-            world_width=world_width,
+            voxel_width=voxel_width,
             lod_bias=lod_bias,
             force_level=force_level,
             level_scale_factors=geo2d._level_scale_factors,
@@ -1688,6 +1706,215 @@ class GFXMultiscaleImageVisual:
             return
         self.cancel_pending_2d()
 
+    def _allocate_paint_resources_2d(self) -> None:
+        """Allocate the 2D paint cache + LUT textures and the slot manager.
+
+        Called from ``__init__`` and from ``_rebuild_2d_resources`` so the
+        paint resources track the underlying 2D image geometry.
+        """
+        if self._image_geometry_2d is None:
+            return
+        bs = self._image_geometry_2d.block_size
+        gh, gw = self._image_geometry_2d.base_layout.grid_dims
+
+        # Stripes-of-tiles layout: row-stripe per slot of height bs.
+        # Two channels: (value, alpha).  Alpha=0 ⇒ this voxel is unpainted.
+        paint_cache_data = np.zeros(
+            (self._paint_max_tiles * bs, bs, 2), dtype=np.float32
+        )
+        self._t_paint_cache = gfx.Texture(paint_cache_data, dim=2, format="2xf4")
+
+        # Same grid as base LUT: per-tile (slot_index, alpha).
+        # alpha=0 ⇒ no slot allocated for this tile (skip the cache lookup).
+        paint_lut_data = np.zeros((gh, gw, 2), dtype=np.float32)
+        self._t_paint_lut = gfx.Texture(paint_lut_data, dim=2, format="2xf4")
+
+        self._paint_slot_manager = PaintTileSlotManager(self._paint_max_tiles)
+
+    def patch_paint_texture(
+        self,
+        voxel_indices: np.ndarray,
+        values: np.ndarray,
+        displayed_axes: tuple[int, int],
+    ) -> int:
+        """Write painted voxels into the GPU paint cache + LUT.
+
+        Used by ``MultiscalePaintController._write_values`` for sub-frame
+        paint feedback in 2-D.  No-op if the visual has no 2-D paint
+        resources (e.g. 3-D-only visual).
+
+        Parameters
+        ----------
+        voxel_indices :
+            Shape ``(N, ndim)`` int64.  Level-0 voxel indices in
+            data-array axis order.
+        values :
+            Shape ``(N,)`` float32.  Brush values to write.
+        displayed_axes :
+            Two-element tuple ``(row_axis, col_axis)`` describing which
+            data-array axes correspond to the displayed (row, col) of
+            the 2-D tile grid.  ``row_axis`` ↔ pygfx-y, ``col_axis`` ↔
+            pygfx-x; this matches the upload convention of the multiscale
+            2-D image (no transpose on upload).
+
+        Returns
+        -------
+        int
+            Number of distinct tiles successfully patched.  Tiles that
+            could not be allocated a slot (pool exhaustion) are silently
+            skipped; check ``self._paint_slot_manager.exhausted`` to
+            detect this.
+        """
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+            or self._image_geometry_2d is None
+        ):
+            return 0
+        if voxel_indices.shape[0] == 0:
+            return 0
+
+        bs = int(self._image_geometry_2d.block_size)
+        ax_row, ax_col = displayed_axes
+
+        rows = voxel_indices[:, ax_row].astype(np.int64)
+        cols = voxel_indices[:, ax_col].astype(np.int64)
+        vals = values.astype(np.float32, copy=False)
+
+        gy = rows // bs
+        gx = cols // bs
+        ty = rows % bs
+        tx = cols % bs
+
+        cache_data = self._t_paint_cache.data
+        lut_data = self._t_paint_lut.data
+
+        cache_y_min = cache_data.shape[0]
+        cache_y_max = 0
+        cache_x_min = cache_data.shape[1]
+        cache_x_max = 0
+        lut_y_min = lut_data.shape[0]
+        lut_y_max = 0
+        lut_x_min = lut_data.shape[1]
+        lut_x_max = 0
+        n_tiles_patched = 0
+
+        # Group voxels by (gy, gx) so each tile gets one slot allocation.
+        pairs = np.stack([gy, gx], axis=1)
+        unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
+
+        for tile_i in range(unique_pairs.shape[0]):
+            gy_t = int(unique_pairs[tile_i, 0])
+            gx_t = int(unique_pairs[tile_i, 1])
+            slot = self._paint_slot_manager.get_or_allocate((gy_t, gx_t))
+            if slot is None:
+                continue
+            n_tiles_patched += 1
+
+            sel = inverse == tile_i
+            ty_sel = ty[sel]
+            tx_sel = tx[sel]
+            v_sel = vals[sel]
+
+            # Stripes layout: this slot's pixel rows are
+            # cache_data[slot*bs : (slot+1)*bs, :, :]
+            slot_y0 = slot * bs
+            cache_data[slot_y0 + ty_sel, tx_sel, 0] = v_sel
+            cache_data[slot_y0 + ty_sel, tx_sel, 1] = 1.0
+
+            lut_data[gy_t, gx_t, 0] = float(slot)
+            lut_data[gy_t, gx_t, 1] = 1.0
+
+            cache_y_min = min(cache_y_min, slot_y0)
+            cache_y_max = max(cache_y_max, slot_y0 + bs)
+            cache_x_min = 0
+            cache_x_max = bs
+            lut_y_min = min(lut_y_min, gy_t)
+            lut_y_max = max(lut_y_max, gy_t + 1)
+            lut_x_min = min(lut_x_min, gx_t)
+            lut_x_max = max(lut_x_max, gx_t + 1)
+
+        if n_tiles_patched == 0:
+            return 0
+
+        # pygfx Texture.update_range takes (offset, size) in (x, y, z) order.
+        self._t_paint_cache.update_range(
+            (cache_x_min, cache_y_min, 0),
+            (cache_x_max - cache_x_min, cache_y_max - cache_y_min, 1),
+        )
+        self._t_paint_lut.update_range(
+            (lut_x_min, lut_y_min, 0),
+            (lut_x_max - lut_x_min, lut_y_max - lut_y_min, 1),
+        )
+        return n_tiles_patched
+
+    def clear_paint_textures(self) -> None:
+        """Reset all paint-cache slots and LUT entries to "no paint".
+
+        Called by ``MultiscalePaintController.commit`` and ``abort`` at
+        session end.
+        """
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+        ):
+            return
+        self._t_paint_cache.data[:] = 0.0
+        self._t_paint_lut.data[:] = 0.0
+        # data.shape[:2] is (rows, cols); update_range size is (x, y, z)
+        # = (cols, rows, 1).
+        cache_h, cache_w = self._t_paint_cache.data.shape[:2]
+        lut_h, lut_w = self._t_paint_lut.data.shape[:2]
+        self._t_paint_cache.update_range((0, 0, 0), (cache_w, cache_h, 1))
+        self._t_paint_lut.update_range((0, 0, 0), (lut_w, lut_h, 1))
+        self._paint_slot_manager.clear()
+
+    def invalidate_painted_tiles_2d(
+        self, dirty_grid_coords: set[tuple[int, int]]
+    ) -> int:
+        """Evict committed finest-level tiles whose ``(gy, gx)`` is dirty.
+
+        Used by ``MultiscalePaintController`` to drop the visible cached
+        copy of a tile after a brush write so the next reslice re-fetches
+        through the open paint transaction (read-your-writes).
+
+        Only level-1 tiles (== finest-data level == level 0) are evicted.
+        Coarser levels show pre-paint data until the next paint-pyramid
+        rebuild (deferred to a follow-up).  In-flight slots are also
+        released so any pending stale fetches don't overwrite freshly
+        painted state.
+
+        Parameters
+        ----------
+        dirty_grid_coords :
+            Set of ``(gy, gx)`` finest-level tile-grid coordinates whose
+            corresponding tiles should be evicted.  Coordinates that
+            don't currently have a committed tile are silently ignored.
+
+        Returns
+        -------
+        int
+            Number of tiles evicted from the committed tilemap.
+        """
+        if self._block_cache_2d is None:
+            return 0
+        tm = self._block_cache_2d.tile_manager
+        # Always release in-flight to avoid races with stale fetches.
+        tm.release_all_in_flight()
+        self._pending_slot_map_2d = {}
+        evicted = 0
+        for key in list(tm.tilemap.keys()):
+            if key.level != 1:
+                continue
+            if (key.gy, key.gx) in dirty_grid_coords:
+                slot = tm.tilemap.pop(key)
+                tm.slot_index[slot.index] = None
+                tm.free_slots.append(slot.index)
+                evicted += 1
+        return evicted
+
     # ── EventBus handler methods ─────────────────────────────────────────
 
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
@@ -1697,7 +1924,7 @@ class GFXMultiscaleImageVisual:
 
         # Recompute norm_size and push the updated uniform buffer so the
         # proxy cube shape stays consistent with the new transform.
-        if self._use_brick_shader and self._dataset_size is not None:
+        if self._dataset_size is not None:
             _check_transform_no_rotation(self._transform)
             self._norm_size = _norm_size_from_transform(
                 self._transform, self._dataset_size
@@ -1797,35 +2024,17 @@ class GFXMultiscaleImageVisual:
         pass
 
     def tick(self) -> None:
-        """Advance jitter seed for the brick shader. No-op otherwise."""
-        if (
-            self._use_brick_shader
-            and self.material_3d is not None
-            and isinstance(self.material_3d, MultiscaleVolumeBrickMaterial)
-        ):
+        """Advance jitter seed for the brick shader."""
+        if self.material_3d is not None:
             self.material_3d.tick()
 
     # ── Private helpers ─────────────────────────────────────────────────
 
     def _build_aabb_line_3d(self) -> gfx.Line:
-        """Build the 3D AABB wireframe line for the current geometry.
-
-        For the brick-shader path the line is in normalized space
-        (matching the Group matrix).  For the standard block shader the
-        line is in data-voxel space.
-        """
-        if self._use_brick_shader and self._norm_size is not None:
+        """Build the 3D AABB wireframe line in normalized space."""
+        if self._norm_size is not None:
             half = self._norm_size / 2.0
             positions = _box_wireframe_positions(-half, half)
-        elif self._volume_geometry is not None:
-            d, h, w = self._volume_geometry.level_shapes[0]
-            # pygfx voxel convention: voxel i center at i, edges at i±0.5.
-            # The inner Volume's local transform (scale=bs, offset=bs/2-0.5)
-            # maps data voxel n to Group-local n, so the extent is [-0.5, N-0.5].
-            positions = _box_wireframe_positions(
-                np.array([-0.5, -0.5, -0.5]),
-                np.array([w - 0.5, h - 0.5, d - 0.5]),
-            )
         else:
             positions = _box_wireframe_positions(np.zeros(3), np.ones(3))
         return _make_aabb_line(positions, self._aabb_color, self._aabb_line_width)
@@ -1847,41 +2056,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap,
         clim: tuple[float, float],
         threshold: float,
-        interpolation: str,
-    ) -> tuple[gfx.Volume, VolumeBlockMaterial, gfx.Texture]:
-        """Construct the proxy texture, material, and Volume node."""
-        geo = self._volume_geometry
-        gd, gh, gw = geo.base_layout.grid_dims
-
-        proxy_data = np.zeros((gd, gh, gw), dtype=np.float32)
-        proxy_tex = gfx.Texture(proxy_data, dim=3)
-
-        material = VolumeBlockMaterial(
-            cache_texture=self._block_cache_3d.cache_tex,
-            lut_texture=self._lut_manager_3d.lut_tex,
-            lut_params_buffer=self._lut_params_buffer_3d,
-            block_scales_buffer=self._block_scales_buffer_3d,
-            clim=clim,
-            map=colormap,
-            interpolation=interpolation,
-            threshold=threshold,
-        )
-
-        geometry = gfx.Geometry(grid=proxy_tex)
-        vol = gfx.Volume(geometry, material)
-
-        bs = float(geo.block_size)
-        vol.local.scale = (bs, bs, bs)
-        off = 0.5 * (bs - 1.0)
-        vol.local.position = (off, off, off)
-
-        return vol, material, proxy_tex
-
-    def _build_3d_node_brick(
-        self,
-        colormap: gfx.TextureMap,
-        clim: tuple[float, float],
-        threshold: float,
+        pick_write: bool = True,
     ) -> tuple[gfx.Volume, MultiscaleVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, brick material, and Volume node.
 
@@ -1903,6 +2078,7 @@ class GFXMultiscaleImageVisual:
             clim=clim,
             map=colormap,
             threshold=threshold,
+            pick_write=pick_write,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
@@ -1916,6 +2092,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap,
         clim: tuple[float, float],
         interpolation: str,
+        pick_write: bool = True,
     ) -> tuple[gfx.Image, ImageBlockMaterial, gfx.Texture]:
         gh, gw = self._image_geometry_2d.base_layout.grid_dims
 
@@ -1927,8 +2104,11 @@ class GFXMultiscaleImageVisual:
             lut_texture=self._lut_manager_2d.lut_tex,
             lut_params_buffer=self._lut_params_buffer_2d,
             block_scales_buffer=self._block_scales_buffer_2d,
+            paint_cache_texture=self._t_paint_cache,
+            paint_lut_texture=self._t_paint_lut,
             clim=clim,
             map=colormap,
+            pick_write=pick_write,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)

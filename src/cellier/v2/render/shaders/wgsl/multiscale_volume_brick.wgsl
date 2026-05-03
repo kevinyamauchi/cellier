@@ -101,46 +101,25 @@ fn ray_to_seed(ray_dir: vec3<f32>) -> u32 {
 }
 
 
-// ── Atlas sampling ─────────────────────────────────────────────────────────
-
-// Standard variant: derives pos_in_brick via fmod. Correct for traversal
-// where every probe spatially belongs to the brick being sampled.
-fn sample_atlas_nearest(
-    voxel_pos:  vec3<f32>,   // finest-level voxel coordinates
-    lut_entry:  vec4<u32>,   // RGB = slot indices, W = lut_w (level, 1-based)
-    lod_scale:  vec3<f32>,   // downscale factor for this level
-) -> f32 {
-    let block_size  = vec3<f32>(u_vol_params.block_size_x,
-                                u_vol_params.block_size_y,
-                                u_vol_params.block_size_z);
-    let cache_size  = vec3<f32>(u_vol_params.cache_size_x,
-                                u_vol_params.cache_size_y,
-                                u_vol_params.cache_size_z);
-    let padded_size = block_size + vec3<f32>(2.0 * BORDER);
-
-    // Atlas slot base (in texels).
-    let tile_origin = vec3<f32>(lut_entry.xyz) * padded_size;
-
-    // Map finest-level voxel → level-k voxel, then take modulo block.
-    let voxel_k      = voxel_pos / lod_scale;
-    let pos_in_brick = voxel_k - floor(voxel_k / block_size) * block_size;
-
-    // + BORDER: skip ghost border.  + 0.5: sample voxel centre.
-    let cache_pos   = tile_origin + pos_in_brick + vec3<f32>(BORDER + 0.5);
-    let cache_coord = cache_pos / cache_size;
-
-    return textureSample(t_cache, s_cache, cache_coord).r;
-}
-
-// Gradient variant: takes an explicit brick corner (in level-k voxel space)
-// instead of re-deriving it via fmod. Use this when the probe may cross a
-// brick boundary — fmod would remap it into the wrong tile, producing garbage.
-// The sampler's clamp address mode handles the small out-of-border overshoot.
-fn sample_atlas_with_corner(
-    voxel_pos:     vec3<f32>,   // finest-level voxel coordinates
-    lut_entry:     vec4<u32>,   // RGB = slot indices, W = lut_w (level, 1-based)
-    lod_scale:     vec3<f32>,   // downscale factor for this level
-    brick_corner_k: vec3<f32>,  // anchor brick's corner in level-k voxel space
+// Every atlas tile is padded with BORDER (see const) extra level-k voxels on each
+// side. All callers supply brick_corner_k — the corner of the owning tile in
+// level-k space — rather than re-deriving it via fmod. The probe may overshoot
+// the brick interior by up to BORDER level-k voxels; the texture sampler's
+// clamp address mode reads from ghost padding without wrapping into an
+// unrelated tile. fmod must NOT be used: it wraps overshooting probes back
+// into the interior, silently reading the wrong position.
+//
+// Overshoot budget per call site:
+//   traversal  — probe is interior by construction; overshoot = 0
+//   bisection  — at most one step_size ≈ block_size/STEPS_PER_BRICK ≈ 2.7
+//                level-k voxels (LOD=1, default params); fits within BORDER=3
+//   gradient   — ±1.5 level-k voxels (grad_eps = lod_scale * 1.5); fits
+//                within BORDER=3 at all LOD levels
+fn sample_atlas(
+    voxel_pos:      vec3<f32>,   // finest-level voxel coordinates
+    lut_entry:      vec4<u32>,   // RGB = slot indices, W = lut_w (level, 1-based)
+    lod_scale:      vec3<f32>,   // downscale factor for this level
+    brick_corner_k: vec3<f32>,   // anchor brick's corner in level-k voxel space
 ) -> f32 {
     let block_size  = vec3<f32>(u_vol_params.block_size_x,
                                 u_vol_params.block_size_y,
@@ -154,7 +133,7 @@ fn sample_atlas_with_corner(
     let tile_origin = vec3<f32>(lut_entry.xyz) * padded_size;
 
     // Offset from anchor brick corner — allows negative values (ghost below)
-    // and values > block_size (ghost above), unlike fmod which always wraps.
+    // and values > block_size (ghost above).
     let voxel_k      = voxel_pos / lod_scale;
     let pos_in_brick = voxel_k - brick_corner_k;
 
@@ -168,13 +147,14 @@ fn sample_atlas_with_corner(
 // ── Brick setup ───────────────────────────────────────────────────────────
 
 struct BrickInfo {
-    lut_entry:  vec4<u32>,
-    lod_scale:  vec3<f32>,
-    t_end:      f32,
-    num_steps:  u32,
-    step_size:  f32,
-    brick_max:  f32,
-    valid:      bool,
+    lut_entry:      vec4<u32>,
+    lod_scale:      vec3<f32>,
+    brick_corner_k: vec3<f32>,
+    t_end:          f32,
+    num_steps:      u32,
+    step_size:      f32,
+    brick_max:      f32,
+    valid:          bool,
 };
 
 fn setup_brick(
@@ -225,7 +205,9 @@ fn setup_brick(
 
     // 5. If valid, compute step budget.
     if (info.valid) {
-        info.lod_scale = get_lod_scale(lut_entry.w);
+        info.lod_scale      = get_lod_scale(lut_entry.w);
+        let voxel_k_bc      = voxel_pos / info.lod_scale;
+        info.brick_corner_k = floor(voxel_k_bc / block_size) * block_size;
         let brick_len       = max(info.t_end - t, 1e-6);
         let brick_world_len = length(brick_max_n - brick_min_n);
         let max_scale  = max(info.lod_scale.x, max(info.lod_scale.y, info.lod_scale.z));
@@ -272,7 +254,8 @@ fn lookup_brick_mip(
 
     // 4. Step budget (identical to setup_brick, using DDA-derived brick length).
     if (info.valid) {
-        info.lod_scale = get_lod_scale(lut_entry.w);
+        info.lod_scale      = get_lod_scale(lut_entry.w);
+        info.brick_corner_k = floor(vec3<f32>(entry_idx) / info.lod_scale) * block_size;
         let brick_len       = max(info.t_end - t_entry, 1e-6);
         // brick_world_len: diagonal of one brick in normalized space.
         // Since voxel→norm is a uniform linear scale, this is constant for
@@ -416,8 +399,10 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var t_sample_carry: f32 = t_start;
 
     // Fix 2: track which brick prev_t belongs to for cross-brick bisection.
-    var prev_lut_entry: vec4<u32>;
-    var prev_lod_scale: vec3<f32>;
+    var prev_lut_entry:      vec4<u32>;
+    var prev_lod_scale:      vec3<f32>;
+    var prev_brick_corner_k: vec3<f32>;
+    var surface_brick_corner_k: vec3<f32>;
     var brick_boundary_t: f32 = t_start;
 
     // MIP state
@@ -524,9 +509,10 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ endif
 
         // Capture for post-loop bisection (ISO only, but always written).
-        surface_lut_entry = brick.lut_entry;
-        surface_lod_scale = brick.lod_scale;
-        surface_step_size = brick.step_size;
+        surface_lut_entry      = brick.lut_entry;
+        surface_lod_scale      = brick.lod_scale;
+        surface_brick_corner_k = brick.brick_corner_k;
+        surface_step_size      = brick.step_size;
 
         $$ if render_mode == 'mip'
         // MIP: per-brick stochastic jitter (boundary continuity not needed).
@@ -549,8 +535,12 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             $$ endif
 
             let pos     = ray_origin + ray_dir * t_sample;
-            let voxel   = norm_to_voxel(pos, norm_size, dataset_size);
-            let density = sample_atlas_nearest(voxel, brick.lut_entry, brick.lod_scale);
+            let voxel   = clamp(
+                norm_to_voxel(pos, norm_size, dataset_size),
+                vec3<f32>(0.0),
+                dataset_size - vec3<f32>(0.001)
+            );
+            let density = sample_atlas(voxel, brick.lut_entry, brick.lod_scale, brick.brick_corner_k);
 
             $$ if render_mode == 'mip'
             // MIP: track maximum intensity and its position across the ray.
@@ -566,11 +556,12 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
                 surface_density = density;
                 break;
             }
-            prev_density = density;
-            prev_t       = t_sample;
+            prev_density        = density;
+            prev_t              = t_sample;
             // Fix 2: track which brick prev_t belongs to.
-            prev_lut_entry = brick.lut_entry;
-            prev_lod_scale = brick.lod_scale;
+            prev_lut_entry      = brick.lut_entry;
+            prev_lod_scale      = brick.lod_scale;
+            prev_brick_corner_k = brick.brick_corner_k;
             $$ endif
 
             t_sample += brick.step_size;
@@ -640,10 +631,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         let mid      = (lo + hi) * 0.5;
         let pos_mid  = ray_origin + ray_dir * mid;
         let voxel_m  = norm_to_voxel(pos_mid, norm_size, dataset_size);
-        let in_prev  = mid < brick_boundary_t;
-        let bis_lut  = select(surface_lut_entry, prev_lut_entry, in_prev);
-        let bis_lod  = select(surface_lod_scale, prev_lod_scale, in_prev);
-        let d_mid    = sample_atlas_nearest(voxel_m, bis_lut, bis_lod);
+        let in_prev    = mid < brick_boundary_t;
+        let bis_lut    = select(surface_lut_entry,     prev_lut_entry,      in_prev);
+        let bis_lod    = select(surface_lod_scale,     prev_lod_scale,      in_prev);
+        let bis_corner = select(surface_brick_corner_k, prev_brick_corner_k, in_prev);
+        let d_mid      = sample_atlas(voxel_m, bis_lut, bis_lod, bis_corner);
         if (d_mid >= iso_threshold) { hi = mid; } else { lo = mid; }
     }
     let refined_t   = (lo + hi) * 0.5;
@@ -667,17 +659,17 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let voxel_k_ref    = refined_v / grad_lod;
     let brick_corner_k = floor(voxel_k_ref / block_size_v) * block_size_v;
 
-    let dx = sample_atlas_with_corner(refined_v + vec3<f32>(grad_eps.x, 0.0, 0.0),
+    let dx = sample_atlas(refined_v + vec3<f32>(grad_eps.x, 0.0, 0.0),
                                       grad_lut, grad_lod, brick_corner_k)
-           - sample_atlas_with_corner(refined_v - vec3<f32>(grad_eps.x, 0.0, 0.0),
+           - sample_atlas(refined_v - vec3<f32>(grad_eps.x, 0.0, 0.0),
                                       grad_lut, grad_lod, brick_corner_k);
-    let dy = sample_atlas_with_corner(refined_v + vec3<f32>(0.0, grad_eps.y, 0.0),
+    let dy = sample_atlas(refined_v + vec3<f32>(0.0, grad_eps.y, 0.0),
                                       grad_lut, grad_lod, brick_corner_k)
-           - sample_atlas_with_corner(refined_v - vec3<f32>(0.0, grad_eps.y, 0.0),
+           - sample_atlas(refined_v - vec3<f32>(0.0, grad_eps.y, 0.0),
                                       grad_lut, grad_lod, brick_corner_k);
-    let dz = sample_atlas_with_corner(refined_v + vec3<f32>(0.0, 0.0, grad_eps.z),
+    let dz = sample_atlas(refined_v + vec3<f32>(0.0, 0.0, grad_eps.z),
                                       grad_lut, grad_lod, brick_corner_k)
-           - sample_atlas_with_corner(refined_v - vec3<f32>(0.0, 0.0, grad_eps.z),
+           - sample_atlas(refined_v - vec3<f32>(0.0, 0.0, grad_eps.z),
                                       grad_lut, grad_lod, brick_corner_k);
     let gradient = vec3<f32>(dx, dy, dz);
     let normal   = select(normalize(-gradient), vec3<f32>(0.0, 1.0, 0.0),

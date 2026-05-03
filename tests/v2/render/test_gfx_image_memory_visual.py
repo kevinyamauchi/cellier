@@ -104,7 +104,8 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
 
@@ -125,7 +126,8 @@ def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=None,
     )
     assert requests[0].axis_selections == ((0, 5), (0, 6), (0, 7))
@@ -213,7 +215,8 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     req = requests[0]
@@ -323,7 +326,7 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
 def test_on_data_ready_2d_transposes_correctly(mock_gfx):
-    """Data (H=20, W=30) must be transposed to (W=30, H=20, 1) for pygfx."""
+    """Data (H=20, W=30) must be uploaded as (H=20, W=30, 1) — no transpose."""
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
@@ -346,8 +349,8 @@ def test_on_data_ready_2d_transposes_correctly(mock_gfx):
 
     assert len(captured_arrays) == 1
     arr = captured_arrays[0]
-    assert arr.shape == (30, 20, 1)
-    np.testing.assert_array_equal(arr[:, :, 0], data.T)
+    assert arr.shape == (20, 30, 1)
+    np.testing.assert_array_equal(arr[:, :, 0], data)
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
@@ -422,7 +425,8 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     assert visual._last_displayed_axes == (0, 1, 2)
@@ -491,7 +495,8 @@ def test_identity_transform_is_noop_3d(mock_gfx):
     requests = visual.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
-        thresholds=None,
+        fov_y_rad=1.0,
+        screen_height_px=600.0,
         dims_state=dims,
     )
     assert len(requests) == 1
