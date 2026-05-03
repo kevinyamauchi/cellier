@@ -202,7 +202,8 @@ class CanvasView:
         canvas aspect ratio.  The OrthographicCamera exposes ``width``
         and ``height`` which define the *minimum* visible extent; the
         actual extent is expanded in one dimension to match the canvas
-        aspect ratio.
+        aspect ratio. This is because maintain_aspect is set to True.
+        (see pygfx OrthographicCamera docstring)
         """
         cam = self._camera
         vw = screen_w if screen_w > 0 else 800.0
