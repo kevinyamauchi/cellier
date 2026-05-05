@@ -251,14 +251,14 @@ def test_scale_translation_length_mismatch_raises():
 
 
 # ---------------------------------------------------------------------------
-# set_slice / expand_dims tests
+# select_axes / swap_axes / expand_dims tests
 # ---------------------------------------------------------------------------
 
 
-def test_set_slice_3d_to_2d():
+def test_select_axes_3d_to_2d():
     """Extract axes 1,2 (y,x) from a 3D transform."""
     t = AffineTransform.from_scale_and_translation((4.0, 2.0, 3.0), (10.0, 20.0, 30.0))
-    sub = t.set_slice((1, 2))
+    sub = t.select_axes((1, 2))
     assert sub.ndim == 2
     assert sub.matrix.shape == (3, 3)
     # Scale: y=2, x=3
@@ -269,43 +269,43 @@ def test_set_slice_3d_to_2d():
     np.testing.assert_allclose(sub.matrix[1, 2], 30.0)
 
 
-def test_set_slice_4d_to_3d():
+def test_select_axes_4d_to_3d():
     """Extract last 3 axes from a 4D transform."""
     t = AffineTransform.from_scale((1.0, 4.0, 2.0, 3.0))
-    sub = t.set_slice((1, 2, 3))
+    sub = t.select_axes((1, 2, 3))
     assert sub.ndim == 3
     assert sub.matrix.shape == (4, 4)
     expected = np.diag([4.0, 2.0, 3.0, 1.0]).astype(np.float32)
     np.testing.assert_array_equal(sub.matrix, expected)
 
 
-def test_set_slice_non_contiguous_axes():
+def test_select_axes_non_contiguous_axes():
     """Extract axes 0,2 (t,y) from a 4D transform, skipping z."""
     t = AffineTransform.from_scale((1.0, 4.0, 2.0, 3.0))
-    sub = t.set_slice((0, 2))
+    sub = t.select_axes((0, 2))
     assert sub.ndim == 2
     # Scale: t=1, y=2
     np.testing.assert_allclose(sub.matrix[0, 0], 1.0)
     np.testing.assert_allclose(sub.matrix[1, 1], 2.0)
 
 
-def test_set_slice_preserves_off_diagonal():
+def test_select_axes_preserves_off_diagonal():
     """Off-diagonal entries (shear/rotation) are preserved in the sub-matrix."""
     m = np.eye(4, dtype=np.float32)
     m[0, 1] = 0.5  # shear between axes 0 and 1
     m[1, 0] = 0.3
     t = AffineTransform(matrix=m)
-    sub = t.set_slice((0, 1))
+    sub = t.select_axes((0, 1))
     np.testing.assert_allclose(sub.matrix[0, 1], 0.5)
     np.testing.assert_allclose(sub.matrix[1, 0], 0.3)
 
 
-def test_set_slice_roundtrip_coordinates():
+def test_select_axes_roundtrip_coordinates():
     """Sliced transform should produce same result as full transform for those axes."""
     t = AffineTransform.from_scale_and_translation(
         (1.0, 4.0, 2.0, 3.0), (0.0, 10.0, 5.0, 7.0)
     )
-    sub = t.set_slice((1, 2, 3))
+    sub = t.select_axes((1, 2, 3))
 
     # Map a 3D point through the sub-transform
     pts_3d = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)

@@ -117,9 +117,9 @@ def compute_brick_aabb_corners(
         block_world = block_size * sv  # (3,) per-axis
         min_corner = np.array(
             [
-                brick_key.gx * block_world[0] + tv[0],  # x = W
-                brick_key.gy * block_world[1] + tv[1],  # y = H
-                brick_key.gz * block_world[2] + tv[2],  # z = D
+                brick_key.g2 * block_world[0] + tv[0],  # x = W
+                brick_key.g1 * block_world[1] + tv[1],  # y = H
+                brick_key.g0 * block_world[2] + tv[2],  # z = D
             ],
             dtype=np.float64,
         )
@@ -129,9 +129,9 @@ def compute_brick_aabb_corners(
     block_world = float(block_size * scale)
     min_corner = np.array(
         [
-            brick_key.gx * block_world,
-            brick_key.gy * block_world,
-            brick_key.gz * block_world,
+            brick_key.g2 * block_world,
+            brick_key.g1 * block_world,
+            brick_key.g0 * block_world,
         ],
         dtype=np.float64,
     )
@@ -291,9 +291,9 @@ def bricks_in_frustum(
     for i, key in enumerate(keys_list):
         scale = 2 ** (key.level - 1)
         bw = float(block_size * scale)
-        brick_mins[i, 0] = key.gx * bw
-        brick_mins[i, 1] = key.gy * bw
-        brick_mins[i, 2] = key.gz * bw
+        brick_mins[i, 0] = key.g2 * bw
+        brick_mins[i, 1] = key.g1 * bw
+        brick_mins[i, 2] = key.g0 * bw
         block_worlds[i] = bw
 
     all_corners = (

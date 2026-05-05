@@ -49,6 +49,22 @@ class AxisAlignedSelection(EventedModel):
     displayed_axes: tuple[int, ...]
     slice_indices: dict[int, int] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _validate_displayed_rank(self) -> AxisAlignedSelection:
+        """Display rank must be 2 or 3 (the GPU/camera constraint)."""
+        n = len(self.displayed_axes)
+        if n not in (2, 3):
+            raise ValueError(
+                f"displayed_axes must have length 2 or 3, got {n} "
+                f"(displayed_axes={self.displayed_axes})"
+            )
+        if len(set(self.displayed_axes)) != n:
+            raise ValueError(
+                f"displayed_axes must contain distinct indices, "
+                f"got {self.displayed_axes}"
+            )
+        return self
+
     def to_state(self) -> AxisAlignedSelectionState:
         """Return an immutable snapshot of this selection."""
         return AxisAlignedSelectionState(

@@ -270,8 +270,8 @@ def viewport_cull_2d(
     bs = float(block_size)
 
     levels = np.array([k.level for k in keys], dtype=np.int32)
-    gy = np.array([k.gy for k in keys], dtype=np.float64)
-    gx = np.array([k.gx for k in keys], dtype=np.float64)
+    gy = np.array([k.g0 for k in keys], dtype=np.float64)
+    gx = np.array([k.g1 for k in keys], dtype=np.float64)
 
     if level_scale_arr_shader is not None and level_translation_arr_shader is not None:
         bw_x = bs * level_scale_arr_shader[levels - 1, 0]  # (M,)
@@ -334,8 +334,8 @@ def arr_to_block_keys_2d(
         level = int(row[0])
         key = BlockKey2D(
             level=level,
-            gy=int(row[1]),
-            gx=int(row[2]),
+            g0=int(row[1]),
+            g1=int(row[2]),
             slice_coord=slice_coord,
         )
         required[key] = level

@@ -50,14 +50,18 @@ class BlockKey3D:
     ----------
     level : int
         1-indexed LOAD level (1 = finest).
-    gz, gy, gx : int
-        Grid position at this level's resolution.
+    g0, g1, g2 : int
+        Grid position at this level's resolution.  Indexed in the same
+        order as the visual's ``displayed_axes`` -- i.e. ``g0`` is the
+        brick coordinate along ``displayed_axes[0]``, etc.  For the
+        current 3D case with ``displayed_axes=(0, 1, 2)`` these are
+        the grid positions along data axes z, y, x respectively.
     """
 
     level: int
-    gz: int
-    gy: int
-    gx: int
+    g0: int
+    g1: int
+    g2: int
 
 
 @dataclass
@@ -114,7 +118,7 @@ class TileManager:
             i: None for i in range(cache_parameters.n_slots)
         }
         # Slot 0 is reserved (samples as black / out-of-bounds).
-        self.slot_index[0] = BlockKey3D(level=0, gz=0, gy=0, gx=0)
+        self.slot_index[0] = BlockKey3D(level=0, g0=0, g1=0, g2=0)
 
         # Free slots (everything except slot 0).
         self.free_slots: list[int] = list(range(cache_parameters.n_slots - 1, 0, -1))
@@ -292,7 +296,7 @@ class TileManager:
         self._in_flight.clear()
         for i in range(self.cache_parameters.n_slots):
             self.slot_index[i] = None
-        self.slot_index[0] = BlockKey3D(level=0, gz=0, gy=0, gx=0)
+        self.slot_index[0] = BlockKey3D(level=0, g0=0, g1=0, g2=0)
         self.free_slots = list(range(self.cache_parameters.n_slots - 1, 0, -1))
         self._lru_heap.clear()
         _CACHE_LOGGER.info("cache_cleared  was_occupied=%d", was_occupied)

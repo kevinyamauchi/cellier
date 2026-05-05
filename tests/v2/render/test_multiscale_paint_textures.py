@@ -95,7 +95,7 @@ def test_paint_textures_are_allocated(visual_setup):
 
 def test_patch_writes_value_and_alpha(visual_setup):
     _ctrl, gfx_visual = visual_setup
-    # Paint two voxels in the same tile (gy=1, gx=2): voxels at (16, 32) and (17, 33).
+    # Paint two voxels in the same tile (g0=1, g1=2): voxels at (16, 32) and (17, 33).
     voxels = np.array([[16, 32], [17, 33]], dtype=np.int64)
     values = np.array([0.7, 0.4], dtype=np.float32)
     n = gfx_visual.patch_paint_texture(voxels, values, displayed_axes=(0, 1))

@@ -233,11 +233,11 @@ def rebuild_lut(
         for key, slot in by_level[level]:
             sz, sy, sx = slot.grid_pos
             # Base-grid slice covered by this coarse brick, clamped to grid.
-            gz0 = key.gz * gz_scale
+            gz0 = key.g0 * gz_scale
             gz1 = min(gz0 + gz_scale, gd)
-            gy0 = key.gy * gy_scale
+            gy0 = key.g1 * gy_scale
             gy1 = min(gy0 + gy_scale, gh)
-            gx0 = key.gx * gx_scale
+            gx0 = key.g2 * gx_scale
             gx1 = min(gx0 + gx_scale, gw)
             # Single numpy slice assignment — fills the block at C speed.
             lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
