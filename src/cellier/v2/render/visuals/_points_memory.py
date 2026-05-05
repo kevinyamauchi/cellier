@@ -169,7 +169,7 @@ class GFXPointsMemoryVisual:
 
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.set_slice(displayed_axes)
+        sub = self._transform.select_axes(displayed_axes)
         self.node.local.matrix = _pygfx_matrix(sub)
 
     # ------------------------------------------------------------------

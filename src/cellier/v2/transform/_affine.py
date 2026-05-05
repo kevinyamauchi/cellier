@@ -201,12 +201,12 @@ class AffineTransform(BaseTransform):
 
     # ── Sub-transform extraction ──────────────────────────────────────
 
-    def set_slice(self, axes: tuple[int, ...]) -> AffineTransform:
+    def select_axes(self, axes: tuple[int, ...]) -> AffineTransform:
         """Extract a sub-transform for the given data axes.
 
-        Similar to napari's ``Transform.set_slice``.  Returns a lower-
-        dimensional transform containing only the rows/columns for the
-        specified axes.
+        Returns a lower-dimensional transform containing only the
+        rows/columns for the specified axes.  The output axis order
+        matches the order of ``axes``.
 
         Parameters
         ----------
@@ -227,6 +227,39 @@ class AffineTransform(BaseTransform):
                 m[out_i, out_j] = self.matrix[src_i, src_j]
             m[out_i, k] = self.matrix[src_i, tc]
         return AffineTransform(matrix=m)
+
+    def swap_axes(self, permutation: tuple[int, ...]) -> AffineTransform:
+        """Reorder the axes of this transform by an explicit permutation.
+
+        Use this to convert a transform from one axis ordering to
+        another (e.g. data axis order ``(z, y, x)`` to display axis
+        order ``(x, y, z)``).  The permutation must be a permutation of
+        ``range(self.ndim)``.
+
+        Parameters
+        ----------
+        permutation : tuple[int, ...]
+            ``permutation[i]`` is the source axis index whose row/column
+            becomes output axis ``i``.
+
+        Returns
+        -------
+        AffineTransform
+            A transform of the same ``ndim`` with axes reordered.
+
+        Raises
+        ------
+        ValueError
+            If ``permutation`` is not a permutation of
+            ``range(self.ndim)``.
+        """
+        n = self.ndim
+        if len(permutation) != n or sorted(permutation) != list(range(n)):
+            raise ValueError(
+                f"permutation must be a permutation of range({n}), "
+                f"got {permutation}"
+            )
+        return self.select_axes(permutation)
 
     def expand_dims(self, target_ndim: int) -> AffineTransform:
         """Embed this transform as the last ``self.ndim`` axes of a larger identity.

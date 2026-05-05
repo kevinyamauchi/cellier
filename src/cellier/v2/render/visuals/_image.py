@@ -66,6 +66,7 @@ from cellier.v2.render.visuals._paint_tile_slot_manager import (
     PaintTileSlotManager,
 )
 from cellier.v2.transform import AffineTransform
+from cellier.v2.transform._axis_order import select_axes, swap_axes
 
 if TYPE_CHECKING:
     from pygfx.resources import Buffer
@@ -101,10 +102,13 @@ def _extract_scale_and_translation(
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Extract per-axis scale and translation vectors from level transforms.
 
-    Vectors are returned in data-axis order ``(axis0, axis1, ...) =
-    (z, y, x)``, matching the ``AffineTransform`` matrix convention.
-    Callers that feed these into world-space geometry functions must
-    convert to shader order ``(x, y, z)`` first.
+    Vectors are returned in the same axis order as the input transforms.
+    For VolumeGeometry / ImageGeometry2D the transforms are already
+    projected onto the displayed axes via ``select_axes``, so the
+    output is in displayed-axis order over the displayed subset (e.g.
+    ``(z, y, x)`` when displayed_axes=(0, 1, 2)).  Callers that feed
+    these into shader-space geometry must reverse the local axis order
+    via ``swap_axes`` first.
 
     Parameters
     ----------
@@ -164,14 +168,17 @@ def _check_transform_no_rotation(transform: AffineTransform) -> None:
 
 def _norm_size_from_transform(
     transform: AffineTransform,
+    displayed_axes: tuple[int, ...],
     dataset_size_xyz: np.ndarray,
 ) -> np.ndarray:
     """Compute normalised physical size from a scale+translation transform.
 
-    Extracts per-axis physical scale factors from the column norms of the
-    linear submatrix (data-axis order: z, y, x for 3-D), converts to shader
-    order (x=W, y=H, z=D), multiplies by ``dataset_size_xyz``, and
-    normalises so the longest axis equals 1.0.
+    Projects ``transform`` onto the 3 displayed data axes via
+    ``select_axes``, extracts per-axis scale factors from the column
+    norms of the linear submatrix (now in displayed-axis order over the
+    3 displayed axes), reverses to shader order via ``swap_axes``,
+    multiplies by ``dataset_size_xyz``, and normalises so the longest
+    axis equals 1.0.
 
     For a pure diagonal (scale-only) transform the column norms equal the
     absolute diagonal values, so this is exact.
@@ -179,8 +186,11 @@ def _norm_size_from_transform(
     Parameters
     ----------
     transform : AffineTransform
-        The data-to-world transform.  Must be scale + translation only
-        (validated separately by ``_check_transform_no_rotation``).
+        The full data-to-world transform (any ``ndim >= 3``).  Must be
+        scale + translation only (validated separately by
+        ``_check_transform_no_rotation``).
+    displayed_axes : tuple[int, ...]
+        The 3 displayed data axes, in display order.
     dataset_size_xyz : ndarray, shape (3,)
         Finest-level voxel counts in shader order (x=W, y=H, z=D).
 
@@ -190,14 +200,20 @@ def _norm_size_from_transform(
         Normalised physical size in shader order, with the longest axis
         equal to 1.0.
     """
-    nd = transform.ndim
-    linear = transform.matrix[:nd, :nd]  # data order: (z, y, x) for 3-D
-    # Column norms give the physical scale factor for each data axis.
+    if len(displayed_axes) != 3:
+        raise ValueError(
+            f"_norm_size_from_transform requires 3 displayed axes, "
+            f"got {len(displayed_axes)} ({displayed_axes})"
+        )
+    sub = transform.select_axes(displayed_axes)
+    nd = sub.ndim
+    linear = sub.matrix[:nd, :nd]
+    # Column norms are in displayed-axis order over the 3 displayed axes.
     col_norms = np.array(
         [np.linalg.norm(linear[:, i]) for i in range(nd)], dtype=np.float64
     )
-    # col_norms is in data order (sz, sy, sx); shader order is (sx, sy, sz).
-    per_axis_scale_xyz = col_norms[::-1]
+    # Convert displayed-axis order → shader order via explicit reversal.
+    per_axis_scale_xyz = np.asarray(swap_axes(col_norms, (2, 1, 0)))
     return compute_normalized_size(dataset_size_xyz, per_axis_scale_xyz)
 
 
@@ -241,14 +257,22 @@ class VolumeGeometry:
             level_transforms[0].matrix, np.eye(ndim + 1)
         ), "level_transforms[0] must be the identity"
 
-        # Data-axis order (z, y, x).
+        # Inputs are in displayed-axis order over the 3 displayed axes
+        # (e.g. (z, y, x) when displayed_axes=(0, 1, 2)).
         sv_data, tv_data = _extract_scale_and_translation(level_transforms)
         self._scale_vecs_data = sv_data
         self._translation_vecs_data = tv_data
 
-        # Shader/pygfx order (x=W, y=H, z=D).
-        self._scale_vecs_shader = [sv[[2, 1, 0]] for sv in sv_data]
-        self._translation_vecs_shader = [tv[[2, 1, 0]] for tv in tv_data]
+        # Shader / pygfx order is the reversal of displayed-axis order.
+        # Always a full reversal of the local 3 axes, regardless of which
+        # data axes were selected upstream in ``from_cellier_model``.
+        _to_shader_3d = (2, 1, 0)
+        self._scale_vecs_shader = [
+            np.asarray(swap_axes(sv, _to_shader_3d)) for sv in sv_data
+        ]
+        self._translation_vecs_shader = [
+            np.asarray(swap_axes(tv, _to_shader_3d)) for tv in tv_data
+        ]
 
         # (n_levels, 3) arrays for vectorised hot-path lookups.
         self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
@@ -323,14 +347,20 @@ class ImageGeometry2D:
             ]
         self.level_transforms = list(level_transforms)
 
-        # Data-axis order (H, W).
+        # Inputs are in displayed-axis order over the 2 displayed axes
+        # (e.g. (H, W) when displayed_axes=(1, 2)).
         sv_data, tv_data = _extract_scale_and_translation(self.level_transforms)
         self._scale_vecs_data = sv_data
         self._translation_vecs_data = tv_data
 
-        # Shader order (x=W, y=H) — 2D reversal: sv[[1, 0]].
-        self._scale_vecs_shader = [sv[[1, 0]] for sv in sv_data]
-        self._translation_vecs_shader = [tv[[1, 0]] for tv in tv_data]
+        # Shader order is the reversal of displayed-axis order.
+        _to_shader_2d = (1, 0)
+        self._scale_vecs_shader = [
+            np.asarray(swap_axes(sv, _to_shader_2d)) for sv in sv_data
+        ]
+        self._translation_vecs_shader = [
+            np.asarray(swap_axes(tv, _to_shader_2d)) for tv in tv_data
+        ]
 
         self._scale_arr_shader = np.stack(self._scale_vecs_shader, axis=0)
         self._translation_arr_shader = np.stack(self._translation_vecs_shader, axis=0)
@@ -340,7 +370,7 @@ class ImageGeometry2D:
 
         # Build 2D base layout from finest level (H, W).
         self.base_layout = BlockLayout2D.from_shape(
-            shape=(level_shapes[0][0], level_shapes[0][1]),
+            shape=tuple(level_shapes[0]),
             block_size=block_size,
         )
         self._level_grids = build_tile_grids_2d(
@@ -355,7 +385,7 @@ class ImageGeometry2D:
         """Rebuild from new level shapes after displayed axes change."""
         self.level_shapes = list(level_shapes)
         self.base_layout = BlockLayout2D.from_shape(
-            shape=(level_shapes[0][0], level_shapes[0][1]),
+            shape=tuple(level_shapes[0]),
             block_size=self.block_size,
         )
         self._level_grids = build_tile_grids_2d(
@@ -383,9 +413,9 @@ def _brick_key_to_padded_coords(
     the DataStore is responsible for clamping and zero-padding.
     """
     padded = block_size + 2 * overlap
-    z0 = key.gz * block_size - overlap
-    y0 = key.gy * block_size - overlap
-    x0 = key.gx * block_size - overlap
+    z0 = key.g0 * block_size - overlap
+    y0 = key.g1 * block_size - overlap
+    x0 = key.g2 * block_size - overlap
     return z0, y0, x0, z0 + padded, y0 + padded, x0 + padded
 
 
@@ -447,8 +477,8 @@ def _block_key_2d_to_padded_coords(
     Returns y0, x0, y1, x1.  May extend outside store bounds.
     """
     padded = block_size + 2 * overlap
-    y0 = key.gy * block_size - overlap
-    x0 = key.gx * block_size - overlap
+    y0 = key.g0 * block_size - overlap
+    x0 = key.g1 * block_size - overlap
     return y0, x0, y0 + padded, x0 + padded
 
 
@@ -632,16 +662,30 @@ class GFXMultiscaleImageVisual:
         self._brick_scales_buffer: Buffer | None = None
         self._norm_size: np.ndarray | None = None
         self._dataset_size: np.ndarray | None = None
+        self._norm_size_axes: tuple[int, ...] | None = None
         if volume_geometry is not None:
-            # dataset_size in shader order (x=W, y=H, z=D).
-            ds = volume_geometry.level_shapes[0]  # (D, H, W)
-            self._dataset_size = np.array(
-                [float(ds[2]), float(ds[1]), float(ds[0])], dtype=np.float64
+            # ``volume_geometry.level_shapes[0]`` is in displayed-axis order
+            # over the 3 displayed axes (e.g. (D, H, W) when displayed=(0,1,2)).
+            # Reverse to shader order (x=W, y=H, z=D) via ``swap_axes``.
+            ds = volume_geometry.level_shapes[0]
+            self._dataset_size = np.asarray(
+                swap_axes(tuple(float(s) for s in ds), (2, 1, 0)),
+                dtype=np.float64,
             )
             _check_transform_no_rotation(self._transform)
-            self._norm_size = _norm_size_from_transform(
-                self._transform, self._dataset_size
+            # 3D rendering requires 3 displayed axes.  ``displayed_axes`` is
+            # set when constructed via ``from_cellier_model``; if a caller
+            # uses the raw constructor with a 3D-equal-ndim transform, fall
+            # back to the trailing 3 data axes (preserves prior behaviour).
+            axes_for_norm = (
+                displayed_axes
+                if displayed_axes is not None and len(displayed_axes) == 3
+                else tuple(range(self._ndim))[-3:]
             )
+            self._norm_size = _norm_size_from_transform(
+                self._transform, axes_for_norm, self._dataset_size
+            )
+            self._norm_size_axes = axes_for_norm
             self._vol_params_buffer = build_vol_params_buffer(
                 norm_size=self._norm_size,
                 dataset_size=self._dataset_size,
@@ -752,24 +796,28 @@ class GFXMultiscaleImageVisual:
             axes_2d = displayed_axes
 
         # Build 3D geometry when 3D rendering is requested and axes are available.
+        # ``select_axes`` projects the per-data-axis level shape onto the
+        # 3 displayed data axes; ``AffineTransform.select_axes`` does the
+        # same for the per-level transforms.  Inputs to VolumeGeometry are
+        # therefore in displayed-axis order over the displayed subset.
         volume_geometry: VolumeGeometry | None = None
         if "3d" in render_modes and axes_3d is not None:
-            shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
-            transforms_3d = [t.set_slice(axes_3d) for t in model.level_transforms]
+            shapes_3d = [select_axes(s, axes_3d) for s in level_shapes]
+            transforms_3d = [t.select_axes(axes_3d) for t in model.level_transforms]
             volume_geometry = VolumeGeometry(
                 level_shapes=shapes_3d,
                 level_transforms=transforms_3d,
                 block_size=block_size,
             )
 
-        # Build 2D geometry when 2D rendering is requested.
+        # Build 2D geometry when 2D rendering is requested.  Same pattern:
+        # project shapes and transforms onto the 2 displayed data axes.
         image_geometry_2d: ImageGeometry2D | None = None
         if "2d" in render_modes:
-            shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
-            transforms_2d = [t.set_slice(axes_2d) for t in model.level_transforms]
-            level_shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
+            shapes_2d = [select_axes(s, axes_2d) for s in level_shapes]
+            transforms_2d = [t.select_axes(axes_2d) for t in model.level_transforms]
             image_geometry_2d = ImageGeometry2D(
-                level_shapes=level_shapes_2d,
+                level_shapes=shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
                 level_transforms=transforms_2d,
@@ -971,7 +1019,7 @@ class GFXMultiscaleImageVisual:
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
         """Recompute and apply the pygfx node matrix for *displayed_axes*."""
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.set_slice(displayed_axes)
+        sub = self._transform.select_axes(displayed_axes)
 
         if self.node_3d is not None:
             data_to_world = _pygfx_matrix(sub)
@@ -1058,10 +1106,19 @@ class GFXMultiscaleImageVisual:
                 self._update_node_matrix(displayed)
 
         # Camera / frustum are always 3D from pygfx -- use the 3D
-        # sub-transform (last 3 displayed axes) for inverse mapping.
-        sub_3d = self._transform.set_slice(
-            self._last_displayed_axes or tuple(range(self._ndim))[-3:]
-        )
+        # sub-transform projected onto the displayed axes.  Display rank
+        # must be 3 here (validated upstream by AxisAlignedSelection).
+        if self._last_displayed_axes is None:
+            raise RuntimeError(
+                "build_slice_request requires displayed_axes to be set. "
+                "Ensure the dims_state has been propagated to the visual."
+            )
+        if len(self._last_displayed_axes) != 3:
+            raise ValueError(
+                f"build_slice_request expects 3D display, got "
+                f"displayed_axes={self._last_displayed_axes}"
+            )
+        sub_3d = self._transform.select_axes(self._last_displayed_axes)
         # level_grids["centres"], bricks_in_frustum_arr, and sort_arr_by_distance
         # all work in shader order (x=W, y=H, z=D) level-0 voxel space.
         # sub_3d (AffineTransform) operates in data-axis order (z,y,x), whereas
@@ -1394,13 +1451,13 @@ class GFXMultiscaleImageVisual:
         #
         # Axis-order note: pygfx delivers world coords as (X, Y) where
         #   X = second displayed axis,  Y = first displayed axis.
-        # But set_slice(displayed=(a, b)).imap_coordinates expects input in
+        # But select_axes(displayed=(a, b)).imap_coordinates expects input in
         #   (a-world, b-world) = (first-displayed, second-displayed) order
         # and returns (a-data, b-data) = (gy, gx) order.
         # Downstream consumers (sort_tiles_by_distance_2d, viewport_cull_2d)
         # expect (gx, gy) = (second-displayed, first-displayed) order.
         # So we swap the input and swap the output.
-        sub_2d = self._transform.set_slice(displayed)
+        sub_2d = self._transform.select_axes(displayed)
 
         # Convert world_width to level-0 voxels using the geometric mean of
         # the per-axis world-to-voxel scale from the forward (data→world)
@@ -1573,14 +1630,14 @@ class GFXMultiscaleImageVisual:
             # ── DEBUG: print tile region and data selection ─────────────────
             if _DBG.isEnabledFor(_logging.DEBUG) and _debug_tile_count < 4:
                 _sv = geo2d._scale_arr_shader[level_index]
-                _cx_l0 = (tile_key.gx + 0.5) * block_size * float(_sv[0])
-                _cy_l0 = (tile_key.gy + 0.5) * block_size * float(_sv[1])
+                _cx_l0 = (tile_key.g1 + 0.5) * block_size * float(_sv[0])
+                _cy_l0 = (tile_key.g0 + 0.5) * block_size * float(_sv[1])
                 _DBG.debug(
-                    "  tile level=%d gy=%d gx=%d  "
-                    "centre_L0_vox(gx,gy)=(%.2f,%.2f)  axis_sel=%s",
+                    "  tile level=%d g0=%d g1=%d  "
+                    "centre_L0_vox(g1,g0)=(%.2f,%.2f)  axis_sel=%s",
                     tile_key.level,
-                    tile_key.gy,
-                    tile_key.gx,
+                    tile_key.g0,
+                    tile_key.g1,
                     _cx_l0,
                     _cy_l0,
                     axis_selections,
@@ -1908,7 +1965,7 @@ class GFXMultiscaleImageVisual:
         for key in list(tm.tilemap.keys()):
             if key.level != 1:
                 continue
-            if (key.gy, key.gx) in dirty_grid_coords:
+            if (key.g0, key.g1) in dirty_grid_coords:
                 slot = tm.tilemap.pop(key)
                 tm.slot_index[slot.index] = None
                 tm.free_slots.append(slot.index)
@@ -1927,7 +1984,7 @@ class GFXMultiscaleImageVisual:
         if self._dataset_size is not None:
             _check_transform_no_rotation(self._transform)
             self._norm_size = _norm_size_from_transform(
-                self._transform, self._dataset_size
+                self._transform, self._norm_size_axes, self._dataset_size
             )
             if self._vol_params_buffer is not None:
                 buf_data = self._vol_params_buffer.data

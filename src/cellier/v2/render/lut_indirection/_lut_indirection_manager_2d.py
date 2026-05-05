@@ -171,9 +171,9 @@ def rebuild_lut_2d(
             for key, slot in tiles_by_level[level]:
                 sy, sx = slot.grid_pos
                 # Base-grid slice covered by this coarse tile, clamped.
-                gy0 = key.gy * scale_y
+                gy0 = key.g0 * scale_y
                 gy1 = min(gy0 + scale_y, gh)
-                gx0 = key.gx * scale_x
+                gx0 = key.g1 * scale_x
                 gx1 = min(gx0 + scale_x, gw)
                 lut_data[gy0:gy1, gx0:gx1] = (sx, sy, level, 0)
 

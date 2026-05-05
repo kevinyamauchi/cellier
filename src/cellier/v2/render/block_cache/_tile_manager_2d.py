@@ -41,8 +41,11 @@ class BlockKey2D:
     ----------
     level : int
         1-indexed LOD level (1 = finest).
-    gy, gx : int
-        Grid position at this level's resolution.
+    g0, g1 : int
+        Grid position at this level's resolution.  Indexed in the same
+        order as the visual's ``displayed_axes`` -- i.e. ``g0`` is the
+        brick coordinate along ``displayed_axes[0]``, ``g1`` along
+        ``displayed_axes[1]``.
     slice_coord : tuple of (axis_index, world_value) pairs
         Sorted tuple encoding the sliced-axis positions at the time this
         tile was requested.  Tiles from different slice positions will have
@@ -51,8 +54,8 @@ class BlockKey2D:
     """
 
     level: int
-    gy: int
-    gx: int
+    g0: int
+    g1: int
     slice_coord: tuple[tuple[int, int], ...] = ()
 
 
@@ -96,7 +99,7 @@ class TileManager2D:
             i: None for i in range(cache_parameters.n_slots)
         }
         # Slot 0 is reserved (empty/black).
-        self.slot_index[0] = BlockKey2D(level=0, gy=0, gx=0)
+        self.slot_index[0] = BlockKey2D(level=0, g0=0, g1=0)
         # Free slots (everything except slot 0).
         self.free_slots: list[int] = list(range(cache_parameters.n_slots - 1, 0, -1))
 
@@ -278,7 +281,7 @@ class TileManager2D:
         self._in_flight.clear()
         for i in range(self.cache_info.n_slots):
             self.slot_index[i] = None
-        self.slot_index[0] = BlockKey2D(level=0, gy=0, gx=0)
+        self.slot_index[0] = BlockKey2D(level=0, g0=0, g1=0)
         self.free_slots = list(range(self.cache_info.n_slots - 1, 0, -1))
         self._lru_heap.clear()
         _CACHE_LOGGER.info("cache_cleared  was_occupied=%d", was_occupied)

@@ -25,7 +25,7 @@ def _stage_and_commit(cache: BlockCache3D, bricks: dict, frame_number: int):
 
 def test_first_request_is_a_miss() -> None:
     cache = BlockCache3D(CACHE_INFO)
-    key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = cache.stage({key: 1}, frame_number=1)
     assert len(fill_plan) == 1
     assert fill_plan[0][0] == key
@@ -33,7 +33,7 @@ def test_first_request_is_a_miss() -> None:
 
 def test_repeated_request_is_a_hit() -> None:
     cache = BlockCache3D(CACHE_INFO)
-    key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     _stage_and_commit(cache, {key: 1}, frame_number=1)
     fill_plan = cache.stage({key: 1}, frame_number=2)
     assert fill_plan == []
@@ -41,7 +41,7 @@ def test_repeated_request_is_a_hit() -> None:
 
 def test_hit_does_not_change_slot() -> None:
     cache = BlockCache3D(CACHE_INFO)
-    key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     first_plan = _stage_and_commit(cache, {key: 1}, frame_number=1)
     first_slot = first_plan[0][1]
 
@@ -56,7 +56,7 @@ def test_lru_evicts_oldest_brick() -> None:
     """Fill cache with bricks A-G at frames 1-7, refresh B at frame 8,
     then request H. A should be evicted (oldest timestamp)."""
     cache = BlockCache3D(CACHE_INFO)
-    keys = [BlockKey3D(level=1, gz=i, gy=0, gx=0) for i in range(7)]
+    keys = [BlockKey3D(level=1, g0=i, g1=0, g2=0) for i in range(7)]
     for frame, key in enumerate(keys, start=1):
         _stage_and_commit(cache, {key: 1}, frame_number=frame)
 
@@ -66,7 +66,7 @@ def test_lru_evicts_oldest_brick() -> None:
     key_b = keys[1]
     cache.stage({key_b: 1}, frame_number=8)  # hit — no commit needed
 
-    key_h = BlockKey3D(level=1, gz=99, gy=0, gx=0)
+    key_h = BlockKey3D(level=1, g0=99, g1=0, g2=0)
     fill_plan = cache.stage({key_h: 1}, frame_number=9)
 
     assert len(fill_plan) == 1
@@ -76,7 +76,7 @@ def test_lru_evicts_oldest_brick() -> None:
 
 def test_write_brick_fills_correct_slice() -> None:
     cache = BlockCache3D(CACHE_INFO)
-    key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = cache.stage({key: 1}, frame_number=1)
     slot = fill_plan[0][1]
 
@@ -91,7 +91,7 @@ def test_write_brick_fills_correct_slice() -> None:
 
 def test_write_brick_does_not_touch_other_slots() -> None:
     cache = BlockCache3D(CACHE_INFO)
-    key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = cache.stage({key: 1}, frame_number=1)
     slot = fill_plan[0][1]
 

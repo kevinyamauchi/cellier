@@ -382,7 +382,7 @@ class GFXImageMemoryVisual:
         volume and AABB line) inherit the same transform.
         """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.set_slice(displayed_axes)
+        sub = self._transform.select_axes(displayed_axes)
         m = _pygfx_matrix(sub)
         if self.node_3d is not None:
             self.node_3d.local.matrix = m

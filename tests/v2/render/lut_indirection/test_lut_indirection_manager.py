@@ -32,7 +32,7 @@ def test_rebuild_empty_lut_is_all_zeros() -> None:
 
 
 def test_coarse_brick_fills_its_fine_cells() -> None:
-    """A level-2 brick at (gz=0,gy=0,gx=0) covers [0:2, 0:2, 0:2] of the
+    """A level-2 brick at (g0=0,g1=0,g2=0) covers [0:2, 0:2, 0:2] of the
     finest grid. After rebuild, every cell in that region should carry
     level=2 and the slot's (sx, sy, sz) coordinates.
 
@@ -42,7 +42,7 @@ def test_coarse_brick_fills_its_fine_cells() -> None:
     """
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
-    coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
+    coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     fill_plan = _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
     slot = fill_plan[0][1]
     sz, sy, sx = slot.grid_pos
@@ -60,7 +60,7 @@ def test_uncovered_cells_remain_zero() -> None:
     """Cells outside the coarse brick's footprint stay at level 0."""
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
-    coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
+    coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
 
     lut.rebuild(tile_manager)
@@ -78,8 +78,8 @@ def test_fine_brick_overwrites_coarse_at_its_cell() -> None:
     """
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
-    coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
-    fine_key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
+    fine_key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     _stage_and_commit(tile_manager, {coarse_key: 2, fine_key: 1}, frame_number=1)
 
     lut.rebuild(tile_manager)
@@ -94,8 +94,8 @@ def test_fine_brick_slot_coordinates_are_correct() -> None:
     coarse slot's."""
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
     tile_manager = TileManager(CACHE_INFO)
-    coarse_key = BlockKey3D(level=2, gz=0, gy=0, gx=0)
-    fine_key = BlockKey3D(level=1, gz=0, gy=0, gx=0)
+    coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
+    fine_key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = _stage_and_commit(
         tile_manager, {coarse_key: 2, fine_key: 1}, frame_number=1
     )

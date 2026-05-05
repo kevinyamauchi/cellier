@@ -430,7 +430,7 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
         dims_state=dims,
     )
     assert visual._last_displayed_axes == (0, 1, 2)
-    # set_slice((0,1,2)) from a 3D transform; _pygfx_matrix reverses
+    # select_axes((0,1,2)) from a 3D transform; _pygfx_matrix reverses
     # data order (z, y, x) to pygfx order (x, y, z).
     # scale (4, 2, 3) in data order → (3, 2, 4) in pygfx order.
     expected = np.diag([3.0, 2.0, 4.0, 1.0]).astype(np.float32)
@@ -476,7 +476,7 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     visual.on_transform_changed(event)
 
     assert visual._transform is new_t
-    # 2D node receives set_slice((1, 2)) -> diag(5, 7) in data order (y, x)
+    # 2D node receives select_axes((1, 2)) -> diag(5, 7) in data order (y, x)
     # -> _pygfx_matrix reverses to pygfx order (x, y) -> diag(7, 5).
     expected_2d = np.diag([7.0, 5.0, 1.0, 1.0]).astype(np.float32)
     np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)

@@ -362,6 +362,6 @@ def arr_to_brick_keys(arr: np.ndarray) -> dict[BlockKey3D, int]:
     required: dict[BlockKey3D, int] = {}
     for row in arr:
         level = int(row[0])
-        key = BlockKey3D(level=level, gz=int(row[1]), gy=int(row[2]), gx=int(row[3]))
+        key = BlockKey3D(level=level, g0=int(row[1]), g1=int(row[2]), g2=int(row[3]))
         required[key] = level
     return required
