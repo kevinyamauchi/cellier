@@ -186,8 +186,6 @@ def _open_ome_ts_stores(
             else:
                 spec.setdefault("context", {})["gcs_user_project"] = ""
         store = ts.open(spec).result()
-        shape = tuple(int(d) for d in store.domain.shape)
-        print(f"  {name}: opened as {driver}  shape={shape}")
         stores.append(store)
     return stores
 
@@ -463,11 +461,6 @@ class OMEZarrImageDataStore(BaseDataStore):
             image_path = str(series_index)
 
         resolved_path = _join_uri_path(zarr_path, image_path)
-        print(
-            f"  Bf2Raw container detected — resolving series {series_index} "
-            f"at '{image_path}'"
-        )
-
         child_group = yaozarrs.open_group(resolved_path)
         child_metadata = child_group.ome_metadata()
 

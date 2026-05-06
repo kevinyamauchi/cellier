@@ -542,13 +542,6 @@ class GFXMultichannelMultiscaleImageVisual:
                     fill={self._channel_axis: ch_idx},
                 )
             )
-        # DEBUG print #1
-        print(
-            f"[MULTI-BUILD-2D] sid={str(sid)[:8]} "
-            f"planner_frame={planner._frame_number} "
-            f"ch_request_counts={[len(r) for r in channel_request_lists]} "
-            f"total={sum(len(r) for r in channel_request_lists)}"
-        )
         return [
             req
             for tile_group in zip_longest(*channel_request_lists)
@@ -577,7 +570,6 @@ class GFXMultichannelMultiscaleImageVisual:
 
     def on_data_ready_2d(self, batch: list[tuple[ChunkRequest, np.ndarray]]) -> None:
         """Route arriving 2D tiles to the correct channel slot."""
-        # DEBUG print #3
         accepted: list[tuple[ChunkRequest, np.ndarray]] = []
         rejected = 0
         for request, data in batch:
@@ -589,11 +581,6 @@ class GFXMultichannelMultiscaleImageVisual:
         for request, _ in accepted:
             ch = int(request.axis_selections[self._channel_axis])
             ch_counts[ch] = ch_counts.get(ch, 0) + 1
-        print(
-            f"[MULTI-READY-2D] batch={len(batch)} accepted={len(accepted)} "
-            f"guard_rejected={rejected} by_channel={ch_counts}"
-        )
-
         by_channel: dict[int, list[tuple[ChunkRequest, np.ndarray]]] = {}
         for request, data in accepted:
             ch_idx = int(request.axis_selections[self._channel_axis])
