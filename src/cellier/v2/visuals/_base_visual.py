@@ -44,6 +44,9 @@ class BaseAppearance(EventedModel):
     depth_test: bool = True
     depth_write: bool = True
     depth_compare: Literal["<", "<=", "==", "!=", ">=", ">"] = "<"
+    transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"] = (
+        "blend"
+    )
 
 
 class BaseVisual(EventedModel):

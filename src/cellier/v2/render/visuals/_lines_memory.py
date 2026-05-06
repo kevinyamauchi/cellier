@@ -45,7 +45,7 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
 
 def _build_material(appearance: LinesMemoryAppearance) -> gfx.LineSegmentMaterial:
     """Construct a LineSegmentMaterial from a LinesMemoryAppearance."""
-    return gfx.LineSegmentMaterial(
+    mat = gfx.LineSegmentMaterial(
         thickness=appearance.thickness,
         thickness_space=appearance.thickness_space,
         color=appearance.color,
@@ -55,6 +55,8 @@ def _build_material(appearance: LinesMemoryAppearance) -> gfx.LineSegmentMateria
         depth_write=appearance.depth_write,
         depth_compare=appearance.depth_compare,
     )
+    mat.alpha_mode = appearance.transparency_mode
+    return mat
 
 
 class GFXLinesMemoryVisual:
@@ -332,6 +334,8 @@ class GFXLinesMemoryVisual:
             self._material.depth_write = val
         elif name == "depth_compare":
             self._material.depth_compare = val
+        elif name == "transparency_mode":
+            self._material.alpha_mode = val
         elif name == "render_order":
             self.node.render_order = val
 

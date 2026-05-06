@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     from cellier.v2.render._requests import ReslicingRequest
     from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.v2.render.visuals._image_memory_multichannel import (
+        GFXMultichannelImageMemoryVisual,
+    )
+    from cellier.v2.render.visuals._image_multiscale_multichannel import (
+        GFXMultichannelMultiscaleImageVisual,
+    )
     from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
     from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
@@ -23,6 +29,8 @@ if TYPE_CHECKING:
     _GFXVisual = (
         GFXMultiscaleImageVisual
         | GFXImageMemoryVisual
+        | GFXMultichannelImageMemoryVisual
+        | GFXMultichannelMultiscaleImageVisual
         | GFXPointsMemoryVisual
         | GFXLinesMemoryVisual
         | GFXMeshMemoryVisual

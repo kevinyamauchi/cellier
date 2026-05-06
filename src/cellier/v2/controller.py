@@ -45,6 +45,12 @@ from cellier.v2.render.render_manager import RenderManager
 from cellier.v2.render.visuals._canvas_overlay import GFXCenteredAxes2D
 from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+from cellier.v2.render.visuals._image_memory_multichannel import (
+    GFXMultichannelImageMemoryVisual,
+)
+from cellier.v2.render.visuals._image_multiscale_multichannel import (
+    GFXMultichannelMultiscaleImageVisual,
+)
 from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
 from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
@@ -63,10 +69,15 @@ from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._canvas_overlay import CenteredAxes2D
 from cellier.v2.visuals._image import (
     ImageAppearance,
+    MultichannelMultiscaleImageVisual,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._image_memory import (
+    ImageMemoryAppearance,
+    ImageVisual,
+    MultichannelImageVisual,
+)
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 from cellier.v2.visuals._mesh_memory import (
     MeshAppearance,
@@ -90,6 +101,7 @@ if TYPE_CHECKING:
     from cellier.v2.render._config import RenderManagerConfig
     from cellier.v2.render.canvas_view import CanvasView
     from cellier.v2.visuals._canvas_overlay import CanvasOverlay
+    from cellier.v2.visuals._channel_appearance import ChannelAppearance
     from cellier.v2.visuals._types import VisualType
 
 
@@ -473,6 +485,12 @@ class CellierController:
             return self._add_multiscale_image_visual(scene_id, visual_model)
         elif isinstance(visual_model, ImageVisual):
             return self._add_image_visual(scene_id, visual_model)
+        elif isinstance(visual_model, MultichannelImageVisual):
+            return self._add_multichannel_image_memory_visual(scene_id, visual_model)
+        elif isinstance(visual_model, MultichannelMultiscaleImageVisual):
+            return self._add_multichannel_multiscale_image_visual(
+                scene_id, visual_model
+            )
         elif isinstance(visual_model, PointsVisual):
             return self._add_points_visual(scene_id, visual_model)
         elif isinstance(visual_model, LinesVisual):
@@ -696,6 +714,187 @@ class CellierController:
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
+    def add_multichannel_image(
+        self,
+        data: ImageMemoryStore,
+        scene_id: UUID,
+        channel_axis: int,
+        channels: dict[int, ChannelAppearance],
+        name: str = "multichannel_image",
+        max_channels_2d: int = 8,
+        max_channels_3d: int = 4,
+    ) -> MultichannelImageVisual:
+        """Add an in-memory multichannel image visual to a scene.
+
+        Parameters
+        ----------
+        data : ImageMemoryStore
+            Backing data store.
+        scene_id : UUID
+            Target scene.
+        channel_axis : int
+            Data axis index for the channel dimension.
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
+        name : str
+            Display name for the visual.
+        max_channels_2d : int
+            Maximum simultaneous 2D channel nodes.
+        max_channels_3d : int
+            Maximum simultaneous 3D channel nodes.
+
+        Returns
+        -------
+        MultichannelImageVisual
+        """
+        if len(channels) > max_channels_2d:
+            raise ValueError(
+                f"len(channels)={len(channels)} exceeds "
+                f"max_channels_2d={max_channels_2d}."
+            )
+        visual_model = MultichannelImageVisual(
+            name=name,
+            data_store_id=str(data.id),
+            channel_axis=channel_axis,
+            channels=channels,
+            max_channels_2d=max_channels_2d,
+            max_channels_3d=max_channels_3d,
+        )
+        return self.add_visual(scene_id, visual_model, data_store=data)
+
+    def add_multichannel_image_multiscale(
+        self,
+        data: BaseDataStore,
+        scene_id: UUID,
+        channel_axis: int,
+        channels: dict[int, ChannelAppearance],
+        name: str = "multichannel_image",
+        render_config: MultiscaleImageRenderConfig | None = None,
+        transform: AffineTransform | None = None,
+        max_channels_2d: int = 8,
+        max_channels_3d: int = 4,
+    ) -> MultichannelMultiscaleImageVisual:
+        """Add a multiscale multichannel image visual to a scene.
+
+        Parameters
+        ----------
+        data : BaseDataStore
+            Backing multiscale data store.
+        scene_id : UUID
+            Target scene.
+        channel_axis : int
+            Data axis index for the channel dimension.
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
+        name : str
+            Display name for the visual.
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration; uses defaults when ``None``.
+        transform : AffineTransform or None
+            Data-to-world transform; uses identity when ``None``.
+        max_channels_2d : int
+            Maximum simultaneous 2D channel nodes.
+        max_channels_3d : int
+            Maximum simultaneous 3D channel nodes.
+
+        Returns
+        -------
+        MultichannelMultiscaleImageVisual
+        """
+        if render_config is None:
+            render_config = MultiscaleImageRenderConfig()
+        if len(channels) > max_channels_2d:
+            raise ValueError(
+                f"len(channels)={len(channels)} exceeds "
+                f"max_channels_2d={max_channels_2d}."
+            )
+        visual_model = MultichannelMultiscaleImageVisual(
+            name=name,
+            data_store_id=str(data.id),
+            channel_axis=channel_axis,
+            channels=channels,
+            level_transforms=data.level_transforms,
+            render_config=render_config,
+            max_channels_2d=max_channels_2d,
+            max_channels_3d=max_channels_3d,
+        )
+        return self.add_visual(scene_id, visual_model, data_store=data)
+
+    def _get_visual_model(self, visual_id: UUID) -> VisualType:
+        """Return the visual model for *visual_id*.
+
+        Raises
+        ------
+        KeyError
+            If *visual_id* is not registered.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        scene = self._model.scenes[scene_id]
+        for visual in scene.visuals:
+            if visual.id == visual_id:
+                return visual
+        raise KeyError(f"Visual {visual_id} not found.")
+
+    def add_channel(
+        self,
+        visual_id: UUID,
+        channel_index: int,
+        appearance: ChannelAppearance,
+    ) -> None:
+        """Add a channel to a multichannel image visual.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of a MultichannelImageVisual or MultichannelMultiscaleImageVisual.
+        channel_index : int
+            Index along the visual's channel_axis. Must not already be present.
+        appearance : ChannelAppearance
+            Colormap, clim, and opacity settings for the new channel.
+
+        Raises
+        ------
+        ValueError
+            If channel_index is already present.
+        RuntimeError
+            If the pool is full.
+        """
+        visual = self._get_visual_model(visual_id)
+        if channel_index in visual.channels:
+            raise ValueError(
+                f"channel_index={channel_index} already in visual.channels."
+            )
+        if len(visual.channels) >= visual.max_channels_2d:
+            raise RuntimeError(
+                f"Pool is full ({visual.max_channels_2d} channels). "
+                "Increase max_channels_2d or remove a channel first."
+            )
+        new_channels = dict(visual.channels)
+        new_channels[channel_index] = appearance
+        visual.channels = new_channels
+        self.reslice_visual(visual_id)
+
+    def remove_channel(self, visual_id: UUID, channel_index: int) -> None:
+        """Remove a channel from a multichannel image visual.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of a MultichannelImageVisual or MultichannelMultiscaleImageVisual.
+        channel_index : int
+            Index of the channel to remove.
+
+        Raises
+        ------
+        KeyError
+            If channel_index is not in visual.channels.
+        """
+        visual = self._get_visual_model(visual_id)
+        if channel_index not in visual.channels:
+            raise KeyError(f"channel_index={channel_index} not in visual.channels.")
+        new_channels = {k: v for k, v in visual.channels.items() if k != channel_index}
+        visual.channels = new_channels
+
     # ------------------------------------------------------------------
     # Visual management — private dispatch methods
     # ------------------------------------------------------------------
@@ -824,6 +1023,118 @@ class CellierController:
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_multichannel_image_memory_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MultichannelImageVisual,
+    ) -> MultichannelImageVisual:
+        """Wire and register a pre-built MultichannelImageVisual."""
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXMultichannelImageMemoryVisual(
+            visual_model=visual_model,
+            data_store=data_store,
+            render_modes=render_modes,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_aabb(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_multichannel_multiscale_image_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MultichannelMultiscaleImageVisual,
+    ) -> MultichannelMultiscaleImageVisual:
+        """Wire and register a pre-built MultichannelMultiscaleImageVisual."""
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        level_shapes = list(data_store.level_shapes)
+        gfx_visual = GFXMultichannelMultiscaleImageVisual(
+            visual_model=visual_model,
+            level_shapes=level_shapes,
+            render_modes=render_modes,
+            displayed_axes=displayed_axes,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_aabb(visual_model)
+        self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
             AABBChangedEvent,
             gfx_visual.on_aabb_changed,
@@ -1971,7 +2282,7 @@ class CellierController:
         self._render_manager.config.camera.settle_threshold_s = value
 
     def _on_camera_changed(self, event: CameraChangedEvent) -> None:
-        """Synchronous bus handler — updates camera model and schedules settle task."""
+        """Synchronous bus handler: updates camera model and schedules settle task."""
         self._update_camera_model(event.scene_id, event.source_id, event.camera_state)
 
         if not self._render_manager.config.camera.reslice_enabled:

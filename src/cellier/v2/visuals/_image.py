@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 
 from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
+from cellier.v2.visuals._channel_appearance import ChannelAppearance
 
 
 class ImageAppearance(BaseAppearance):
@@ -142,3 +143,43 @@ class MultiscaleImageVisual(BaseVisual):
                     )
             data["level_transforms"] = transforms
         return data
+
+
+class MultichannelMultiscaleImageVisual(BaseVisual):
+    """Model-layer visual for a multichannel multiscale image.
+
+    Parameters
+    ----------
+    channel_axis : int
+        Data-axis index for the channel dimension. Immutable after construction.
+    channels : dict[int, ChannelAppearance]
+        Per-channel appearance; keys are channel indices.
+    level_transforms : list[AffineTransform]
+        Per-level voxel-level-k → voxel-level-0 AffineTransforms.
+    render_config : MultiscaleImageRenderConfig
+        Render-layer brick cache and LOD configuration.
+    max_channels_2d : int
+        2D node pool size. Default 8.
+    max_channels_3d : int
+        3D node pool size. Default 4.
+    requires_camera_reslice : bool
+        Always ``True`` (frozen). Camera movement triggers reslicing.
+    """
+
+    visual_type: Literal["multichannel_multiscale_image"] = (
+        "multichannel_multiscale_image"
+    )
+    channel_axis: int = Field(frozen=True)
+    channels: dict[int, ChannelAppearance]
+    data_store_id: str
+    level_transforms: list[AffineTransform]
+    aabb: AABBParams = Field(default_factory=AABBParams)
+    render_config: MultiscaleImageRenderConfig = Field(
+        default_factory=MultiscaleImageRenderConfig
+    )
+    max_channels_2d: int = 8
+    max_channels_3d: int = 4
+    requires_camera_reslice: bool = Field(default=True, frozen=True)
+
+    # BaseVisual requires an `appearance` field; provide a minimal placeholder.
+    appearance: BaseAppearance = Field(default_factory=BaseAppearance)
