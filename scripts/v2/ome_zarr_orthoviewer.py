@@ -15,7 +15,7 @@ Usage
     uv run scripts/v2/ome_zarr_orthoviewer.py --make-example
 
     # Run with ome-zarr v0.5 file
-    uv run scripts/v2/ome_zarr_orthoviewer.py --zarr-file-path /path/to/data.ome.zarr    
+    uv run scripts/v2/ome_zarr_orthoviewer.py --zarr-file-path /path/to/data.ome.zarr
 """
 
 from __future__ import annotations
@@ -904,9 +904,9 @@ def _make_axis_meshes(
             side="both",
             opacity=1.0,
             render_order=1,
-            depth_test=False,
-            depth_write=False,
-            depth_compare="<=",
+            depth_test=True,
+            depth_write=True,
+            transparency_mode="blend",
         )
         visual = controller.add_mesh(
             data=store,
