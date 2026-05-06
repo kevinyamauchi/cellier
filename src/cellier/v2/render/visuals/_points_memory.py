@@ -45,7 +45,7 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
 
 def _build_material(appearance: PointsMarkerAppearance) -> gfx.PointsMaterial:
     """Construct a PointsMaterial from a PointsMarkerAppearance."""
-    return gfx.PointsMaterial(
+    mat = gfx.PointsMaterial(
         size=appearance.size,
         size_space=appearance.size_space,
         color=appearance.color,
@@ -55,6 +55,8 @@ def _build_material(appearance: PointsMarkerAppearance) -> gfx.PointsMaterial:
         depth_write=appearance.depth_write,
         depth_compare=appearance.depth_compare,
     )
+    mat.alpha_mode = appearance.transparency_mode
+    return mat
 
 
 class GFXPointsMemoryVisual:
@@ -333,6 +335,8 @@ class GFXPointsMemoryVisual:
             self._material.depth_write = val
         elif name == "depth_compare":
             self._material.depth_compare = val
+        elif name == "transparency_mode":
+            self._material.alpha_mode = val
         elif name == "render_order":
             self.node.render_order = val
 

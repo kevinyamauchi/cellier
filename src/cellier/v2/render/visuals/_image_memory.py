@@ -346,6 +346,7 @@ class GFXImageMemoryVisual:
                 inner.material.depth_test = appearance.depth_test
                 inner.material.depth_write = appearance.depth_write
                 inner.material.depth_compare = appearance.depth_compare
+                inner.material.alpha_mode = appearance.transparency_mode
 
         # Node matrix is set lazily on first build_slice_request when we
         # know the displayed axes.  Identity is fine as a placeholder.
@@ -695,6 +696,8 @@ class GFXImageMemoryVisual:
                 material.interpolation = event.new_value
             elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
                 setattr(material, event.field_name, event.new_value)
+            elif event.field_name == "transparency_mode":
+                material.alpha_mode = event.new_value
         if event.field_name == "render_order":
             if self.node_2d is not None:
                 self.node_2d.render_order = event.new_value

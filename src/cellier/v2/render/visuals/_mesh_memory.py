@@ -71,7 +71,10 @@ def _build_material_3d(appearance) -> gfx.MeshAbstractMaterial:
             flat_shading=appearance.flat_shading,
             side=side,
         )
-    _apply_alpha_mode(material, appearance.opacity)
+    if appearance.transparency_mode != "blend":
+        material.alpha_mode = appearance.transparency_mode
+    else:
+        _apply_alpha_mode(material, appearance.opacity)
     material.depth_test = appearance.depth_test
     material.depth_write = appearance.depth_write
     material.depth_compare = appearance.depth_compare
@@ -361,7 +364,15 @@ class GFXMeshMemoryVisual:
             elif name == "side":
                 mat.side = val
         if name == "opacity":
-            _apply_alpha_mode(self._material_3d, float(val))
+            if self._material_3d.alpha_mode in ("blend", "solid"):
+                _apply_alpha_mode(self._material_3d, float(val))
+        elif name == "transparency_mode":
+            if val != "blend":
+                self._material_3d.alpha_mode = val
+                self._material_2d.alpha_mode = val
+            else:
+                _apply_alpha_mode(self._material_3d, float(self._material_3d.opacity))
+                _apply_alpha_mode(self._material_2d, float(self._material_2d.opacity))
         if name == "depth_test":
             self._material_3d.depth_test = val
             self._material_2d.depth_test = val
