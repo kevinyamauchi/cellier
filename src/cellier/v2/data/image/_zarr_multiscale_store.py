@@ -92,9 +92,6 @@ def _open_ts_stores(
             },
         }
         store = ts.open(spec).result()
-        fmt = "v2" if driver == "zarr" else "v3"
-        shape = tuple(int(d) for d in store.domain.shape)
-        print(f"  {name}: opened as zarr {fmt}  shape={shape}")
         stores.append(store)
     return stores
 

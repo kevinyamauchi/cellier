@@ -1426,14 +1426,6 @@ class GFXMultiscaleImageVisual:
             chunk_requests.append(req)
             self._pending_slot_map_2d[chunk_id] = (tile_key, slot)
 
-        # DEBUG print #2
-        unique_slice_coords = {k.slice_coord for k in required}
-        print(
-            f"[MATERIALIZE] self_frame={self._frame_number} "
-            f"required={len(required)} fill_plan={len(fill_plan)} "
-            f"requests={len(chunk_requests)} "
-            f"slice_coords={unique_slice_coords}"
-        )
         return chunk_requests
 
     # ── 3D SliceCoordinator interface ──────────────────────────────────
@@ -2091,16 +2083,6 @@ class GFXMultiscaleImageVisual:
             Each item is a ``(request, data)`` pair where ``data`` has
             shape ``(pbs, pbs)``, dtype float32.
         """
-        # DEBUG print #4
-        hits = sum(
-            1 for req, _ in batch if req.chunk_request_id in self._pending_slot_map_2d
-        )
-        print(
-            f"[SLOT-READY-2D] batch={len(batch)} map_hits={hits} "
-            f"map_misses={len(batch) - hits} "
-            f"map_size={len(self._pending_slot_map_2d)}"
-        )
-
         for req, data in batch:
             entry = self._pending_slot_map_2d.get(req.chunk_request_id)
             if entry is None:
@@ -2137,8 +2119,6 @@ class GFXMultiscaleImageVisual:
         """Release all in-flight 2D slots."""
         if self._block_cache_2d is None:
             return
-        # DEBUG print #5
-        print(f"[CANCEL-2D] clearing {len(self._pending_slot_map_2d)} pending entries")
         self._block_cache_2d.tile_manager.release_all_in_flight()
         self._pending_slot_map_2d = {}
 
