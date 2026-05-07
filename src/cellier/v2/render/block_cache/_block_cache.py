@@ -32,6 +32,9 @@ class BlockCache3D:
     ----------
     cache_parameters : CacheInfo
         Cache sizing metadata produced by ``compute_cache_info()``.
+    dtype : np.dtype or None
+        Data type for the cache texture. Defaults to float32.
+        Pass ``np.int32`` for label caches.
 
     Attributes
     ----------
@@ -40,15 +43,17 @@ class BlockCache3D:
     tile_manager : TileManager3D
         Brick-to-slot mapping with LRU eviction.
     cache_data : np.ndarray
-        CPU-side backing array, shape ``(cD, cH, cW)``, dtype float32.
+        CPU-side backing array, shape ``(cD, cH, cW)``.
     cache_tex : gfx.Texture
-        GPU 3-D float32 texture wrapping ``cache_data``.
+        GPU 3-D texture wrapping ``cache_data``.
     """
 
-    def __init__(self, cache_parameters: BlockCacheParameters3D) -> None:
+    def __init__(self, cache_parameters: BlockCacheParameters3D, dtype=None) -> None:
         self.info = cache_parameters
         self.tile_manager = TileManager3D(cache_parameters)
-        self.cache_data, self.cache_tex = build_cache_texture_3d(cache_parameters)
+        self.cache_data, self.cache_tex = build_cache_texture_3d(
+            cache_parameters, dtype=dtype
+        )
 
     def stage(
         self,
@@ -79,8 +84,12 @@ class BlockCache3D:
         return self.tile_manager.stage(required_bricks, frame_number)
 
     def write_brick(
-        self, slot: TileSlot, data: np.ndarray, key: BlockKey3D | None = None
-    ) -> None:
+        self,
+        slot: TileSlot,
+        data: np.ndarray,
+        key: BlockKey3D | None = None,
+        background_label: int = 0,
+    ) -> bool:
         """Write a padded brick into the CPU array and mark dirty for GPU upload.
 
         The actual GPU transfer is deferred until the next
@@ -91,11 +100,24 @@ class BlockCache3D:
         slot : TileSlot
             Target slot — ``grid_pos`` determines the write offset.
         data : np.ndarray
-            Float32 array of shape ``(pbs, pbs, pbs)`` where
+            Array of shape ``(pbs, pbs, pbs)`` where
             ``pbs = block_size + 2 * overlap``.
         key : BlockKey3D or None
             Brick identity for logging.
+        background_label : int
+            For integer (label) caches: value treated as background.
+            Returns True if the brick contains any non-background value.
+            Ignored for float caches (always returns False).
+
+        Returns
+        -------
+        bool
+            True if brick contains any non-background value (useful for
+            label caches to set ``slot.brick_max``).  For float caches
+            this is always False.
         """
+        import numpy as np
+
         commit_block_3d(
             cache_data=self.cache_data,
             cache_tex=self.cache_tex,
@@ -109,6 +131,9 @@ class BlockCache3D:
             slot.index,
             slot.grid_pos,
         )
+        if np.issubdtype(self.cache_data.dtype, np.integer):
+            return bool(np.any(data != background_label))
+        return False
 
     @property
     def n_resident(self) -> int:

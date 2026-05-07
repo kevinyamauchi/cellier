@@ -51,6 +51,8 @@ from cellier.v2.render.visuals._image_memory_multichannel import (
 from cellier.v2.render.visuals._image_multiscale_multichannel import (
     GFXMultichannelMultiscaleImageVisual,
 )
+from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
 from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
 from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
@@ -78,6 +80,12 @@ from cellier.v2.visuals._image_memory import (
     ImageVisual,
     MultichannelImageVisual,
 )
+from cellier.v2.visuals._label_memory import LabelMemoryAppearance, LabelMemoryVisual
+from cellier.v2.visuals._labels import (
+    LabelAppearance,
+    MultiscaleLabelRenderConfig,
+    MultiscaleLabelVisual,
+)
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 from cellier.v2.visuals._mesh_memory import (
     MeshAppearance,
@@ -95,6 +103,7 @@ if TYPE_CHECKING:
     from cellier.v2._state import CameraState, DimsState
     from cellier.v2.data._base_data_store import BaseDataStore
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+    from cellier.v2.data.label._label_memory_store import LabelMemoryStore
     from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
@@ -491,6 +500,10 @@ class CellierController:
             return self._add_multichannel_multiscale_image_visual(
                 scene_id, visual_model
             )
+        elif isinstance(visual_model, MultiscaleLabelVisual):
+            return self._add_multiscale_label_visual(scene_id, visual_model)
+        elif isinstance(visual_model, LabelMemoryVisual):
+            return self._add_label_memory_visual(scene_id, visual_model)
         elif isinstance(visual_model, PointsVisual):
             return self._add_points_visual(scene_id, visual_model)
         elif isinstance(visual_model, LinesVisual):
@@ -531,6 +544,49 @@ class CellierController:
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+        )
+        return self.add_visual(scene_id, visual_model, data_store=data)
+
+    def add_labels(
+        self,
+        data: LabelMemoryStore,
+        scene_id: UUID,
+        appearance: LabelMemoryAppearance | None = None,
+        name: str = "labels",
+        transform: AffineTransform | None = None,
+    ) -> LabelMemoryVisual:
+        """Add an in-memory label visual to a scene.
+
+        Parameters
+        ----------
+        data : LabelMemoryStore
+            Backing int32 label store.
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : LabelMemoryAppearance or None
+            Appearance parameters. Defaults to LabelMemoryAppearance().
+        name : str
+            Human-readable label. Default ``"labels"``.
+        transform : AffineTransform or None
+            Data-to-world transform. Defaults to identity when None.
+
+        Returns
+        -------
+        LabelMemoryVisual
+        """
+        if appearance is None:
+            appearance = LabelMemoryAppearance()
+
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=data.ndim)
+        )
+        visual_model = LabelMemoryVisual(
+            name=name,
+            data_store_id=str(data.id),
+            appearance=appearance,
+            transform=resolved_transform,
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
@@ -705,6 +761,55 @@ class CellierController:
             else AffineTransform.identity(ndim=len(data.level_shapes[0]))
         )
         visual_model = MultiscaleImageVisual(
+            name=name,
+            data_store_id=str(data.id),
+            level_transforms=data.level_transforms,
+            appearance=appearance,
+            render_config=render_config,
+            transform=resolved_transform,
+        )
+        return self.add_visual(scene_id, visual_model, data_store=data)
+
+    def add_labels_multiscale(
+        self,
+        data: BaseDataStore,
+        scene_id: UUID,
+        appearance: LabelAppearance,
+        name: str = "labels",
+        render_config: MultiscaleLabelRenderConfig | None = None,
+        transform: AffineTransform | None = None,
+    ) -> MultiscaleLabelVisual:
+        """Add a multiscale label visual to a scene.
+
+        Parameters
+        ----------
+        data : BaseDataStore
+            The backing label data store (e.g. ``OMEZarrLabelDataStore``).
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : LabelAppearance
+            Visual appearance parameters.
+        name : str
+            Human-readable label. Default ``"labels"``.
+        render_config : MultiscaleLabelRenderConfig or None
+            Render-layer configuration. Defaults to
+            ``MultiscaleLabelRenderConfig()`` with all default values if None.
+        transform : AffineTransform or None
+            Data-to-world transform. Defaults to identity when None.
+
+        Returns
+        -------
+        MultiscaleLabelVisual
+        """
+        if render_config is None:
+            render_config = MultiscaleLabelRenderConfig()
+
+        resolved_transform = (
+            transform
+            if transform is not None
+            else AffineTransform.identity(ndim=len(data.level_shapes[0]))
+        )
+        visual_model = MultiscaleLabelVisual(
             name=name,
             data_store_id=str(data.id),
             level_transforms=data.level_transforms,
@@ -929,6 +1034,70 @@ class CellierController:
 
         level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
+            model=visual_model,
+            level_shapes=level_shapes,
+            render_modes=render_modes,
+            displayed_axes=displayed_axes,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_multiscale_label_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MultiscaleLabelVisual,
+    ) -> MultiscaleLabelVisual:
+        """Wire and register a pre-built MultiscaleLabelVisual."""
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        level_shapes = list(data_store.level_shapes)
+        gfx_visual = GFXMultiscaleLabelVisual.from_cellier_model(
             model=visual_model,
             level_shapes=level_shapes,
             render_modes=render_modes,
@@ -1351,6 +1520,69 @@ class CellierController:
         self._event_bus.subscribe(
             AppearanceChangedEvent,
             gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            gfx_visual.on_visibility_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            TransformChangedEvent,
+            gfx_visual.on_transform_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.emit(
+            VisualAddedEvent(
+                source_id=self._id,
+                scene_id=scene_id,
+                visual_id=visual_model.id,
+            )
+        )
+        return visual_model
+
+    def _add_label_memory_visual(
+        self,
+        scene_id: UUID,
+        visual_model: LabelMemoryVisual,
+    ) -> LabelMemoryVisual:
+        """Wire and register a pre-built LabelMemoryVisual."""
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+
+        scene.visuals.append(visual_model)
+
+        gfx_visual = GFXLabelMemoryVisual(
+            visual_model=visual_model,
+            data_store=data_store,
+            render_modes=render_modes,
+            transform=visual_model.transform,
+        )
+
+        self._render_manager.add_visual(
+            scene_id, gfx_visual, data_store, displayed_axes
+        )
+        self._visual_to_scene[visual_model.id] = scene_id
+
+        self._wire_appearance(visual_model)
+        self._wire_aabb(visual_model)
+        self._wire_transform(visual_model, scene_id)
+        self._event_bus.subscribe(
+            AppearanceChangedEvent,
+            gfx_visual.on_appearance_changed,
+            entity_id=visual_model.id,
+            owner_id=visual_model.id,
+        )
+        self._event_bus.subscribe(
+            AABBChangedEvent,
+            gfx_visual.on_aabb_changed,
             entity_id=visual_model.id,
             owner_id=visual_model.id,
         )
@@ -1894,6 +2126,7 @@ class CellierController:
     def _wire_transform(
         self,
         visual: MultiscaleImageVisual
+        | MultiscaleLabelVisual
         | ImageVisual
         | MeshVisual
         | PointsVisual
@@ -1931,7 +2164,9 @@ class CellierController:
     def _wire_appearance(
         self,
         visual: MultiscaleImageVisual
+        | MultiscaleLabelVisual
         | ImageVisual
+        | LabelMemoryVisual
         | MeshVisual
         | PointsVisual
         | LinesVisual,
@@ -1943,7 +2178,9 @@ class CellierController:
             (visual.appearance.events, handler)
         )
 
-    def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
+    def _wire_aabb(
+        self, visual: MultiscaleImageVisual | MultiscaleLabelVisual | ImageVisual
+    ) -> None:
         """Subscribe to all field changes on a visual's aabb model."""
         handler = self._make_aabb_handler(visual.id)
         visual.aabb.events.connect(handler)
@@ -2035,7 +2272,7 @@ class CellierController:
         scene_id = self._visual_to_scene[visual_id]
         dims_state = self._dims_state_for_scene(scene_id)
         visual = self.get_visual_model(visual_id)
-        if isinstance(visual, MultiscaleImageVisual):
+        if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual)):
             cfg = VisualRenderConfig(
                 lod_bias=visual.appearance.lod_bias,
                 force_level=visual.appearance.force_level,
@@ -2452,10 +2689,6 @@ class CellierController:
     # ------------------------------------------------------------------
     # Stubs for future features
     # ------------------------------------------------------------------
-
-    def add_labels(self, *args, **kwargs):
-        """Not implemented in Phase 1."""
-        raise NotImplementedError("add_labels is not implemented in Phase 1.")
 
     def add_paint_controller(
         self,

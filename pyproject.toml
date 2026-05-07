@@ -71,6 +71,7 @@ dev = [
     "pre-commit",
     "rich",  # https://github.com/Textualize/rich
     "ruff",
+    "zensical>=0.0.40",
 ]
 
 # optional rich-powered debug logging

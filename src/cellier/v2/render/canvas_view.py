@@ -175,10 +175,11 @@ class CanvasView:
         screen_h: float,
     ) -> ReslicingRequest:
         """Build a ReslicingRequest for a perspective camera."""
+        frustum = np.asarray(self._camera.frustum, dtype=np.float64)
         return ReslicingRequest(
             camera_type="perspective",
             camera_pos=np.array(self._camera.world.position, dtype=np.float64),
-            frustum_corners=np.asarray(self._camera.frustum, dtype=np.float64).copy(),
+            frustum_corners=frustum.copy(),
             fov_y_rad=float(np.radians(self._camera.fov)),
             screen_size_px=(float(screen_w), float(screen_h)),
             world_extent=(0.0, 0.0),

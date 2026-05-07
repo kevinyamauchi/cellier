@@ -10,6 +10,8 @@ from cellier.v2.visuals._image import (
     MultiscaleImageVisual,
 )
 from cellier.v2.visuals._image_memory import ImageVisual, MultichannelImageVisual
+from cellier.v2.visuals._label_memory import LabelMemoryVisual
+from cellier.v2.visuals._labels import MultiscaleLabelVisual
 from cellier.v2.visuals._lines_memory import LinesVisual
 from cellier.v2.visuals._mesh_memory import MeshVisual
 from cellier.v2.visuals._points_memory import PointsVisual
@@ -20,6 +22,8 @@ VisualType = Annotated[
         ImageVisual,
         MultichannelImageVisual,
         MultichannelMultiscaleImageVisual,
+        LabelMemoryVisual,
+        MultiscaleLabelVisual,
         PointsVisual,
         LinesVisual,
         MeshVisual,
