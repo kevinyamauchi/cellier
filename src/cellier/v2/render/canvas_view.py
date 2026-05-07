@@ -116,7 +116,7 @@ class CanvasView:
             *self._renderer.effect_passes,
         )
 
-        self._last_camera_state: CameraState = self._capture_camera_state()
+        self._last_camera_state: CameraState = self.capture_camera_state()
         self._overlays: list[GFXCanvasOverlay] = []
         self._canvas.request_draw(self._draw_frame)
 
@@ -300,7 +300,7 @@ class CanvasView:
             self._camera.world.position = tuple(request.camera_pos)
         finally:
             self._applying_model_state = False
-        self._last_camera_state = self._capture_camera_state()
+        self._last_camera_state = self.capture_camera_state()
 
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
@@ -353,11 +353,11 @@ class CanvasView:
             self._accum_pass.enabled = True
         self._controller.enabled = True
         self._dim = new_dim
-        self._last_camera_state = self._capture_camera_state()
+        self._last_camera_state = self.capture_camera_state()
         first_visit = new_dim not in self._fitted
         return first_visit
 
-    def _capture_camera_state(self) -> CameraState:
+    def capture_camera_state(self) -> CameraState:
         """Snapshot the current pygfx camera into a CameraState NamedTuple."""
         cam = self._camera
         pos = cam.world.position
@@ -391,7 +391,7 @@ class CanvasView:
 
     def _draw_frame(self) -> None:
         # Detect camera changes by comparing against the cached state.
-        current_state = self._capture_camera_state()
+        current_state = self.capture_camera_state()
         if current_state != self._last_camera_state and not self._applying_model_state:
             self._camera_dirty = True
             self._last_camera_state = current_state

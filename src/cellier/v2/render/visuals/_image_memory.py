@@ -343,6 +343,7 @@ class GFXImageMemoryVisual:
 
         for inner in (self._inner_node_2d, self._inner_node_3d):
             if inner is not None:
+                inner.material.opacity = appearance.opacity
                 inner.material.depth_test = appearance.depth_test
                 inner.material.depth_write = appearance.depth_write
                 inner.material.depth_compare = appearance.depth_compare
@@ -694,6 +695,8 @@ class GFXImageMemoryVisual:
                 material.map = _make_colormap(event.new_value)
             elif event.field_name == "interpolation":
                 material.interpolation = event.new_value
+            elif event.field_name == "opacity":
+                material.opacity = event.new_value
             elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
                 setattr(material, event.field_name, event.new_value)
             elif event.field_name == "transparency_mode":

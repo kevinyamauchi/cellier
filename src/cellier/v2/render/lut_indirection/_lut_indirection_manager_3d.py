@@ -11,8 +11,8 @@ import pygfx as gfx
 from cellier.v2.logging import _GPU_LOGGER
 
 if TYPE_CHECKING:
-    from cellier.v2.render.block_cache import TileManager
-    from cellier.v2.render.lut_indirection._layout import BlockLayout3D
+    from cellier.v2.render.block_cache import TileManager3D
+    from cellier.v2.render.lut_indirection._layout_3d import BlockLayout3D
 
 
 class LutIndirectionManager3D:
@@ -82,7 +82,7 @@ class LutIndirectionManager3D:
     # GPU writes
     # ------------------------------------------------------------------
 
-    def rebuild(self, tile_manager: TileManager) -> None:
+    def rebuild(self, tile_manager: TileManager3D) -> None:
         """Rewrite ``lut_data`` from current tilemap state and schedule GPU upload.
 
         Strategy: sweep coarsest-to-finest through all resident bricks.
@@ -94,7 +94,7 @@ class LutIndirectionManager3D:
 
         Parameters
         ----------
-        tile_manager : TileManager
+        tile_manager : TileManager3D
             Current tile manager holding the resident brick mapping.
         """
         rebuild_lut(
@@ -164,7 +164,7 @@ def build_brick_max_texture(
 
 def rebuild_lut(
     base_layout: BlockLayout3D,
-    tile_manager: TileManager,
+    tile_manager: TileManager3D,
     n_levels: int,
     lut_data: np.ndarray,
     lut_tex: gfx.Texture,
@@ -183,7 +183,7 @@ def rebuild_lut(
     ----------
     base_layout : BlockLayout
         Layout of the finest (level 1) resolution.
-    tile_manager : TileManager
+    tile_manager : TileManager3D
         Current tile manager with resident bricks.
     n_levels : int
         Total number of LOAD levels.

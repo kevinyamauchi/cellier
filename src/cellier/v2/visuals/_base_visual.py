@@ -34,12 +34,15 @@ class BaseAppearance(EventedModel):
     visible : bool
         If True, the visual is visible.
         Default value is True.
+    opacity : float
+        Master opacity multiplier in [0, 1].  Default 1.0.
     render_order : int
         Pygfx node render order.  Objects with higher values are drawn later
         and therefore appear on top when depth values are equal.  Default 0.
     """
 
     visible: bool = True
+    opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     render_order: int = 0
     depth_test: bool = True
     depth_write: bool = True

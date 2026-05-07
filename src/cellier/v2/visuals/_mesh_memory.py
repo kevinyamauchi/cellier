@@ -33,7 +33,6 @@ class MeshFlatAppearance(BaseAppearance):
     color_mode: Literal["uniform", "vertex", "face"] = "uniform"
     wireframe: bool = False
     wireframe_thickness: float = 1.0
-    opacity: float = 1.0
     side: Literal["both", "front", "back"] = "both"
 
 
@@ -65,7 +64,6 @@ class MeshPhongAppearance(BaseAppearance):
     color: tuple[float, float, float, float] = (0.4, 0.6, 0.9, 1.0)
     color_mode: Literal["uniform", "vertex", "face"] = "uniform"
     shininess: float = 30.0
-    opacity: float = 1.0
     side: Literal["both", "front", "back"] = "front"
     flat_shading: bool = False
 

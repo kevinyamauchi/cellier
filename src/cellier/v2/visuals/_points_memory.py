@@ -33,7 +33,6 @@ class PointsMarkerAppearance(BaseAppearance):
     size: float = 5.0
     size_space: Literal["screen", "world"] = "screen"
     color_mode: Literal["uniform", "vertex"] = "uniform"
-    opacity: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class PointsVisual(BaseVisual):

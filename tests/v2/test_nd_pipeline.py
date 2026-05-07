@@ -25,8 +25,8 @@ import pytest
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.data.image._image_requests import ChunkRequest
 from cellier.v2.render.visuals._image import (
-    ImageGeometry2D,
-    VolumeGeometry,
+    ImageGeometry3D,
+    MultiscaleBrickLayout3D,
 )
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes
@@ -157,7 +157,7 @@ def test_volume_geometry_3d_non_contiguous_displayed_axes():
     # Replicate from_cellier_model's 3D geometry construction.
     shapes_3d = [select_axes(s, displayed_axes) for s in level_shapes]
     transforms_3d = [t.select_axes(displayed_axes) for t in level_transforms]
-    vg = VolumeGeometry(
+    vg = MultiscaleBrickLayout3D(
         level_shapes=shapes_3d,
         level_transforms=transforms_3d,
         block_size=4,
@@ -191,7 +191,7 @@ def test_image_geometry_2d_non_contiguous_displayed_axes():
 
     shapes_2d = [select_axes(s, displayed_axes) for s in level_shapes]
     transforms_2d = [t.select_axes(displayed_axes) for t in level_transforms]
-    ig = ImageGeometry2D(
+    ig = ImageGeometry3D(
         level_shapes=shapes_2d,
         block_size=2,
         n_levels=3,

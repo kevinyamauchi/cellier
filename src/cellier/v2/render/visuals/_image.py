@@ -92,10 +92,6 @@ if TYPE_CHECKING:
 # @register_wgpu_render_function decorator.
 import cellier.v2.render.shaders._multiscale_volume_brick as _brick_reg  # noqa: F401
 
-# ---------------------------------------------------------------------------
-# Transform helpers
-# ---------------------------------------------------------------------------
-
 
 def _extract_scale_and_translation(
     level_transforms: list[AffineTransform],
@@ -222,7 +218,7 @@ def _norm_size_from_transform(
 # ---------------------------------------------------------------------------
 
 
-class VolumeGeometry:
+class MultiscaleBrickLayout3D:
     """Pre-built metadata cache for a multiscale 3-D volume.
 
     Holds per-level ``BlockLayout3D`` objects and the precomputed coarse
@@ -305,12 +301,7 @@ class VolumeGeometry:
         self._rebuild(level_shapes)
 
 
-# ---------------------------------------------------------------------------
-# ImageGeometry2D
-# ---------------------------------------------------------------------------
-
-
-class ImageGeometry2D:
+class ImageGeometry3D:
     """Pre-built metadata cache for a multiscale 2-D image.
 
     Analogous to ``VolumeGeometry`` but for 2D tile grids.
@@ -499,7 +490,7 @@ class GFXMultiscaleImageVisual:
     ----------
     visual_model_id : UUID
         ID of the associated ``MultiscaleImageVisual`` model.
-    volume_geometry : VolumeGeometry
+    volume_geometry : MultiscaleBrickLayout3D
         Pre-built metadata cache (level shapes, LOAD grids).
     render_modes : set[str]
         Which nodes to build: ``{"3d"}``, ``{"2d"}``, or
@@ -523,8 +514,8 @@ class GFXMultiscaleImageVisual:
     def __init__(
         self,
         visual_model_id: UUID,
-        volume_geometry: VolumeGeometry | None,
-        image_geometry_2d: ImageGeometry2D | None,
+        volume_geometry: MultiscaleBrickLayout3D | None,
+        image_geometry_2d: ImageGeometry3D | None,
         render_modes: set[str],
         displayed_axes: tuple[int, ...] | None = None,
         colormap: gfx.TextureMap | None = None,
@@ -800,11 +791,11 @@ class GFXMultiscaleImageVisual:
         # 3 displayed data axes; ``AffineTransform.select_axes`` does the
         # same for the per-level transforms.  Inputs to VolumeGeometry are
         # therefore in displayed-axis order over the displayed subset.
-        volume_geometry: VolumeGeometry | None = None
+        volume_geometry: MultiscaleBrickLayout3D | None = None
         if "3d" in render_modes and axes_3d is not None:
             shapes_3d = [select_axes(s, axes_3d) for s in level_shapes]
             transforms_3d = [t.select_axes(axes_3d) for t in model.level_transforms]
-            volume_geometry = VolumeGeometry(
+            volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
                 level_transforms=transforms_3d,
                 block_size=block_size,
@@ -812,11 +803,11 @@ class GFXMultiscaleImageVisual:
 
         # Build 2D geometry when 2D rendering is requested.  Same pattern:
         # project shapes and transforms onto the 2 displayed data axes.
-        image_geometry_2d: ImageGeometry2D | None = None
+        image_geometry_2d: ImageGeometry3D | None = None
         if "2d" in render_modes:
             shapes_2d = [select_axes(s, axes_2d) for s in level_shapes]
             transforms_2d = [t.select_axes(axes_2d) for t in model.level_transforms]
-            image_geometry_2d = ImageGeometry2D(
+            image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
@@ -850,6 +841,7 @@ class GFXMultiscaleImageVisual:
         )
         for mat in (instance.material_3d, instance.material_2d):
             if mat is not None:
+                mat.opacity = model.appearance.opacity
                 mat.depth_test = model.appearance.depth_test
                 mat.depth_write = model.appearance.depth_write
                 mat.depth_compare = model.appearance.depth_compare
@@ -2402,6 +2394,10 @@ class GFXMultiscaleImageVisual:
                 self.node_3d.render_order = event.new_value
             if self.node_2d is not None:
                 self.node_2d.render_order = event.new_value
+        elif event.field_name == "opacity":
+            for mat in (self.material_3d, self.material_2d):
+                if mat is not None:
+                    mat.opacity = event.new_value
         elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:

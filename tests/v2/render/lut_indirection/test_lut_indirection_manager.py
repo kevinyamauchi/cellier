@@ -2,7 +2,7 @@ import numpy as np
 
 from cellier.v2.render.block_cache import (
     BlockKey3D,
-    TileManager,
+    TileManager3D,
     compute_block_cache_parameters_3d,
 )
 from cellier.v2.render.lut_indirection import BlockLayout3D, LutIndirectionManager3D
@@ -16,7 +16,7 @@ BASE_LAYOUT = BlockLayout3D(volume_shape=(4, 4, 4), block_size=1)
 N_LEVELS = 2
 
 
-def _stage_and_commit(tile_manager: TileManager, bricks: dict, frame_number: int):
+def _stage_and_commit(tile_manager: TileManager3D, bricks: dict, frame_number: int):
     """Stage bricks and immediately commit all misses (synchronous helper)."""
     fill_plan = tile_manager.stage(bricks, frame_number=frame_number)
     for key, slot in fill_plan:
@@ -26,7 +26,7 @@ def _stage_and_commit(tile_manager: TileManager, bricks: dict, frame_number: int
 
 def test_rebuild_empty_lut_is_all_zeros() -> None:
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
-    tile_manager = TileManager(CACHE_INFO)
+    tile_manager = TileManager3D(CACHE_INFO)
     lut.rebuild(tile_manager)
     assert np.all(lut.lut_data == 0)
 
@@ -41,7 +41,7 @@ def test_coarse_brick_fills_its_fine_cells() -> None:
     sz=0, sy=0, sx=1 and the LUT channels are (sx=1, sy=0, sz=0, level=2).
     """
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
-    tile_manager = TileManager(CACHE_INFO)
+    tile_manager = TileManager3D(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     fill_plan = _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
     slot = fill_plan[0][1]
@@ -59,7 +59,7 @@ def test_coarse_brick_fills_its_fine_cells() -> None:
 def test_uncovered_cells_remain_zero() -> None:
     """Cells outside the coarse brick's footprint stay at level 0."""
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
-    tile_manager = TileManager(CACHE_INFO)
+    tile_manager = TileManager3D(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     _stage_and_commit(tile_manager, {coarse_key: 2}, frame_number=1)
 
@@ -77,7 +77,7 @@ def test_fine_brick_overwrites_coarse_at_its_cell() -> None:
     - lut[2,0,0] is covered by neither → level=0
     """
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
-    tile_manager = TileManager(CACHE_INFO)
+    tile_manager = TileManager3D(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     fine_key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     _stage_and_commit(tile_manager, {coarse_key: 2, fine_key: 1}, frame_number=1)
@@ -93,7 +93,7 @@ def test_fine_brick_slot_coordinates_are_correct() -> None:
     """The fine brick's cell carries its own slot's (sx, sy, sz), not the
     coarse slot's."""
     lut = LutIndirectionManager3D(BASE_LAYOUT, n_levels=N_LEVELS)
-    tile_manager = TileManager(CACHE_INFO)
+    tile_manager = TileManager3D(CACHE_INFO)
     coarse_key = BlockKey3D(level=2, g0=0, g1=0, g2=0)
     fine_key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = _stage_and_commit(

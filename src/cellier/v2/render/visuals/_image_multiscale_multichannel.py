@@ -164,8 +164,8 @@ class GFXMultichannelMultiscaleImageVisual:
     ) -> GFXMultiscaleImageVisual:
         """Create one ``GFXMultiscaleImageVisual`` channel slot."""
         from cellier.v2.render.visuals._image import (
-            ImageGeometry2D,
-            VolumeGeometry,
+            ImageGeometry3D,
+            MultiscaleBrickLayout3D,
         )
 
         rc = visual_model.render_config
@@ -176,8 +176,8 @@ class GFXMultichannelMultiscaleImageVisual:
         spatial_displayed = tuple(ax for ax in displayed_axes if ax != channel_axis)
 
         # Build geometry objects over the spatial displayed axes only.
-        volume_geometry: VolumeGeometry | None = None
-        image_geometry_2d: ImageGeometry2D | None = None
+        volume_geometry: MultiscaleBrickLayout3D | None = None
+        image_geometry_2d: ImageGeometry3D | None = None
 
         if "3d" in render_modes and len(spatial_displayed) >= 3:
             axes_3d = spatial_displayed[-3:]
@@ -187,7 +187,7 @@ class GFXMultichannelMultiscaleImageVisual:
             transforms_3d = [
                 lt.select_axes(axes_3d) for lt in visual_model.level_transforms
             ]
-            volume_geometry = VolumeGeometry(
+            volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
                 level_transforms=transforms_3d,
                 block_size=rc.block_size,
@@ -199,7 +199,7 @@ class GFXMultichannelMultiscaleImageVisual:
             transforms_2d = [
                 lt.select_axes(axes_2d) for lt in visual_model.level_transforms
             ]
-            image_geometry_2d = ImageGeometry2D(
+            image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
                 block_size=rc.block_size,
                 n_levels=len(level_shapes),

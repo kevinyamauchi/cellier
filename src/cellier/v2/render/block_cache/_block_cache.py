@@ -15,9 +15,9 @@ from cellier.v2.render.block_cache._cache_parameters_3d import (
     build_cache_texture_3d,
     commit_block_3d,
 )
-from cellier.v2.render.block_cache._tile_manager import (
+from cellier.v2.render.block_cache._tile_manager_3d import (
     BlockKey3D,
-    TileManager,
+    TileManager3D,
     TileSlot,
 )
 
@@ -37,7 +37,7 @@ class BlockCache3D:
     ----------
     info : CacheInfo
         Cache sizing metadata (grid dims, slot count, padded brick size).
-    tile_manager : TileManager
+    tile_manager : TileManager3D
         Brick-to-slot mapping with LRU eviction.
     cache_data : np.ndarray
         CPU-side backing array, shape ``(cD, cH, cW)``, dtype float32.
@@ -47,7 +47,7 @@ class BlockCache3D:
 
     def __init__(self, cache_parameters: BlockCacheParameters3D) -> None:
         self.info = cache_parameters
-        self.tile_manager = TileManager(cache_parameters)
+        self.tile_manager = TileManager3D(cache_parameters)
         self.cache_data, self.cache_tex = build_cache_texture_3d(cache_parameters)
 
     def stage(
