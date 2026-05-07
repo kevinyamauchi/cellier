@@ -84,6 +84,7 @@ def compute_block_cache_parameters_3d(
     gpu_budget_bytes: int,
     overlap: int = 1,
     bytes_per_voxel: int = 4,
+    dtype: np.dtype = None,
 ) -> BlockCacheParameters3D:
     """Compute cache dimensions that fit within the GPU memory budget.
 
@@ -96,13 +97,18 @@ def compute_block_cache_parameters_3d(
     overlap : int
         Border voxels duplicated on each side of every slot.
     bytes_per_voxel : int
-        Bytes per voxel (4 for float32).
+        Bytes per voxel (4 for float32). Ignored when *dtype* is provided.
+    dtype : np.dtype, optional
+        If provided, overrides *bytes_per_voxel* using
+        ``np.dtype(dtype).itemsize``.
 
     Returns
     -------
     params : BlockCacheParameters3D
         Cache sizing metadata.
     """
+    if dtype is not None:
+        bytes_per_voxel = np.dtype(dtype).itemsize
     padded = block_size + 2 * overlap
     bytes_per_brick = padded**3 * bytes_per_voxel
     max_slots = gpu_budget_bytes // bytes_per_brick
@@ -115,6 +121,7 @@ def compute_block_cache_parameters_3d(
 
 def build_cache_texture_3d(
     params: BlockCacheParameters3D,
+    dtype: np.dtype = None,
 ) -> tuple[np.ndarray, gfx.Texture]:
     """Allocate the fixed-size cache texture, zeroed.
 
@@ -122,16 +129,25 @@ def build_cache_texture_3d(
     ----------
     params : BlockCacheParameters3D
         Cache sizing metadata.
+    dtype : np.dtype or None
+        Data type for the cache texture. Defaults to float32.
+        Pass ``np.int32`` for label caches.
 
     Returns
     -------
     cache_data : np.ndarray
-        CPU-side backing array of shape ``(cD, cH, cW)``, dtype float32.
+        CPU-side backing array of shape ``(cD, cH, cW)``.
     cache_tex : gfx.Texture
         pygfx 3-D texture wrapping ``cache_data``.
     """
-    cache_data = np.zeros(params.cache_shape, dtype=np.float32)
-    cache_tex = gfx.Texture(cache_data, dim=3)
+    _FORMAT_MAP = {np.float32: "1xf4", np.int32: "1xi4"}
+    if dtype is None:
+        dtype = np.float32
+    else:
+        dtype = np.dtype(dtype).type
+    fmt = _FORMAT_MAP.get(dtype, "1xf4")
+    cache_data = np.zeros(params.cache_shape, dtype=dtype)
+    cache_tex = gfx.Texture(cache_data, dim=3, format=fmt)
     return cache_data, cache_tex
 
 
