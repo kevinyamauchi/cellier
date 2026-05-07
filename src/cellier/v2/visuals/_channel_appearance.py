@@ -25,7 +25,6 @@ class ChannelAppearance(BaseAppearance):
 
     colormap: Colormap
     clim: tuple[float, float] = (0.0, 1.0)
-    opacity: float = 1.0
     render_mode_3d: Literal["mip", "iso"] = "mip"
     transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"] = (
         "add"

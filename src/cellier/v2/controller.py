@@ -1754,6 +1754,29 @@ class CellierController:
         """
         return self._render_manager._canvases[canvas_id]
 
+    def get_camera_state(self, canvas_id: UUID) -> CameraState:
+        """Return a snapshot of the current camera state for *canvas_id*.
+
+        Useful for seeding downstream widgets (e.g. orientation overlays)
+        with the post-fit camera state without constructing a synthetic
+        ``CameraChangedEvent``.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of a registered canvas.
+
+        Returns
+        -------
+        CameraState
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        """
+        return self.get_canvas_view(canvas_id).capture_camera_state()
+
     def get_visual_model(self, visual_id: UUID) -> MultiscaleImageVisual:
         """Return the live visual model for visual_id.
 

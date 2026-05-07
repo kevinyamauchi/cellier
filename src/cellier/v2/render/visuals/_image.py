@@ -850,6 +850,7 @@ class GFXMultiscaleImageVisual:
         )
         for mat in (instance.material_3d, instance.material_2d):
             if mat is not None:
+                mat.opacity = model.appearance.opacity
                 mat.depth_test = model.appearance.depth_test
                 mat.depth_write = model.appearance.depth_write
                 mat.depth_compare = model.appearance.depth_compare
@@ -2402,6 +2403,10 @@ class GFXMultiscaleImageVisual:
                 self.node_3d.render_order = event.new_value
             if self.node_2d is not None:
                 self.node_2d.render_order = event.new_value
+        elif event.field_name == "opacity":
+            for mat in (self.material_3d, self.material_2d):
+                if mat is not None:
+                    mat.opacity = event.new_value
         elif event.field_name in ("depth_test", "depth_write", "depth_compare"):
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:

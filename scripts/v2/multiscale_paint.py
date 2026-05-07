@@ -260,7 +260,7 @@ def main() -> None:
     )
     print(f"  Paint controller: {paint_ctrl!r}")
 
-    canvas_view = controller._render_manager._canvases[canvas_id]
+    canvas_view = controller.get_canvas_view(canvas_id)
 
     def _enabled() -> bool:
         return bool(canvas_view._controller.enabled)

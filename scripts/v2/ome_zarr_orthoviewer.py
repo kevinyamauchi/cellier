@@ -356,7 +356,7 @@ class OmeZarrOrthoViewer:
         # Plane overlay (optional — pass None to omit the group)
         plane_visual=None,
         plane_store=None,
-        gfx_vol_visual=None,
+        vol_visual_id=None,
         initial_plane_opacity: float = 0.4,
         # Orientation overlays (pass None to omit checkboxes)
         axes_2d_overlay_ids: list | None = None,
@@ -534,7 +534,7 @@ class OmeZarrOrthoViewer:
         panel_layout.addWidget(group_3d)
 
         # Plane Overlay group (only shown when plane objects are provided)
-        if plane_visual is not None or gfx_vol_visual is not None:
+        if plane_visual is not None or vol_visual_id is not None:
             from PySide6.QtCore import Qt
             from superqt import QLabeledDoubleSlider
 
@@ -549,11 +549,8 @@ class OmeZarrOrthoViewer:
             vol_opacity_slider.setDecimals(2)
 
             def _on_vol_opacity_changed(value: float) -> None:
-                if (
-                    gfx_vol_visual is not None
-                    and gfx_vol_visual.material_3d is not None
-                ):
-                    gfx_vol_visual.material_3d.opacity = value
+                if vol_visual_id is not None:
+                    controller.update_appearance_field(vol_visual_id, "opacity", value)
 
             vol_opacity_slider.valueChanged.connect(_on_vol_opacity_changed)
             layout_planes.addWidget(vol_opacity_label)
@@ -1679,9 +1676,6 @@ async def async_main(zarr_uri: str) -> None:
         yz_scene.id, plane_updater.on_yz_dims_changed, owner_id=plane_updater._id
     )
 
-    scene_mgr = controller._render_manager._scenes[vol_scene.id]
-    gfx_vol_visual = scene_mgr.get_visual(visuals["vol"].id)
-
     # ── Canvas views ──────────────────────────────────────────────────────
     def _canvas_view(scene_id):
         canvas_id = controller.get_canvas_ids(scene_id)[0]
@@ -1786,7 +1780,7 @@ async def async_main(zarr_uri: str) -> None:
         slider_decimals=slider_decimals,
         plane_visual=plane_visual,
         plane_store=plane_store,
-        gfx_vol_visual=gfx_vol_visual,
+        vol_visual_id=visuals["vol"].id,
         initial_plane_opacity=_INITIAL_PLANE_OPACITY,
         axes_2d_overlay_ids=[
             xy_axes_overlay.id,
@@ -1839,12 +1833,11 @@ async def async_main(zarr_uri: str) -> None:
     def _seed_camera_event(scene_id):
         from cellier.v2.events._events import CameraChangedEvent
 
-        canvas_view = controller.get_canvas_view(controller.get_canvas_ids(scene_id)[0])
-        camera_state = canvas_view._capture_camera_state()
+        canvas_id = controller.get_canvas_ids(scene_id)[0]
         return CameraChangedEvent(
-            source_id=canvas_view._canvas_id,
+            source_id=canvas_id,
             scene_id=scene_id,
-            camera_state=camera_state,
+            camera_state=controller.get_camera_state(canvas_id),
         )
 
     orient_updater.on_xy_camera_changed(_seed_camera_event(xy_scene.id))
