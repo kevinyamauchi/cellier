@@ -84,7 +84,7 @@ class TileSlot:
     brick_max: float = 0.0
 
 
-class TileManager:
+class TileManager3D:
     """Manages brick-to-slot mapping with LRU eviction and late insertion.
 
     Slot lifecycle
