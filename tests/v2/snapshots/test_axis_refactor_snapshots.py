@@ -35,8 +35,8 @@ import numpy as np
 import pytest
 
 from cellier.v2.render.visuals._image import (
-    ImageGeometry2D,
-    VolumeGeometry,
+    ImageGeometry3D,
+    MultiscaleBrickLayout3D,
 )
 from cellier.v2.transform import AffineTransform
 
@@ -100,7 +100,7 @@ def _replicate_from_cellier_model(
     if "3d" in render_modes and axes_3d is not None:
         shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
         transforms_3d = [t.select_axes(axes_3d) for t in level_transforms]
-        volume_geometry = VolumeGeometry(
+        volume_geometry = MultiscaleBrickLayout3D(
             level_shapes=shapes_3d,
             level_transforms=transforms_3d,
             block_size=block_size,
@@ -111,7 +111,7 @@ def _replicate_from_cellier_model(
         shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
         transforms_2d = [t.select_axes(axes_2d) for t in level_transforms]
         level_shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
-        image_geometry_2d = ImageGeometry2D(
+        image_geometry_2d = ImageGeometry3D(
             level_shapes=level_shapes_2d,
             block_size=block_size,
             n_levels=len(level_shapes),
@@ -121,7 +121,7 @@ def _replicate_from_cellier_model(
     return axes_3d, axes_2d, volume_geometry, image_geometry_2d
 
 
-def _capture_volume_geometry(geom: VolumeGeometry) -> dict:
+def _capture_volume_geometry(geom: MultiscaleBrickLayout3D) -> dict:
     return {
         "level_shapes": [list(s) for s in geom.level_shapes],
         "scale_vecs_data": _round(geom._scale_vecs_data),
@@ -135,7 +135,7 @@ def _capture_volume_geometry(geom: VolumeGeometry) -> dict:
     }
 
 
-def _capture_image_geometry_2d(geom: ImageGeometry2D) -> dict:
+def _capture_image_geometry_2d(geom: ImageGeometry3D) -> dict:
     return {
         "level_shapes": [list(s) for s in geom.level_shapes],
         "scale_vecs_data": _round(geom._scale_vecs_data),

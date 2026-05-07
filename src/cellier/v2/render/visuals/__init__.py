@@ -1,6 +1,9 @@
 """PyGFX implementations of the data visuals."""
 
-from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual, VolumeGeometry
+from cellier.v2.render.visuals._image import (
+    GFXMultiscaleImageVisual,
+    MultiscaleBrickLayout3D,
+)
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 from cellier.v2.render.visuals._image_memory_multichannel import (
     GFXMultichannelImageMemoryVisual,
@@ -14,5 +17,5 @@ __all__ = [
     "GFXMultichannelImageMemoryVisual",
     "GFXMultichannelMultiscaleImageVisual",
     "GFXMultiscaleImageVisual",
-    "VolumeGeometry",
+    "MultiscaleBrickLayout3D",
 ]
