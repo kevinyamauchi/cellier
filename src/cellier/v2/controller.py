@@ -2739,13 +2739,14 @@ class CellierController:
         from cellier.v2.data.image._zarr_multiscale_store import (
             MultiscaleZarrDataStore,
         )
+        from cellier.v2.data.label._label_memory_store import LabelMemoryStore
 
         scene_id = self._visual_to_scene[visual_id]
         scene = self._model.scenes[scene_id]
         visual_model = next(v for v in scene.visuals if v.id == visual_id)
         data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
 
-        if isinstance(data_store, ImageMemoryStore):
+        if isinstance(data_store, (ImageMemoryStore, LabelMemoryStore)):
             from cellier.v2.paint import SyncPaintController
 
             displayed_axes = scene.dims.selection.displayed_axes
@@ -2798,8 +2799,8 @@ class CellierController:
         raise TypeError(
             f"No PaintController implementation for data store type "
             f"{type(data_store).__name__!r}.  "
-            f"Supported: ImageMemoryStore, OMEZarrImageDataStore, "
-            f"MultiscaleZarrDataStore."
+            f"Supported: ImageMemoryStore, LabelMemoryStore, "
+            f"OMEZarrImageDataStore, MultiscaleZarrDataStore."
         )
 
     def remove_scene(self, scene_id: UUID) -> None:
