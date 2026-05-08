@@ -66,10 +66,13 @@ class LabelVolumeBrickMaterial(gfx.VolumeBasicMaterial):
         Colormap mode (baked into shader; frozen after construction).
     salt : int
         Hash seed for random mode.
-    render_mode : "iso_categorical" | "flat_categorical" | "gradient_debug"
+    render_mode : "iso_categorical" | "flat_categorical" | "gradient_debug" \
+        | "smooth_iso"
         3D render mode.  ``gradient_debug`` renders abs(normalize(gradient))
         as RGB (R=|X|, G=|Y|, B=|Z|); flat regions with no gradient show as
         solid blue.  Use to diagnose brick-boundary normal discontinuities.
+        ``smooth_iso`` uses a soft trilinear density field for bisection and
+        a 3x3x3 Sobel normal kernel for smooth curved shading.
     """
 
     def __init__(

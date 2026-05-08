@@ -225,7 +225,7 @@ def main(label_uri: str):
         colormap_mode="random",
         background_label=0,
         salt=0,
-        render_mode="iso_categorical",
+        render_mode="smooth_iso",
         lod_bias=1.0,
         frustum_cull=True,
         force_level=None,
