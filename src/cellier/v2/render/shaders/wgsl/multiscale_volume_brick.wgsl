@@ -531,11 +531,15 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var max_density: f32 = 0.0;
     var max_pos = vec3<f32>(0.0);
 
+    // Attenuated MIP state
+    var amip_sumval: f32 = 0.0;
+    var amip_scale:  f32 = 1.0;
+
     // LOD debug state (always declared; only used in lod_color mode)
     var lod_debug_color = vec3<f32>(0.0);
     var lod_debug_found = false;
 
-    $$ if render_mode == 'mip'
+    $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
     // ── DDA state for MIP brick traversal ─────────────────────────────────
     // Brick sizes are uniform in normalized space (the voxel→norm transform
     // is a linear scale), so all grid crossings can be precomputed once.
@@ -567,7 +571,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     $$ endif
 
     for (var brick_iter = 0u; brick_iter < MAX_BRICK_ITERS; brick_iter++) {
-        $$ if render_mode == 'mip'
+        $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
         if (t >= t_end) { break; }
 
         // ── DDA advance ────────────────────────────────────────────────────
@@ -601,13 +605,13 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         }
         $$ endif
 
-        $$ if render_mode != 'mip'
+        $$ if render_mode != 'mip' and render_mode != 'attenuated_mip'
         // Fix 2: record where this brick begins for cross-brick bisection.
         brick_boundary_t = t;
         $$ endif
 
         if (!brick.valid) {
-            $$ if render_mode == 'mip'
+            $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
             continue;   // DDA already advanced t; just skip to next brick.
             $$ else
             t = brick.t_end + 0.0001;
@@ -620,6 +624,9 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ if render_mode == 'mip'
         // MIP early-out: skip bricks whose max can't beat our running maximum.
         if (brick.brick_max <= max_density) { continue; }
+        $$ elif render_mode == 'attenuated_mip'
+        // Upper bound: brick_max attenuated at current scale (scale only decreases).
+        if (brick.brick_max * amip_scale <= max_density) { continue; }
         $$ else
         // ISO early-out: skip bricks that are entirely below the isosurface.
         if (brick.brick_max < iso_threshold) {
@@ -636,8 +643,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         surface_brick_corner_k = brick.brick_corner_k;
         surface_step_size      = brick.step_size;
 
-        $$ if render_mode == 'mip'
-        // MIP: per-brick stochastic jitter (boundary continuity not needed).
+        $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
+        // MIP/attenuated-MIP: per-brick stochastic jitter (continuity not needed).
         let jitter   = rand(ray_seed_base + brick_iter + frame_index) * brick.step_size;
         var t_sample = t_entry + jitter;
         $$ else
@@ -650,7 +657,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ endif
 
         for (var i = 0u; i < brick.num_steps; i++) {
-            $$ if render_mode == 'mip'
+            $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
             if (t_sample > dda_t_exit) { break; }
             $$ else
             if (t_sample > brick.t_end) { break; }
@@ -668,6 +675,22 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             // MIP: track maximum intensity and its position across the ray.
             if (density > max_density) {
                 max_density = density;
+                max_pos     = pos;
+            }
+            $$ elif render_mode == 'attenuated_mip'
+            // Accumulate normalized brightness as a depth proxy.
+            // Normalising by vol_diag makes the attenuation coefficient
+            // dataset-independent (1.0 = full attenuation across the volume).
+            let vol_diag   = length(norm_size);
+            let clim_lo    = u_material.maprange[0];
+            let clim_hi    = u_material.maprange[1];
+            let clim_range = max(clim_hi - clim_lo, 1e-6);
+            amip_sumval   += (brick.step_size / vol_diag)
+                             * clamp((density - clim_lo) / clim_range, 0.0, 1.0);
+            amip_scale     = exp(-u_material.attenuation * (amip_sumval - 1.0));
+            let attenuated = density * amip_scale;
+            if (attenuated > max_density) {
+                max_density = attenuated;
                 max_pos     = pos;
             }
             $$ else
@@ -689,7 +712,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             t_sample += brick.step_size;
         }
 
-        $$ if render_mode != 'mip'
+        $$ if render_mode != 'mip' and render_mode != 'attenuated_mip'
         // Fix 1: carry the sample position so the next brick resumes seamlessly.
         t_sample_carry = t_sample;
         if (!surface_found) {
@@ -698,7 +721,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             t = brick.t_end + 0.0001;
         }
         $$ endif
-        // MIP: t already advanced by DDA at the top of this iteration.
+        // MIP/attenuated_mip: t already advanced by DDA at the top of this iteration.
     }
 
     // ── Post-traversal output ─────────────────────────────────────────
@@ -708,8 +731,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     out.color = vec4<f32>(lod_debug_color, 1.0);
     out.depth = 0.0;
 
-    $$ elif render_mode == 'mip'
-    // ── MIP output ────────────────────────────────────────────────────
+    $$ elif render_mode == 'mip' or render_mode == 'attenuated_mip'
+    // ── MIP / attenuated-MIP output ───────────────────────────────────
     if (max_density <= 0.0) { discard; }
 
     let mip_value = vec4<f32>(max_density, 0.0, 0.0, 1.0);

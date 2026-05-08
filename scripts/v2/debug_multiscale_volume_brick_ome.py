@@ -21,8 +21,9 @@ Controls
 - **Toggle 2D / 3D** button — switch between a 2D Z-slice view and the
   full 3D volume renderer.
 - **Reslice now** button — manually trigger a brick re-request.
-- **Render mode** dropdown *(3D only)* — switch between ISO and MIP.
+- **Render mode** dropdown *(3D only)* — switch between ISO, MIP, and attenuated MIP.
   Colormap auto-switches to viridis for MIP and grays for ISO.
+- **Attenuation** slider *(3D, attenuated_mip only)* — depth attenuation coefficient.
 - **Pipeline mode** radios *(3D only)* — toggle between full LOD +
   frustum culling and a flat "load all bricks at the coarsest level" mode.
 - **ISO threshold** spinner *(3D only)* — adjust the isosurface threshold.
@@ -103,6 +104,7 @@ class OmeBrickViewer:
             dtype_max=clim_range[1],
             initial_render_mode=visual_model.appearance.render_mode,
             initial_threshold=visual_model.appearance.iso_threshold,
+            initial_attenuation=visual_model.appearance.attenuation,
             decimals=slider_decimals,
         )
         controller.connect_widget(
@@ -364,6 +366,7 @@ def _build_viewer_model(
             frustum_cull=True,
             iso_threshold=0.2,
             render_mode="smooth_iso",
+            attenuation=1.0,
         ),
         render_config=MultiscaleImageRenderConfig(
             block_size=32,

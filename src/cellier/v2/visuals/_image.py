@@ -36,11 +36,17 @@ class ImageAppearance(BaseAppearance):
         brick planning. Default is True.
     iso_threshold : float
         Isosurface threshold for 3D raycast rendering. Default is 0.2.
-    render_mode : Literal["iso", "mip", "smooth_iso"]
+    render_mode : Literal["iso", "mip", "smooth_iso", "attenuated_mip"]
         Volume rendering mode.  ``"iso"`` for isosurface rendering,
         ``"mip"`` for Maximum Intensity Projection.  ``"smooth_iso"`` uses a
         soft trilinear density field for bisection and a 3x3x3 Sobel normal
-        kernel for smooth curved shading.  Default is ``"iso"``.
+        kernel for smooth curved shading.  ``"attenuated_mip"`` is a
+        depth-attenuated MIP that biases the maximum toward the near surface.
+        Default is ``"iso"``.
+    attenuation : float
+        Depth attenuation coefficient for ``"attenuated_mip"`` mode.
+        Higher values penalise depth more aggressively; ``0`` degenerates to
+        standard MIP.  Default is ``1.0``.
     """
 
     color_map: Colormap
@@ -49,7 +55,8 @@ class ImageAppearance(BaseAppearance):
     force_level: int | None = None
     frustum_cull: bool = True
     iso_threshold: float = 0.2
-    render_mode: Literal["iso", "mip", "smooth_iso"] = "iso"
+    render_mode: Literal["iso", "mip", "smooth_iso", "attenuated_mip"] = "iso"
+    attenuation: float = 1.0
 
 
 class MultiscaleImageRenderConfig(EventedModel):

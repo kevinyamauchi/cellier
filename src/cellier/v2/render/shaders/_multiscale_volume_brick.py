@@ -12,7 +12,7 @@ render function for ``(Volume, MultiscaleVolumeBrickMaterial)`` pairs via the
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 import pygfx as gfx
@@ -260,7 +260,16 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         1D colourmap texture.
     threshold : float
         Isosurface threshold.
+    attenuation : float
+        Depth attenuation coefficient for ``"attenuated_mip"`` mode.
+        Higher values bias the max-finder toward the near surface.
+        Has no effect in other render modes.  Default is ``1.0``.
     """
+
+    uniform_type: ClassVar[dict] = dict(
+        gfx.VolumeIsoMaterial.uniform_type,
+        attenuation="f4",
+    )
 
     def __init__(
         self,
@@ -272,6 +281,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         clim: tuple[float, float] = (0.0, 1.0),
         map: gfx.TextureMap | None = None,
         threshold: float = 0.5,
+        attenuation: float = 1.0,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -287,16 +297,32 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         self.vol_params_buffer = vol_params_buffer
         self.block_scales_buffer = block_scales_buffer
         self._store.render_mode = "iso"
+        self.uniform_buffer.data["attenuation"] = float(attenuation)
+        self.uniform_buffer.update_full()
         self._frame_index: int = 0
 
     @property
     def render_mode(self) -> str:
-        """Volume render mode: ``"iso"``, ``"mip"``, or ``"smooth_iso"``."""
+        """Volume render mode.
+
+        Must be one of: ``"iso"``, ``"mip"``, ``"smooth_iso"``, or
+        ``"attenuated_mip"``.
+        """
         return self._store.render_mode
 
     @render_mode.setter
     def render_mode(self, value: str) -> None:
         self._store.render_mode = value
+
+    @property
+    def attenuation(self) -> float:
+        """Depth attenuation coefficient for ``"attenuated_mip"`` mode."""
+        return float(self.uniform_buffer.data["attenuation"])
+
+    @attenuation.setter
+    def attenuation(self, value: float) -> None:
+        self.uniform_buffer.data["attenuation"] = float(value)
+        self.uniform_buffer.update_full()
 
     def tick(self) -> None:
         """Advance jitter seed. Call once per rendered frame."""
