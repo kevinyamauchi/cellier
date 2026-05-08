@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pygfx as gfx
 import wgpu
 from pygfx.objects import Image, Volume
@@ -252,6 +253,10 @@ class LabelBlockMaterial(gfx.ImageBasicMaterial):
         Direct-mode sorted label keys.
     label_colors_texture : gfx.Texture | None
         Direct-mode RGBA per entry.
+    paint_cache_texture : gfx.Texture | None
+        2D float32 paint cache (stripes-of-tiles layout).
+    paint_lut_texture : gfx.Texture | None
+        2D float32 paint LUT (slot_index, presence) per tile.
     colormap_mode : "random" | "direct"
         Colormap mode (baked into shader).
     background_label : int
@@ -267,6 +272,8 @@ class LabelBlockMaterial(gfx.ImageBasicMaterial):
         label_params_buffer: Buffer,
         label_keys_texture: gfx.Texture | None = None,
         label_colors_texture: gfx.Texture | None = None,
+        paint_cache_texture: gfx.Texture | None = None,
+        paint_lut_texture: gfx.Texture | None = None,
         colormap_mode: str = "random",
         background_label: int = 0,
         n_entries: int = 0,
@@ -280,6 +287,8 @@ class LabelBlockMaterial(gfx.ImageBasicMaterial):
         self.label_params_buffer = label_params_buffer
         self.label_keys_texture = label_keys_texture
         self.label_colors_texture = label_colors_texture
+        self.paint_cache_texture = paint_cache_texture
+        self.paint_lut_texture = paint_lut_texture
         self.colormap_mode = colormap_mode
         self.background_label = background_label
         self.n_entries = n_entries
@@ -381,6 +390,28 @@ class LabelBlockShader(ImageShader):
                     "FRAGMENT",
                 )
             )
+
+        # Paint cache + LUT.  The WGSL always samples both, so fall back to
+        # 1x1 zero textures when the material was built without paint resources.
+        if material.paint_cache_texture is None:
+            paint_cache_view = GfxTextureView(
+                gfx.Texture(np.zeros((1, 1, 2), dtype=np.float32), dim=2, format="2xf4")
+            )
+        else:
+            paint_cache_view = GfxTextureView(material.paint_cache_texture)
+        bindings.append(
+            Binding("t_paint_cache", "texture/auto", paint_cache_view, "FRAGMENT")
+        )
+
+        if material.paint_lut_texture is None:
+            paint_lut_view = GfxTextureView(
+                gfx.Texture(np.zeros((1, 1, 2), dtype=np.float32), dim=2, format="2xf4")
+            )
+        else:
+            paint_lut_view = GfxTextureView(material.paint_lut_texture)
+        bindings.append(
+            Binding("t_paint_lut", "texture/auto", paint_lut_view, "FRAGMENT")
+        )
 
         bindings = dict(enumerate(bindings))
         self.define_bindings(0, bindings)

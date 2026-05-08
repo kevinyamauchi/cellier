@@ -4,18 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from cellier.v2.paint._abstract import AbstractPaintController
-from cellier.v2.paint._history import ActiveStroke
 
 if TYPE_CHECKING:
     from uuid import UUID
 
+    import numpy as np
+
     from cellier.v2.controller import CellierController
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.data.label._label_memory_store import LabelMemoryStore
-    from cellier.v2.events._events import CanvasMousePress2DEvent
     from cellier.v2.paint._history import PaintStrokeCommand
 
 
@@ -39,7 +37,7 @@ class SyncPaintController(AbstractPaintController):
     displayed_axes : tuple[int, int]
         The two data-array axes currently displayed in 2D for the bound
         canvas, in ``(row_axis, col_axis)`` order.
-    brush_value : float
+    brush_value : int
     brush_radius_voxels : float
     history_depth : int
     """
@@ -52,13 +50,14 @@ class SyncPaintController(AbstractPaintController):
         canvas_id: UUID,
         data_store: ImageMemoryStore | LabelMemoryStore,
         displayed_axes: tuple[int, ...],
-        brush_value: float = 1.0,
+        brush_value: int = 1,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
     ) -> None:
         self._data_store: ImageMemoryStore | LabelMemoryStore = data_store
         self._data_shape = data_store.shape
         self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
+        self._store_dtype: np.dtype = data_store.data.dtype
         super().__init__(
             cellier_controller=cellier_controller,
             visual_id=visual_id,
@@ -69,32 +68,6 @@ class SyncPaintController(AbstractPaintController):
             brush_radius_voxels=brush_radius_voxels,
             history_depth=history_depth,
         )
-
-    def _on_mouse_press(self, event: CanvasMousePress2DEvent) -> None:
-        # Label visuals discard background fragments so they don't write to the
-        # pick buffer when blank. Use a data-bounds check instead of pick
-        # detection to decide whether to start a stroke.
-        if not self._coord_within_data_bounds(event.world_coordinate):
-            return
-        self._active_stroke = ActiveStroke(
-            visual_id=self._visual_id,
-            data_store_id=self._data_store_id,
-        )
-        self._apply_brush(event.world_coordinate)
-
-    def _coord_within_data_bounds(self, world_coord: np.ndarray) -> bool:
-        """True if *world_coord* maps to a valid voxel in the data array."""
-        ax_row, ax_col = self._displayed_axes
-        swapped = world_coord.copy()
-        swapped[ax_row], swapped[ax_col] = (
-            float(world_coord[ax_col]),
-            float(world_coord[ax_row]),
-        )
-        scene_model = self._controller._model.scenes[self._scene_id]
-        visual_model = next(v for v in scene_model.visuals if v.id == self._visual_id)
-        voxel_coord = visual_model.transform.imap_coordinates(np.atleast_2d(swapped))[0]
-        voxel = np.round(voxel_coord).astype(np.int64)
-        return all(0 <= int(voxel[i]) < self._data_shape[i] for i in range(len(voxel)))
 
     def _apply_brush(self, world_coord: np.ndarray) -> None:
         """Swap displayed axes before delegating to the base brush logic.
@@ -117,13 +90,12 @@ class SyncPaintController(AbstractPaintController):
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read directly from the backing numpy array."""
         idx = tuple(voxel_indices[:, i] for i in range(voxel_indices.shape[1]))
-        return self._data_store.data[idx].astype(np.float32, copy=True)
+        return self._data_store.data[idx].copy()
 
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
         """Write directly to the backing numpy array and reslice."""
         idx = tuple(voxel_indices[:, i] for i in range(voxel_indices.shape[1]))
-        cast_values = np.round(values).astype(self._data_store.data.dtype)
-        self._data_store.data[idx] = cast_values
+        self._data_store.data[idx] = values.astype(self._data_store.data.dtype)
         self._controller.reslice_scene(self._scene_id)
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:

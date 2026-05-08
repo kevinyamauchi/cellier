@@ -55,7 +55,6 @@ def _make_controller(
     level_scales: list[float],
     block_size: int = 8,
     displayed_axes: tuple[int, int] = (0, 1),
-    downsample_mode: str = "decimate",
 ) -> MultiscalePaintController:
     """Build a MultiscalePaintController stub with real tensorstore handles.
 
@@ -79,7 +78,7 @@ def _make_controller(
     ctrl = object.__new__(MultiscalePaintController)
     ctrl._data_store = data_store
     ctrl._displayed_axes = displayed_axes
-    ctrl._downsample_mode = downsample_mode
+    ctrl._store_dtype = np.dtype(stores[0].dtype.numpy_dtype)
     ctrl._write_layer = WriteLayer(data_store_id=data_store.id, block_size=block_size)
     ctrl._write_buffer = TensorStoreWriteBuffer(stores[0])
 
@@ -210,26 +209,6 @@ def test_no_rebuild_single_level(tmp_path: Path) -> None:
     ctrl._write_buffer.commit()
 
     assert stats == {}
-
-
-def test_mean_mode(tmp_path: Path) -> None:
-    """mean downsample of a uniform block returns the same value."""
-    ctrl = _make_controller(
-        tmp_path,
-        level_shapes=[(16, 16), (8, 8)],
-        level_scales=[1.0, 2.0],
-        block_size=8,
-        downsample_mode="mean",
-    )
-    _stage_block(ctrl, 0, 8, 0, 8, value=1.0)
-
-    txn = ctrl._write_buffer.transaction
-    stats = ctrl._rebuild_pyramid(txn)
-    ctrl._write_buffer.commit()
-
-    assert stats == {1: 1}
-    result = ctrl._data_store._ts_stores[1][0:4, 0:4].read().result()
-    np.testing.assert_allclose(result, np.ones((4, 4), dtype=np.float32))
 
 
 def test_rebuild_txn_none(tmp_path: Path) -> None:

@@ -17,7 +17,6 @@ from PySide6 import QtAsyncio
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -109,11 +108,10 @@ def main() -> None:
     toolbar_layout = QHBoxLayout(toolbar)
     toolbar_layout.setContentsMargins(4, 4, 4, 4)
 
-    brush_value_label = QLabel("brush value")
-    brush_value_spin = QDoubleSpinBox()
-    brush_value_spin.setRange(0.0, 1.0)
-    brush_value_spin.setSingleStep(0.05)
-    brush_value_spin.setValue(1.0)
+    brush_value_label = QLabel("label ID")
+    brush_value_spin = QSpinBox()
+    brush_value_spin.setRange(1, 255)
+    brush_value_spin.setValue(1)
 
     brush_radius_label = QLabel("radius (vox)")
     brush_radius_spin = QSpinBox()
@@ -165,12 +163,12 @@ def main() -> None:
     paint_ctrl = controller.add_paint_controller(
         visual_id=image_visual.id,
         canvas_id=canvas_id,
-        brush_value=float(brush_value_spin.value()),
+        brush_value=int(brush_value_spin.value()),
         brush_radius_voxels=float(brush_radius_spin.value()),
     )
 
-    def _on_brush_value_changed(value: float) -> None:
-        paint_ctrl.brush_value = float(value)
+    def _on_brush_value_changed(value: int) -> None:
+        paint_ctrl.brush_value = int(value)
 
     def _on_brush_radius_changed(value: int) -> None:
         paint_ctrl.brush_radius_voxels = float(value)

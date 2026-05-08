@@ -10,6 +10,8 @@
 // u_label_params -- LabelParams uniform (background_label, salt, n_entries)
 // t_label_keys   -- texture_2d<i32>  (direct mode: sorted label IDs)
 // t_label_colors -- texture_2d<f32>  (direct mode: RGBA per entry)
+// t_paint_lut    -- texture_2d<f32>, .r=slot_index .g=presence (0 = no slot)
+// t_paint_cache  -- texture_2d<f32>, .r=label_id_as_float32 .g=presence
 
 // NOTE: Do NOT define struct LabelParams, LutParams, or BlockScales here.
 // pygfx auto-generates them from numpy dtypes via structname=.
@@ -114,6 +116,30 @@ fn get_label_color(label_id: i32) -> vec4<f32> {
     $$ endif
 }
 
+// ── Paint overlay (level-0 only, label IDs stored as float32) ─────────────
+fn sample_paint_label_lut(texcoord: vec2<f32>) -> vec2<f32> {
+    // Returns (label_id_as_float32, presence).  presence < 0.5 means no paint.
+    let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
+    let vol_size   = vec2<f32>(u_lut_params.vol_size_x, u_lut_params.vol_size_y);
+    let lut_size   = vec2<i32>(i32(u_lut_params.lut_size_x), i32(u_lut_params.lut_size_y));
+
+    let pos      = clamp(texcoord * vol_size, vec2<f32>(0.0), vol_size - vec2<f32>(0.5));
+    let tile_f   = floor(pos / block_size);
+    let tile_idx = clamp(vec2<i32>(tile_f), vec2<i32>(0), lut_size - vec2<i32>(1));
+
+    let lutv = textureLoad(t_paint_lut, tile_idx, 0);
+    if (lutv.y < 0.5) {
+        return vec2<f32>(0.0, 0.0);
+    }
+
+    let slot   = i32(lutv.x);
+    let bs     = i32(u_lut_params.block_size_x);
+    let within = vec2<i32>(pos - tile_f * block_size);
+    let coord  = vec2<i32>(within.x, slot * bs + within.y);
+    let v      = textureLoad(t_paint_cache, coord, 0);
+    return vec2<f32>(v.r, v.g);  // (label_id_as_float32, presence)
+}
+
 // ── Vertex shader ─────────────────────────────────────────────────────────
 
 struct VertexInput {
@@ -141,7 +167,15 @@ fn vs_main(in: VertexInput) -> Varyings {
 
 @fragment
 fn fs_main(varyings: Varyings) -> FragmentOutput {
-    let label_id = sample_im_lut(varyings.texcoord);
+    var label_id: i32 = sample_im_lut(varyings.texcoord);
+
+    // Paint overlay: substitute the painted label ID if this voxel has been
+    // painted.  Runs before the background discard so painting with label 0
+    // erases existing labels, and painting on a blank tile shows immediately.
+    let paint = sample_paint_label_lut(varyings.texcoord);
+    if (paint.y > 0.5) {
+        label_id = i32(paint.x + 0.5);
+    }
 
     if (label_id == u_label_params.background_label) { discard; }
 

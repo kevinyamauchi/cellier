@@ -2694,11 +2694,10 @@ class CellierController:
         self,
         visual_id: UUID,
         canvas_id: UUID,
-        brush_value: float = 1.0,
+        brush_value: int = 1,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
         autosave_interval_s: float | None = None,
-        downsample_mode: str = "decimate",
     ):
         """Create and wire a paint controller for the visual's data store.
 
@@ -2710,8 +2709,8 @@ class CellierController:
             Canvas to bind to.  Its camera controller is disabled for
             the session.  Pass ``controller.get_canvas_ids(scene_id)[0]``
             for the common single-canvas case.
-        brush_value : float
-            Scalar written to every painted voxel.
+        brush_value : int
+            Integer label ID written to every painted voxel.
         brush_radius_voxels : float
             Brush radius in level-0 voxel units.
         history_depth : int
@@ -2720,9 +2719,6 @@ class CellierController:
             Seconds between automatic flushes for ``MultiscalePaintController``.
             Each autosave rebuilds the pyramid and resets GPU paint textures.
             ``None`` disables autosave.  Ignored for ``SyncPaintController``.
-        downsample_mode : str
-            ``"decimate"`` (default) for label stores; ``"mean"`` for
-            intensity images.  Ignored for ``SyncPaintController``.
 
         Returns
         -------
@@ -2768,7 +2764,12 @@ class CellierController:
                 history_depth=history_depth,
             )
 
-        if isinstance(data_store, (OMEZarrImageDataStore, MultiscaleZarrDataStore)):
+        from cellier.v2.data.label._ome_zarr_label_store import OMEZarrLabelDataStore
+
+        if isinstance(
+            data_store,
+            (OMEZarrImageDataStore, MultiscaleZarrDataStore, OMEZarrLabelDataStore),
+        ):
             from cellier.v2.paint import MultiscalePaintController
 
             displayed_axes = scene.dims.selection.displayed_axes
@@ -2793,14 +2794,13 @@ class CellierController:
                 brush_radius_voxels=brush_radius_voxels,
                 history_depth=history_depth,
                 autosave_interval_s=autosave_interval_s,
-                downsample_mode=downsample_mode,
             )
 
         raise TypeError(
             f"No PaintController implementation for data store type "
             f"{type(data_store).__name__!r}.  "
             f"Supported: ImageMemoryStore, LabelMemoryStore, "
-            f"OMEZarrImageDataStore, MultiscaleZarrDataStore."
+            f"OMEZarrImageDataStore, MultiscaleZarrDataStore, OMEZarrLabelDataStore."
         )
 
     def remove_scene(self, scene_id: UUID) -> None:

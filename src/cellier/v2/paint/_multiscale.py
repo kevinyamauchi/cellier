@@ -36,7 +36,7 @@ displayed-axis configurations; 3-D paint feedback raises
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -80,16 +80,13 @@ class MultiscalePaintController(AbstractPaintController):
         The two data-array axes currently displayed in 2D for the bound
         canvas, in ``(row_axis, col_axis)`` order.  3D paint feedback is
         a follow-up; passing a 3-tuple raises ``NotImplementedError``.
-    brush_value :
+    brush_value : int
     brush_radius_voxels :
     history_depth :
     autosave_interval_s :
         If set, a ``QTimer`` fires every this many seconds to flush staged
         paint to disk, rebuild the pyramid, and reset the GPU paint
         textures.  ``None`` disables autosave.
-    downsample_mode :
-        ``"decimate"`` (default) — stride-2 pick for label stores.
-        ``"mean"`` — per-stride average for intensity images.
     """
 
     def __init__(
@@ -101,11 +98,10 @@ class MultiscalePaintController(AbstractPaintController):
         data_store: Any,
         visual_block_size: int,
         displayed_axes: tuple[int, ...],
-        brush_value: float = 1.0,
+        brush_value: int = 1,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
         autosave_interval_s: float | None = None,
-        downsample_mode: Literal["decimate", "mean"] = "decimate",
     ) -> None:
         if len(displayed_axes) != 2:
             raise NotImplementedError(
@@ -124,12 +120,12 @@ class MultiscalePaintController(AbstractPaintController):
             int(d) for d in data_store.level_shapes[0]
         )
         self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
-        self._downsample_mode: str = downsample_mode
         self._autosave_count: int = 0
         self._autosave_interval_s: float | None = autosave_interval_s
         self._last_autosave_time: datetime | None = None
         self._autosave_timer = None  # typed below after QTimer import
 
+        self._store_dtype: np.dtype = data_store.dtype
         self._write_buffer: TensorStoreWriteBuffer = TensorStoreWriteBuffer(
             data_store._ts_stores[0]
         )
@@ -180,23 +176,26 @@ class MultiscalePaintController(AbstractPaintController):
 
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read pre-paint values through the open transaction."""
-        if voxel_indices.shape[0] == 0:
-            return np.zeros((0,), dtype=np.float32)
-        old_values = self._write_buffer.read_staged(voxel_indices)
-        return old_values
+        return self._write_buffer.read_staged(voxel_indices)
 
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
         """Stage writes, mark dirty bricks, patch the GPU paint texture."""
         if voxel_indices.shape[0] == 0:
             return
-        self._write_buffer.stage(voxel_indices, values)
+
+        cast_values = values.astype(self._store_dtype, copy=False)
+        self._write_buffer.stage(voxel_indices, cast_values)
 
         new_dirty = self._write_layer.voxels_to_brick_keys(voxel_indices)
         for key in new_dirty:
             self._write_layer.mark_dirty(key)
 
+        # GPU paint cache always stores float32 (label IDs as float).
         self._controller.patch_painted_tiles_2d(
-            self._visual_id, voxel_indices, values, self._displayed_axes
+            self._visual_id,
+            voxel_indices,
+            cast_values.astype(np.float32),
+            self._displayed_axes,
         )
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:
@@ -408,32 +407,15 @@ class MultiscalePaintController(AbstractPaintController):
                 src_slices[ax_x] = slice(src_x0, src_x1)
                 block = np.array(
                     src_store[tuple(src_slices)].read().result(),
-                    dtype=np.float32,
+                    dtype=self._store_dtype,
                 )
 
-                if self._downsample_mode == "decimate":
-                    dec_slices = [slice(None)] * block.ndim
-                    dec_slices[ax_y] = slice(None, None, stride_y)
-                    dec_slices[ax_x] = slice(None, None, stride_x)
-                    downsampled = block[tuple(dec_slices)]
-                else:  # "mean"
-                    h, w = block.shape[ax_y], block.shape[ax_x]
-                    h_trim = (h // stride_y) * stride_y
-                    w_trim = (w // stride_x) * stride_x
-                    trim_slices = [slice(None)] * block.ndim
-                    trim_slices[ax_y] = slice(0, h_trim)
-                    trim_slices[ax_x] = slice(0, w_trim)
-                    block = block[tuple(trim_slices)]
-                    downsampled = (
-                        block.reshape(
-                            h_trim // stride_y,
-                            stride_y,
-                            w_trim // stride_x,
-                            stride_x,
-                        )
-                        .mean(axis=(1, 3))
-                        .astype(np.float32)
-                    )
+                # Stride-2 decimation: pick every stride-th voxel.
+                # Pure index selection preserves the store dtype exactly.
+                dec_slices = [slice(None)] * block.ndim
+                dec_slices[ax_y] = slice(None, None, stride_y)
+                dec_slices[ax_x] = slice(None, None, stride_x)
+                downsampled = block[tuple(dec_slices)]
 
                 actual_h = dst_y1 - dst_y0
                 actual_w = dst_x1 - dst_x0

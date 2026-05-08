@@ -73,6 +73,7 @@ from cellier.v2.render.visuals._image_memory import (
     _pygfx_matrix,
     _rect_wireframe_positions,
 )
+from cellier.v2.render.visuals._paint_tile_slot_manager import PaintTileSlotManager
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes, swap_axes
 
@@ -156,6 +157,7 @@ class GFXMultiscaleLabelVisual:
         aabb_line_width: float = 2.0,
         render_order: int = 0,
         pick_write: bool = True,
+        paint_max_tiles: int = 512,
     ) -> None:
         self.visual_model_id = visual_model_id
 
@@ -215,6 +217,12 @@ class GFXMultiscaleLabelVisual:
         self._colormap_mode: str = colormap_mode
         self._salt: int = int(salt)
         self._render_mode: str = render_mode
+        self._paint_max_tiles: int = int(paint_max_tiles)
+
+        # 2D paint resources (allocated in _allocate_paint_resources_2d)
+        self._paint_slot_manager: PaintTileSlotManager | None = None
+        self._t_paint_cache: gfx.Texture | None = None
+        self._t_paint_lut: gfx.Texture | None = None
 
         # Build label colormap GPU resources
         if color_dict is None:
@@ -274,6 +282,7 @@ class GFXMultiscaleLabelVisual:
             self._block_scales_buffer_2d = build_block_scales_buffer_2d(
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
             )
+            self._allocate_paint_resources_2d()
 
         # ── Brick-shader-specific buffers (3D only) ───────────────────────
         self._vol_params_buffer: Buffer | None = None
@@ -360,6 +369,7 @@ class GFXMultiscaleLabelVisual:
         block_size = render_config.block_size
         gpu_budget_bytes = render_config.gpu_budget_bytes
         gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
+        paint_max_tiles = render_config.paint_max_tiles
 
         if len(displayed_axes) == 3:
             axes_3d: tuple[int, ...] | None = displayed_axes
@@ -403,6 +413,7 @@ class GFXMultiscaleLabelVisual:
             render_mode=app.render_mode,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
+            paint_max_tiles=paint_max_tiles,
             aabb_enabled=model.aabb.enabled,
             aabb_color=model.aabb.color,
             aabb_line_width=model.aabb.line_width,
@@ -509,6 +520,7 @@ class GFXMultiscaleLabelVisual:
         self._block_scales_buffer_2d = build_block_scales_buffer_2d(
             level_scale_vecs_data=geo2d._scale_vecs_data,
         )
+        self._allocate_paint_resources_2d()
         if self.node_2d is not None:
             inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node()
             self._inner_node_2d = inner
@@ -1136,6 +1148,169 @@ class GFXMultiscaleLabelVisual:
     def tick(self) -> None:
         pass
 
+    # ── Paint helpers ─────────────────────────────────────────────────────
+
+    def _allocate_paint_resources_2d(self) -> None:
+        """Allocate GPU paint cache, paint LUT, and slot manager for 2-D paint."""
+        if self._image_geometry_2d is None:
+            return
+        bs = self._image_geometry_2d.block_size
+        gh, gw = self._image_geometry_2d.base_layout.grid_dims
+        n_slots = self._paint_max_tiles
+
+        paint_cache_data = np.zeros((n_slots * bs, bs, 2), dtype=np.float32)
+        self._t_paint_cache = gfx.Texture(paint_cache_data, dim=2, format="2xf4")
+
+        paint_lut_data = np.zeros((gh, gw, 2), dtype=np.float32)
+        self._t_paint_lut = gfx.Texture(paint_lut_data, dim=2, format="2xf4")
+
+        self._paint_slot_manager = PaintTileSlotManager(n_slots)
+
+    def patch_paint_texture(
+        self,
+        voxel_indices: np.ndarray,
+        values: np.ndarray,
+        displayed_axes: tuple[int, int],
+    ) -> int:
+        """Write painted voxels into the GPU paint cache + LUT.
+
+        Parameters
+        ----------
+        voxel_indices :
+            Shape ``(N, ndim)`` int64.  Level-0 voxel indices in
+            data-array axis order.
+        values :
+            Shape ``(N,)`` float32.  Label IDs cast to float32.
+        displayed_axes :
+            Two-element tuple ``(row_axis, col_axis)`` describing which
+            data-array axes correspond to the displayed (row, col) of
+            the 2-D tile grid.
+
+        Returns
+        -------
+        int
+            Number of tiles patched (0 if paint resources unallocated or
+            pool exhausted).
+        """
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+            or self._image_geometry_2d is None
+        ):
+            return 0
+        if voxel_indices.shape[0] == 0:
+            return 0
+
+        bs = int(self._image_geometry_2d.block_size)
+        ax_row, ax_col = displayed_axes
+
+        rows = voxel_indices[:, ax_row].astype(np.int64)
+        cols = voxel_indices[:, ax_col].astype(np.int64)
+        vals = values.astype(np.float32, copy=False)
+
+        gy = rows // bs
+        gx = cols // bs
+        ty = rows % bs
+        tx = cols % bs
+
+        cache_data = self._t_paint_cache.data
+        lut_data = self._t_paint_lut.data
+
+        cache_y_min = cache_data.shape[0]
+        cache_y_max = 0
+        cache_x_min = cache_data.shape[1]
+        cache_x_max = 0
+        lut_y_min = lut_data.shape[0]
+        lut_y_max = 0
+        lut_x_min = lut_data.shape[1]
+        lut_x_max = 0
+        n_tiles_patched = 0
+
+        pairs = np.stack([gy, gx], axis=1)
+        unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
+
+        for tile_i in range(unique_pairs.shape[0]):
+            gy_t = int(unique_pairs[tile_i, 0])
+            gx_t = int(unique_pairs[tile_i, 1])
+            slot = self._paint_slot_manager.get_or_allocate((gy_t, gx_t))
+            if slot is None:
+                continue
+            n_tiles_patched += 1
+
+            sel = inverse == tile_i
+            ty_sel = ty[sel]
+            tx_sel = tx[sel]
+            v_sel = vals[sel]
+
+            slot_y0 = slot * bs
+            cache_data[slot_y0 + ty_sel, tx_sel, 0] = v_sel
+            cache_data[slot_y0 + ty_sel, tx_sel, 1] = 1.0
+
+            lut_data[gy_t, gx_t, 0] = float(slot)
+            lut_data[gy_t, gx_t, 1] = 1.0
+
+            cache_y_min = min(cache_y_min, slot_y0)
+            cache_y_max = max(cache_y_max, slot_y0 + bs)
+            cache_x_min = 0
+            cache_x_max = bs
+            lut_y_min = min(lut_y_min, gy_t)
+            lut_y_max = max(lut_y_max, gy_t + 1)
+            lut_x_min = min(lut_x_min, gx_t)
+            lut_x_max = max(lut_x_max, gx_t + 1)
+
+        if n_tiles_patched == 0:
+            return 0
+
+        self._t_paint_cache.update_range(
+            (cache_x_min, cache_y_min, 0),
+            (cache_x_max - cache_x_min, cache_y_max - cache_y_min, 1),
+        )
+        self._t_paint_lut.update_range(
+            (lut_x_min, lut_y_min, 0),
+            (lut_x_max - lut_x_min, lut_y_max - lut_y_min, 1),
+        )
+        return n_tiles_patched
+
+    def clear_paint_textures(self) -> None:
+        """Zero all GPU paint textures and reset the slot manager."""
+        if (
+            self._t_paint_cache is None
+            or self._t_paint_lut is None
+            or self._paint_slot_manager is None
+        ):
+            return
+        self._t_paint_cache.data[:] = 0.0
+        self._t_paint_lut.data[:] = 0.0
+        cache_h, cache_w = self._t_paint_cache.data.shape[:2]
+        lut_h, lut_w = self._t_paint_lut.data.shape[:2]
+        self._t_paint_cache.update_range((0, 0, 0), (cache_w, cache_h, 1))
+        self._t_paint_lut.update_range((0, 0, 0), (lut_w, lut_h, 1))
+        self._paint_slot_manager.clear()
+
+    def invalidate_painted_tiles_2d(
+        self, dirty_grid_coords: set[tuple[int, int]]
+    ) -> int:
+        """Evict level-0 tiles from the 2-D block cache for dirty grid coords.
+
+        Returns the number of tiles evicted.
+        """
+        if self._block_cache_2d is None:
+            return 0
+        tm = self._block_cache_2d.tile_manager
+        tm.release_all_in_flight()
+        self._pending_slot_map_2d = {}
+        evicted = 0
+        for key in list(tm.tilemap.keys()):
+            if key.level != 1:
+                continue
+            if (key.g0, key.g1) in dirty_grid_coords:
+                slot = tm.tilemap.pop(key)
+                tm.slot_index[slot.index] = None
+                tm.free_slots.append(slot.index)
+                evicted += 1
+        return evicted
+
     # ── Private helpers ───────────────────────────────────────────────────
 
     def _build_aabb_line_3d(self) -> gfx.Line:
@@ -1213,6 +1388,8 @@ class GFXMultiscaleLabelVisual:
             label_params_buffer=self._label_params_buffer,
             label_keys_texture=keys_tex,
             label_colors_texture=colors_tex,
+            paint_cache_texture=self._t_paint_cache,
+            paint_lut_texture=self._t_paint_lut,
             colormap_mode=self._colormap_mode,
             background_label=self._background_label,
             n_entries=self._n_entries,

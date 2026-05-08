@@ -50,9 +50,8 @@ class WriteBuffer(Protocol):
             Shape ``(N, ndim)`` int64.  Each row is one level-0 voxel
             index in data-array axis order.
         values :
-            Shape ``(N,)``.  Values to write.  Caller is responsible for
-            providing a dtype the underlying store accepts (typically
-            float32 cast on write).
+            Shape ``(N,)``.  Values to write.  Must be castable to the
+            underlying store dtype.
         """
 
     def read_staged(self, voxel_indices: np.ndarray) -> np.ndarray:
@@ -62,7 +61,7 @@ class WriteBuffer(Protocol):
         voxels that have been written through ``stage``, falling back to
         the underlying store for unwritten voxels.
 
-        Returns shape ``(N,)`` float32.
+        Returns shape ``(N,)`` in the underlying store's native dtype.
         """
 
     def commit(self) -> None:
@@ -158,12 +157,12 @@ class TensorStoreWriteBuffer:
                 "TensorStoreWriteBuffer.read_staged() called after commit/abort."
             )
         if voxel_indices.shape[0] == 0:
-            return np.zeros((0,), dtype=np.float32)
+            return np.zeros((0,), dtype=self._store.dtype.numpy_dtype)
         idx = _voxel_indices_to_vindex(voxel_indices)
         # vindex read through the transaction sees both staged writes
         # and underlying data.
         raw = self._store.vindex[idx].read().result()
-        return np.asarray(raw, dtype=np.float32)
+        return np.asarray(raw, dtype=self._store.dtype.numpy_dtype)
 
     def commit(self) -> None:
         if self._txn is None:
