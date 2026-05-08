@@ -228,6 +228,7 @@ def main(label_uri: str):
         render_mode="iso_categorical",
         lod_bias=1.0,
         frustum_cull=True,
+        force_level=None,
     )
     render_config = MultiscaleLabelRenderConfig(block_size=32)
 

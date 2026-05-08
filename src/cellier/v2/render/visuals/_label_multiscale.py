@@ -233,10 +233,11 @@ class GFXMultiscaleLabelVisual:
         self._block_cache_3d: BlockCache3D | None = None
         self._lut_manager_3d: LutIndirectionManager3D | None = None
         if volume_geometry is not None:
+            # overlap=2 matches the shader BORDER=2 constant
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
                 gpu_budget_bytes=gpu_budget_bytes_3d,
-                overlap=1,  # BORDER=1: screen-space normals remove gradient probe need
+                overlap=2,
                 dtype=np.int32,
             )
             self._block_cache_3d = BlockCache3D(

@@ -2031,7 +2031,7 @@ class CellierController:
         scene = self._model.scenes[scene_id]
         configs: dict[UUID, VisualRenderConfig] = {}
         for visual in scene.visuals:
-            if isinstance(visual, MultiscaleImageVisual):
+            if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual)):
                 configs[visual.id] = VisualRenderConfig(
                     lod_bias=visual.appearance.lod_bias,
                     force_level=visual.appearance.force_level,

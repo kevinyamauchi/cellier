@@ -3,7 +3,7 @@
 // Labels use textureLoad (nearest-neighbor on integer textures), not textureSample.
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const BORDER: f32          = 1.0;     // ghost border (nearest-neighbor only; no gradient)
+const BORDER: f32          = 2.0;     // ghost border depth (level-k voxels); must match Python overlap=2
 const MAX_BRICK_ITERS: u32 = 512u;
 const STEPS_PER_BRICK: f32 = 24.0;
 
@@ -121,12 +121,45 @@ fn sample_atlas_label(
 
     let tile_origin  = vec3<f32>(lut_entry.xyz) * padded_size;
     let voxel_k      = voxel_pos / lod_scale;
-    let pos_in_brick = voxel_k - brick_corner_k;
+    // Extend into the ghost border region [-BORDER, block_size-1+BORDER] so that
+    // samples near brick edges read true neighbor data from the padded tile
+    // rather than clamping to the brick's last voxel.
+    let pos_in_brick = clamp(voxel_k - brick_corner_k, vec3<f32>(-BORDER), block_size - vec3<f32>(1.0) + vec3<f32>(BORDER));
 
     // Nearest-neighbor: round, no +0.5 sub-voxel shift.
     let cache_pos = tile_origin + pos_in_brick + vec3<f32>(BORDER);
     let texel     = clamp(vec3<i32>(round(cache_pos)), vec3<i32>(0), cache_size - vec3<i32>(1));
     return textureLoad(t_cache, texel, 0).r;
+}
+
+// ── Brick context lookup ──────────────────────────────────────────────────
+
+struct BrickContext {
+    lut_entry:      vec4<u32>,
+    lod_scale:      vec3<f32>,
+    brick_corner_k: vec3<f32>,
+    valid:          bool,
+};
+
+fn lookup_brick_context(voxel_pos: vec3<f32>) -> BrickContext {
+    var ctx: BrickContext;
+    let block_size = vec3<f32>(u_vol_params.block_size_x,
+                               u_vol_params.block_size_y,
+                               u_vol_params.block_size_z);
+    let lut_size_i = vec3<i32>(i32(u_vol_params.lut_size_x),
+                               i32(u_vol_params.lut_size_y),
+                               i32(u_vol_params.lut_size_z));
+    let safe_idx   = clamp(vec3<i32>(floor(voxel_pos / block_size)),
+                           vec3<i32>(0),
+                           lut_size_i - vec3<i32>(1));
+    let lut_entry  = textureLoad(t_lut, safe_idx, 0);
+    ctx.valid      = lut_entry.w > 0u;
+    if (ctx.valid) {
+        ctx.lut_entry      = lut_entry;
+        ctx.lod_scale      = get_lod_scale(lut_entry.w);
+        ctx.brick_corner_k = floor((voxel_pos / ctx.lod_scale) / block_size) * block_size;
+    }
+    return ctx;
 }
 
 // ── Brick setup ───────────────────────────────────────────────────────────
@@ -197,6 +230,80 @@ fn setup_brick(
 
     return info;
 }
+
+// ── Object-space label surface normal (iso_categorical + gradient_debug) ─
+$$ if render_mode == "iso_categorical" or render_mode == "gradient_debug"
+fn label_object_normal(
+    voxel_pos:      vec3<f32>,
+    lut_entry:      vec4<u32>,
+    lod_scale:      vec3<f32>,
+    brick_corner_k: vec3<f32>,
+    surface_label:  i32,
+    dataset_size:   vec3<f32>,
+) -> vec3<f32> {
+    // Step by one level-k voxel in each axis direction (= lod_scale in dataset voxels).
+    let s = lod_scale;
+    let lo = vec3<f32>(0.0);
+    let hi = dataset_size - vec3<f32>(0.001);
+
+    // Re-fetch the LUT context for each neighbor independently.  When the
+    // surface sits at or near a brick boundary, floating-point precision can
+    // assign surface_brick_corner_k to the wrong brick, causing the fixed
+    // context to read ghost-border data instead of the true neighbor voxel.
+    // Using lookup_brick_context per sample is the same strategy already used
+    // by the bisection loop.  lut_entry/lod_scale/brick_corner_k remain the
+    // fallback for positions that land outside the loaded LUT (valid == false).
+    let xp_pos = clamp(voxel_pos + vec3<f32>(s.x, 0.0, 0.0), lo, hi);
+    let xp_ctx = lookup_brick_context(xp_pos);
+    let xp = sample_atlas_label(xp_pos,
+        select(lut_entry,      xp_ctx.lut_entry,      xp_ctx.valid),
+        select(lod_scale,      xp_ctx.lod_scale,      xp_ctx.valid),
+        select(brick_corner_k, xp_ctx.brick_corner_k, xp_ctx.valid));
+
+    let xn_pos = clamp(voxel_pos - vec3<f32>(s.x, 0.0, 0.0), lo, hi);
+    let xn_ctx = lookup_brick_context(xn_pos);
+    let xn = sample_atlas_label(xn_pos,
+        select(lut_entry,      xn_ctx.lut_entry,      xn_ctx.valid),
+        select(lod_scale,      xn_ctx.lod_scale,      xn_ctx.valid),
+        select(brick_corner_k, xn_ctx.brick_corner_k, xn_ctx.valid));
+
+    let yp_pos = clamp(voxel_pos + vec3<f32>(0.0, s.y, 0.0), lo, hi);
+    let yp_ctx = lookup_brick_context(yp_pos);
+    let yp = sample_atlas_label(yp_pos,
+        select(lut_entry,      yp_ctx.lut_entry,      yp_ctx.valid),
+        select(lod_scale,      yp_ctx.lod_scale,      yp_ctx.valid),
+        select(brick_corner_k, yp_ctx.brick_corner_k, yp_ctx.valid));
+
+    let yn_pos = clamp(voxel_pos - vec3<f32>(0.0, s.y, 0.0), lo, hi);
+    let yn_ctx = lookup_brick_context(yn_pos);
+    let yn = sample_atlas_label(yn_pos,
+        select(lut_entry,      yn_ctx.lut_entry,      yn_ctx.valid),
+        select(lod_scale,      yn_ctx.lod_scale,      yn_ctx.valid),
+        select(brick_corner_k, yn_ctx.brick_corner_k, yn_ctx.valid));
+
+    let zp_pos = clamp(voxel_pos + vec3<f32>(0.0, 0.0, s.z), lo, hi);
+    let zp_ctx = lookup_brick_context(zp_pos);
+    let zp = sample_atlas_label(zp_pos,
+        select(lut_entry,      zp_ctx.lut_entry,      zp_ctx.valid),
+        select(lod_scale,      zp_ctx.lod_scale,      zp_ctx.valid),
+        select(brick_corner_k, zp_ctx.brick_corner_k, zp_ctx.valid));
+
+    let zn_pos = clamp(voxel_pos - vec3<f32>(0.0, 0.0, s.z), lo, hi);
+    let zn_ctx = lookup_brick_context(zn_pos);
+    let zn = sample_atlas_label(zn_pos,
+        select(lut_entry,      zn_ctx.lut_entry,      zn_ctx.valid),
+        select(lod_scale,      zn_ctx.lod_scale,      zn_ctx.valid),
+        select(brick_corner_k, zn_ctx.brick_corner_k, zn_ctx.valid));
+
+    // Central difference of indicator (1 = inside label, 0 = outside).
+    // Divide by lod_scale: converts from level-k voxel-space gradient to
+    // world-space gradient direction (larger voxels shrink that component).
+    let gx = f32(i32(xp == surface_label) - i32(xn == surface_label));
+    let gy = f32(i32(yp == surface_label) - i32(yn == surface_label));
+    let gz = f32(i32(zp == surface_label) - i32(zn == surface_label));
+    return vec3<f32>(gx, gy, gz) / lod_scale;
+}
+$$ endif
 
 // ── Vertex shader ─────────────────────────────────────────────────────────
 
@@ -293,18 +400,15 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var surface_found = false;
     // surface_pos: midpoint after bisection (used for depth).
     var surface_pos   = vec3<f32>(0.0);
-    // surface_hi_p: last confirmed-foreground bisection position (use for color).
-    // Using surface_pos (midpoint) for label ID can snap to background and produce
-    // incorrect colors. Always use surface_hi_p for get_label_color().
+    // surface_hi_p: last confirmed-foreground bisection position (used for depth).
     var surface_hi_p  = vec3<f32>(0.0);
+    // surface_lid: label ID cached from bisection — avoids a fallible atlas
+    // re-sample whose round() can snap to background at voxel boundaries.
+    var surface_lid:  i32;
     var surface_lut_entry: vec4<u32>;
     var surface_lod_scale: vec3<f32>;
     var surface_brick_corner_k: vec3<f32>;
     var prev_t: f32 = t_start;
-    var prev_lut_entry:      vec4<u32>;
-    var prev_lod_scale:      vec3<f32>;
-    var prev_brick_corner_k: vec3<f32>;
-    var brick_boundary_t: f32 = t_start;
 
     for (var brick_iter = 0u; brick_iter < MAX_BRICK_ITERS; brick_iter++) {
         if (t >= t_end || surface_found) { break; }
@@ -312,24 +416,35 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         let brick = setup_brick(ray_origin, ray_dir, inv_ray_dir,
                                 t, t_end, norm_size, dataset_size);
 
-        brick_boundary_t = t;
-
         if (!brick.valid) {
+            // Set prev_t to the midpoint of the skipped region, NOT to
+            // brick.t_end + epsilon.  The midpoint is block_size/2 LOD-k
+            // voxels from the boundary — well outside the ghost-border
+            // rounding range (BORDER = 2) — so sample_atlas_label cannot
+            // snap it into the first foreground voxel of the next brick.
+            prev_t = (t + brick.t_end) * 0.5;
             t = brick.t_end + 0.0001;
-            prev_t = t;
             continue;
         }
 
         // Skip bricks containing no labels (brick_max == 0.0 means all-background).
         if (brick.brick_max < 0.5) {
+            // Same reasoning as the invalid-brick case above.
+            prev_t = (t + brick.t_end) * 0.5;
             t = brick.t_end + 0.0001;
-            prev_t = t;
             continue;
         }
 
         surface_lut_entry      = brick.lut_entry;
         surface_lod_scale      = brick.lod_scale;
         surface_brick_corner_k = brick.brick_corner_k;
+
+        // prev_t is intentionally carried forward unchanged here.  Fix 1
+        // (per-midpoint lookup_brick_context) handles LOD boundaries during
+        // bisection; clamping prev_t to the brick entry is unnecessary and
+        // causes bisection to lose its background anchor when the label
+        // surface aligns with a brick boundary.  See: ISO brick boundary
+        // fix notes.
 
         var t_sample = t;
         for (var i = 0u; i < brick.num_steps; i++) {
@@ -347,8 +462,20 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             if (lid != background_label) {
                 // 10-step bisection for sub-voxel surface refinement.
                 // norm space: lo_p = previous sample position, hi_p = current.
+                //
+                // Fix 1: re-fetch the LUT at each midpoint so the correct LOD
+                // context is used when the midpoint crosses a LOD boundary.
+                // hi_ctx tracks the LOD context of the foreground side and is
+                // written back to surface_* after bisection so the final color
+                // sample uses the context valid at surface_hi_p.
                 var lo_p_norm = ray_origin + ray_dir * prev_t;
                 var hi_p_norm = pos;
+                var lid_hi:   i32 = lid;
+                var hi_ctx: BrickContext;
+                hi_ctx.lut_entry      = surface_lut_entry;
+                hi_ctx.lod_scale      = surface_lod_scale;
+                hi_ctx.brick_corner_k = surface_brick_corner_k;
+                hi_ctx.valid          = true;
                 for (var r = 0; r < 10; r++) {
                     let mid_norm  = (lo_p_norm + hi_p_norm) * 0.5;
                     let mid_voxel = clamp(
@@ -356,27 +483,40 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
                         vec3<f32>(0.0),
                         dataset_size - vec3<f32>(0.001)
                     );
-                    let mid_id = sample_atlas_label(
+                    // Re-fetch LOD context at the midpoint; fall back to hi_ctx
+                    // if the brick is not yet resident in the cache.
+                    let mid_ctx = lookup_brick_context(mid_voxel);
+                    let use_lut_entry      = select(hi_ctx.lut_entry,      mid_ctx.lut_entry,      mid_ctx.valid);
+                    let use_lod_scale      = select(hi_ctx.lod_scale,      mid_ctx.lod_scale,      mid_ctx.valid);
+                    let use_brick_corner_k = select(hi_ctx.brick_corner_k, mid_ctx.brick_corner_k, mid_ctx.valid);
+                    let mid_id  = sample_atlas_label(
                         mid_voxel,
-                        surface_lut_entry,
-                        surface_lod_scale,
-                        surface_brick_corner_k,
+                        use_lut_entry,
+                        use_lod_scale,
+                        use_brick_corner_k,
                     );
                     if (mid_id != background_label) {
-                        hi_p_norm = mid_norm;
+                        hi_p_norm             = mid_norm;
+                        lid_hi                = mid_id;
+                        hi_ctx.lut_entry      = use_lut_entry;
+                        hi_ctx.lod_scale      = use_lod_scale;
+                        hi_ctx.brick_corner_k = use_brick_corner_k;
                     } else {
                         lo_p_norm = mid_norm;
                     }
                 }
+                // Write hi_ctx back: the final color sample must use the LOD
+                // context that is valid at surface_hi_p, not the initial hit.
+                surface_lut_entry      = hi_ctx.lut_entry;
+                surface_lod_scale      = hi_ctx.lod_scale;
+                surface_brick_corner_k = hi_ctx.brick_corner_k;
+                surface_lid   = lid_hi;
                 surface_pos   = (lo_p_norm + hi_p_norm) * 0.5;
                 surface_hi_p  = hi_p_norm;
                 surface_found = true;
                 break;
             }
-            prev_t  = t_sample;
-            prev_lut_entry      = brick.lut_entry;
-            prev_lod_scale      = brick.lod_scale;
-            prev_brick_corner_k = brick.brick_corner_k;
+            prev_t = t_sample;
             t_sample += brick.step_size;
         }
         if (!surface_found) {
@@ -384,9 +524,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         }
     }
 
-    // Hoist world_surface before discards so dpdx/dpdy see defined derivatives
-    // across the full 2×2 quad. Pixels that find no surface use the exit point
-    // as a smooth fallback and are discarded below.
+    // Compute world_surface before the discard so the depth write uses
+    // the correct surface position for all surviving pixels.
     let surface_or_exit = select(
         ray_origin + ray_dir * t_end,
         surface_pos,
@@ -394,41 +533,49 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     );
     let world_surface = u_wobject.world_transform * vec4<f32>(surface_or_exit, 1.0);
 
-    $$ if render_mode == "iso_categorical"
-    // Screen-space normal from world-position derivatives across the 2×2 quad.
-    // cross(dpdy, dpdx) points toward the camera in y-down screen convention.
-    let ss_normal = cross(dpdy(world_surface.xyz), dpdx(world_surface.xyz));
-    $$ endif
-
-    // Deferred discards (must come after derivative calls).
+    // Deferred discards.
     if (!surface_found) { discard; }
 
-    // Sample label identity from surface_hi_p (guaranteed foreground voxel).
-    let hi_voxel = clamp(
-        norm_to_voxel(surface_hi_p, norm_size, dataset_size),
-        vec3<f32>(0.0),
-        dataset_size - vec3<f32>(0.001)
-    );
-    let lid_surface = sample_atlas_label(
-        hi_voxel,
-        surface_lut_entry,
-        surface_lod_scale,
-        surface_brick_corner_k,
-    );
-    let color = get_label_color(lid_surface);
+    // Use the label ID cached during bisection — avoids a fallible re-sample
+    // whose round() can snap to background at voxel boundaries.
+    let color = get_label_color(surface_lid);
     if (color.a < 0.001) { discard; }
 
+    $$ if render_mode == "iso_categorical" or render_mode == "gradient_debug"
+    // Object-space surface voxel: shared by iso_categorical and gradient_debug.
+    let surface_voxel = clamp(
+        norm_to_voxel(surface_hi_p, norm_size, dataset_size),
+        vec3<f32>(0.0),
+        dataset_size - vec3<f32>(0.001),
+    );
+    let obj_normal = label_object_normal(
+        surface_voxel,
+        surface_lut_entry, surface_lod_scale, surface_brick_corner_k,
+        surface_lid, dataset_size,
+    );
+    $$ endif
+
     $$ if render_mode == "iso_categorical"
+    // Shade with ambient + diffuse using the object-space gradient normal.
     let view_dir = normalize(-ray_dir);
     let normal   = select(
-        normalize(ss_normal),
+        normalize(obj_normal),
         vec3<f32>(0.0, 1.0, 0.0),
-        dot(ss_normal, ss_normal) < 1e-10,
+        dot(obj_normal, obj_normal) < 1e-10,
     );
     let N        = select(-normal, normal, dot(normal, view_dir) > 0.0);
     let ambient  = 0.3;
     let diffuse  = max(dot(N, view_dir), 0.0);
     let lit_color = color.rgb * (ambient + diffuse);
+    $$ elif render_mode == "gradient_debug"
+    // Visualize the normalised gradient magnitude as RGB (abs of each component).
+    // Zero-length gradient (interior / degenerate surface) renders as black.
+    // Brick-boundary artifacts show up as colour discontinuities.
+    let lit_color = select(
+        vec3<f32>(0.0),
+        abs(normalize(obj_normal)),
+        dot(obj_normal, obj_normal) > 1e-10,
+    );
     $$ else
     let lit_color = color.rgb;
     $$ endif

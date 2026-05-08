@@ -24,7 +24,7 @@ class LabelAppearance(BaseAppearance):
         Hash seed for random-mode colormap. Default 0.
     color_dict : dict
         Explicit label-ID → RGBA mapping (direct mode only).
-    render_mode : "iso_categorical" | "flat_categorical"
+    render_mode : "iso_categorical" | "flat_categorical" | "gradient_debug"
         3D rendering mode.
     lod_bias : float
         Multiplier on the screen-space LOD threshold. Default 1.0.
@@ -40,7 +40,9 @@ class LabelAppearance(BaseAppearance):
     color_dict: dict[int, tuple[float, float, float, float]] = Field(
         default_factory=dict
     )
-    render_mode: Literal["iso_categorical", "flat_categorical"] = "iso_categorical"
+    render_mode: Literal["iso_categorical", "flat_categorical", "gradient_debug"] = (
+        "iso_categorical"
+    )
     lod_bias: float = 1.0
     force_level: int | None = None
     frustum_cull: bool = True
