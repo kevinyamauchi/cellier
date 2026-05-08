@@ -363,7 +363,7 @@ def _build_viewer_model(
             force_level=None,
             frustum_cull=True,
             iso_threshold=0.2,
-            render_mode="iso",
+            render_mode="smooth_iso",
         ),
         render_config=MultiscaleImageRenderConfig(
             block_size=32,

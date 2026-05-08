@@ -291,7 +291,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
 
     @property
     def render_mode(self) -> str:
-        """Volume render mode: ``"iso"`` or ``"mip"``."""
+        """Volume render mode: ``"iso"``, ``"mip"``, or ``"smooth_iso"``."""
         return self._store.render_mode
 
     @render_mode.setter

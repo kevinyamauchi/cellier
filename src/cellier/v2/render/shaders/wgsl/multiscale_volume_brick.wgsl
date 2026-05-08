@@ -271,6 +271,128 @@ fn lookup_brick_mip(
 }
 
 
+// ── Smooth iso helpers (only compiled in smooth_iso mode) ─────────────────
+$$ if render_mode == "smooth_iso"
+
+// soft_density_img — trilinear reconstruction of the float density field.
+//
+// With nearest-neighbour sampling the density field is piecewise-constant
+// (one value per level-k voxel).  This function samples the 8 corners of
+// the level-k voxel cube centred at voxel_pos (each corner at ±0.5 *
+// lod_scale in dataset space) and returns their mean, which equals the
+// trilinear interpolated value at voxel_pos.  The isosurface of this smooth
+// field at iso_threshold lies between the last below-threshold and first
+// above-threshold voxel, giving a sub-voxel surface for bisection to find.
+//
+// All 8 corners share the caller's brick context: ±0.5 level-k voxels is
+// well within BORDER=3, so the padded atlas tile already holds correct data
+// even when voxel_pos is at a brick edge.
+//
+// Parameters
+// ----------
+// voxel_pos      : dataset-space centre of the query position (level-0 voxels)
+// lut_entry      : atlas tile address (xyz) and LOD level (w) for this brick
+// lod_scale      : scale factor from level-k voxels to level-0 voxels, per axis
+// brick_corner_k : level-k coordinate of the brick's (0,0,0) corner
+// dataset_size   : full dataset extent in level-0 voxels
+fn soft_density_img(
+    voxel_pos:      vec3<f32>,
+    lut_entry:      vec4<u32>,
+    lod_scale:      vec3<f32>,
+    brick_corner_k: vec3<f32>,
+    dataset_size:   vec3<f32>,
+) -> f32 {
+    let h  = lod_scale * 0.5;
+    let lo = vec3<f32>(0.0);
+    let hi = dataset_size - vec3<f32>(0.001);
+    var sum = 0.0;
+    for (var dx = -1; dx <= 1; dx += 2) {
+        for (var dy = -1; dy <= 1; dy += 2) {
+            for (var dz = -1; dz <= 1; dz += 2) {
+                let corner = clamp(
+                    voxel_pos + vec3<f32>(f32(dx), f32(dy), f32(dz)) * h,
+                    lo, hi,
+                );
+                sum += sample_atlas(corner, lut_entry, lod_scale, brick_corner_k);
+            }
+        }
+    }
+    return sum / 8.0;
+}
+
+// smooth_gradient_img — 3×3×3 Sobel gradient of the nearest-neighbour density field.
+//
+// Evaluates the density at the 26 non-centre positions of a 3×3×3 grid
+// spaced one level-k voxel apart (±lod_scale in dataset space), then
+// computes weighted central differences using a Gaussian Sobel kernel
+// ([1, 2, 1] weights in each transverse axis) to produce a smooth normal.
+//
+// Compared to the 6-point central difference gradient, this normal varies
+// continuously across voxel faces and averages over a wider neighbourhood,
+// reducing the staircase appearance at low LOD or near noisy data.
+//
+// All 26 neighbours share the same brick context: ±1 level-k voxel is within
+// BORDER=3, so the clamped textureSample reads correct border data for all
+// samples without any per-sample LUT re-fetch.  The brick_corner_k passed in
+// should be derived from the refined surface position (same as the existing
+// gradient does), not from surface_brick_corner_k, to avoid FP precision
+// issues at brick boundaries.
+//
+// The returned gradient is divided by lod_scale to give a direction-correct
+// vector in world space for anisotropic datasets.
+//
+// Parameters
+// ----------
+// voxel_pos      : dataset-space position of the surface point (level-0 voxels)
+// lut_entry      : atlas tile address for the surface brick
+// lod_scale      : scale factor from level-k voxels to level-0 voxels, per axis
+// brick_corner_k : level-k brick origin, derived from the refined surface position
+// dataset_size   : full dataset extent in level-0 voxels
+fn smooth_gradient_img(
+    voxel_pos:      vec3<f32>,
+    lut_entry:      vec4<u32>,
+    lod_scale:      vec3<f32>,
+    brick_corner_k: vec3<f32>,
+    dataset_size:   vec3<f32>,
+) -> vec3<f32> {
+    let s  = lod_scale;
+    let lo = vec3<f32>(0.0);
+    let hi = dataset_size - vec3<f32>(0.001);
+
+    // Evaluate the density at the 26 non-centre neighbours and store in a
+    // flat array indexed by (dx+1)*9 + (dy+1)*3 + (dz+1).
+    var f: array<f32, 27>;
+    for (var dx = -1; dx <= 1; dx++) {
+        for (var dy = -1; dy <= 1; dy++) {
+            for (var dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dy == 0 && dz == 0) { continue; }
+                let pos = clamp(
+                    voxel_pos + vec3<f32>(f32(dx) * s.x, f32(dy) * s.y, f32(dz) * s.z),
+                    lo, hi,
+                );
+                f[(dx + 1) * 9 + (dy + 1) * 3 + (dz + 1)] = sample_atlas(pos, lut_entry, lod_scale, brick_corner_k);
+            }
+        }
+    }
+
+    // Sobel weights: 2 at offset 0, 1 at offset ±1 in each transverse axis.
+    var gx = 0.0; var gy = 0.0; var gz = 0.0;
+    for (var da = -1; da <= 1; da++) {
+        for (var db = -1; db <= 1; db++) {
+            let w = select(1.0, 2.0, da == 0) * select(1.0, 2.0, db == 0);
+            gx += w * (f[( 1 + 1) * 9 + (da + 1) * 3 + (db + 1)] - f[(-1 + 1) * 9 + (da + 1) * 3 + (db + 1)]);
+            gy += w * (f[(da + 1) * 9 + ( 1 + 1) * 3 + (db + 1)] - f[(da + 1) * 9 + (-1 + 1) * 3 + (db + 1)]);
+            gz += w * (f[(da + 1) * 9 + (db + 1) * 3 + ( 1 + 1)] - f[(da + 1) * 9 + (db + 1) * 3 + (-1 + 1)]);
+        }
+    }
+    // Divide by lod_scale: converts the level-k voxel-space gradient to a
+    // direction-correct world-space vector for anisotropic datasets (larger
+    // voxels shrink that gradient component).
+    return vec3<f32>(gx, gy, gz) / lod_scale;
+}
+
+$$ endif
+
 // ── Vertex shader ─────────────────────────────────────────────────────────
 
 struct VertexInput {
@@ -635,20 +757,24 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         let bis_lut    = select(surface_lut_entry,     prev_lut_entry,      in_prev);
         let bis_lod    = select(surface_lod_scale,     prev_lod_scale,      in_prev);
         let bis_corner = select(surface_brick_corner_k, prev_brick_corner_k, in_prev);
-        let d_mid      = sample_atlas(voxel_m, bis_lut, bis_lod, bis_corner);
+        // smooth_iso: test the soft trilinear density field so bisection
+        // finds the sub-voxel isosurface rather than a nearest-neighbour voxel face.
+        $$ if render_mode == "smooth_iso"
+        let d_mid = soft_density_img(voxel_m, bis_lut, bis_lod, bis_corner, dataset_size);
+        $$ else
+        let d_mid = sample_atlas(voxel_m, bis_lut, bis_lod, bis_corner);
+        $$ endif
         if (d_mid >= iso_threshold) { hi = mid; } else { lo = mid; }
     }
     let refined_t   = (lo + hi) * 0.5;
     let refined_pos = ray_origin + ray_dir * refined_t;
 
-    // ── Gradient-based normal (central differences in voxel space) ────
+    // ── Gradient-based normal ─────────────────────────────────────────
     // Fix 2: use the atlas slot matching the refined position's brick.
     let grad_in_prev = refined_t < brick_boundary_t;
     let grad_lut     = select(surface_lut_entry, prev_lut_entry, grad_in_prev);
     let grad_lod     = select(surface_lod_scale, prev_lod_scale, grad_in_prev);
-    // Offset by ~1.5 voxels at the current LOD level (in finest-level coords).
-    let grad_eps    = grad_lod * 1.5;
-    let refined_v   = norm_to_voxel(refined_pos, norm_size, dataset_size);
+    let refined_v    = norm_to_voxel(refined_pos, norm_size, dataset_size);
 
     // Fix 3: compute brick corner once from the refined position so gradient
     // probes that cross a brick boundary use a direct offset rather than fmod,
@@ -659,6 +785,14 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let voxel_k_ref    = refined_v / grad_lod;
     let brick_corner_k = floor(voxel_k_ref / block_size_v) * block_size_v;
 
+    $$ if render_mode == "smooth_iso"
+    // 3×3×3 Sobel on the nearest-neighbour density field.  All 26 samples
+    // share the context derived from refined_v; ±1 level-k voxel fits within
+    // BORDER=3 so no per-sample LUT re-fetch is needed.
+    let gradient = smooth_gradient_img(refined_v, grad_lut, grad_lod, brick_corner_k, dataset_size);
+    $$ else
+    // 6-point central differences at ±1.5 level-k voxels.
+    let grad_eps = grad_lod * 1.5;
     let dx = sample_atlas(refined_v + vec3<f32>(grad_eps.x, 0.0, 0.0),
                                       grad_lut, grad_lod, brick_corner_k)
            - sample_atlas(refined_v - vec3<f32>(grad_eps.x, 0.0, 0.0),
@@ -671,7 +805,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
                                       grad_lut, grad_lod, brick_corner_k)
            - sample_atlas(refined_v - vec3<f32>(0.0, 0.0, grad_eps.z),
                                       grad_lut, grad_lod, brick_corner_k);
-    let gradient = vec3<f32>(dx, dy, dz);
+    // Divide by grad_lod: each axis step is grad_lod * 1.5 finest-level voxels,
+    // so without this the gradient direction is biased in axes with large lod_scale
+    // (e.g. z-anisotropic data).  For isotropic data this has no effect on direction.
+    let gradient = vec3<f32>(dx, dy, dz) / grad_lod;
+    $$ endif
     let normal   = select(normalize(-gradient), vec3<f32>(0.0, 1.0, 0.0),
                           length(gradient) < 1e-6);
 

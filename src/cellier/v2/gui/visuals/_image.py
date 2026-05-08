@@ -20,8 +20,9 @@ if TYPE_CHECKING:
 class QtRenderModeComboBox:
     """Bidirectional render-mode selector wired to the cellier v2 bus.
 
-    Wraps a ``QComboBox`` with ``"iso"`` and ``"mip"`` options and keeps it in
-    sync with ``ImageAppearance.render_mode`` via ``AppearanceChangedEvent``.
+    Wraps a ``QComboBox`` with ``"iso"``, ``"mip"``, and ``"smooth_iso"`` options
+    and keeps it in sync with ``ImageAppearance.render_mode`` via
+    ``AppearanceChangedEvent``.
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
 
@@ -58,7 +59,7 @@ class QtRenderModeComboBox:
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._combo = QComboBox(parent)
-        self._combo.addItems(["iso", "mip"])
+        self._combo.addItems(["iso", "smooth_iso", "mip"])
         self._combo.setCurrentText(initial_render_mode)
         self._combo.currentTextChanged.connect(self._on_combo_changed)
 
@@ -232,9 +233,10 @@ class QtIsoThresholdSlider:
 class QtVolumeRenderControls:
     """Combined render-mode and ISO-threshold widget wired to the cellier v2 bus.
 
-    Contains a render-mode ``QComboBox`` (``"iso"`` / ``"mip"``) and a
-    ``superqt.QLabeledDoubleSlider`` for the ISO threshold.  The threshold
-    slider is only visible when the render mode is ``"iso"``.
+    Contains a render-mode ``QComboBox`` (``"iso"`` / ``"smooth_iso"`` /
+    ``"mip"``) and a ``superqt.QLabeledDoubleSlider`` for the ISO threshold.
+    The threshold slider is visible when the render mode is ``"iso"`` or
+    ``"smooth_iso"``.
 
     Both controls share one UUID so a single ``on_visual_changed`` subscription
     handles both fields.  Follows the v2 widget pattern: source-ID echo
@@ -294,7 +296,7 @@ class QtVolumeRenderControls:
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._combo = QComboBox()
-        self._combo.addItems(["iso", "mip"])
+        self._combo.addItems(["iso", "smooth_iso", "mip"])
         self._combo.setCurrentText(initial_render_mode)
         self._combo.currentTextChanged.connect(self._on_combo_changed)
         layout.addRow("Mode", self._combo)
@@ -306,9 +308,10 @@ class QtVolumeRenderControls:
         self._slider.valueChanged.connect(self._on_slider_changed)
         layout.addRow("Threshold", self._slider)
 
-        # Show threshold row only in ISO mode.
-        self._slider.setVisible(initial_render_mode == "iso")
-        layout.labelForField(self._slider).setVisible(initial_render_mode == "iso")
+        # Show threshold row for iso-based modes; hide for mip.
+        threshold_visible = initial_render_mode in ("iso", "smooth_iso")
+        self._slider.setVisible(threshold_visible)
+        layout.labelForField(self._slider).setVisible(threshold_visible)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -384,7 +387,7 @@ class QtVolumeRenderControls:
         self._slider.blockSignals(False)
 
     def _update_threshold_visibility(self, render_mode: str) -> None:
-        visible = render_mode == "iso"
+        visible = render_mode in ("iso", "smooth_iso")
         self._slider.setVisible(visible)
         layout = self._container.layout()
         layout.labelForField(self._slider).setVisible(visible)

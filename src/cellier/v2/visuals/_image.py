@@ -36,9 +36,11 @@ class ImageAppearance(BaseAppearance):
         brick planning. Default is True.
     iso_threshold : float
         Isosurface threshold for 3D raycast rendering. Default is 0.2.
-    render_mode : Literal["iso", "mip"]
+    render_mode : Literal["iso", "mip", "smooth_iso"]
         Volume rendering mode.  ``"iso"`` for isosurface rendering,
-        ``"mip"`` for Maximum Intensity Projection.  Default is ``"iso"``.
+        ``"mip"`` for Maximum Intensity Projection.  ``"smooth_iso"`` uses a
+        soft trilinear density field for bisection and a 3x3x3 Sobel normal
+        kernel for smooth curved shading.  Default is ``"iso"``.
     """
 
     color_map: Colormap
@@ -47,7 +49,7 @@ class ImageAppearance(BaseAppearance):
     force_level: int | None = None
     frustum_cull: bool = True
     iso_threshold: float = 0.2
-    render_mode: Literal["iso", "mip"] = "iso"
+    render_mode: Literal["iso", "mip", "smooth_iso"] = "iso"
 
 
 class MultiscaleImageRenderConfig(EventedModel):
