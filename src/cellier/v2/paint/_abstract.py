@@ -45,7 +45,7 @@ class AbstractPaintController(ABC):
     data_store_id : UUID
         Recorded on every :class:`PaintStrokeCommand` for history
         attribution.
-    brush_value : float
+    brush_value : int
     brush_radius_voxels : float
     history_depth : int
     """
@@ -57,7 +57,7 @@ class AbstractPaintController(ABC):
         scene_id: UUID,
         canvas_id: UUID,
         data_store_id: UUID,
-        brush_value: float = 1.0,
+        brush_value: int = 1,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
     ) -> None:
@@ -67,16 +67,27 @@ class AbstractPaintController(ABC):
         self._scene_id = scene_id
         self._canvas_id = canvas_id
         self._data_store_id = data_store_id
-        self._brush_value = float(brush_value)
+        self._brush_value = int(brush_value)
         self._brush_radius = float(brush_radius_voxels)
         self._history = CommandHistory(max_depth=history_depth)
         self._active_stroke: ActiveStroke | None = None
 
-        # Concrete subclasses set ``self._data_shape`` before calling super().
-        # Validate here so the failure surfaces in the subclass constructor.
+        # Concrete subclasses must set ``_data_shape`` and ``_displayed_axes``
+        # before calling super().__init__; validate here so failures surface
+        # in the subclass constructor rather than silently late.
         if not hasattr(self, "_data_shape"):
             raise AttributeError(
                 "Concrete paint controllers must set `_data_shape` "
+                "before calling AbstractPaintController.__init__."
+            )
+        if not hasattr(self, "_displayed_axes"):
+            raise AttributeError(
+                "Concrete paint controllers must set `_displayed_axes` "
+                "before calling AbstractPaintController.__init__."
+            )
+        if not hasattr(self, "_store_dtype"):
+            raise AttributeError(
+                "Concrete paint controllers must set `_store_dtype` "
                 "before calling AbstractPaintController.__init__."
             )
 
@@ -109,13 +120,13 @@ class AbstractPaintController(ABC):
     # ------------------------------------------------------------------
 
     @property
-    def brush_value(self) -> float:
+    def brush_value(self) -> int:
         """Scalar value written to every painted voxel."""
         return self._brush_value
 
     @brush_value.setter
-    def brush_value(self, value: float) -> None:
-        self._brush_value = float(value)
+    def brush_value(self, value: int) -> None:
+        self._brush_value = int(value)
 
     @property
     def brush_radius_voxels(self) -> float:
@@ -131,13 +142,35 @@ class AbstractPaintController(ABC):
     # ------------------------------------------------------------------
 
     def _on_mouse_press(self, event: CanvasMousePress2DEvent) -> None:
-        if event.pick_info.hit_visual_id != self._visual_id:
+        # Label visuals discard background fragments so they never write to the
+        # pick buffer when all-background.  Use a data-bounds check instead of
+        # pick detection so a blank label array is still paintable.
+        if not self._coord_within_data_bounds(event.world_coordinate):
             return
         self._active_stroke = ActiveStroke(
             visual_id=self._visual_id,
             data_store_id=self._data_store_id,
         )
         self._apply_brush(event.world_coordinate)
+
+    def _coord_within_data_bounds(self, world_coord: np.ndarray) -> bool:
+        """True if *world_coord* maps to a valid voxel in the data array.
+
+        Performs the same axis swap as :meth:`_apply_brush` so the bounds
+        check uses data-array (row, col) order rather than pygfx world
+        (x, y) order.
+        """
+        ax_row, ax_col = self._displayed_axes
+        swapped = world_coord.copy()
+        swapped[ax_row], swapped[ax_col] = (
+            float(world_coord[ax_col]),
+            float(world_coord[ax_row]),
+        )
+        scene_model = self._controller._model.scenes[self._scene_id]
+        visual_model = next(v for v in scene_model.visuals if v.id == self._visual_id)
+        voxel_coord = visual_model.transform.imap_coordinates(np.atleast_2d(swapped))[0]
+        voxel = np.round(voxel_coord).astype(np.int64)
+        return all(0 <= int(voxel[i]) < self._data_shape[i] for i in range(len(voxel)))
 
     def _on_mouse_move(self, event: CanvasMouseMove2DEvent) -> None:
         if self._active_stroke is None:
@@ -170,7 +203,7 @@ class AbstractPaintController(ABC):
             return
         old_values = self._read_old_values(voxel_indices)
         new_values = np.full(
-            voxel_indices.shape[0], self._brush_value, dtype=np.float32
+            voxel_indices.shape[0], self._brush_value, dtype=self._store_dtype
         )
         self._write_values(voxel_indices, new_values)
         if self._active_stroke is not None:
@@ -233,7 +266,7 @@ class AbstractPaintController(ABC):
 
     @abstractmethod
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
-        """Return pre-paint float32 values for each voxel."""
+        """Return pre-paint values for each voxel in the store's native dtype."""
         ...
 
     @abstractmethod

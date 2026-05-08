@@ -1,11 +1,11 @@
-"""Demo: SyncPaintController on a 256x256 in-memory float32 label array.
+"""Demo: SyncPaintController on a 256x256 in-memory int32 label array.
 
-Click and drag on the image to paint.  Clicking outside the image (on the
-background or other visuals) has no effect.  The toolbar exposes brush
-value, brush radius, undo, commit, and abort.
+Click and drag on the image to paint integer label IDs.  Different label
+values produce different colors via the random colormap.  The toolbar
+exposes brush value, brush radius, undo, commit, and abort.
 
 Run with:
-    uv run python scripts/v2/in_memory_paint.py
+    uv run python scripts/v2/in_memory_paint_labels.py
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from PySide6 import QtAsyncio
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -28,11 +27,11 @@ from PySide6.QtWidgets import (
 )
 
 from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+from cellier.v2.data.label._label_memory_store import LabelMemoryStore
 from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._label_memory import LabelMemoryAppearance, LabelMemoryVisual
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance
 
 
@@ -40,14 +39,10 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # ── 1. Data ─────────────────────────────────────────────────────────
-    # Blank image — any painted voxel will be unambiguously visible
-    # against the empty background.
-    label_data = np.zeros((256, 256), dtype=np.float32)
-    image_store = ImageMemoryStore(data=label_data, name="labels")
+    label_data = np.zeros((256, 256), dtype=np.int32)
+    label_store = LabelMemoryStore(data=label_data, name="labels")
 
-    # Magenta dots at known (y, x) data coordinates serve as reference
-    # markers — click on a dot and the painted blob should land centered
-    # on the same dot.
+    # Magenta dots at known (y, x) data coordinates for coordinate verification.
     ANCHOR_COORDS = [
         (50, 50),
         (50, 200),
@@ -67,24 +62,17 @@ def main() -> None:
         render_modes={"2d"},
     )
 
-    appearance = ImageMemoryAppearance(color_map="grays", clim=(0.0, 1.0))
-    # ``add_image`` would default the visual's transform to identity(ndim=3),
-    # which mismatches the 2-D world coordinate emitted by the canvas and
-    # breaks ``transform.imap_coordinates`` inside the paint controller.
-    # Build the visual explicitly with a 2-D identity transform.
-    image_visual_model = ImageVisual(
+    appearance = LabelMemoryAppearance(colormap_mode="random")
+    label_visual_model = LabelMemoryVisual(
         name="labels",
-        data_store_id=str(image_store.id),
+        data_store_id=str(label_store.id),
         appearance=appearance,
         transform=AffineTransform.identity(ndim=2),
     )
-    image_visual = controller.add_visual(
-        scene.id, image_visual_model, data_store=image_store
+    label_visual = controller.add_visual(
+        scene.id, label_visual_model, data_store=label_store
     )
 
-    # Bright magenta points at ANCHOR_COORDS — should overlay each image
-    # bright block exactly if the conventions match.  depth_test off and
-    # high render_order so the points always draw on top of the image.
     points_appearance = PointsMarkerAppearance(
         color=(1.0, 0.0, 1.0, 1.0),
         size=20.0,
@@ -102,18 +90,17 @@ def main() -> None:
 
     # ── 3. Qt window ────────────────────────────────────────────────────
     root = QWidget()
-    root.setWindowTitle("In-memory paint demo")
+    root.setWindowTitle("In-memory label paint demo")
     layout = QVBoxLayout(root)
 
     toolbar = QWidget(root)
     toolbar_layout = QHBoxLayout(toolbar)
     toolbar_layout.setContentsMargins(4, 4, 4, 4)
 
-    brush_value_label = QLabel("brush value")
-    brush_value_spin = QDoubleSpinBox()
-    brush_value_spin.setRange(0.0, 1.0)
-    brush_value_spin.setSingleStep(0.05)
-    brush_value_spin.setValue(1.0)
+    brush_value_label = QLabel("label id")
+    brush_value_spin = QSpinBox()
+    brush_value_spin.setRange(0, 255)
+    brush_value_spin.setValue(1)
 
     brush_radius_label = QLabel("radius (vox)")
     brush_radius_spin = QSpinBox()
@@ -145,7 +132,7 @@ def main() -> None:
 
     # ── 4. Camera fit on first delivery ──────────────────────────────────
     scene_mgr = controller._render_manager._scenes[scene.id]
-    gfx_vis = scene_mgr.get_visual(image_visual.id)
+    gfx_vis = scene_mgr.get_visual(label_visual.id)
     _fitted = False
     _orig = gfx_vis.on_data_ready_2d
 
@@ -155,7 +142,7 @@ def main() -> None:
         if not _fitted:
             _fitted = True
             controller.look_at_visual(
-                image_visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
+                label_visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
             )
 
     gfx_vis.on_data_ready_2d = _patched
@@ -163,13 +150,13 @@ def main() -> None:
 
     # ── 5. Paint controller ──────────────────────────────────────────────
     paint_ctrl = controller.add_paint_controller(
-        visual_id=image_visual.id,
+        visual_id=label_visual.id,
         canvas_id=canvas_id,
         brush_value=float(brush_value_spin.value()),
         brush_radius_voxels=float(brush_radius_spin.value()),
     )
 
-    def _on_brush_value_changed(value: float) -> None:
+    def _on_brush_value_changed(value: int) -> None:
         paint_ctrl.brush_value = float(value)
 
     def _on_brush_radius_changed(value: int) -> None:

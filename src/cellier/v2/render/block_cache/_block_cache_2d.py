@@ -32,10 +32,12 @@ class BlockCache2D:
         GPU 2-D float32 texture wrapping ``cache_data``.
     """
 
-    def __init__(self, cache_parameters: BlockCacheParameters2D) -> None:
+    def __init__(self, cache_parameters: BlockCacheParameters2D, dtype=None) -> None:
         self.info = cache_parameters
         self.tile_manager = TileManager2D(cache_parameters)
-        self.cache_data, self.cache_tex = build_cache_texture_2d(cache_parameters)
+        self.cache_data, self.cache_tex = build_cache_texture_2d(
+            cache_parameters, dtype=dtype
+        )
 
     def write_tile(
         self, slot: TileSlot, data: np.ndarray, key: BlockKey2D | None = None

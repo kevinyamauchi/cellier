@@ -1,23 +1,24 @@
-"""Synchronous in-memory paint controller for ImageMemoryStore."""
+"""Synchronous in-memory paint controller for ImageMemoryStore and LabelMemoryStore."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 from cellier.v2.paint._abstract import AbstractPaintController
 
 if TYPE_CHECKING:
     from uuid import UUID
 
+    import numpy as np
+
     from cellier.v2.controller import CellierController
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+    from cellier.v2.data.label._label_memory_store import LabelMemoryStore
     from cellier.v2.paint._history import PaintStrokeCommand
 
 
 class SyncPaintController(AbstractPaintController):
-    """Paint controller for :class:`ImageMemoryStore`.
+    """Paint controller for :class:`ImageMemoryStore` and :class:`LabelMemoryStore`.
 
     Directly and synchronously mutates the backing numpy array on every
     brush application, then calls
@@ -31,12 +32,12 @@ class SyncPaintController(AbstractPaintController):
     visual_id : UUID
     scene_id : UUID
     canvas_id : UUID
-    data_store : ImageMemoryStore
+    data_store : ImageMemoryStore | LabelMemoryStore
         The store whose ``.data`` array is painted directly.
     displayed_axes : tuple[int, int]
         The two data-array axes currently displayed in 2D for the bound
         canvas, in ``(row_axis, col_axis)`` order.
-    brush_value : float
+    brush_value : int
     brush_radius_voxels : float
     history_depth : int
     """
@@ -47,15 +48,16 @@ class SyncPaintController(AbstractPaintController):
         visual_id: UUID,
         scene_id: UUID,
         canvas_id: UUID,
-        data_store: ImageMemoryStore,
+        data_store: ImageMemoryStore | LabelMemoryStore,
         displayed_axes: tuple[int, ...],
-        brush_value: float = 1.0,
+        brush_value: int = 1,
         brush_radius_voxels: float = 2.0,
         history_depth: int = 100,
     ) -> None:
-        self._data_store = data_store
+        self._data_store: ImageMemoryStore | LabelMemoryStore = data_store
         self._data_shape = data_store.shape
         self._displayed_axes: tuple[int, int] = tuple(displayed_axes)  # type: ignore[assignment]
+        self._store_dtype: np.dtype = data_store.data.dtype
         super().__init__(
             cellier_controller=cellier_controller,
             visual_id=visual_id,
@@ -88,12 +90,12 @@ class SyncPaintController(AbstractPaintController):
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read directly from the backing numpy array."""
         idx = tuple(voxel_indices[:, i] for i in range(voxel_indices.shape[1]))
-        return self._data_store.data[idx].astype(np.float32, copy=True)
+        return self._data_store.data[idx].copy()
 
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
         """Write directly to the backing numpy array and reslice."""
         idx = tuple(voxel_indices[:, i] for i in range(voxel_indices.shape[1]))
-        self._data_store.data[idx] = values
+        self._data_store.data[idx] = values.astype(self._data_store.data.dtype)
         self._controller.reslice_scene(self._scene_id)
 
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:

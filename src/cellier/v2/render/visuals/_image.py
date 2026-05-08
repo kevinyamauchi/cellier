@@ -521,6 +521,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap | None = None,
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
+        attenuation: float = 1.0,
         interpolation: str = "nearest",
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
@@ -701,6 +702,7 @@ class GFXMultiscaleImageVisual:
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
+                attenuation=attenuation,
                 pick_write=pick_write,
             )
             self._inner_node_3d = inner
@@ -778,6 +780,7 @@ class GFXMultiscaleImageVisual:
         gpu_budget_bytes = render_config.gpu_budget_bytes
         gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
         threshold = model.appearance.iso_threshold
+        attenuation = model.appearance.attenuation
 
         if len(displayed_axes) == 3:
             axes_3d: tuple[int, ...] | None = displayed_axes
@@ -826,6 +829,7 @@ class GFXMultiscaleImageVisual:
             colormap=colormap,
             clim=clim,
             threshold=threshold,
+            attenuation=attenuation,
             interpolation=interpolation,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
@@ -958,10 +962,12 @@ class GFXMultiscaleImageVisual:
             colormap = self.material_3d.map
             clim = self.material_3d.clim
             threshold = self.material_3d.threshold
+            attenuation = self.material_3d.attenuation
             inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
                 colormap=colormap,
                 clim=clim,
                 threshold=threshold,
+                attenuation=attenuation,
             )
             self._inner_node_3d = inner
             self._aabb_line_3d = self._build_aabb_line_3d()
@@ -2386,6 +2392,9 @@ class GFXMultiscaleImageVisual:
         elif event.field_name == "iso_threshold":
             if self.material_3d is not None:
                 self.material_3d.threshold = float(event.new_value)
+        elif event.field_name == "attenuation":
+            if self.material_3d is not None:
+                self.material_3d.attenuation = float(event.new_value)
         elif event.field_name == "render_mode":
             if self.material_3d is not None:
                 self.material_3d.render_mode = event.new_value
@@ -2488,6 +2497,7 @@ class GFXMultiscaleImageVisual:
         colormap: gfx.TextureMap,
         clim: tuple[float, float],
         threshold: float,
+        attenuation: float = 1.0,
         pick_write: bool = True,
     ) -> tuple[gfx.Volume, MultiscaleVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, brick material, and Volume node.
@@ -2510,6 +2520,7 @@ class GFXMultiscaleImageVisual:
             clim=clim,
             map=colormap,
             threshold=threshold,
+            attenuation=attenuation,
             pick_write=pick_write,
         )
 

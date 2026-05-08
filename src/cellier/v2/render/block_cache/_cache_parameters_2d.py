@@ -72,8 +72,12 @@ def compute_block_cache_parameters_2d(
     )
 
 
+_FORMAT_MAP_2D = {np.float32: None, np.int32: "1xi4"}
+
+
 def build_cache_texture_2d(
     cache_info: BlockCacheParameters2D,
+    dtype=None,
 ) -> tuple[np.ndarray, gfx.Texture]:
     """Allocate the fixed-size 2D cache texture (zeroed).
 
@@ -81,17 +85,27 @@ def build_cache_texture_2d(
     ----------
     cache_info : CacheInfo
         Cache sizing metadata.
+    dtype : np.dtype or None
+        Data type for the cache texture. Defaults to float32.
+        Pass ``np.int32`` for label caches.
 
     Returns
     -------
     cache_data : np.ndarray
-        The backing float32 array ``(cH, cW)``.
+        The backing array ``(cH, cW)``.
     cache_tex : gfx.Texture
         pygfx 2D texture wrapping ``cache_data``.
     """
+    if dtype is None:
+        dtype = np.float32
+    dtype = np.dtype(dtype)
     pbs = cache_info.padded_block_size
     gs = cache_info.grid_side
     cache_shape = (gs * pbs, gs * pbs)
-    cache_data = np.zeros(cache_shape, dtype=np.float32)
-    cache_tex = gfx.Texture(cache_data, dim=2)
+    cache_data = np.zeros(cache_shape, dtype=dtype)
+    fmt = _FORMAT_MAP_2D.get(dtype.type)
+    if fmt is not None:
+        cache_tex = gfx.Texture(cache_data, dim=2, format=fmt)
+    else:
+        cache_tex = gfx.Texture(cache_data, dim=2)
     return cache_data, cache_tex

@@ -20,8 +20,9 @@ if TYPE_CHECKING:
 class QtRenderModeComboBox:
     """Bidirectional render-mode selector wired to the cellier v2 bus.
 
-    Wraps a ``QComboBox`` with ``"iso"`` and ``"mip"`` options and keeps it in
-    sync with ``ImageAppearance.render_mode`` via ``AppearanceChangedEvent``.
+    Wraps a ``QComboBox`` with ``"iso"``, ``"mip"``, and ``"smooth_iso"`` options
+    and keeps it in sync with ``ImageAppearance.render_mode`` via
+    ``AppearanceChangedEvent``.
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
 
@@ -58,7 +59,7 @@ class QtRenderModeComboBox:
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._combo = QComboBox(parent)
-        self._combo.addItems(["iso", "mip"])
+        self._combo.addItems(["iso", "smooth_iso", "mip", "attenuated_mip"])
         self._combo.setCurrentText(initial_render_mode)
         self._combo.currentTextChanged.connect(self._on_combo_changed)
 
@@ -230,14 +231,16 @@ class QtIsoThresholdSlider:
 
 
 class QtVolumeRenderControls:
-    """Combined render-mode and ISO-threshold widget wired to the cellier v2 bus.
+    """Combined render-mode, ISO-threshold, and attenuation widget wired to the cellier v2 bus.
 
-    Contains a render-mode ``QComboBox`` (``"iso"`` / ``"mip"``) and a
-    ``superqt.QLabeledDoubleSlider`` for the ISO threshold.  The threshold
-    slider is only visible when the render mode is ``"iso"``.
+    Contains a render-mode ``QComboBox`` (``"iso"`` / ``"smooth_iso"`` /
+    ``"mip"`` / ``"attenuated_mip"``) and mode-dependent parameter sliders:
 
-    Both controls share one UUID so a single ``on_visual_changed`` subscription
-    handles both fields.  Follows the v2 widget pattern: source-ID echo
+    - ISO threshold slider — visible when mode is ``"iso"`` or ``"smooth_iso"``.
+    - Attenuation slider — visible when mode is ``"attenuated_mip"``.
+
+    All controls share one UUID so a single ``on_visual_changed`` subscription
+    handles all fields.  Follows the v2 widget pattern: source-ID echo
     filtering and signal blocking on model-driven updates.
 
     Wire to the controller after construction::
@@ -250,8 +253,8 @@ class QtVolumeRenderControls:
     Parameters
     ----------
     visual_id :
-        UUID of the visual whose ``render_mode`` and ``iso_threshold`` fields
-        this widget controls.
+        UUID of the visual whose ``render_mode``, ``iso_threshold``, and
+        ``attenuation`` fields this widget controls.
     dtype_max :
         Upper bound of the threshold slider — typically the dtype maximum
         (e.g. 65535 for uint16, 1.0 for float32).
@@ -259,6 +262,9 @@ class QtVolumeRenderControls:
         Starting render mode — typically ``visual_model.appearance.render_mode``.
     initial_threshold :
         Starting threshold — typically ``visual_model.appearance.iso_threshold``.
+    initial_attenuation :
+        Starting attenuation coefficient — typically
+        ``visual_model.appearance.attenuation``.  Default is ``1.0``.
     decimals :
         Number of decimal places shown in the threshold slider label.  Use
         ``0`` for integer dtypes and ``2`` (or similar) for float data.
@@ -277,6 +283,7 @@ class QtVolumeRenderControls:
         dtype_max: float,
         initial_render_mode: str,
         initial_threshold: float,
+        initial_attenuation: float = 1.0,
         decimals: int = 2,
         parent=None,
     ) -> None:
@@ -294,7 +301,7 @@ class QtVolumeRenderControls:
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._combo = QComboBox()
-        self._combo.addItems(["iso", "mip"])
+        self._combo.addItems(["iso", "smooth_iso", "mip", "attenuated_mip"])
         self._combo.setCurrentText(initial_render_mode)
         self._combo.currentTextChanged.connect(self._on_combo_changed)
         layout.addRow("Mode", self._combo)
@@ -306,9 +313,17 @@ class QtVolumeRenderControls:
         self._slider.valueChanged.connect(self._on_slider_changed)
         layout.addRow("Threshold", self._slider)
 
-        # Show threshold row only in ISO mode.
-        self._slider.setVisible(initial_render_mode == "iso")
-        layout.labelForField(self._slider).setVisible(initial_render_mode == "iso")
+        self._attenuation_slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
+        self._attenuation_slider.setRange(0.0, 10.0)
+        self._attenuation_slider.setValue(initial_attenuation)
+        self._attenuation_slider.setDecimals(2)
+        self._attenuation_slider.valueChanged.connect(
+            self._on_attenuation_slider_changed
+        )
+        layout.addRow("Attenuation", self._attenuation_slider)
+
+        # Show mode-specific controls; hide the others.
+        self._update_mode_controls_visibility(initial_render_mode)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -346,11 +361,13 @@ class QtVolumeRenderControls:
             self._set_render_mode(event.new_value)
         elif event.field_name == "iso_threshold":
             self._set_threshold(event.new_value)
+        elif event.field_name == "attenuation":
+            self._set_attenuation(event.new_value)
 
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, text: str) -> None:
-        self._update_threshold_visibility(text)
+        self._update_mode_controls_visibility(text)
         self.changed.emit(
             AppearanceUpdateEvent(
                 source_id=self._id,
@@ -370,21 +387,39 @@ class QtVolumeRenderControls:
             )
         )
 
+    def _on_attenuation_slider_changed(self, value: float) -> None:
+        self.changed.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="attenuation",
+                value=value,
+            )
+        )
+
     # ── Qt seam 2: push values without re-firing signals ─────────────────────
 
     def _set_render_mode(self, value: str) -> None:
         self._combo.blockSignals(True)
         self._combo.setCurrentText(value)
         self._combo.blockSignals(False)
-        self._update_threshold_visibility(value)
+        self._update_mode_controls_visibility(value)
 
     def _set_threshold(self, value: float) -> None:
         self._slider.blockSignals(True)
         self._slider.setValue(value)
         self._slider.blockSignals(False)
 
-    def _update_threshold_visibility(self, render_mode: str) -> None:
-        visible = render_mode == "iso"
-        self._slider.setVisible(visible)
+    def _set_attenuation(self, value: float) -> None:
+        self._attenuation_slider.blockSignals(True)
+        self._attenuation_slider.setValue(value)
+        self._attenuation_slider.blockSignals(False)
+
+    def _update_mode_controls_visibility(self, render_mode: str) -> None:
+        threshold_visible = render_mode in ("iso", "smooth_iso")
+        attenuation_visible = render_mode == "attenuated_mip"
         layout = self._container.layout()
-        layout.labelForField(self._slider).setVisible(visible)
+        self._slider.setVisible(threshold_visible)
+        layout.labelForField(self._slider).setVisible(threshold_visible)
+        self._attenuation_slider.setVisible(attenuation_visible)
+        layout.labelForField(self._attenuation_slider).setVisible(attenuation_visible)
