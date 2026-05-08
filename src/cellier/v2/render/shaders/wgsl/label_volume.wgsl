@@ -37,7 +37,7 @@ fn random_label_color(label_id: i32, salt: u32) -> vec4<f32> {
     x = (x ^ (x >> 16u)) * 0x45d9f3bu;
     x = x ^ (x >> 16u);
     let hue  = f32(x & 0xFFFFu) / 65535.0;
-    let sat  = 0.6 + 0.4 * f32((x >> 16u) & 0x3Fu) / 63.0;
+    let sat  = 0.9 + 0.1 * f32((x >> 16u) & 0x3Fu) / 63.0;
     let val_ = 0.7 + 0.3 * f32((x >> 22u) & 0xFu)  / 15.0;
     return vec4<f32>(hsv_to_rgb(hue, sat, val_), 1.0);
 }
