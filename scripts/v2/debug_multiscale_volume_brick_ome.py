@@ -505,12 +505,6 @@ async def async_main(zarr_uri: str):
     vis = controller._render_manager._scenes[scene.id].get_visual(visual_model.id)
     vis.material_3d.debug_mode = _DEBUG_MODE
 
-    # ── Print diagnostics ─────────────────────────────────────────────
-    print(f"[DEBUG] debug_mode     = {_DEBUG_MODE}")
-    print(f"[DEBUG] norm_size      = {vis._norm_size}")
-    print(f"[DEBUG] dataset_size   = {vis._dataset_size}")
-    print(f"[DEBUG] node_3d matrix =\n{vis.node_3d.local.matrix}")
-
     # ── Canvas view ───────────────────────────────────────────────────
     canvas_view = controller.get_canvas_view(controller.get_canvas_ids(scene.id)[0])
 
@@ -545,7 +539,6 @@ async def async_main(zarr_uri: str):
     # Fit camera from metadata-derived bounding box, then kick off first reslice.
     controller.fit_camera(scene.id)
     controller.reslice_scene(scene.id)
-    print("[DEBUG] Camera fitted. Use 'Reslice now' to reload bricks.")
 
     app = QtWidgets.QApplication.instance()
     app.aboutToQuit.connect(canvas_widget.close)
@@ -588,14 +581,10 @@ if __name__ == "__main__":
     else:
         zarr_uri = zarr_input
 
-    import logging
-
     import PySide6.QtAsyncio as QtAsyncio
     from PySide6.QtWidgets import QApplication
 
-    from cellier.v2.logging import enable_debug_logging
-
-    enable_debug_logging(categories=("perf"), level=logging.WARN)
+    # enable_debug_logging(categories=("perf"), level=logging.WARN)
 
     app = QApplication([sys.argv[0]])
     QtAsyncio.run(async_main(zarr_uri), handle_sigint=True)

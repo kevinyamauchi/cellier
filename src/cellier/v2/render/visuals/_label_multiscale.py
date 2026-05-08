@@ -61,6 +61,7 @@ from cellier.v2.render.shaders._multiscale_volume_brick import (
 from cellier.v2.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
+    NormSizedVolume,
     _block_key_2d_to_padded_coords,
     _brick_key_to_padded_coords,
     _build_axis_selections,
@@ -318,7 +319,7 @@ class GFXMultiscaleLabelVisual:
 
         # ── 3D node ───────────────────────────────────────────────────────
         self.node_3d: gfx.Group | None = None
-        self._inner_node_3d: gfx.Volume | None = None
+        self._inner_node_3d: NormSizedVolume | None = None
         self.material_3d: LabelVolumeBrickMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
         self._aabb_line_3d: gfx.Line | None = None
@@ -1051,6 +1052,8 @@ class GFXMultiscaleLabelVisual:
                 buf_data["norm_size_y"] = float(self._norm_size[1])
                 buf_data["norm_size_z"] = float(self._norm_size[2])
                 self._vol_params_buffer.update_full()
+            if self._inner_node_3d is not None:
+                self._inner_node_3d.update_norm_size(self._norm_size)
 
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
@@ -1335,7 +1338,7 @@ class GFXMultiscaleLabelVisual:
     def _build_3d_node(
         self,
         pick_write: bool = True,
-    ) -> tuple[gfx.Volume, LabelVolumeBrickMaterial, gfx.Texture]:
+    ) -> tuple[NormSizedVolume, LabelVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, label brick material, and Volume node."""
         proxy_data = np.zeros((2, 2, 2), dtype=np.float32)
         proxy_tex = gfx.Texture(proxy_data, dim=3)
@@ -1363,7 +1366,7 @@ class GFXMultiscaleLabelVisual:
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
-        vol = gfx.Volume(geometry, material)
+        vol = NormSizedVolume(geometry, material, norm_size=self._norm_size)
         return vol, material, proxy_tex
 
     def _build_2d_node(

@@ -93,6 +93,35 @@ if TYPE_CHECKING:
 import cellier.v2.render.shaders._multiscale_volume_brick as _brick_reg  # noqa: F401
 
 
+class NormSizedVolume(gfx.Volume):
+    """gfx.Volume subclass with a norm_size-aware bounding box.
+
+    The standard gfx.Volume derives its local bounding box from the proxy
+    texture dimensions, which for a 2x2x2 dummy produces an asymmetric box
+    that offsets the orbit center by half the scene size.  This subclass
+    overrides get_bounding_box() to return the correct [-norm_size/2,
+    norm_size/2] box in normalized local space.
+    """
+
+    def __init__(
+        self, geometry, material, *, norm_size: np.ndarray | None = None, **kwargs
+    ):
+        super().__init__(geometry, material, **kwargs)
+        self._norm_size: np.ndarray | None = (
+            np.asarray(norm_size, dtype=np.float64) if norm_size is not None else None
+        )
+
+    def update_norm_size(self, norm_size: np.ndarray) -> None:
+        """Update the bounding box extents after a transform change."""
+        self._norm_size = np.asarray(norm_size, dtype=np.float64)
+
+    def get_bounding_box(self) -> np.ndarray | None:
+        if self._norm_size is None:
+            return super().get_bounding_box()
+        half = self._norm_size / 2.0
+        return np.array([-half, half])
+
+
 def _extract_scale_and_translation(
     level_transforms: list[AffineTransform],
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
@@ -693,7 +722,7 @@ class GFXMultiscaleImageVisual:
 
         # ── 3D node ─────────────────────────────────────────────────────
         self.node_3d: gfx.Group | None = None
-        self._inner_node_3d: gfx.Volume | None = None
+        self._inner_node_3d: NormSizedVolume | None = None
         self.material_3d: MultiscaleVolumeBrickMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
         self._aabb_line_3d: gfx.Line | None = None
@@ -2365,6 +2394,8 @@ class GFXMultiscaleImageVisual:
                 buf_data["norm_size_y"] = float(self._norm_size[1])
                 buf_data["norm_size_z"] = float(self._norm_size[2])
                 self._vol_params_buffer.update_full()
+            if self._inner_node_3d is not None:
+                self._inner_node_3d.update_norm_size(self._norm_size)
 
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
@@ -2499,7 +2530,7 @@ class GFXMultiscaleImageVisual:
         threshold: float,
         attenuation: float = 1.0,
         pick_write: bool = True,
-    ) -> tuple[gfx.Volume, MultiscaleVolumeBrickMaterial, gfx.Texture]:
+    ) -> tuple[NormSizedVolume, MultiscaleVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, brick material, and Volume node.
 
         The brick shader generates its own box geometry from
@@ -2507,6 +2538,10 @@ class GFXMultiscaleImageVisual:
         dummy (2x2x2) and the inner Volume node has identity local
         transform.  The Group node's matrix (set by
         ``_update_node_matrix``) maps normalized -> world.
+
+        NormSizedVolume is used so that pygfx's bounding box machinery sees
+        the correct [-norm_size/2, norm_size/2] bounds rather than the
+        asymmetric box derived from the 2x2x2 proxy texture dimensions.
         """
         proxy_data = np.zeros((2, 2, 2), dtype=np.float32)
         proxy_tex = gfx.Texture(proxy_data, dim=3)
@@ -2525,7 +2560,7 @@ class GFXMultiscaleImageVisual:
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
-        vol = gfx.Volume(geometry, material)
+        vol = NormSizedVolume(geometry, material, norm_size=self._norm_size)
         # No inner transform — vertex shader uses normalized space.
 
         return vol, material, proxy_tex
