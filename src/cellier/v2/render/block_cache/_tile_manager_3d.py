@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class BlockKey3D:
-    """Identifier for a brick at a specific LOAD level.
+    """Identifier for a brick at a specific LOAD level and slice position.
 
     Attributes
     ----------
@@ -56,12 +56,19 @@ class BlockKey3D:
         brick coordinate along ``displayed_axes[0]``, etc.  For the
         current 3D case with ``displayed_axes=(0, 1, 2)`` these are
         the grid positions along data axes z, y, x respectively.
+    slice_coord : tuple of (axis_index, world_value) pairs
+        Sorted tuple encoding the non-displayed axis positions at the
+        time this brick was requested.  Bricks from different slice
+        positions will have distinct keys, allowing the cache to hold
+        bricks from multiple slices simultaneously during a transition.
+        Empty for purely 3-D data where all axes are displayed.
     """
 
     level: int
     g0: int
     g1: int
     g2: int
+    slice_coord: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass
@@ -288,6 +295,39 @@ class TileManager3D:
             return slot_idx
 
         raise RuntimeError("_evict_lru: heap exhausted with no valid victim")
+
+    def evict_finer_than(self, min_level: int) -> int:
+        """Evict all committed bricks with level < min_level.
+
+        Removes entries from ``tilemap`` and returns their slots to
+        ``free_slots``.  In-flight slots are unaffected (they are handled
+        by ``release_all_in_flight``).
+
+        In the 3D pipeline this is useful when ``force_level`` is set: all
+        bricks are requested at a single level, so any finer bricks left
+        over from a previous frame are not needed and can be reclaimed
+        proactively rather than waiting for LRU eviction.
+
+        Parameters
+        ----------
+        min_level : int
+            Evict bricks whose level is strictly less than this value.
+
+        Returns
+        -------
+        int
+            Number of bricks evicted.
+        """
+        to_evict = [key for key in self.tilemap if key.level < min_level]
+        for key in to_evict:
+            slot = self.tilemap.pop(key)
+            self.slot_index[slot.index] = None
+            self.free_slots.append(slot.index)
+        if to_evict:
+            _CACHE_LOGGER.debug(
+                "evict_finer_than  min_level=%d  evicted=%d", min_level, len(to_evict)
+            )
+        return len(to_evict)
 
     def clear(self) -> None:
         """Reset to an empty cache, discarding all committed and in-flight bricks."""

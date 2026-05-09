@@ -264,6 +264,7 @@ class GFXMultiscaleLabelVisual:
         self._lut_params_buffer_2d = None
         self._block_scales_buffer_2d = None
         self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
+        self._current_slice_coord_3d: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
@@ -572,6 +573,13 @@ class GFXMultiscaleLabelVisual:
         self._frame_number += 1
         geo = self._volume_geometry
 
+        # Record the current slice coordinate so non-displayed axis positions
+        # are embedded in every BlockKey3D (mirrors the 2D path).
+        if dims_state is not None:
+            self._current_slice_coord_3d = tuple(
+                sorted(dims_state.selection.slice_indices.items())
+            )
+
         if dims_state is not None:
             displayed = dims_state.selection.displayed_axes
             if displayed != self._last_displayed_axes:
@@ -664,12 +672,27 @@ class GFXMultiscaleLabelVisual:
         if n_dropped:
             brick_arr = brick_arr[:n_budget]
 
+        # When force_level is set every brick is at a single level; evict
+        # finer bricks proactively so their slots are immediately reusable.
+        if force_level is not None:
+            self._block_cache_3d.tile_manager.evict_finer_than(force_level)
         t0 = time.perf_counter()
-        sorted_required = arr_to_brick_keys(brick_arr)
+        sorted_required = arr_to_brick_keys(
+            brick_arr, slice_coord=self._current_slice_coord_3d or ()
+        )
         fill_plan = self._block_cache_3d.tile_manager.stage(
             sorted_required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
+
+        # When all required bricks are cache hits, on_data_ready never fires
+        # so the LUT would remain stale (pointing to a different slice position).
+        # Rebuild immediately in that case — mirrors the 2D all-hits guard.
+        if not fill_plan:
+            self._lut_manager_3d.rebuild(
+                self._block_cache_3d.tile_manager,
+                current_slice_coord=self._current_slice_coord_3d,
+            )
 
         slice_id = uuid4()
         chunk_requests: list[ChunkRequest] = []
@@ -770,7 +793,10 @@ class GFXMultiscaleLabelVisual:
             self._block_cache_3d.n_resident,
         )
 
-        self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
+        self._lut_manager_3d.rebuild(
+            self._block_cache_3d.tile_manager,
+            current_slice_coord=self._current_slice_coord_3d,
+        )
 
         _GPU_LOGGER.info(
             "lut_rebuilt  resident=%d  frame=%d",

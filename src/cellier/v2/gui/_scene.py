@@ -139,12 +139,14 @@ class QtDimsSliders:
         *,
         initial_slice_indices: dict[int, int] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
+        non_displayed_sliders: set[int] | None = None,
         debounce_ms: int = 50,
         parent: QWidget | None = None,
     ) -> None:
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
         self._scene_id = scene_id
+        self._non_displayed_sliders: set[int] = non_displayed_sliders or set()
 
         # Single-shot QTimer for rate-limiting rapid slider moves.
         # Fires at most once per interval; a dirty flag ensures the final
@@ -190,6 +192,16 @@ class QtDimsSliders:
         Qt seam 1: replace with the backend element for other toolkits.
         """
         return self._container
+
+    @property
+    def non_displayed_sliders(self) -> set[int]:
+        """Axes excluded from slider display regardless of dims state (e.g. channel axis)."""
+        return self._non_displayed_sliders
+
+    @non_displayed_sliders.setter
+    def non_displayed_sliders(self, axes: set[int]) -> None:
+        self._non_displayed_sliders = axes
+        self._update_visibility(self._displayed_axes)
 
     def current_index(self) -> dict[int, int]:
         """Return the current value of every slider regardless of visibility."""
@@ -247,6 +259,7 @@ class QtDimsSliders:
             axis: sld.value()
             for axis, sld in self._sliders.items()
             if axis not in self._displayed_axes
+            and axis not in self._non_displayed_sliders
         }
         self.changed.emit(
             DimsUpdateEvent(
@@ -271,7 +284,10 @@ class QtDimsSliders:
         self._displayed_axes = displayed_axes
         layout: QFormLayout = self._container.layout()
         for axis, sld in self._sliders.items():
-            layout.setRowVisible(sld, axis not in displayed_axes)
+            visible = (
+                axis not in displayed_axes and axis not in self._non_displayed_sliders
+            )
+            layout.setRowVisible(sld, visible)
 
 
 class QtCanvasWidget:

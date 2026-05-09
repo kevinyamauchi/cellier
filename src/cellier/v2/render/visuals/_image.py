@@ -652,6 +652,9 @@ class GFXMultiscaleImageVisual:
         # Used by the two-phase LUT rebuild to separate current-slice tiles from
         # old-slice fallback tiles.
         self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
+        # 3D equivalent: embeds non-displayed axis positions into BlockKey3D so
+        # that bricks from different slice positions are not treated as cache hits.
+        self._current_slice_coord_3d: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
@@ -1201,6 +1204,7 @@ class GFXMultiscaleImageVisual:
         slice_request_id: UUID,
         dims_state: DimsState | None,
         fill: dict[int, int] | None = None,
+        slice_coord: tuple[tuple[int, int], ...] = (),
     ) -> list[ChunkRequest]:
         """Stage ``brick_arr`` in ``self._block_cache_3d`` and build ChunkRequests.
 
@@ -1219,12 +1223,22 @@ class GFXMultiscaleImageVisual:
             Axis index → scalar value overrides applied after
             ``_build_axis_selections``.  For multichannel use, pass
             ``{channel_axis: channel_index}``.
+        slice_coord : tuple of (axis_index, world_value) pairs
+            Sorted slice-position encoding to embed in every ``BlockKey3D``
+            so that bricks from different non-displayed-axis positions are
+            not treated as cache hits.
         """
         geo = self._volume_geometry
-        sorted_required = arr_to_brick_keys(brick_arr)
+        sorted_required = arr_to_brick_keys(brick_arr, slice_coord=slice_coord)
         fill_plan = self._block_cache_3d.tile_manager.stage(
             sorted_required, self._frame_number
         )
+
+        if not fill_plan:
+            self._lut_manager_3d.rebuild(
+                self._block_cache_3d.tile_manager,
+                current_slice_coord=self._current_slice_coord_3d,
+            )
 
         chunk_requests: list[ChunkRequest] = []
         self._pending_slot_map = {}
@@ -1501,6 +1515,13 @@ class GFXMultiscaleImageVisual:
         self._frame_number += 1
         geo = self._volume_geometry
 
+        # Record the current slice coordinate so non-displayed axis positions
+        # are embedded in every BlockKey3D (mirrors the 2D path).
+        if dims_state is not None:
+            self._current_slice_coord_3d = tuple(
+                sorted(dims_state.selection.slice_indices.items())
+            )
+
         # Lazy node matrix update when displayed axes change.
         if dims_state is not None:
             displayed = dims_state.selection.displayed_axes
@@ -1634,12 +1655,27 @@ class GFXMultiscaleImageVisual:
             brick_arr = brick_arr[:n_budget]
 
         # 5. Stage: find cache hits/misses, reserve slots for misses
+        # When force_level is set every brick is at a single level; evict
+        # finer bricks proactively so their slots are immediately reusable.
+        if force_level is not None:
+            self._block_cache_3d.tile_manager.evict_finer_than(force_level)
         t0 = time.perf_counter()
-        sorted_required = arr_to_brick_keys(brick_arr)
+        sorted_required = arr_to_brick_keys(
+            brick_arr, slice_coord=self._current_slice_coord_3d or ()
+        )
         fill_plan = self._block_cache_3d.tile_manager.stage(
             sorted_required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
+
+        # When all required bricks are cache hits, on_data_ready never fires
+        # so the LUT would remain stale (pointing to a different slice position).
+        # Rebuild immediately in that case — mirrors the 2D all-hits guard.
+        if not fill_plan:
+            self._lut_manager_3d.rebuild(
+                self._block_cache_3d.tile_manager,
+                current_slice_coord=self._current_slice_coord_3d,
+            )
 
         # 6. Build ChunkRequests and populate the pending slot map
         slice_id = uuid4()
@@ -1762,7 +1798,10 @@ class GFXMultiscaleImageVisual:
             self._block_cache_3d.n_resident,
         )
 
-        self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
+        self._lut_manager_3d.rebuild(
+            self._block_cache_3d.tile_manager,
+            current_slice_coord=self._current_slice_coord_3d,
+        )
 
         _GPU_LOGGER.info(
             "lut_rebuilt  resident=%d  frame=%d",
