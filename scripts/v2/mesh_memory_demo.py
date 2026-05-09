@@ -40,13 +40,9 @@ def _make_sphere_mesh():
     c = size // 2
     z, y, x = np.mgrid[:size, :size, :size]
     vol = (x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2
-    verts, faces, normals, _ = marching_cubes(vol, level=40**2)
+    verts, faces, _, _ = marching_cubes(vol, level=40**2)
     # marching_cubes returns verts in (z, y, x) row order — correct for cellier.
-    return (
-        verts.astype(np.float32),
-        faces.astype(np.int32),
-        normals.astype(np.float32),
-    )
+    return verts.astype(np.float32), faces.astype(np.int32)
 
 
 def _random_vertex_colors(n: int) -> np.ndarray:
@@ -59,11 +55,10 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # ── 1. Build mesh ────────────────────────────────────────────────
-    verts, faces, normals = _make_sphere_mesh()
+    verts, faces = _make_sphere_mesh()
     store = MeshMemoryStore(
         positions=verts,
         indices=faces,
-        normals=normals,
         name="sphere",
     )
     z_min = int(verts[:, 0].min())

@@ -443,6 +443,16 @@ class GFXMultichannelMultiscaleImageVisual:
             if displayed != self._last_displayed_axes:
                 self._rebuild_slot_geometries(displayed)
 
+        # Set current slice coord on all slots so _materialize_brick_requests
+        # embeds the correct non-displayed axis position in every BlockKey3D.
+        current_slice_coord_3d: tuple[tuple[int, int], ...] = ()
+        if dims_state is not None:
+            current_slice_coord_3d = tuple(
+                sorted(dims_state.selection.slice_indices.items())
+            )
+        for slot in self._slots:
+            slot._current_slice_coord_3d = current_slice_coord_3d
+
         brick_arr = planner._plan_bricks(
             camera_pos_world,
             frustum_corners_world,
@@ -462,12 +472,15 @@ class GFXMultichannelMultiscaleImageVisual:
         for ch_idx in visible_channels:
             slot_idx = self._channel_to_slot[ch_idx]
             channel_slot = self._slots[slot_idx]
+            if force_level is not None:
+                channel_slot._block_cache_3d.tile_manager.evict_finer_than(force_level)
             channel_request_lists.append(
                 channel_slot._materialize_brick_requests(
                     brick_arr,
                     sid,
                     dims_state,
                     fill={self._channel_axis: ch_idx},
+                    slice_coord=current_slice_coord_3d,
                 )
             )
         return [

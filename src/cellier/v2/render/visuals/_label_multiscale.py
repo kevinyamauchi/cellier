@@ -61,6 +61,7 @@ from cellier.v2.render.shaders._multiscale_volume_brick import (
 from cellier.v2.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
+    NormSizedVolume,
     _block_key_2d_to_padded_coords,
     _brick_key_to_padded_coords,
     _build_axis_selections,
@@ -263,6 +264,7 @@ class GFXMultiscaleLabelVisual:
         self._lut_params_buffer_2d = None
         self._block_scales_buffer_2d = None
         self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
+        self._current_slice_coord_3d: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
@@ -318,7 +320,7 @@ class GFXMultiscaleLabelVisual:
 
         # ── 3D node ───────────────────────────────────────────────────────
         self.node_3d: gfx.Group | None = None
-        self._inner_node_3d: gfx.Volume | None = None
+        self._inner_node_3d: NormSizedVolume | None = None
         self.material_3d: LabelVolumeBrickMaterial | None = None
         self._proxy_tex_3d: gfx.Texture | None = None
         self._aabb_line_3d: gfx.Line | None = None
@@ -571,6 +573,13 @@ class GFXMultiscaleLabelVisual:
         self._frame_number += 1
         geo = self._volume_geometry
 
+        # Record the current slice coordinate so non-displayed axis positions
+        # are embedded in every BlockKey3D (mirrors the 2D path).
+        if dims_state is not None:
+            self._current_slice_coord_3d = tuple(
+                sorted(dims_state.selection.slice_indices.items())
+            )
+
         if dims_state is not None:
             displayed = dims_state.selection.displayed_axes
             if displayed != self._last_displayed_axes:
@@ -663,12 +672,27 @@ class GFXMultiscaleLabelVisual:
         if n_dropped:
             brick_arr = brick_arr[:n_budget]
 
+        # When force_level is set every brick is at a single level; evict
+        # finer bricks proactively so their slots are immediately reusable.
+        if force_level is not None:
+            self._block_cache_3d.tile_manager.evict_finer_than(force_level)
         t0 = time.perf_counter()
-        sorted_required = arr_to_brick_keys(brick_arr)
+        sorted_required = arr_to_brick_keys(
+            brick_arr, slice_coord=self._current_slice_coord_3d or ()
+        )
         fill_plan = self._block_cache_3d.tile_manager.stage(
             sorted_required, self._frame_number
         )
         stage_ms = (time.perf_counter() - t0) * 1000
+
+        # When all required bricks are cache hits, on_data_ready never fires
+        # so the LUT would remain stale (pointing to a different slice position).
+        # Rebuild immediately in that case — mirrors the 2D all-hits guard.
+        if not fill_plan:
+            self._lut_manager_3d.rebuild(
+                self._block_cache_3d.tile_manager,
+                current_slice_coord=self._current_slice_coord_3d,
+            )
 
         slice_id = uuid4()
         chunk_requests: list[ChunkRequest] = []
@@ -769,7 +793,10 @@ class GFXMultiscaleLabelVisual:
             self._block_cache_3d.n_resident,
         )
 
-        self._lut_manager_3d.rebuild(self._block_cache_3d.tile_manager)
+        self._lut_manager_3d.rebuild(
+            self._block_cache_3d.tile_manager,
+            current_slice_coord=self._current_slice_coord_3d,
+        )
 
         _GPU_LOGGER.info(
             "lut_rebuilt  resident=%d  frame=%d",
@@ -1051,6 +1078,8 @@ class GFXMultiscaleLabelVisual:
                 buf_data["norm_size_y"] = float(self._norm_size[1])
                 buf_data["norm_size_z"] = float(self._norm_size[2])
                 self._vol_params_buffer.update_full()
+            if self._inner_node_3d is not None:
+                self._inner_node_3d.update_norm_size(self._norm_size)
 
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
@@ -1335,7 +1364,7 @@ class GFXMultiscaleLabelVisual:
     def _build_3d_node(
         self,
         pick_write: bool = True,
-    ) -> tuple[gfx.Volume, LabelVolumeBrickMaterial, gfx.Texture]:
+    ) -> tuple[NormSizedVolume, LabelVolumeBrickMaterial, gfx.Texture]:
         """Construct the proxy texture, label brick material, and Volume node."""
         proxy_data = np.zeros((2, 2, 2), dtype=np.float32)
         proxy_tex = gfx.Texture(proxy_data, dim=3)
@@ -1363,7 +1392,7 @@ class GFXMultiscaleLabelVisual:
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
-        vol = gfx.Volume(geometry, material)
+        vol = NormSizedVolume(geometry, material, norm_size=self._norm_size)
         return vol, material, proxy_tex
 
     def _build_2d_node(

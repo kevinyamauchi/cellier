@@ -5,17 +5,13 @@ import asyncio
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import ConfigDict, field_serializer, field_validator, model_validator
+from pydantic import ConfigDict, field_serializer, field_validator
 
 from cellier.v2.data._base_data_store import BaseDataStore
 from cellier.v2.data.mesh._mesh_requests import MeshData, MeshSliceRequest
 
-# Placeholder returned when the slab contains no surviving faces.
-# A single degenerate triangle avoids the "empty geometry is illegal"
-# restriction in pygfx.
-_PLACEHOLDER_POSITIONS = np.zeros((3, 3), dtype=np.float32)
+# Single degenerate triangle used when the slab contains no surviving faces.
 _PLACEHOLDER_INDICES = np.array([[0, 1, 2]], dtype=np.int32)
-_PLACEHOLDER_NORMALS = np.tile([0.0, 0.0, 1.0], (3, 1)).astype(np.float32)
 
 
 def _compute_vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
@@ -57,14 +53,13 @@ class MeshMemoryStore(BaseDataStore):
     Parameters
     ----------
     positions : np.ndarray
-        (n_vertices, 3) float32 vertex positions.
+        (n_vertices, N) float32 vertex positions for any world
+        dimensionality N ≥ 2.  For a 3-D scene use shape (n_vertices, 3);
+        for a 5-D scene (t, z, y, x, c) use shape (n_vertices, 5).
     indices : np.ndarray
         (n_faces, 3) int32 triangle face indices.
         **Must be int32** — pygfx rejects int64 at upload time.
         int64 input is coerced silently by the validator.
-    normals : np.ndarray | None
-        (n_vertices, 3) float32 per-vertex normals.  Auto-computed
-        from positions and indices if None.
     colors : np.ndarray | None
         Per-vertex (n_vertices, 4) or per-face (n_faces, 4) float32
         RGBA.  Layout inferred from shape.
@@ -76,37 +71,13 @@ class MeshMemoryStore(BaseDataStore):
     name: str = "mesh_memory_store"
     positions: np.ndarray
     indices: np.ndarray
-    normals: np.ndarray
     colors: np.ndarray | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ------------------------------------------------------------------
-    # Validators — run in declaration order (mode="before" first)
+    # Validators
     # ------------------------------------------------------------------
-
-    @model_validator(mode="before")
-    @classmethod
-    def _compute_normals_if_missing(cls, data: Any) -> Any:
-        """Auto-compute normals before pydantic processes any fields.
-
-        Uses mode="before" so the result is injected into the raw input
-        dict, avoiding object.__setattr__ on a psygnal EventedModel.
-        """
-        if not isinstance(data, dict):
-            return data
-        if data.get("normals") is not None:
-            return data
-
-        raw_pos = data.get("positions")
-        raw_idx = data.get("indices")
-        if raw_pos is None or raw_idx is None:
-            return data  # missing fields — let field validators error
-
-        pos = np.asarray(raw_pos, dtype=np.float32)
-        idx = np.asarray(raw_idx, dtype=np.int32)
-        data["normals"] = _compute_vertex_normals(pos, idx)
-        return data
 
     @field_validator("positions", mode="before")
     @classmethod
@@ -118,13 +89,6 @@ class MeshMemoryStore(BaseDataStore):
     def _coerce_indices(cls, v: Any) -> np.ndarray:
         """Coerce to int32 — pygfx rejects int64 index buffers."""
         return np.ascontiguousarray(np.asarray(v, dtype=np.int32))
-
-    @field_validator("normals", mode="before")
-    @classmethod
-    def _coerce_normals(cls, v: Any) -> np.ndarray | None:
-        if v is None:
-            return None
-        return np.ascontiguousarray(np.asarray(v, dtype=np.float32))
 
     @field_validator("colors", mode="before")
     @classmethod
@@ -144,10 +108,6 @@ class MeshMemoryStore(BaseDataStore):
     @field_serializer("indices")
     def _ser_indices(self, v: np.ndarray, _info: Any) -> list:
         return v.tolist()
-
-    @field_serializer("normals")
-    def _ser_normals(self, v: np.ndarray | None, _info: Any) -> list | None:
-        return v.tolist() if v is not None else None
 
     @field_serializer("colors")
     def _ser_colors(self, v: np.ndarray | None, _info: Any) -> list | None:
@@ -206,14 +166,15 @@ class MeshMemoryStore(BaseDataStore):
         -------
         MeshData
             Filtered, reindexed, projected mesh ready for GPU upload.
+            Normals are computed from the projected geometry.
             ``is_empty=True`` when the slab contained no faces.
         """
-        positions = self.positions  # (n_vertices, 3)
+        positions = self.positions  # (n_vertices, N)
         indices = self.indices  # (n_faces, 3)
-        normals = self.normals  # (n_vertices, 3)
         colors = self.colors
         n_vertices = positions.shape[0]
         displayed = list(request.displayed_axes)
+        n_display = len(displayed)
 
         # ── Phase 1: build slab mask ─────────────────────────────────
         face_mask = np.ones(self.n_faces, dtype=bool)
@@ -233,11 +194,13 @@ class MeshMemoryStore(BaseDataStore):
 
         if surviving.shape[0] == 0:
             # Empty slab — return placeholder so the node stays valid.
+            ph_pos = np.zeros((3, n_display), dtype=np.float32)
+            ph_nor = np.zeros((3, n_display), dtype=np.float32)
             return MeshData(
                 request_id=request.slice_request_id,
-                positions=_PLACEHOLDER_POSITIONS[:, displayed],
+                positions=ph_pos,
                 indices=_PLACEHOLDER_INDICES,
-                normals=_PLACEHOLDER_NORMALS[:, displayed],
+                normals=ph_nor,
                 colors=None,
                 color_mode="vertex",
                 is_empty=True,
@@ -247,8 +210,7 @@ class MeshMemoryStore(BaseDataStore):
         remap = np.full(n_vertices, -1, dtype=np.int32)
         remap[unique_old] = np.arange(len(unique_old), dtype=np.int32)
 
-        new_positions = positions[unique_old]  # (n_surv_v, 3)
-        new_normals = normals[unique_old]  # (n_surv_v, 3)
+        new_positions = positions[unique_old]  # (n_surv_v, N)
         new_indices = remap[surviving]  # (n_surv_f, 3)
 
         if colors is not None:
@@ -266,8 +228,15 @@ class MeshMemoryStore(BaseDataStore):
         await asyncio.sleep(0)
 
         # ── Phase 3: project onto displayed axes ─────────────────────
-        proj_positions = new_positions[:, displayed]
-        proj_normals = new_normals[:, displayed]
+        proj_positions = new_positions[:, displayed]  # (n_surv_v, n_display)
+
+        # Normals are computed from the projected geometry so they are
+        # always valid in the display space regardless of world dimension.
+        # In 2D the material is unlit so normals are unused; emit zeros.
+        if n_display == 3:
+            proj_normals = _compute_vertex_normals(proj_positions, new_indices)
+        else:
+            proj_normals = np.zeros_like(proj_positions)
 
         return MeshData(
             request_id=request.slice_request_id,

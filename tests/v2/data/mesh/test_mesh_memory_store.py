@@ -33,19 +33,30 @@ def _req(displayed=(1, 2), sliced=None, thickness=0.5):
 # ── Construction ──────────────────────────────────────────────────────────────
 
 
-def test_normals_auto_computed():
+def test_normals_in_3d_get_data_result():
+    """Normals are computed from projected geometry for 3-D display."""
     store = _simple_store()
-    assert store.normals is not None
-    assert store.normals.shape == (4, 3)
-    assert store.normals.dtype == np.float32
+    sid = uuid4()
+    req = MeshSliceRequest(
+        slice_request_id=sid,
+        chunk_request_id=sid,
+        scale_index=0,
+        displayed_axes=(0, 1, 2),
+        slice_indices={},
+    )
+    result = asyncio.run(store.get_data(req))
+    assert result.normals is not None
+    assert result.normals.shape == (result.positions.shape[0], 3)
+    assert result.normals.dtype == np.float32
 
 
-def test_user_supplied_normals_not_overwritten():
-    positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
-    indices = np.array([[0, 1, 2]], dtype=np.int32)
-    my_normals = np.ones((3, 3), dtype=np.float32)
-    store = MeshMemoryStore(positions=positions, indices=indices, normals=my_normals)
-    np.testing.assert_array_equal(store.normals, my_normals)
+def test_normals_zeros_for_2d_display():
+    """2-D display emits zero normals (material is unlit; normals unused)."""
+    store = _simple_store()
+    result = asyncio.run(store.get_data(_req(displayed=(1, 2), sliced={0: 0})))
+    assert not result.is_empty
+    assert result.normals.shape == (result.positions.shape[0], 2)
+    assert result.normals.dtype == np.float32
 
 
 def test_int64_indices_coerced_to_int32():

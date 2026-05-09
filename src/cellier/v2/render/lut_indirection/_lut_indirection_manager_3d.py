@@ -82,12 +82,25 @@ class LutIndirectionManager3D:
     # GPU writes
     # ------------------------------------------------------------------
 
-    def rebuild(self, tile_manager: TileManager3D) -> None:
+    def rebuild(
+        self,
+        tile_manager: TileManager3D,
+        current_slice_coord: tuple[tuple[int, int], ...] | None = None,
+    ) -> None:
         """Rewrite ``lut_data`` from current tilemap state and schedule GPU upload.
 
         Strategy: sweep coarsest-to-finest through all resident bricks.
         Each brick slice-writes the base-grid cells it covers, so finer
         writes naturally overwrite coarser fallbacks.
+
+        When ``current_slice_coord`` is provided, uses a two-phase sweep:
+
+        - **Phase 1 (background):** bricks whose ``slice_coord`` differs from
+          ``current_slice_coord`` are written coarsest-to-finest as LOD
+          placeholders visible while new-slice data is still loading.
+        - **Phase 2 (foreground):** bricks whose ``slice_coord`` matches
+          ``current_slice_coord`` are written coarsest-to-finest, overwriting
+          wherever current-slice data is resident.
 
         The GPU upload is deferred until the next ``renderer.render()``
         call (see the pygfx texture update_range behavior).
@@ -96,6 +109,9 @@ class LutIndirectionManager3D:
         ----------
         tile_manager : TileManager3D
             Current tile manager holding the resident brick mapping.
+        current_slice_coord : tuple of (axis_index, world_value) pairs or None
+            Non-displayed axis positions for the current frame.  ``None``
+            disables the two-phase sweep (single-phase, backward-compatible).
         """
         rebuild_lut(
             self._base_layout,
@@ -106,6 +122,7 @@ class LutIndirectionManager3D:
             self.brick_max_data,
             self.brick_max_tex,
             level_scale_vecs_data=self._level_scale_vecs_data,
+            current_slice_coord=current_slice_coord,
         )
 
 
@@ -171,6 +188,7 @@ def rebuild_lut(
     brick_max_data: np.ndarray,
     brick_max_tex: gfx.Texture,
     level_scale_vecs_data: list | None = None,
+    current_slice_coord: tuple[tuple[int, int], ...] | None = None,
 ) -> None:
     """Rebuild the full LUT from the current tile manager state.
 
@@ -178,6 +196,18 @@ def rebuild_lut(
     data into all base-grid cells it covers via a numpy slice assignment
     (one C-speed fill per resident brick).  Because finer levels are
     written last, they naturally overwrite the coarser fallback.
+
+    When ``current_slice_coord`` is provided, uses a two-phase sweep:
+
+    - **Phase 1 (background):** bricks whose ``slice_coord`` differs from
+      ``current_slice_coord`` are written coarsest-to-finest.  These are
+      old-slice bricks that serve as LOD placeholders while new data loads.
+    - **Phase 2 (foreground):** bricks whose ``slice_coord`` matches
+      ``current_slice_coord`` are written coarsest-to-finest, overwriting
+      the background wherever current-slice data is resident.
+
+    When ``current_slice_coord`` is ``None``, all bricks are written in a
+    single coarsest-to-finest sweep (backward-compatible behaviour).
 
     Parameters
     ----------
@@ -201,47 +231,66 @@ def rebuild_lut(
         the finest level.  When ``None``, falls back to the uniform
         ``2^(level-1)`` assumption (correct for isotropic power-of-2
         pyramids only).
+    current_slice_coord : tuple of (axis_index, world_value) pairs or None
+        Non-displayed axis positions for the current frame.  ``None``
+        disables the two-phase sweep.
     """
     gd, gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset everything to out-of-bounds (level 0 = black).
     brick_max_data[:] = 0.0
 
-    # Group resident bricks by level so we can iterate each level once.
-    by_level: dict[int, list] = {}
-    for key, slot in tile_manager.tilemap.items():
-        if key.level > 0:
-            by_level.setdefault(key.level, []).append((key, slot))
-
-    # Write coarsest first so finer levels overwrite where both are resident.
-    for level in range(n_levels, 0, -1):
-        if level not in by_level:
-            continue
-        # Per-axis scale: how many finest-grid cells one level-k brick covers.
-        # Use actual scale vectors when available; fall back to uniform 2^(k-1)
-        # for backward compatibility with isotropic power-of-2 pyramids.
+    def _scale_for_level(level: int) -> tuple[int, int, int]:
         if level_scale_vecs_data is not None and (level - 1) < len(
             level_scale_vecs_data
         ):
             sv = level_scale_vecs_data[level - 1]
-            gz_scale = max(1, int(round(float(sv[0]))))
-            gy_scale = max(1, int(round(float(sv[1]))))
-            gx_scale = max(1, int(round(float(sv[2]))))
-        else:
-            uniform = 2 ** (level - 1)
-            gz_scale = gy_scale = gx_scale = uniform
-        for key, slot in by_level[level]:
-            sz, sy, sx = slot.grid_pos
-            # Base-grid slice covered by this coarse brick, clamped to grid.
-            gz0 = key.g0 * gz_scale
-            gz1 = min(gz0 + gz_scale, gd)
-            gy0 = key.g1 * gy_scale
-            gy1 = min(gy0 + gy_scale, gh)
-            gx0 = key.g2 * gx_scale
-            gx1 = min(gx0 + gx_scale, gw)
-            # Single numpy slice assignment — fills the block at C speed.
-            lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
-            brick_max_data[gz0:gz1, gy0:gy1, gx0:gx1] = slot.brick_max
+            return (
+                max(1, int(round(float(sv[0])))),
+                max(1, int(round(float(sv[1])))),
+                max(1, int(round(float(sv[2])))),
+            )
+        uniform = 2 ** (level - 1)
+        return (uniform, uniform, uniform)
+
+    def _write_bricks(by_level: dict[int, list]) -> None:
+        """Write one group of bricks coarsest-to-finest into lut_data."""
+        for level in range(n_levels, 0, -1):
+            if level not in by_level:
+                continue
+            gz_scale, gy_scale, gx_scale = _scale_for_level(level)
+            for key, slot in by_level[level]:
+                sz, sy, sx = slot.grid_pos
+                gz0 = key.g0 * gz_scale
+                gz1 = min(gz0 + gz_scale, gd)
+                gy0 = key.g1 * gy_scale
+                gy1 = min(gy0 + gy_scale, gh)
+                gx0 = key.g2 * gx_scale
+                gx1 = min(gx0 + gx_scale, gw)
+                lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
+                brick_max_data[gz0:gz1, gy0:gy1, gx0:gx1] = slot.brick_max
+
+    if current_slice_coord is None:
+        # Single-phase: all bricks treated as foreground.
+        by_level: dict[int, list] = {}
+        for key, slot in tile_manager.tilemap.items():
+            if key.level > 0:
+                by_level.setdefault(key.level, []).append((key, slot))
+        _write_bricks(by_level)
+    else:
+        # Two-phase: background (old-slice) first, then foreground (current-slice).
+        bg_by_level: dict[int, list] = {}
+        fg_by_level: dict[int, list] = {}
+        for key, slot in tile_manager.tilemap.items():
+            if key.level <= 0:
+                continue
+            if key.slice_coord == current_slice_coord:
+                fg_by_level.setdefault(key.level, []).append((key, slot))
+            else:
+                bg_by_level.setdefault(key.level, []).append((key, slot))
+        _write_bricks(bg_by_level)
+        _write_bricks(fg_by_level)
+        by_level = {**bg_by_level, **fg_by_level}
 
     # Log per-level brick counts resident in LUT (np.unique scan is deferred
     # behind the level check to avoid scanning the full array every batch).

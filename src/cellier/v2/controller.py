@@ -913,6 +913,14 @@ class CellierController:
                 f"len(channels)={len(channels)} exceeds "
                 f"max_channels_2d={max_channels_2d}."
             )
+        # Extract the spatial-only submatrix so the GFX layer can expand_dims
+        # it back to full data ndim (it prepends identity axes for non-spatial dims).
+        if transform is not None:
+            spatial_axes = tuple(i for i in range(transform.ndim) if i != channel_axis)
+            spatial_transform = transform.select_axes(spatial_axes)
+        else:
+            spatial_transform = None
+
         visual_model = MultichannelMultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
@@ -922,6 +930,7 @@ class CellierController:
             render_config=render_config,
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
+            transform=spatial_transform,
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
@@ -1295,6 +1304,7 @@ class CellierController:
             level_shapes=level_shapes,
             render_modes=render_modes,
             displayed_axes=displayed_axes,
+            transform=visual_model.transform,
         )
 
         self._render_manager.add_visual(
@@ -1302,6 +1312,7 @@ class CellierController:
         )
         self._visual_to_scene[visual_model.id] = scene_id
 
+        self._wire_appearance(visual_model)
         self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
@@ -2169,7 +2180,9 @@ class CellierController:
         | LabelMemoryVisual
         | MeshVisual
         | PointsVisual
-        | LinesVisual,
+        | LinesVisual
+        | MultichannelMultiscaleImageVisual
+        | MultichannelImageVisual,
     ) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         handler = self._make_appearance_handler(visual.id)

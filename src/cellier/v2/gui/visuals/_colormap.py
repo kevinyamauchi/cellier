@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Sequence
 from uuid import uuid4
 
 from psygnal import Signal
@@ -74,6 +74,18 @@ class QtColormapComboBox:
     def close(self) -> None:
         """Emit ``closed`` to trigger bus unsubscription via the controller."""
         self.closed.emit()
+
+    def add_colormaps(self, colormaps: Sequence[Any]) -> None:
+        """Add colormaps to the combo box.
+
+        Parameters
+        ----------
+        colormaps : Sequence[Any]
+            Colormaps to add. Each item can be anything accepted by
+            ``cmap.Colormap`` — e.g. a name string, a ``cmap.Colormap``
+            instance, or a color-stop sequence.
+        """
+        self._combo.addColormaps(colormaps)
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires.
