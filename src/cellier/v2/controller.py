@@ -1312,6 +1312,7 @@ class CellierController:
         )
         self._visual_to_scene[visual_model.id] = scene_id
 
+        self._wire_appearance(visual_model)
         self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._event_bus.subscribe(
@@ -2179,7 +2180,9 @@ class CellierController:
         | LabelMemoryVisual
         | MeshVisual
         | PointsVisual
-        | LinesVisual,
+        | LinesVisual
+        | MultichannelMultiscaleImageVisual
+        | MultichannelImageVisual,
     ) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         handler = self._make_appearance_handler(visual.id)
