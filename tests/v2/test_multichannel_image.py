@@ -21,7 +21,7 @@ from cellier.v2.visuals._image_memory import MultichannelImageVisual
 
 
 def _make_channel_appearance(**kwargs) -> ChannelAppearance:
-    defaults = {"colormap": "viridis", "clim": (0.0, 1.0)}
+    defaults = {"color_map": "viridis", "clim": (0.0, 1.0)}
     defaults.update(kwargs)
     return ChannelAppearance(**defaults)
 

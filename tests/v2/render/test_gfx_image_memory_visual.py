@@ -10,7 +10,7 @@ import numpy as np
 from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.data.image._image_requests import ChunkRequest
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,8 +21,8 @@ def _make_store(shape=(10, 20, 30)) -> ImageMemoryStore:
     return ImageMemoryStore(data=np.zeros(shape, dtype=np.float32))
 
 
-def _make_appearance() -> ImageMemoryAppearance:
-    return ImageMemoryAppearance(color_map="viridis", clim=(0.0, 1.0))
+def _make_appearance() -> InMemoryImageAppearance:
+    return InMemoryImageAppearance(color_map="viridis", clim=(0.0, 1.0))
 
 
 def _make_visual_model(store: ImageMemoryStore) -> ImageVisual:

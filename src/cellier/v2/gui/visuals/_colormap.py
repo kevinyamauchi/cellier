@@ -21,7 +21,7 @@ class QtColormapComboBox:
     """Bidirectional colormap selector wired to the cellier v2 bus.
 
     Wraps a ``superqt.QColormapComboBox`` and keeps it in sync with
-    ``ImageAppearance.color_map`` via ``AppearanceChangedEvent``.  Follows the
+    ``MultiscaleImageAppearance.color_map`` via ``AppearanceChangedEvent``.  Follows the
     v2 widget pattern: one UUID per widget, source-ID echo filtering, and
     signal blocking when applying model-driven updates.
 

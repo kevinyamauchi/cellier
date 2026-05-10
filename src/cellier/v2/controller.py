@@ -16,9 +16,11 @@ from cellier.v2.events import (
     AppearanceChangedEvent,
     AppearanceUpdateEvent,
     CameraChangedEvent,
+    ChannelAppearanceChangedEvent,
     DimsChangedEvent,
     DimsUpdateEvent,
     EventBus,
+    PickWriteChangedEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
     SceneAddedEvent,
@@ -68,22 +70,25 @@ from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsMa
 from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
+
+if TYPE_CHECKING:
+    from cellier.v2.visuals._base_visual import BaseVisual
 from cellier.v2.visuals._canvas_overlay import CenteredAxes2D
 from cellier.v2.visuals._image import (
-    ImageAppearance,
     MultichannelMultiscaleImageVisual,
+    MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
 from cellier.v2.visuals._image_memory import (
-    ImageMemoryAppearance,
+    BaseImageAppearance,
     ImageVisual,
     MultichannelImageVisual,
 )
-from cellier.v2.visuals._label_memory import LabelMemoryAppearance, LabelMemoryVisual
+from cellier.v2.visuals._label_memory import BaseLabelsAppearance, LabelMemoryVisual
 from cellier.v2.visuals._labels import (
-    LabelAppearance,
     MultiscaleLabelRenderConfig,
+    MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
@@ -520,7 +525,7 @@ class CellierController:
         self,
         data: ImageMemoryStore,
         scene_id: UUID,
-        appearance: ImageMemoryAppearance,
+        appearance: BaseImageAppearance,
         name: str = "image",
     ) -> ImageVisual:
         """Add an in-memory image visual to a scene.
@@ -531,7 +536,7 @@ class CellierController:
             The backing data store.
         scene_id : UUID
             ID of an existing scene.
-        appearance : ImageMemoryAppearance
+        appearance : BaseImageAppearance
             Appearance parameters.
         name : str
             Human-readable label. Default ``"image"``.
@@ -551,7 +556,7 @@ class CellierController:
         self,
         data: LabelMemoryStore,
         scene_id: UUID,
-        appearance: LabelMemoryAppearance | None = None,
+        appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
     ) -> LabelMemoryVisual:
@@ -563,8 +568,8 @@ class CellierController:
             Backing int32 label store.
         scene_id : UUID
             ID of an existing scene.
-        appearance : LabelMemoryAppearance or None
-            Appearance parameters. Defaults to LabelMemoryAppearance().
+        appearance : BaseLabelsAppearance or None
+            Appearance parameters. Defaults to InMemoryLabelsAppearance().
         name : str
             Human-readable label. Default ``"labels"``.
         transform : AffineTransform or None
@@ -575,7 +580,9 @@ class CellierController:
         LabelMemoryVisual
         """
         if appearance is None:
-            appearance = LabelMemoryAppearance()
+            from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance
+
+            appearance = InMemoryLabelsAppearance()
 
         resolved_transform = (
             transform
@@ -725,7 +732,7 @@ class CellierController:
         self,
         data: BaseDataStore,
         scene_id: UUID,
-        appearance: ImageAppearance,
+        appearance: MultiscaleImageAppearance,
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
@@ -738,7 +745,7 @@ class CellierController:
             The backing data store.
         scene_id : UUID
             ID of an existing scene.
-        appearance : ImageAppearance
+        appearance : MultiscaleImageAppearance
             Visual appearance parameters.
         name : str
             Human-readable label. Default ``"image"``.
@@ -774,7 +781,7 @@ class CellierController:
         self,
         data: BaseDataStore,
         scene_id: UUID,
-        appearance: LabelAppearance,
+        appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
@@ -787,7 +794,7 @@ class CellierController:
             The backing label data store (e.g. ``OMEZarrLabelDataStore``).
         scene_id : UUID
             ID of an existing scene.
-        appearance : LabelAppearance
+        appearance : MultiscaleLabelsAppearance
             Visual appearance parameters.
         name : str
             Human-readable label. Default ``"labels"``.
@@ -1013,80 +1020,88 @@ class CellierController:
     # Visual management — private dispatch methods
     # ------------------------------------------------------------------
 
-    def _add_multiscale_image_visual(
+    def _register_visual(
         self,
         scene_id: UUID,
-        visual_model: MultiscaleImageVisual,
-    ) -> MultiscaleImageVisual:
-        """Wire and register a pre-built MultiscaleImageVisual.
+        visual_model: BaseVisual,
+        gfx_visual: Any,
+        data_store: Any,
+        displayed_axes: tuple[int, ...],
+    ) -> None:
+        """Register a pre-built (visual_model, gfx_visual) pair in one scene.
 
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of an existing scene.
-        visual_model : MultiscaleImageVisual
-            Pre-built visual model. Its ``data_store_id`` must already be
-            registered in ``self._model.data.stores``.
-
-        Returns
-        -------
-        MultiscaleImageVisual
+        Single point of truth for all post-construction wiring:
+        - Appends the visual to the scene's visual list.
+        - Registers the GFX visual with the RenderManager.
+        - Records the visual→scene mapping.
+        - Wires psygnal bridges (appearance, channels, aabb, transform,
+          pick_write).
+        - Subscribes the GFX visual to all EventBus events it handles.
+        - Emits VisualAddedEvent.
         """
-        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
         scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
-
         scene.visuals.append(visual_model)
-
-        level_shapes = list(data_store.level_shapes)
-        gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
-            model=visual_model,
-            level_shapes=level_shapes,
-            render_modes=render_modes,
-            displayed_axes=displayed_axes,
-        )
-
         self._render_manager.add_visual(
             scene_id, gfx_visual, data_store, displayed_axes
         )
         self._visual_to_scene[visual_model.id] = scene_id
 
-        self._wire_appearance(visual_model)
+        # psygnal bridges
+        if hasattr(visual_model, "appearance"):
+            self._wire_appearance(visual_model)
+        if hasattr(visual_model, "channels"):
+            self._wire_channels(visual_model)
         self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
+        self._wire_pick_write(visual_model)
+
+        # EventBus subscriptions — only subscribe when the GFX visual implements
+        # the handler so new visual types get wired automatically.
+        for event_type, handler_name in (
+            (AppearanceChangedEvent, "on_appearance_changed"),
+            (ChannelAppearanceChangedEvent, "on_channel_appearance_changed"),
+            (AABBChangedEvent, "on_aabb_changed"),
+            (VisualVisibilityChangedEvent, "on_visibility_changed"),
+            (TransformChangedEvent, "on_transform_changed"),
+            (PickWriteChangedEvent, "on_pick_write_changed"),
+        ):
+            handler = getattr(gfx_visual, handler_name, None)
+            if handler is not None:
+                self._event_bus.subscribe(
+                    event_type,
+                    handler,
+                    entity_id=visual_model.id,
+                    owner_id=visual_model.id,
+                )
+
         self._event_bus.emit(
             VisualAddedEvent(
                 source_id=self._id,
                 scene_id=scene_id,
                 visual_id=visual_model.id,
             )
+        )
+
+    def _add_multiscale_image_visual(
+        self,
+        scene_id: UUID,
+        visual_model: MultiscaleImageVisual,
+    ) -> MultiscaleImageVisual:
+        """Wire and register a pre-built MultiscaleImageVisual."""
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
+        gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
+            model=visual_model,
+            level_shapes=list(data_store.level_shapes),
+            render_modes=render_modes,
+            displayed_axes=displayed_axes,
+        )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1102,55 +1117,14 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
-        level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultiscaleLabelVisual.from_cellier_model(
             model=visual_model,
-            level_shapes=level_shapes,
+            level_shapes=list(data_store.level_shapes),
             render_modes=render_modes,
             displayed_axes=displayed_axes,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1159,72 +1133,20 @@ class CellierController:
         scene_id: UUID,
         visual_model: ImageVisual,
     ) -> ImageVisual:
-        """Wire and register a pre-built ImageVisual.
-
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of an existing scene.
-        visual_model : ImageVisual
-            Pre-built visual model.
-
-        Returns
-        -------
-        ImageVisual
-        """
+        """Wire and register a pre-built ImageVisual."""
         data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
         gfx_visual = GFXImageMemoryVisual(
             visual_model=visual_model,
             data_store=data_store,
             render_modes=render_modes,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1240,46 +1162,13 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
         gfx_visual = GFXMultichannelImageMemoryVisual(
             visual_model=visual_model,
             data_store=data_store,
             render_modes=render_modes,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1295,50 +1184,15 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
-        level_shapes = list(data_store.level_shapes)
         gfx_visual = GFXMultichannelMultiscaleImageVisual(
             visual_model=visual_model,
-            level_shapes=level_shapes,
+            level_shapes=list(data_store.level_shapes),
             render_modes=render_modes,
             displayed_axes=displayed_axes,
             transform=visual_model.transform,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1347,65 +1201,20 @@ class CellierController:
         scene_id: UUID,
         visual_model: PointsVisual,
     ) -> PointsVisual:
-        """Wire and register a pre-built PointsVisual.
-
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of an existing scene.
-        visual_model : PointsVisual
-            Pre-built visual model.
-
-        Returns
-        -------
-        PointsVisual
-        """
+        """Wire and register a pre-built PointsVisual."""
         data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
         gfx_visual = GFXPointsMemoryVisual(
             visual_model=visual_model,
             render_modes=render_modes,
             transform=visual_model.transform,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1414,65 +1223,20 @@ class CellierController:
         scene_id: UUID,
         visual_model: LinesVisual,
     ) -> LinesVisual:
-        """Wire and register a pre-built LinesVisual.
-
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of an existing scene.
-        visual_model : LinesVisual
-            Pre-built visual model.
-
-        Returns
-        -------
-        LinesVisual
-        """
+        """Wire and register a pre-built LinesVisual."""
         data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
         scene = self._model.scenes[scene_id]
         displayed_axes = scene.dims.selection.displayed_axes
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
         gfx_visual = GFXLinesMemoryVisual(
             visual_model=visual_model,
             render_modes=render_modes,
             transform=visual_model.transform,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1481,29 +1245,9 @@ class CellierController:
         scene_id: UUID,
         visual_model: MeshVisual,
     ) -> MeshVisual:
-        """Wire and register a pre-built MeshVisual.
-
-        Parameters
-        ----------
-        scene_id : UUID
-            ID of an existing scene.
-        visual_model : MeshVisual
-            Pre-built visual model.
-
-        Returns
-        -------
-        MeshVisual
-        """
+        """Wire and register a pre-built MeshVisual."""
         import warnings
 
-        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
-        scene = self._model.scenes[scene_id]
-        displayed_axes = scene.dims.selection.displayed_axes
-        render_modes = self._scene_render_modes.get(
-            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
-        )
-
-        # Warn if Phong requested but no lights in scene.
         if isinstance(visual_model.appearance, MeshPhongAppearance):
             if not self._render_manager.scene_has_lighting(scene_id):
                 warnings.warn(
@@ -1512,46 +1256,19 @@ class CellierController:
                     "the mesh will render black.",
                     stacklevel=3,
                 )
-
-        scene.visuals.append(visual_model)
-
+        data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        render_modes = self._scene_render_modes.get(
+            scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
+        )
         gfx_visual = GFXMeshMemoryVisual(
             visual_model=visual_model,
             render_modes=render_modes,
             transform=visual_model.transform,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1567,54 +1284,14 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-
-        scene.visuals.append(visual_model)
-
         gfx_visual = GFXLabelMemoryVisual(
             visual_model=visual_model,
             data_store=data_store,
             render_modes=render_modes,
             transform=visual_model.transform,
         )
-
-        self._render_manager.add_visual(
-            scene_id, gfx_visual, data_store, displayed_axes
-        )
-        self._visual_to_scene[visual_model.id] = scene_id
-
-        self._wire_appearance(visual_model)
-        self._wire_aabb(visual_model)
-        self._wire_transform(visual_model, scene_id)
-        self._event_bus.subscribe(
-            AppearanceChangedEvent,
-            gfx_visual.on_appearance_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            AABBChangedEvent,
-            gfx_visual.on_aabb_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            VisualVisibilityChangedEvent,
-            gfx_visual.on_visibility_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.subscribe(
-            TransformChangedEvent,
-            gfx_visual.on_transform_changed,
-            entity_id=visual_model.id,
-            owner_id=visual_model.id,
-        )
-        self._event_bus.emit(
-            VisualAddedEvent(
-                source_id=self._id,
-                scene_id=scene_id,
-                visual_id=visual_model.id,
-            )
+        self._register_visual(
+            scene_id, visual_model, gfx_visual, data_store, displayed_axes
         )
         return visual_model
 
@@ -1858,15 +1535,17 @@ class CellierController:
             all canvases attached to *scene_id* are fitted.
         """
         gfx_scene = self._render_manager.get_scene(scene_id)
-        if canvas_id is not None:
-            canvas = self._render_manager._canvases.get(canvas_id)
+        targets = (
+            [canvas_id]
+            if canvas_id is not None
+            else list(self._scene_to_canvases.get(scene_id, []))
+        )
+        for cid in targets:
+            canvas = self._render_manager._canvases.get(cid)
             if canvas is not None:
                 canvas.show_object(gfx_scene)
-        else:
-            for cid in self._scene_to_canvases.get(scene_id, []):
-                canvas = self._render_manager._canvases.get(cid)
-                if canvas is not None:
-                    canvas.show_object(gfx_scene)
+                state = canvas.capture_camera_state()
+                self._update_camera_model(scene_id, cid, state)
 
     def add_canvas_overlay_model(
         self,
@@ -2136,12 +1815,7 @@ class CellierController:
 
     def _wire_transform(
         self,
-        visual: MultiscaleImageVisual
-        | MultiscaleLabelVisual
-        | ImageVisual
-        | MeshVisual
-        | PointsVisual
-        | LinesVisual,
+        visual: BaseVisual,
         scene_id: UUID,
     ) -> None:
         """Subscribe to transform field changes on a visual model."""
@@ -2174,15 +1848,7 @@ class CellierController:
 
     def _wire_appearance(
         self,
-        visual: MultiscaleImageVisual
-        | MultiscaleLabelVisual
-        | ImageVisual
-        | LabelMemoryVisual
-        | MeshVisual
-        | PointsVisual
-        | LinesVisual
-        | MultichannelMultiscaleImageVisual
-        | MultichannelImageVisual,
+        visual: BaseVisual,
     ) -> None:
         """Subscribe to all field changes on a visual's appearance model."""
         handler = self._make_appearance_handler(visual.id)
@@ -2191,9 +1857,49 @@ class CellierController:
             (visual.appearance.events, handler)
         )
 
-    def _wire_aabb(
-        self, visual: MultiscaleImageVisual | MultiscaleLabelVisual | ImageVisual
+    def _wire_channels(
+        self,
+        visual: MultichannelImageVisual | MultichannelMultiscaleImageVisual,
     ) -> None:
+        """Subscribe to field changes on every ``ChannelAppearance`` in a visual.
+
+        One psygnal handler is registered per channel. Handlers are stored in
+        ``self._visual_psygnal_handlers`` so they can be disconnected on teardown.
+
+        This wires per-field changes only. Whole-dict replacement
+        (``visual.channels = new_dict``) is handled by a direct psygnal connect
+        inside the GFX visual, because it is a structural pool-management
+        operation rather than an appearance field push.
+        """
+        for channel_index, appearance in visual.channels.items():
+            handler = self._make_channel_appearance_handler(visual.id, channel_index)
+            appearance.events.connect(handler)
+            self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+                (appearance.events, handler)
+            )
+
+    def _make_channel_appearance_handler(
+        self, visual_id: UUID, channel_index: int
+    ) -> Callable:
+        """Return a psygnal catch-all handler for one ``ChannelAppearance``."""
+
+        def _on_channel_appearance_psygnal(info: EmissionInfo) -> None:
+            field_name: str = info.signal.name
+            new_value = info.args[0]
+            resolved_source_id = _source_id_override.get() or self._id
+            self._event_bus.emit(
+                ChannelAppearanceChangedEvent(
+                    source_id=resolved_source_id,
+                    visual_id=visual_id,
+                    channel_index=channel_index,
+                    field_name=field_name,
+                    new_value=new_value,
+                )
+            )
+
+        return _on_channel_appearance_psygnal
+
+    def _wire_aabb(self, visual: BaseVisual) -> None:
         """Subscribe to all field changes on a visual's aabb model."""
         handler = self._make_aabb_handler(visual.id)
         visual.aabb.events.connect(handler)
@@ -2226,6 +1932,28 @@ class CellierController:
             )
 
         return _on_aabb_psygnal
+
+    def _wire_pick_write(self, visual: BaseVisual) -> None:
+        """Subscribe to pick_write field changes on a visual model."""
+        handler = self._make_pick_write_handler(visual.id)
+        visual.events.pick_write.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (visual.events.pick_write, handler)
+        )
+
+    def _make_pick_write_handler(self, visual_id: UUID) -> Callable:
+        """Return a handler that emits PickWriteChangedEvent on pick_write changes."""
+
+        def _on_pick_write(new_value: bool) -> None:
+            self._event_bus.emit(
+                PickWriteChangedEvent(
+                    source_id=self._id,
+                    visual_id=visual_id,
+                    pick_write=new_value,
+                )
+            )
+
+        return _on_pick_write
 
     def _make_appearance_handler(self, visual_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for any visual's appearance model.
@@ -2266,6 +1994,8 @@ class CellierController:
                         requires_reslice=(field_name in _RESLICE_FIELDS),
                     )
                 )
+                if field_name in _RESLICE_FIELDS:
+                    self.reslice_visual(visual_id)
 
         return _on_appearance_psygnal
 
@@ -2682,6 +2412,9 @@ class CellierController:
             Camera up vector.
         """
         self._render_manager.look_at_visual(visual_id, canvas_id, view_direction, up)
+        scene_id = self._visual_to_scene[visual_id]
+        state = self.get_canvas_view(canvas_id).capture_camera_state()
+        self._update_camera_model(scene_id, canvas_id, state)
 
     def set_camera_depth_range(
         self,
@@ -2863,6 +2596,46 @@ class CellierController:
         # 7. Notify external observers.
         self._event_bus.emit(SceneRemovedEvent(source_id=self._id, scene_id=scene_id))
 
+    def remove_canvas(self, canvas_id: UUID) -> None:
+        """Remove a canvas from its scene, disconnecting all wiring.
+
+        Teardown order mirrors ``remove_scene`` for the canvas-level steps:
+        1. Cancel any pending camera-settle task.
+        2. Remove bus subscriptions owned by this canvas.
+        3. Update controller lookup maps.
+        4. Remove from the model layer.
+        5. Render-layer teardown (drops widget and GPU references).
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``canvas_id`` is not registered.
+        """
+        scene_id = self._canvas_to_scene[canvas_id]
+
+        # 1. Cancel any pending camera-settle task.
+        task = self._settle_tasks.pop(canvas_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+        # 2. Remove bus subscriptions owned by this canvas.
+        self._event_bus.unsubscribe_all(canvas_id)
+
+        # 3. Update controller lookup maps.
+        self._canvas_to_scene.pop(canvas_id)
+        self._scene_to_canvases[scene_id].remove(canvas_id)
+
+        # 4. Remove from the model layer.
+        self._model.scenes[scene_id].canvases.pop(canvas_id)
+
+        # 5. Render-layer teardown.
+        self._render_manager.remove_canvas(canvas_id)
+
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene, disconnecting all wiring.
 
@@ -2945,13 +2718,6 @@ class CellierController:
                 f"still referenced by visuals: {names}"
             )
         self._model.data.stores.pop(data_store_id)
-
-    def get_dims_widget(self, scene_id: UUID, parent: QWidget | None = None):
-        """Return a dims slider widget for a scene.
-
-        Not implemented in Phase 1.
-        """
-        raise NotImplementedError("get_dims_widget is not implemented in Phase 1.")
 
     # ------------------------------------------------------------------
     # External event subscriptions
@@ -3239,7 +3005,7 @@ class CellierController:
         """
         self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
 
-    def invalidate_painted_tiles_2d(
+    def _invalidate_painted_tiles_2d(
         self, visual_id: UUID, dirty_grid_coords: set[tuple[int, int]]
     ) -> int:
         """Evict the visible 2D-cache tiles for *visual_id* listed in dirty grid coords.
@@ -3269,7 +3035,7 @@ class CellierController:
             return 0
         return gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
 
-    def patch_painted_tiles_2d(
+    def _patch_painted_tiles_2d(
         self,
         visual_id: UUID,
         voxel_indices: np.ndarray,
@@ -3280,7 +3046,7 @@ class CellierController:
 
         Used by :class:`MultiscalePaintController._write_values` for
         sub-frame visible feedback in 2-D paint sessions.  Mirrors the
-        architectural pattern of :meth:`invalidate_painted_tiles_2d`.
+        architectural pattern of :meth:`_invalidate_painted_tiles_2d`.
 
         Parameters
         ----------
@@ -3308,7 +3074,7 @@ class CellierController:
             return 0
         return gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
 
-    def clear_painted_tiles_2d(self, visual_id: UUID) -> None:
+    def _clear_painted_tiles_2d(self, visual_id: UUID) -> None:
         """Clear the GPU paint textures for *visual_id*.
 
         Called by :class:`MultiscalePaintController.commit` and ``abort`` at
@@ -3321,7 +3087,7 @@ class CellierController:
             return
         gfx_visual.clear_paint_textures()
 
-    def on_visual_changed(
+    def on_appearance_changed(
         self,
         visual_id: UUID,
         callback: Callable[[AppearanceChangedEvent], None],
@@ -3359,6 +3125,213 @@ class CellierController:
             owner_id=owner_id,
             weak=weak,
         )
+
+    def on_visual_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[AppearanceChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Deprecated. Use ``on_appearance_changed`` instead."""
+        import warnings
+
+        warnings.warn(
+            "on_visual_changed is deprecated; use on_appearance_changed instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.on_appearance_changed(
+            visual_id, callback, owner_id=owner_id, weak=weak
+        )
+
+    def on_visibility_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualVisibilityChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired whenever the visibility of *visual_id* changes.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualVisibilityChangedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def set_visual_visible(self, visual_id: UUID, visible: bool) -> None:
+        """Show or hide a visual.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        visible :
+            ``True`` to show, ``False`` to hide.
+        """
+        self.update_appearance_field(visual_id, "visible", visible)
+
+    def on_scene_added(
+        self,
+        scene_id: UUID,
+        callback: Callable[[SceneAddedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *scene_id* is added.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``SceneAddedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            SceneAddedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_scene_removed(
+        self,
+        scene_id: UUID,
+        callback: Callable[[SceneRemovedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *scene_id* is removed.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``SceneRemovedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            SceneRemovedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_visual_added(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualAddedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *visual_id* is added.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualAddedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualAddedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_visual_removed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualRemovedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *visual_id* is removed.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualRemovedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualRemovedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def cancel_pending_slices(self, scene_id: UUID) -> None:
+        """Cancel all in-flight slice requests for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id :
+            ID of the scene whose pending slices to cancel.
+        """
+        self._render_manager._slice_coordinator.cancel_scene(scene_id)
 
     def on_aabb_changed(
         self,

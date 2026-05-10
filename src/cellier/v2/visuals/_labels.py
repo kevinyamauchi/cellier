@@ -2,45 +2,40 @@
 
 from typing import Literal
 
-from psygnal import EventedModel
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import BaseVisual
+from cellier.v2.visuals._label_memory import BaseLabelsAppearance
 
 
-class LabelAppearance(BaseAppearance):
+class MultiscaleLabelsAppearance(BaseLabelsAppearance):
     """Appearance for multiscale label visuals.
 
-    Extends LabelMemoryAppearance with LOD-control fields.
+    Extends ``BaseLabelsAppearance`` with LOD-control fields required for
+    brick-streamed multiscale rendering.
 
     Parameters
     ----------
     colormap_mode : "random" | "direct"
-        How to assign colors to label IDs.  Frozen after construction.
+        Inherited from ``BaseLabelsAppearance``. Frozen.
     background_label : int
-        Label ID treated as transparent / background. Default 0.
+        Inherited from ``BaseLabelsAppearance``.
     salt : int
-        Hash seed for random-mode colormap. Default 0.
+        Inherited from ``BaseLabelsAppearance``.
     color_dict : dict
-        Explicit label-ID → RGBA mapping (direct mode only).
-    render_mode : "iso_categorical" | "flat_categorical" | "gradient_debug" \
-        | "smooth_iso"
-        3D rendering mode.
+        Inherited from ``BaseLabelsAppearance``.
+    render_mode : str
+        Overrides ``BaseLabelsAppearance`` to widen the Literal to include
+        ``"gradient_debug"`` and ``"smooth_iso"``. Not frozen — live-mutable.
     lod_bias : float
         Multiplier on the screen-space LOD threshold. Default 1.0.
     force_level : int | None
-        When set, overrides automatic LOD selection. Default None.
+        Overrides automatic LOD selection when set. Default None.
     frustum_cull : bool
-        When True, bricks outside the camera frustum are skipped. Default True.
+        Skip bricks outside the camera frustum. Default True.
     """
 
-    colormap_mode: Literal["random", "direct"] = "random"
-    background_label: int = 0
-    salt: int = 0
-    color_dict: dict[int, tuple[float, float, float, float]] = Field(
-        default_factory=dict
-    )
     render_mode: Literal[
         "iso_categorical", "flat_categorical", "gradient_debug", "smooth_iso"
     ] = "iso_categorical"
@@ -49,7 +44,8 @@ class LabelAppearance(BaseAppearance):
     frustum_cull: bool = True
 
 
-class MultiscaleLabelRenderConfig(EventedModel):
+class MultiscaleLabelRenderConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
     """Render-layer configuration for a multiscale label visual.
 
     Parameters
@@ -73,16 +69,10 @@ class MultiscaleLabelVisual(BaseVisual):
 
     Parameters
     ----------
-    visual_type : Literal["multiscale_label"]
-        Discriminator field. Always ``"multiscale_label"``.
-    data_store_id : str
-        The id of the OMEZarrLabelDataStore to visualize.
     level_transforms : list[AffineTransform]
         Per-level transforms mapping level-k voxel coords to level-0.
-    appearance : LabelAppearance
+    appearance : MultiscaleLabelsAppearance
         Visual appearance configuration.
-    aabb : AABBParams
-        Bounding-box wireframe parameters.
     render_config : MultiscaleLabelRenderConfig
         GPU resource configuration.
     requires_camera_reslice : bool
@@ -90,10 +80,8 @@ class MultiscaleLabelVisual(BaseVisual):
     """
 
     visual_type: Literal["multiscale_label"] = "multiscale_label"
-    data_store_id: str
     level_transforms: list[AffineTransform]
-    appearance: LabelAppearance
-    aabb: AABBParams = Field(default_factory=AABBParams)
+    appearance: MultiscaleLabelsAppearance
     render_config: MultiscaleLabelRenderConfig = Field(
         default_factory=MultiscaleLabelRenderConfig
     )

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from cellier.v2.data.image._image_requests import ChunkRequest
     from cellier.v2.events._events import (
         AABBChangedEvent,
+        ChannelAppearanceChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -117,7 +118,6 @@ class GFXMultichannelMultiscaleImageVisual:
         self._planner_slot_index: int = 0
         self._channel_to_slot: dict[int, int] = {}
         self._free_slots: list[int] = list(range(max_slots))
-        self._appearance_callbacks: dict[int, object] = {}
 
         self._last_displayed_axes: tuple[int, ...] = displayed_axes
         self._current_slice_request_id_3d: UUID | None = None
@@ -215,7 +215,7 @@ class GFXMultichannelMultiscaleImageVisual:
             colormap=gfx.cm.viridis,
             clim=(0.0, 1.0),
             threshold=0.5,
-            interpolation=rc.interpolation,
+            interpolation=visual_model.interpolation,
             gpu_budget_bytes_3d=gpu_budget_bytes_3d,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             transform=transform,
@@ -238,7 +238,7 @@ class GFXMultichannelMultiscaleImageVisual:
         slot = self._slots[slot_idx]
 
         # Apply appearance to the slot's material.
-        cm = _make_colormap(appearance.colormap)
+        cm = _make_colormap(appearance.color_map)
         if slot.material_3d is not None:
             slot.material_3d.map = cm
             slot.material_3d.clim = appearance.clim
@@ -264,8 +264,6 @@ class GFXMultichannelMultiscaleImageVisual:
         if slot.node_2d is not None:
             slot.node_2d.visible = appearance.visible
 
-        self._subscribe_to_channel_appearance(ch_idx, appearance)
-
     def _release_channel(self, ch_idx: int) -> None:
         slot_idx = self._channel_to_slot.pop(ch_idx, None)
         if slot_idx is None:
@@ -276,24 +274,6 @@ class GFXMultichannelMultiscaleImageVisual:
         if slot.node_2d is not None:
             slot.node_2d.visible = False
         self._free_slots.append(slot_idx)
-
-        handler = self._appearance_callbacks.pop(ch_idx, None)
-        if handler is not None:
-            appearance = self._visual_model.channels.get(ch_idx)
-            if appearance is not None:
-                try:
-                    appearance.events.disconnect(handler)
-                except Exception:
-                    pass
-
-    def _subscribe_to_channel_appearance(
-        self, ch_idx: int, appearance: ChannelAppearance
-    ) -> None:
-        def _handler(info, idx: int = ch_idx) -> None:
-            self._on_channel_appearance_changed(idx, info)
-
-        appearance.events.connect(_handler)
-        self._appearance_callbacks[ch_idx] = _handler
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -307,20 +287,23 @@ class GFXMultichannelMultiscaleImageVisual:
         for idx in new - old:
             self._claim_channel(idx, new_channels[idx])
 
-    def _on_channel_appearance_changed(self, ch_idx: int, info) -> None:
-        field_name: str = info.signal.name
-        new_value = info.args[0]
-        slot_idx = self._channel_to_slot.get(ch_idx)
+    def on_channel_appearance_changed(
+        self, event: ChannelAppearanceChangedEvent
+    ) -> None:
+        """Apply a per-channel appearance field change from the EventBus."""
+        slot_idx = self._channel_to_slot.get(event.channel_index)
         if slot_idx is None:
             return
         slot = self._slots[slot_idx]
+        field_name = event.field_name
+        new_value = event.new_value
 
         if field_name == "clim":
             if slot.material_3d is not None:
                 slot.material_3d.clim = new_value
             if slot.material_2d is not None:
                 slot.material_2d.clim = new_value
-        elif field_name == "colormap":
+        elif field_name == "color_map":
             cm = _make_colormap(new_value)
             if slot.material_3d is not None:
                 slot.material_3d.map = cm

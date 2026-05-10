@@ -31,7 +31,7 @@ from cellier.v2.data.label._label_memory_store import LabelMemoryStore
 from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._label_memory import LabelMemoryAppearance, LabelMemoryVisual
+from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance, LabelMemoryVisual
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance
 
 
@@ -62,7 +62,7 @@ def main() -> None:
         render_modes={"2d"},
     )
 
-    appearance = LabelMemoryAppearance(colormap_mode="random")
+    appearance = InMemoryLabelsAppearance(colormap_mode="random")
     label_visual_model = LabelMemoryVisual(
         name="labels",
         data_store_id=str(label_store.id),
@@ -131,21 +131,19 @@ def main() -> None:
     root.resize(700, 750)
 
     # ── 4. Camera fit on first delivery ──────────────────────────────────
-    scene_mgr = controller._render_manager._scenes[scene.id]
-    gfx_vis = scene_mgr.get_visual(label_visual.id)
     _fitted = False
-    _orig = gfx_vis.on_data_ready_2d
 
-    def _patched(batch):
+    def _on_first_data(event):
         nonlocal _fitted
-        _orig(batch)
         if not _fitted:
             _fitted = True
             controller.look_at_visual(
                 label_visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
             )
 
-    gfx_vis.on_data_ready_2d = _patched
+    controller.on_reslice_completed(
+        label_visual.id, _on_first_data, owner_id=controller._id
+    )
     QTimer.singleShot(0, controller.reslice_all)
 
     # ── 5. Paint controller ──────────────────────────────────────────────

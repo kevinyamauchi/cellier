@@ -1355,7 +1355,7 @@ def _build_viewer_model(
     from cellier.v2.scene.scene import Scene
     from cellier.v2.viewer_model import DataManager, ViewerModel
     from cellier.v2.visuals._image import (
-        ImageAppearance,
+        MultiscaleImageAppearance,
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
     )
@@ -1385,7 +1385,7 @@ def _build_viewer_model(
 
     coarsest_level = data_store.n_levels - 1
 
-    common_2d_appearance = ImageAppearance(
+    common_2d_appearance = MultiscaleImageAppearance(
         color_map="grays",
         clim=(0.0, initial_clim_max),
         lod_bias=1.0,
@@ -1472,7 +1472,7 @@ def _build_viewer_model(
         name="vol_volume",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="grays",
             clim=(0.0, initial_clim_max),
             lod_bias=1.0,

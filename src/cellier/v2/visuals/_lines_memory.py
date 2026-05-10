@@ -1,9 +1,9 @@
 # src/cellier/v2/visuals/_lines_memory.py
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
@@ -28,7 +28,6 @@ class LinesMemoryAppearance(BaseAppearance):
         Master opacity multiplier in [0, 1].
     """
 
-    appearance_type: Literal["lines_memory"] = "lines_memory"
     color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     thickness: float = 2.0
     thickness_space: Literal["screen", "world"] = "screen"
@@ -40,18 +39,20 @@ class LinesVisual(BaseVisual):
 
     Parameters
     ----------
-    name : str
-        Human-readable label.
-    data_store_id : str
-        UUID of the backing LinesMemoryStore, as a string.
     appearance : LinesMemoryAppearance
         Initial appearance.
     requires_camera_reslice : bool
-        Always False — lines do not depend on camera position.
+        Always False — lines do not depend on camera position. Frozen.
     """
 
-    visual_type: Literal["lines"] = "lines"
-    name: str
-    data_store_id: str
+    visual_type: Literal["lines_memory"] = "lines_memory"
     appearance: LinesMemoryAppearance = Field(default_factory=LinesMemoryAppearance)
-    requires_camera_reslice: bool = False
+    requires_camera_reslice: bool = Field(default=False, frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_visual_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("visual_type") == "lines":
+            data = dict(data)
+            data["visual_type"] = "lines_memory"
+        return data

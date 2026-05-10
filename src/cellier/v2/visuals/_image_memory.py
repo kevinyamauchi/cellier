@@ -4,19 +4,20 @@ from typing import Literal
 from cmap import Colormap
 from pydantic import Field, field_validator
 
-from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 from cellier.v2.visuals._channel_appearance import ChannelAppearance
 
 __all__ = [
+    "BaseImageAppearance",
     "ChannelAppearance",
-    "ImageMemoryAppearance",
+    "InMemoryImageAppearance",
     "ImageVisual",
     "MultichannelImageVisual",
 ]
 
 
-class ImageMemoryAppearance(BaseAppearance):
-    """Appearance parameters for an in-memory image visual.
+class BaseImageAppearance(BaseAppearance):
+    """Base appearance parameters shared by all image visuals.
 
     Parameters
     ----------
@@ -37,6 +38,10 @@ class ImageMemoryAppearance(BaseAppearance):
     interpolation: Literal["linear", "nearest"] = "nearest"
 
 
+class InMemoryImageAppearance(BaseImageAppearance):
+    """Appearance parameters for an in-memory image visual."""
+
+
 class ImageVisual(BaseVisual):
     """Model-layer visual for a single-resolution in-memory image.
 
@@ -54,17 +59,14 @@ class ImageVisual(BaseVisual):
         Human-readable label.
     data_store_id : str
         UUID (as a string) of the ``ImageMemoryStore`` this visual reads from.
-    appearance : ImageMemoryAppearance
+    appearance : InMemoryImageAppearance
         Appearance parameters.
     requires_camera_reslice : bool
         Always ``False``; frozen. Camera movement does not trigger reslicing.
     """
 
     visual_type: Literal["image_memory"] = "image_memory"
-    data_store_id: str
-    appearance: ImageMemoryAppearance
-    aabb: AABBParams = Field(default_factory=AABBParams)
-
+    appearance: InMemoryImageAppearance
     requires_camera_reslice: bool = Field(default=False, frozen=True)
 
 
@@ -78,6 +80,9 @@ class MultichannelImageVisual(BaseVisual):
         Immutable after construction.
     channels : dict[int, ChannelAppearance]
         Maps each channel index to its appearance.
+    interpolation : str
+        Texture sampler filter applied to all channels. ``"nearest"`` or
+        ``"linear"``. Default ``"nearest"``.
     data_store_id : str
         UUID (as a string) of the ``ImageMemoryStore`` this visual reads from.
     max_channels_2d : int
@@ -91,14 +96,10 @@ class MultichannelImageVisual(BaseVisual):
     visual_type: Literal["multichannel_image_memory"] = "multichannel_image_memory"
     channel_axis: int = Field(frozen=True)
     channels: dict[int, ChannelAppearance]
-    data_store_id: str
-    aabb: AABBParams = Field(default_factory=AABBParams)
+    interpolation: Literal["linear", "nearest"] = "nearest"
     max_channels_2d: int = 8
     max_channels_3d: int = 4
     requires_camera_reslice: bool = Field(default=False, frozen=True)
-
-    # BaseVisual requires an `appearance` field; provide a minimal placeholder.
-    appearance: BaseAppearance = Field(default_factory=BaseAppearance)
 
     @field_validator("channels")
     @classmethod

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.events._events import (
         AABBChangedEvent,
+        ChannelAppearanceChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -98,21 +99,21 @@ class GFXMultichannelImageMemoryVisual:
         self._channel_to_slot_3d: dict[int, int] = {}
         self._free_slots_2d: list[int] = []
         self._free_slots_3d: list[int] = []
-        # channel_index → psygnal handler
-        self._appearance_callbacks: dict[int, object] = {}
 
         max_2d = visual_model.max_channels_2d
         max_3d = visual_model.max_channels_3d
 
+        interpolation = visual_model.interpolation
+
         if "2d" in render_modes:
             self._group_2d, self._pool_2d = make_channel_group_2d(
-                visual_model.channels, max_2d
+                visual_model.channels, max_2d, interpolation=interpolation
             )
             self._free_slots_2d = list(range(max_2d))
 
         if "3d" in render_modes:
             self._group_3d, self._pool_3d = make_channel_group_3d(
-                visual_model.channels, max_3d
+                visual_model.channels, max_3d, interpolation=interpolation
             )
             self._free_slots_3d = list(range(max_3d))
 
@@ -140,8 +141,6 @@ class GFXMultichannelImageMemoryVisual:
             apply_channel_appearance_3d(self._pool_3d[slot], appearance)
             self._pool_3d[slot].visible = appearance.visible
 
-        self._subscribe_to_channel_appearance(ch_idx, appearance)
-
     def _release_channel(self, ch_idx: int) -> None:
         if ch_idx in self._channel_to_slot_2d:
             slot = self._channel_to_slot_2d.pop(ch_idx)
@@ -152,24 +151,6 @@ class GFXMultichannelImageMemoryVisual:
             slot = self._channel_to_slot_3d.pop(ch_idx)
             self._pool_3d[slot].visible = False
             self._free_slots_3d.append(slot)
-
-        handler = self._appearance_callbacks.pop(ch_idx, None)
-        if handler is not None:
-            appearance = self._visual_model.channels.get(ch_idx)
-            if appearance is not None:
-                try:
-                    appearance.events.disconnect(handler)
-                except Exception:
-                    pass
-
-    def _subscribe_to_channel_appearance(
-        self, ch_idx: int, appearance: ChannelAppearance
-    ) -> None:
-        def _handler(info, idx: int = ch_idx) -> None:
-            self._on_channel_appearance_changed(idx, info)
-
-        appearance.events.connect(_handler)
-        self._appearance_callbacks[ch_idx] = _handler
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -183,17 +164,21 @@ class GFXMultichannelImageMemoryVisual:
         for idx in new - old:
             self._claim_channel(idx, new_channels[idx])
 
-    def _on_channel_appearance_changed(self, ch_idx: int, info) -> None:
-        field_name: str = info.signal.name
-        new_value = info.args[0]
+    def on_channel_appearance_changed(
+        self, event: ChannelAppearanceChangedEvent
+    ) -> None:
+        """Apply a per-channel appearance field change from the EventBus."""
+        from cellier.v2.render.visuals._image_memory import _make_colormap
+
+        ch_idx = event.channel_index
+        field_name = event.field_name
+        new_value = event.new_value
 
         if "2d" in self.render_modes and ch_idx in self._channel_to_slot_2d:
             node_2d = self._pool_2d[self._channel_to_slot_2d[ch_idx]]
             if field_name == "clim":
                 node_2d.material.clim = new_value
-            elif field_name == "colormap":
-                from cellier.v2.render.visuals._image_memory import _make_colormap
-
+            elif field_name == "color_map":
                 node_2d.material.map = _make_colormap(new_value)
             elif field_name == "opacity":
                 node_2d.material.opacity = new_value
@@ -206,9 +191,7 @@ class GFXMultichannelImageMemoryVisual:
             node_3d = self._pool_3d[self._channel_to_slot_3d[ch_idx]]
             if field_name == "clim":
                 node_3d.material.clim = new_value
-            elif field_name == "colormap":
-                from cellier.v2.render.visuals._image_memory import _make_colormap
-
+            elif field_name == "color_map":
                 node_3d.material.map = _make_colormap(new_value)
             elif field_name == "opacity":
                 node_3d.material.opacity = new_value

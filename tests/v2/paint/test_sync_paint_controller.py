@@ -11,7 +11,7 @@ from cellier.v2.controller import CellierController
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.paint._history import PaintStrokeCommand
 from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance
+from cellier.v2.visuals._image_memory import InMemoryImageAppearance
 
 if TYPE_CHECKING:
     from cellier.v2.paint import SyncPaintController
@@ -36,7 +36,7 @@ def paint_setup(qtbot):
 
     data = np.zeros((32, 32), dtype=np.float32)
     store = ImageMemoryStore(data=data, name="paint_store")
-    appearance = ImageMemoryAppearance(color_map="grays", clim=(0.0, 1.0))
+    appearance = InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0))
     visual = controller.add_image(
         data=store,
         scene_id=scene.id,

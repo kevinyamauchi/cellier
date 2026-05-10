@@ -21,7 +21,7 @@ class QtRenderModeComboBox:
     """Bidirectional render-mode selector wired to the cellier v2 bus.
 
     Wraps a ``QComboBox`` with ``"iso"``, ``"mip"``, and ``"smooth_iso"`` options
-    and keeps it in sync with ``ImageAppearance.render_mode`` via
+    and keeps it in sync with ``MultiscaleImageAppearance.render_mode`` via
     ``AppearanceChangedEvent``.
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
@@ -123,7 +123,7 @@ class QtIsoThresholdSlider:
     """Bidirectional ISO threshold slider wired to the cellier v2 bus.
 
     Wraps a ``superqt.QLabeledDoubleSlider`` and keeps it in sync with
-    ``ImageAppearance.iso_threshold`` via ``AppearanceChangedEvent``.
+    ``MultiscaleImageAppearance.iso_threshold`` via ``AppearanceChangedEvent``.
     Follows the v2 widget pattern: one UUID per widget, source-ID echo
     filtering, and signal blocking when applying model-driven updates.
 

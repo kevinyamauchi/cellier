@@ -39,7 +39,7 @@ from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
 from cellier.v2.render._config import RenderManagerConfig, SlicingConfig
 from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image import ImageAppearance
+from cellier.v2.visuals._image import MultiscaleImageAppearance
 
 # ---------------------------------------------------------------------------
 # Debug-logging CLI helper (power-user per-category:level syntax)
@@ -202,7 +202,7 @@ def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
         name="image_2d",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             lod_bias=LOD_BIAS,
@@ -245,7 +245,7 @@ def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
         name="volume_3d",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             lod_bias=LOD_BIAS,
@@ -520,9 +520,8 @@ class CombinedApp(QMainWindow):
 
     def _on_toggle_clicked(self) -> None:
         # Cancel in-flight slicing requests for the scene we are leaving.
-        coordinator = self._controller._render_manager._slice_coordinator
         if self._active_mode == "2d":
-            coordinator.cancel_scene(self._scene_2d.id)
+            self._controller.cancel_pending_slices(self._scene_2d.id)
             self._active_mode = "3d"
             self._canvas_widget_2d.setVisible(False)
             self._canvas_widget_3d.setVisible(True)
@@ -532,7 +531,7 @@ class CombinedApp(QMainWindow):
             for w in self._widget_3d:
                 w.setVisible(True)
         else:
-            coordinator.cancel_scene(self._scene_3d.id)
+            self._controller.cancel_pending_slices(self._scene_3d.id)
             self._active_mode = "2d"
             self._canvas_widget_3d.setVisible(False)
             self._canvas_widget_2d.setVisible(True)

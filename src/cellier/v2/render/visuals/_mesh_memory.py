@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from cellier.v2._state import DimsState
     from cellier.v2.data.mesh._mesh_requests import MeshData
     from cellier.v2.events._events import (
+        AABBChangedEvent,
         AppearanceChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
@@ -139,6 +140,11 @@ class GFXMeshMemoryVisual:
         self.render_modes: set[str] = render_modes
         self._transform: AffineTransform = transform
         self._last_displayed_axes: tuple[int, ...] | None = None
+
+        self._aabb_enabled: bool = visual_model.aabb.enabled
+        self._aabb_color: str = visual_model.aabb.color
+        self._aabb_line_width: float = visual_model.aabb.line_width
+        self._aabb_line: gfx.Line | None = None
 
         appearance = visual_model.appearance
         self._material_3d = _build_material_3d(appearance)
@@ -399,6 +405,21 @@ class GFXMeshMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_aabb_changed(self, event: AABBChangedEvent) -> None:
+        """Store AABB param changes; apply to line node if it exists."""
+        if event.field_name == "enabled":
+            self._aabb_enabled = event.new_value
+            if self._aabb_line is not None:
+                self._aabb_line.visible = event.new_value
+        elif event.field_name == "color":
+            self._aabb_color = event.new_value
+            if self._aabb_line is not None:
+                self._aabb_line.material.color = event.new_value
+        elif event.field_name == "line_width":
+            self._aabb_line_width = event.new_value
+            if self._aabb_line is not None:
+                self._aabb_line.material.thickness = event.new_value
 
     def tick(self) -> None:
         """Called once per rendered frame. No per-frame state to advance.

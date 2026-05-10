@@ -378,6 +378,23 @@ class RenderManager:
             self._canvases.pop(cid)
         # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
 
+    def remove_canvas(self, canvas_id: UUID) -> None:
+        """Remove a single canvas and drop its render references.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``canvas_id`` is not registered.
+        """
+        self._canvas_to_scene.pop(canvas_id)
+        self._canvases.pop(canvas_id)
+        # CanvasView reference dropped; GC handles Qt widget + wgpu renderer.
+
     def _make_tick_fn(self, scene_id: UUID):
         """Return a callable that ticks all visuals in *scene_id*."""
 

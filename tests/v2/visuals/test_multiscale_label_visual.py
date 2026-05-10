@@ -1,21 +1,23 @@
-"""Tests for LabelAppearance and MultiscaleLabelVisual model layer."""
+"""Tests for MultiscaleLabelsAppearance and MultiscaleLabelVisual model layer."""
 
 from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._labels import (
-    LabelAppearance,
     MultiscaleLabelRenderConfig,
+    MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )
 
-# ── LabelAppearance ──────────────────────────────────────────────────────────
+# ── MultiscaleLabelsAppearance ────────────────────────────────────────────────
 
 
 def test_appearance_defaults():
-    a = LabelAppearance()
+    a = MultiscaleLabelsAppearance()
     assert a.colormap_mode == "random"
     assert a.background_label == 0
     assert a.salt == 0
@@ -28,7 +30,7 @@ def test_appearance_defaults():
 
 
 def test_appearance_json_roundtrip():
-    a = LabelAppearance(
+    a = MultiscaleLabelsAppearance(
         colormap_mode="direct",
         background_label=-1,
         salt=42,
@@ -40,7 +42,7 @@ def test_appearance_json_roundtrip():
         frustum_cull=False,
     )
     json_str = a.model_dump_json()
-    b = LabelAppearance.model_validate_json(json_str)
+    b = MultiscaleLabelsAppearance.model_validate_json(json_str)
     assert b.colormap_mode == "direct"
     assert b.background_label == -1
     assert b.salt == 42
@@ -53,7 +55,7 @@ def test_appearance_json_roundtrip():
 
 
 def test_appearance_mutation_fires_event():
-    a = LabelAppearance()
+    a = MultiscaleLabelsAppearance()
     received = []
     a.events.background_label.connect(lambda v: received.append(v))
     a.background_label = 5
@@ -61,11 +63,27 @@ def test_appearance_mutation_fires_event():
 
 
 def test_appearance_salt_mutation_fires_event():
-    a = LabelAppearance()
+    a = MultiscaleLabelsAppearance()
     received = []
     a.events.salt.connect(lambda v: received.append(v))
     a.salt = 123
     assert received == [123]
+
+
+def test_colormap_mode_is_frozen():
+    from pydantic import ValidationError
+
+    a = MultiscaleLabelsAppearance(colormap_mode="random")
+    with pytest.raises(ValidationError):
+        a.colormap_mode = "direct"
+
+
+def test_render_mode_mutation_fires_event():
+    a = MultiscaleLabelsAppearance(render_mode="iso_categorical")
+    received = []
+    a.events.render_mode.connect(lambda v: received.append(v))
+    a.render_mode = "flat_categorical"
+    assert received == ["flat_categorical"]
 
 
 # ── MultiscaleLabelRenderConfig ──────────────────────────────────────────────
@@ -96,7 +114,7 @@ def _identity_transform(ndim: int = 3) -> AffineTransform:
 def test_visual_json_roundtrip():
     store_id = str(uuid4())
     t = _identity_transform()
-    a = LabelAppearance(colormap_mode="random", background_label=0)
+    a = MultiscaleLabelsAppearance(colormap_mode="random", background_label=0)
     v = MultiscaleLabelVisual(
         name="test",
         data_store_id=store_id,
@@ -113,7 +131,7 @@ def test_visual_json_roundtrip():
 def test_visual_json_roundtrip_with_color_dict():
     store_id = str(uuid4())
     t = _identity_transform()
-    a = LabelAppearance(
+    a = MultiscaleLabelsAppearance(
         colormap_mode="direct",
         color_dict={1: (1.0, 0.0, 0.0, 1.0), 3: (0.0, 0.0, 1.0, 1.0)},
     )
@@ -136,7 +154,7 @@ def test_visual_type_discriminator():
         name="x",
         data_store_id=str(uuid4()),
         level_transforms=[_identity_transform()],
-        appearance=LabelAppearance(),
+        appearance=MultiscaleLabelsAppearance(),
     )
     assert v.visual_type == "multiscale_label"
 
@@ -146,6 +164,42 @@ def test_visual_requires_camera_reslice_is_true():
         name="x",
         data_store_id=str(uuid4()),
         level_transforms=[_identity_transform()],
-        appearance=LabelAppearance(),
+        appearance=MultiscaleLabelsAppearance(),
     )
     assert v.requires_camera_reslice is True
+
+
+# ── Phase 2: MultiscaleLabelsAppearance inherits from BaseLabelsAppearance ────
+
+
+def test_label_appearance_inherits_colormap_mode_frozen():
+    from pydantic import ValidationError
+
+    a = MultiscaleLabelsAppearance()
+    with pytest.raises(ValidationError):
+        a.colormap_mode = "direct"
+
+
+def test_label_appearance_inherits_salt_mutation():
+    a = MultiscaleLabelsAppearance()
+    received = []
+    a.events.salt.connect(lambda v: received.append(v))
+    a.salt = 99
+    assert received == [99]
+
+
+def test_label_appearance_render_mode_is_live():
+    """render_mode must not be frozen — Phase 1 added a live GFX handler for it."""
+    a = MultiscaleLabelsAppearance()
+    received = []
+    a.events.render_mode.connect(lambda v: received.append(v))
+    a.render_mode = "flat_categorical"
+    assert received == ["flat_categorical"]
+
+
+def test_label_appearance_wide_render_mode():
+    """MultiscaleLabelsAppearance supports gradient_debug and smooth_iso (wider than base)."""  # noqa: E501
+    a = MultiscaleLabelsAppearance(render_mode="gradient_debug")
+    assert a.render_mode == "gradient_debug"
+    a2 = MultiscaleLabelsAppearance(render_mode="smooth_iso")
+    assert a2.render_mode == "smooth_iso"

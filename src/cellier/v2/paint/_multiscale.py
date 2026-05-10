@@ -9,7 +9,7 @@ Each brush application:
 2. Stages the new values into the same buffer.
 3. Marks the dirty level-0 bricks in the :class:`WriteLayer`.
 4. Writes the new values into the GPU paint cache + LUT via
-   :meth:`CellierController.patch_painted_tiles_2d`.
+   :meth:`CellierController._patch_painted_tiles_2d`.
 
 The shader composites the paint cache over the base sample, so painted
 voxels are visible on the next frame.  No reslice or eviction occurs
@@ -191,7 +191,7 @@ class MultiscalePaintController(AbstractPaintController):
             self._write_layer.mark_dirty(key)
 
         # GPU paint cache always stores float32 (label IDs as float).
-        self._controller.patch_painted_tiles_2d(
+        self._controller._patch_painted_tiles_2d(
             self._visual_id,
             voxel_indices,
             cast_values.astype(np.float32),
@@ -217,7 +217,7 @@ class MultiscalePaintController(AbstractPaintController):
         self._write_buffer.commit()
 
         # 3. Drop GPU paint textures — paint is now on disk.
-        self._controller.clear_painted_tiles_2d(self._visual_id)
+        self._controller._clear_painted_tiles_2d(self._visual_id)
 
         # 4. Evict + reslice so base cache reflects the committed state.
         self._evict_dirty_visible_tiles()
@@ -234,7 +234,7 @@ class MultiscalePaintController(AbstractPaintController):
         self._write_buffer.abort()
 
         # 2. Drop the GPU paint textures.
-        self._controller.clear_painted_tiles_2d(self._visual_id)
+        self._controller._clear_painted_tiles_2d(self._visual_id)
 
         # 3. NO reslice — the base cache already shows pre-paint data.
         self._write_layer.clear()
@@ -275,7 +275,7 @@ class MultiscalePaintController(AbstractPaintController):
         self._write_buffer = TensorStoreWriteBuffer(self._data_store._ts_stores[0])
 
         # 4. Drop GPU paint textures — frees the entire slot pool.
-        self._controller.clear_painted_tiles_2d(self._visual_id)
+        self._controller._clear_painted_tiles_2d(self._visual_id)
 
         # 5. Evict base cache for dirty bricks; reslice repopulates from disk.
         self._evict_dirty_visible_tiles()
@@ -445,7 +445,7 @@ class MultiscalePaintController(AbstractPaintController):
         dirty_grid_coords_2d: set[tuple[int, int]] = {
             (key.grid_coords[ax_y], key.grid_coords[ax_x]) for key in dirty_keys
         }
-        return self._controller.invalidate_painted_tiles_2d(
+        return self._controller._invalidate_painted_tiles_2d(
             self._visual_id, dirty_grid_coords_2d
         )
 

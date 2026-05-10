@@ -39,7 +39,7 @@ from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import (
-    ImageAppearance,
+    MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
@@ -473,7 +473,7 @@ def _build_viewer_model(
     clim = (0, 8)
 
     # ── Appearance shared across 2D image visuals ─────────────────────────
-    common_2d_image_appearance = ImageAppearance(
+    common_2d_image_appearance = MultiscaleImageAppearance(
         color_map=OCTANT_CMAP,
         clim=clim,
         lod_bias=1.0,
@@ -488,7 +488,7 @@ def _build_viewer_model(
         gpu_budget_bytes_2d=64 * 1024**2,
     )
 
-    vol_image_appearance = ImageAppearance(
+    vol_image_appearance = MultiscaleImageAppearance(
         color_map=OCTANT_CMAP,
         clim=clim,
         lod_bias=1.0,
@@ -536,7 +536,7 @@ def _build_viewer_model(
     # ── Helper: build a visual model for one panel ────────────────────────
     def _make_image_visual(
         name: str,
-        appearance: ImageAppearance,
+        appearance: MultiscaleImageAppearance,
         render_config: MultiscaleImageRenderConfig,
     ) -> MultiscaleImageVisual:
         return MultiscaleImageVisual(
@@ -744,18 +744,16 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     # ── Post-construction: wire vol camera-fit on first data delivery ─────────
     vol_scene = controller.get_scene_by_name("vol")
     vol_image_visual = image_visuals["vol"]
-    vol_scene_manager = controller._render_manager._scenes[vol_scene.id]
-    vol_gfx_visual = vol_scene_manager.get_visual(vol_image_visual.id)
     vol_camera_fitted = [False]
-    original_on_data_ready = vol_gfx_visual.on_data_ready
 
-    def _on_vol_data_ready(batch):
-        original_on_data_ready(batch)
+    def _on_vol_data_ready(event):
         if not vol_camera_fitted[0]:
             vol_camera_fitted[0] = True
             controller.fit_camera(vol_scene.id)
 
-    vol_gfx_visual.on_data_ready = _on_vol_data_ready
+    controller.on_reslice_completed(
+        vol_image_visual.id, _on_vol_data_ready, owner_id=controller._id
+    )
 
     # ── Build canvas widgets ──────────────────────────────────────────────────
     axis_ranges = {0: (0, 300), 1: (0, 300), 2: (0, 300)}
