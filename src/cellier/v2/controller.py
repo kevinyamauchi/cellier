@@ -20,6 +20,7 @@ from cellier.v2.events import (
     DimsChangedEvent,
     DimsUpdateEvent,
     EventBus,
+    FrameRenderedEvent,
     PickWriteChangedEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -114,6 +115,7 @@ if TYPE_CHECKING:
     from cellier.v2.data.points._points_memory_store import PointsMemoryStore
     from cellier.v2.render._config import RenderManagerConfig
     from cellier.v2.render.canvas_view import CanvasView
+    from cellier.v2.stats import PerformanceStats
     from cellier.v2.visuals._canvas_overlay import CanvasOverlay
     from cellier.v2.visuals._channel_appearance import ChannelAppearance
     from cellier.v2.visuals._types import VisualType
@@ -215,6 +217,17 @@ class CellierController:
             self._on_aabb_update,
             owner_id=self._id,
         )
+
+    @property
+    def stats(self) -> PerformanceStats:
+        """Live performance statistics for render and fetch operations.
+
+        Returns the :class:`~cellier.v2.stats.PerformanceStats` instance
+        owned by the render manager.  Values are updated in-place — read
+        the fields directly or pass the object to
+        :class:`~cellier.v2.gui._stats.QtPerformanceWidget`.
+        """
+        return self._render_manager.stats
 
     @property
     def incoming_events(self) -> EventBus:
@@ -3257,22 +3270,20 @@ class CellierController:
             weak=weak,
         )
 
-    def on_visual_added(
+    def on_any_visual_added(
         self,
-        visual_id: UUID,
         callback: Callable[[VisualAddedEvent], None],
         *,
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired when *visual_id* is added.
+        """Register a callback fired whenever any visual is added.
 
         Parameters
         ----------
-        visual_id :
-            The visual to watch.
         callback :
-            Called with the ``VisualAddedEvent``.
+            Called with the ``VisualAddedEvent`` for every new visual,
+            regardless of scene.
         owner_id :
             UUID under which this subscription is registered.
         weak :
@@ -3285,27 +3296,25 @@ class CellierController:
         return self._event_bus.subscribe(
             VisualAddedEvent,
             callback,
-            entity_id=visual_id,
+            entity_id=None,
             owner_id=owner_id,
             weak=weak,
         )
 
-    def on_visual_removed(
+    def on_any_visual_removed(
         self,
-        visual_id: UUID,
         callback: Callable[[VisualRemovedEvent], None],
         *,
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired when *visual_id* is removed.
+        """Register a callback fired whenever any visual is removed.
 
         Parameters
         ----------
-        visual_id :
-            The visual to watch.
         callback :
-            Called with the ``VisualRemovedEvent``.
+            Called with the ``VisualRemovedEvent`` for every removed
+            visual, regardless of scene.
         owner_id :
             UUID under which this subscription is registered.
         weak :
@@ -3318,7 +3327,42 @@ class CellierController:
         return self._event_bus.subscribe(
             VisualRemovedEvent,
             callback,
-            entity_id=visual_id,
+            entity_id=None,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_frame_rendered(
+        self,
+        callback: Callable[[FrameRenderedEvent], None],
+        *,
+        canvas_id: UUID | None = None,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired after each frame is rendered.
+
+        Parameters
+        ----------
+        callback :
+            Called with the ``FrameRenderedEvent`` on every rendered
+            frame.
+        canvas_id :
+            When set, only events from that specific canvas are
+            dispatched.  ``None`` (default) matches all canvases.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            FrameRenderedEvent,
+            callback,
+            entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )

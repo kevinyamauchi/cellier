@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import numpy as np
 
 from cellier.v2.events import DimsChangedEvent, EventBus
-from cellier.v2.events._events import ViewRay, _CanvasRawPointerEvent
+from cellier.v2.events._events import (
+    FrameRenderedEvent,
+    ViewRay,
+    _CanvasRawPointerEvent,
+)
 from cellier.v2.render._config import RenderManagerConfig
 from cellier.v2.render._scene_config import VisualRenderConfig
 from cellier.v2.render.canvas_view import CanvasView
 from cellier.v2.render.scene_manager import SceneManager
 from cellier.v2.render.slice_coordinator import SliceCoordinator
-from cellier.v2.slicer import AsyncSlicer
+from cellier.v2.slicer import AsyncSlicer, FetchSummary
+from cellier.v2.stats import FetchStats, PerformanceStats, RenderStats
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     import pygfx as gfx
     from PySide6.QtWidgets import QWidget
 
@@ -60,9 +65,11 @@ class RenderManager:
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
         self._event_bus: EventBus | None = None
+        self.stats = PerformanceStats()
         self._slicer = AsyncSlicer(
             batch_size=config.slicing.batch_size,
             render_every=config.slicing.render_every,
+            on_fetch_complete=self._on_fetch_complete,
         )
         self._slice_coordinator = SliceCoordinator(
             scenes=self._scenes,
@@ -80,6 +87,11 @@ class RenderManager:
         event_bus.subscribe(
             DimsChangedEvent,
             self._slice_coordinator._on_dims_changed,
+            owner_id=self._slice_coordinator.id,
+        )
+        event_bus.subscribe(
+            FrameRenderedEvent,
+            self._on_frame_rendered,
             owner_id=self._slice_coordinator.id,
         )
 
@@ -181,6 +193,7 @@ class RenderManager:
         # Wire up per-frame tick for visuals (e.g. jitter seed advance).
         canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
         self._canvases[canvas_id] = canvas_view
+        self.stats.render[canvas_id] = RenderStats(alpha=self._config.stats.ema_alpha)
         self._canvas_to_scene[canvas_id] = scene_id
         canvas_view._renderer.add_event_handler(
             lambda ev, cid=canvas_id: self._on_canvas_pointer_event(ev, cid),
@@ -235,6 +248,35 @@ class RenderManager:
             If *canvas_id* is not registered.
         """
         self._canvases[canvas_id].add_overlay(gfx_overlay)
+
+    def _on_frame_rendered(self, event: FrameRenderedEvent) -> None:
+        render_stats = self.stats.render.get(event.canvas_id)
+        if render_stats is not None:
+            now = (
+                event.frame_end_ns / 1_000_000_000
+                if event.frame_end_ns
+                else time.perf_counter()
+            )
+            render_stats.update(event.frame_time_ms, now)
+
+    def _on_fetch_complete(self, summary: FetchSummary) -> None:
+        if summary.consumer_id is None:
+            return
+        try:
+            visual_id = UUID(summary.consumer_id)
+        except ValueError:
+            return
+        fetch_stats = self.stats.fetch.get(visual_id)
+        if fetch_stats is None:
+            fetch_stats = FetchStats()
+            self.stats.fetch[visual_id] = fetch_stats
+        fetch_stats.n_chunks = summary.n_chunks
+        fetch_stats.total_ms = summary.total_ms
+        fetch_stats.ms_per_chunk = (
+            summary.total_ms / summary.n_chunks if summary.n_chunks else 0.0
+        )
+        fetch_stats.cancelled = summary.cancelled
+        fetch_stats.last_updated = time.perf_counter()
 
     def _on_canvas_pointer_event(
         self, event: gfx.PointerEvent, canvas_id: UUID

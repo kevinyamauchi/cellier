@@ -7,6 +7,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -97,6 +98,32 @@ FetchFn = Callable[[ChunkRequest], Coroutine[Any, Any, np.ndarray]]
 BatchCallback = Callable[[list[tuple[ChunkRequest, np.ndarray]]], None]
 
 
+@dataclass
+class FetchSummary:
+    """Timing summary emitted once per completed or cancelled fetch task.
+
+    Passed to the optional ``on_fetch_complete`` callback on
+    ``AsyncSlicer``.  All times are in milliseconds.
+
+    Attributes
+    ----------
+    consumer_id :
+        The ``consumer_id`` string supplied to ``AsyncSlicer.submit``.
+        Typically ``str(visual_model_id)``.
+    n_chunks :
+        Total number of chunk requests in the task.
+    total_ms :
+        Wall time from task start to task end.
+    cancelled :
+        ``True`` when the task was cancelled before all batches completed.
+    """
+
+    consumer_id: str | None
+    n_chunks: int
+    total_ms: float
+    cancelled: bool
+
+
 class AsyncSlicer:
     """Generic cancellable async batch-fetch service.
 
@@ -124,9 +151,15 @@ class AsyncSlicer:
         visual feedback during loading.
     """
 
-    def __init__(self, batch_size: int = 8, render_every: int = 1) -> None:
+    def __init__(
+        self,
+        batch_size: int = 8,
+        render_every: int = 1,
+        on_fetch_complete: Callable[[FetchSummary], None] | None = None,
+    ) -> None:
         self._batch_size = batch_size
         self._render_every = max(1, render_every)
+        self._on_fetch_complete = on_fetch_complete
         # Maps slice_request_id -> running asyncio.Task.
         self._tasks: dict[UUID, asyncio.Task] = {}
 
@@ -182,7 +215,9 @@ class AsyncSlicer:
         if slice_id in self._tasks:
             self._tasks[slice_id].cancel()
 
-        task = asyncio.ensure_future(self._run(requests, fetch_fn, callback, slice_id))
+        task = asyncio.ensure_future(
+            self._run(requests, fetch_fn, callback, slice_id, consumer_id)
+        )
         self._tasks[slice_id] = task
 
         _SLICER_LOGGER.info(
@@ -227,6 +262,7 @@ class AsyncSlicer:
         fetch_fn: FetchFn,
         callback: BatchCallback,
         slice_id: UUID,
+        consumer_id: str | None = None,
     ) -> None:
         """Drive the batched read loop.
 
@@ -261,8 +297,14 @@ class AsyncSlicer:
 
         _cancelled = False
         batch_idx = 0
-        batch_times_ms: list[float] = []
+        _batches_run = 0
         t_fetch_start = time.perf_counter()
+        # batch_times_ms is only accumulated when logging is active;
+        # _log_fetch_summary is the sole consumer of per-batch times.
+        _log_batches = _PERF_LOGGER.isEnabledFor(
+            logging.INFO
+        ) or _SLICER_LOGGER.isEnabledFor(logging.DEBUG)
+        batch_times_ms: list[float] = []
 
         try:
             for batch_idx, batch in enumerate(batches):
@@ -273,46 +315,49 @@ class AsyncSlicer:
                 # (see above) adds the missing _make_cancelled_error() method
                 # to QAsyncioTask, which is required by gather's internal
                 # _GatheringFuture._done_callback when child tasks are cancelled.
-                t_batch = time.perf_counter()
+                t_batch = time.perf_counter() if _log_batches else 0.0
                 results: list[np.ndarray] = await asyncio.gather(
                     *[fetch_fn(req) for req in batch]
                 )
-                batch_ms = (time.perf_counter() - t_batch) * 1000
-                batch_times_ms.append(batch_ms)
 
-                # Per-batch fetch timing at DEBUG.
-                _PERF_LOGGER.debug(
-                    "fetch_batch  %d/%d  bricks=%d  elapsed=%.1fms",
-                    batch_idx + 1,
-                    n_batches,
-                    len(batch),
-                    batch_ms,
-                )
+                _batches_run += 1
+                if _log_batches:
+                    batch_ms = (time.perf_counter() - t_batch) * 1000
+                    batch_times_ms.append(batch_ms)
 
-                # Condensed batch summary at INFO.
-                if _SLICER_LOGGER.isEnabledFor(logging.INFO):
-                    scale_counts: dict[int, int] = {}
-                    for req in batch:
-                        scale_counts[req.scale_index] = (
-                            scale_counts.get(req.scale_index, 0) + 1
-                        )
-                    _SLICER_LOGGER.info(
-                        "batch_done  %d/%d  bricks=%d  scales=%s",
+                    # Per-batch fetch timing at DEBUG.
+                    _PERF_LOGGER.debug(
+                        "fetch_batch  %d/%d  bricks=%d  elapsed=%.1fms",
                         batch_idx + 1,
                         n_batches,
                         len(batch),
-                        scale_counts,
+                        batch_ms,
                     )
 
-                # Per-brick detail at DEBUG (guarded).
-                if _SLICER_LOGGER.isEnabledFor(logging.DEBUG):
-                    for req, data in zip(batch, results):
+                    # Condensed batch summary at DEBUG (moved from INFO).
+                    if _SLICER_LOGGER.isEnabledFor(logging.DEBUG):
+                        scale_counts: dict[int, int] = {}
+                        for req in batch:
+                            scale_counts[req.scale_index] = (
+                                scale_counts.get(req.scale_index, 0) + 1
+                            )
                         _SLICER_LOGGER.debug(
-                            "  brick_received  id=%s  scale=%d  shape=%s",
-                            req.chunk_request_id,
-                            req.scale_index,
-                            data.shape,
+                            "batch_done  %d/%d  bricks=%d  scales=%s",
+                            batch_idx + 1,
+                            n_batches,
+                            len(batch),
+                            scale_counts,
                         )
+
+                    # Per-brick detail at DEBUG (guarded).
+                    if _SLICER_LOGGER.isEnabledFor(logging.DEBUG):
+                        for req, data in zip(batch, results):
+                            _SLICER_LOGGER.debug(
+                                "  brick_received  id=%s  scale=%d  shape=%s",
+                                req.chunk_request_id,
+                                req.scale_index,
+                                data.shape,
+                            )
 
                 callback(list(zip(batch, results)))
                 # Yield to Qt every render_every batches so the renderer can
@@ -337,16 +382,28 @@ class AsyncSlicer:
             # normally, were cancelled, or raised an unexpected exception.
             self._tasks.pop(slice_id, None)
 
-            # Emit fetch timing summary (both normal completion and
-            # cancellation — partial stats are still useful).
+            total_ms = (time.perf_counter() - t_fetch_start) * 1000
+
+            # Emit detailed fetch timing summary to log (only when logging active).
             if batch_times_ms:
-                total_ms = (time.perf_counter() - t_fetch_start) * 1000
                 _log_fetch_summary(
                     slice_id,
                     len(requests),
                     batch_times_ms,
                     total_ms,
                     cancelled=_cancelled,
+                )
+
+            # Fire stats callback with lightweight total_ms / n_chunks summary.
+            # Only fire if at least one batch ran (guards against instant cancellation).
+            if self._on_fetch_complete is not None and _batches_run > 0:
+                self._on_fetch_complete(
+                    FetchSummary(
+                        consumer_id=consumer_id,
+                        n_chunks=len(requests),
+                        total_ms=total_ms,
+                        cancelled=_cancelled,
+                    )
                 )
 
             if not _cancelled:

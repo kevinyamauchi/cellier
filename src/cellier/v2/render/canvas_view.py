@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -10,7 +11,7 @@ import pygfx as gfx
 from rendercanvas.qt import QRenderWidget
 
 from cellier.v2._state import CameraState
-from cellier.v2.events._events import CameraChangedEvent
+from cellier.v2.events._events import CameraChangedEvent, FrameRenderedEvent
 from cellier.v2.logging import _CAMERA_LOGGER
 from cellier.v2.render._requests import DimsState, ReslicingRequest
 from cellier.v2.render._temporal_accumulation import TemporalAccumulationPass
@@ -391,6 +392,8 @@ class CanvasView:
             )
 
     def _draw_frame(self) -> None:
+        t_start = time.perf_counter_ns()
+
         # Detect camera changes by comparing against the cached state.
         current_state = self.capture_camera_state()
         if current_state != self._last_camera_state and not self._applying_model_state:
@@ -439,3 +442,15 @@ class CanvasView:
         else:
             # Fast path — no overlays; single render call as before.
             self._renderer.render(scene, self._camera)
+
+        if self._event_bus is not None:
+            t_end = time.perf_counter_ns()
+            frame_ms = (t_end - t_start) / 1_000_000
+            self._event_bus.emit(
+                FrameRenderedEvent(
+                    source_id=self._canvas_id,
+                    canvas_id=self._canvas_id,
+                    frame_time_ms=frame_ms,
+                    frame_end_ns=t_end,
+                )
+            )

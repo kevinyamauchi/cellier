@@ -377,11 +377,18 @@ class EventBus:
         )
 
         first_exc: BaseException | None = None
-        dead: list[_Subscription] = []
+        # Lazy allocation: only create if a dead weak ref is found.
+        dead: list[_Subscription] | None = None
+        # Iterate over a snapshot only if the list may be mutated during
+        # dispatch (i.e. there are weak subs that could die mid-loop).
+        # For all-strong subscription lists we iterate directly.
+        iterable = list(subs) if any(s.is_weak for s in subs) else subs
 
-        for sub in list(subs):
+        for sub in iterable:
             # Collect dead weak subscriptions for cleanup
             if sub.is_weak and not sub.is_alive():
+                if dead is None:
+                    dead = []
                 dead.append(sub)
                 continue
 
@@ -396,9 +403,10 @@ class EventBus:
                     first_exc = exc
 
         # Clean up confirmed-dead weak subscriptions
-        for sub in dead:
-            subs.remove(sub)
-            self._handle_index.pop(sub.handle._id, None)
+        if dead is not None:
+            for sub in dead:
+                subs.remove(sub)
+                self._handle_index.pop(sub.handle._id, None)
 
         if first_exc is not None:
             raise first_exc

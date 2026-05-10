@@ -66,6 +66,21 @@ class CameraConfig(BaseModel):
     settle_threshold_s: float = Field(default=DEFAULT_CAMERA_SETTLE_THRESHOLD_S, gt=0.0)
 
 
+class StatsConfig(BaseModel):
+    """Configuration for the performance statistics system.
+
+    Parameters
+    ----------
+    ema_alpha : float
+        EMA blend weight applied to FPS and draw-time estimates once the
+        warm-up phase is complete.  Lower values give smoother readings;
+        higher values respond faster to sudden changes.  Must be in
+        ``(0, 1]``.
+    """
+
+    ema_alpha: float = Field(default=0.1, gt=0.0, le=1.0)
+
+
 class RenderManagerConfig(BaseModel):
     """Top-level rendering performance configuration.
 
@@ -81,6 +96,8 @@ class RenderManagerConfig(BaseModel):
         Temporal accumulation pass settings.
     camera : CameraConfig
         Camera-driven reslicing settings.
+    stats : StatsConfig
+        Performance statistics collection settings.
 
     Examples
     --------
@@ -100,3 +117,4 @@ class RenderManagerConfig(BaseModel):
         default_factory=TemporalAccumulationConfig
     )
     camera: CameraConfig = Field(default_factory=CameraConfig)
+    stats: StatsConfig = Field(default_factory=StatsConfig)

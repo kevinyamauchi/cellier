@@ -126,6 +126,7 @@ class FrameRenderedEvent(NamedTuple):
     source_id: UUID
     canvas_id: UUID
     frame_time_ms: float
+    frame_end_ns: int = 0
 
 
 class VisualAddedEvent(NamedTuple):

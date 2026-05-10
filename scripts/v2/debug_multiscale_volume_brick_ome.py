@@ -58,6 +58,7 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
+        from cellier.v2.gui import QtPerformanceWidget
         from cellier.v2.gui._dataset_info import QtOmeZarrMetadataWidget
         from cellier.v2.gui.visuals._aabb import QtAABBWidget
         from cellier.v2.gui.visuals._colormap import QtColormapComboBox
@@ -112,6 +113,7 @@ class OmeBrickViewer:
             subscription_specs=self._render_controls.subscription_specs(),
         )
         self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
+        self._perf_widget = QtPerformanceWidget.from_controller(controller)
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")
@@ -136,6 +138,9 @@ class OmeBrickViewer:
 
         # ── Dataset metadata ──────────────────────────────────────────
         panel_layout.addWidget(self._metadata_widget.widget)
+
+        # ── Performance stats ─────────────────────────────────────────
+        panel_layout.addWidget(self._perf_widget.widget)
 
         # ── Shared: toggle + reslice + mode label ─────────────────────
         self._toggle_btn = QtWidgets.QPushButton("Toggle 2D / 3D")
@@ -545,6 +550,7 @@ async def async_main(zarr_uri: str):
     app.aboutToQuit.connect(viewer._colormap_combo.close)
     app.aboutToQuit.connect(viewer._aabb_widget.close)
     app.aboutToQuit.connect(viewer._render_controls.close)
+    app.aboutToQuit.connect(viewer._perf_widget.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()

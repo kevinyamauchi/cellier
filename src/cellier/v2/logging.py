@@ -15,6 +15,8 @@ Usage
 from __future__ import annotations
 
 import logging
+import logging.handlers
+import queue
 import sys
 
 _PERF_LOGGER = logging.getLogger("cellier.render.perf")
@@ -42,6 +44,9 @@ _ALL_CATEGORIES = tuple(_CATEGORY_MAP.keys())
 # Tag used to identify handlers added by enable_debug_logging().
 _HANDLER_TAG = "_cellier_debug"
 
+# Active QueueListener, kept alive so it can be stopped on disable.
+_active_listener: logging.handlers.QueueListener | None = None
+
 
 def enable_debug_logging(
     categories: tuple[str, ...] = _ALL_CATEGORIES,
@@ -49,6 +54,10 @@ def enable_debug_logging(
     level: int = logging.DEBUG,
 ) -> None:
     """Activate logging for the requested categories.
+
+    Log records are enqueued on the calling thread and written by a
+    background ``QueueListener`` thread, so I/O never blocks the Qt
+    event loop or the asyncio chunk-loading path.
 
     Parameters
     ----------
@@ -63,6 +72,8 @@ def enable_debug_logging(
         Pass ``logging.INFO`` to suppress per-frame debug details and
         see only coarser events (reslice summaries, LUT rebuilds, etc.).
     """
+    global _active_listener
+
     parent_logger = logging.getLogger("cellier.render")
 
     # Set the requested level on each category logger.
@@ -79,22 +90,38 @@ def enable_debug_logging(
         )
         return
 
-    handler: logging.Handler | None = None
+    # Build the real sink handler.
+    sink: logging.Handler | None = None
     if use_rich:
         try:
-            handler = _make_rich_handler()
+            sink = _make_rich_handler()
         except ImportError:
-            handler = None
+            sink = None
 
-    if handler is None:
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(
+    if sink is None:
+        sink = logging.StreamHandler(sys.stderr)
+        sink.setFormatter(
             logging.Formatter("%(asctime)s  %(name)s  %(message)s", datefmt="%H:%M:%S")
         )
+    sink.setLevel(level)
 
-    handler.setLevel(level)
-    setattr(handler, _HANDLER_TAG, True)
-    parent_logger.addHandler(handler)
+    # Wrap the sink in a QueueHandler so log calls on the event-loop thread
+    # never block waiting for I/O.  The QueueListener drains the queue on a
+    # dedicated background thread.
+    log_queue: queue.SimpleQueue = queue.SimpleQueue()
+    queue_handler = logging.handlers.QueueHandler(log_queue)  # type: ignore[arg-type]
+    queue_handler.setLevel(level)
+    setattr(queue_handler, _HANDLER_TAG, True)
+
+    listener = logging.handlers.QueueListener(
+        log_queue,  # type: ignore[arg-type]
+        sink,
+        respect_handler_level=True,
+    )
+    listener.start()
+    _active_listener = listener
+
+    parent_logger.addHandler(queue_handler)
     parent_logger.setLevel(level)
 
     print(
@@ -105,12 +132,18 @@ def enable_debug_logging(
 
 def disable_debug_logging() -> None:
     """Deactivate debug logging: reset levels to WARNING and remove handlers."""
+    global _active_listener
+
     parent_logger = logging.getLogger("cellier.render")
     for logger in _CATEGORY_MAP.values():
         logger.setLevel(logging.WARNING)
     parent_logger.handlers = [
         h for h in parent_logger.handlers if not getattr(h, _HANDLER_TAG, False)
     ]
+
+    if _active_listener is not None:
+        _active_listener.stop()
+        _active_listener = None
 
 
 # ---------------------------------------------------------------------------
