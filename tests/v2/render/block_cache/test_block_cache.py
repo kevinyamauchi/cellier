@@ -54,17 +54,24 @@ def test_hit_does_not_change_slot() -> None:
 
 def test_lru_evicts_oldest_brick() -> None:
     """Fill cache with bricks A-G at frames 1-7, refresh B at frame 8,
-    then request H. A should be evicted (oldest timestamp)."""
+    then request H. A should be evicted (oldest timestamp).
+
+    With the reserve tier, each single-brick stage() call demotes the
+    previous brick to _reserve (it is not in the new plan).  After the
+    loop key_a sits in _reserve with the oldest timestamp (frame 1) so it
+    is the first victim when H needs a slot.
+    """
     cache = BlockCache3D(CACHE_INFO)
     keys = [BlockKey3D(level=1, g0=i, g1=0, g2=0) for i in range(7)]
     for frame, key in enumerate(keys, start=1):
         _stage_and_commit(cache, {key: 1}, frame_number=frame)
 
+    # After the loop key_a has been demoted to reserve (not hot).
     key_a = keys[0]
-    slot_a_index = cache.tile_manager.tilemap[key_a].index
+    slot_a_index = cache.tile_manager._reserve[key_a].index
 
     key_b = keys[1]
-    cache.stage({key_b: 1}, frame_number=8)  # hit — no commit needed
+    cache.stage({key_b: 1}, frame_number=8)  # reserve hit — promotes B
 
     key_h = BlockKey3D(level=1, g0=99, g1=0, g2=0)
     fill_plan = cache.stage({key_h: 1}, frame_number=9)
@@ -72,6 +79,7 @@ def test_lru_evicts_oldest_brick() -> None:
     assert len(fill_plan) == 1
     assert fill_plan[0][1].index == slot_a_index
     assert key_a not in cache.tile_manager.tilemap
+    assert key_a not in cache.tile_manager._reserve
 
 
 def test_write_brick_fills_correct_slice() -> None:

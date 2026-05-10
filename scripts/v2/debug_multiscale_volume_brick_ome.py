@@ -63,6 +63,7 @@ class OmeBrickViewer:
         from cellier.v2.gui.visuals._colormap import QtColormapComboBox
         from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
         from cellier.v2.gui.visuals._image import QtVolumeRenderControls
+        from cellier.v2.gui.visuals._lod_bias import QtLodBiasSlider
 
         self._controller = controller
         self._scene = scene
@@ -182,16 +183,17 @@ class OmeBrickViewer:
         panel_layout.addWidget(clim_group)
 
         # ── Shared: LOD bias ──────────────────────────────────────────
+        self._lod_bias_slider = QtLodBiasSlider(
+            visual_model.id,
+            initial_lod_bias=visual_model.appearance.lod_bias,
+        )
+        controller.connect_widget(
+            self._lod_bias_slider,
+            subscription_specs=self._lod_bias_slider.subscription_specs(),
+        )
         bias_group = QtWidgets.QGroupBox("LOD bias")
-        bias_layout = QtWidgets.QHBoxLayout(bias_group)
-        bias_layout.addWidget(QtWidgets.QLabel("lod_bias"))
-        self._lod_bias_spin = QtWidgets.QDoubleSpinBox()
-        self._lod_bias_spin.setRange(0.1, 10.0)
-        self._lod_bias_spin.setSingleStep(0.1)
-        self._lod_bias_spin.setDecimals(2)
-        self._lod_bias_spin.setValue(1.0)
-        self._lod_bias_spin.valueChanged.connect(self._on_lod_bias_changed)
-        bias_layout.addWidget(self._lod_bias_spin)
+        bias_layout = QtWidgets.QVBoxLayout(bias_group)
+        bias_layout.addWidget(self._lod_bias_slider.widget)
         panel_layout.addWidget(bias_group)
 
         # ── Shared: bounding box ──────────────────────────────────────
@@ -252,12 +254,6 @@ class OmeBrickViewer:
     def _on_reslice_clicked(self) -> None:
         print("[DEBUG] Manual reslice triggered")
         self._controller.reslice_scene(self._scene.id)
-
-    def _on_lod_bias_changed(self, value: float) -> None:
-        print(f"[DEBUG] LOD bias changed to {value}")
-        self._controller.update_appearance_field(
-            self._visual_model.id, "lod_bias", value
-        )
 
     # ── 3D-only callbacks ─────────────────────────────────────────────
 
@@ -545,6 +541,7 @@ async def async_main(zarr_uri: str):
     app.aboutToQuit.connect(viewer._colormap_combo.close)
     app.aboutToQuit.connect(viewer._aabb_widget.close)
     app.aboutToQuit.connect(viewer._render_controls.close)
+    app.aboutToQuit.connect(viewer._lod_bias_slider.close)
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
     await close_event.wait()

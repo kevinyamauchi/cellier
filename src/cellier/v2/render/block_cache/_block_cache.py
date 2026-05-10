@@ -137,8 +137,13 @@ class BlockCache3D:
 
     @property
     def n_resident(self) -> int:
-        """Number of bricks currently resident in the cache."""
+        """Number of hot (rendered) bricks in the cache."""
         return len(self.tile_manager.tilemap)
+
+    @property
+    def n_reserve(self) -> int:
+        """Number of warm (GPU-present, not rendered) bricks in reserve."""
+        return len(self.tile_manager._reserve)
 
     def clear(self) -> None:
         """Evict all resident bricks and reset the cache to empty."""
