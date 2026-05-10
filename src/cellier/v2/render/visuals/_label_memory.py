@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -441,20 +442,15 @@ class GFXLabelMemoryVisual:
                 if inner is not None:
                     inner.material.alpha_mode = val
 
+        elif fn == "render_mode":
+            if self._inner_node_3d is not None:
+                self._inner_node_3d.material.render_mode = val
+
         elif fn == "render_order":
             if self.node_2d is not None:
                 self.node_2d.render_order = val
             if self.node_3d is not None:
                 self.node_3d.render_order = val
-
-        elif fn in ("colormap_mode", "render_mode"):
-            import warnings
-
-            warnings.warn(
-                f"LabelMemoryVisual.appearance.{fn} is frozen after construction. "
-                "Create a new visual to change it.",
-                stacklevel=2,
-            )
 
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
         self._transform = event.transform
@@ -465,6 +461,12 @@ class GFXLabelMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        """Update pick_write on all inner node materials."""
+        for inner in (self._inner_node_2d, self._inner_node_3d):
+            if inner is not None:
+                inner.material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         if event.field_name == "enabled":

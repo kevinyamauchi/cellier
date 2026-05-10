@@ -31,7 +31,7 @@ from cellier.v2.data.label._label_memory_store import LabelMemoryStore
 from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._label_memory import LabelMemoryAppearance, LabelMemoryVisual
+from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance, LabelMemoryVisual
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance
 
 
@@ -62,7 +62,7 @@ def main() -> None:
         render_modes={"2d"},
     )
 
-    appearance = LabelMemoryAppearance(colormap_mode="random")
+    appearance = InMemoryLabelsAppearance(colormap_mode="random")
     label_visual_model = LabelMemoryVisual(
         name="labels",
         data_store_id=str(label_store.id),

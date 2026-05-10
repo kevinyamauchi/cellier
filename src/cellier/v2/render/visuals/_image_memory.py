@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -719,6 +720,12 @@ class GFXImageMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        """Update pick_write on all inner node materials."""
+        for inner in (self._inner_node_2d, self._inner_node_3d):
+            if inner is not None:
+                inner.material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Apply an AABB parameter change.

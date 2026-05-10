@@ -68,6 +68,7 @@ def make_channel_group_2d(
     max_channels: int,
     *,
     transparency_mode: str = "add",
+    interpolation: str = "nearest",
 ) -> tuple[gfx.Group, list[gfx.Image]]:
     """Allocate a 2D node pool as a Group containing ``max_channels`` Image nodes.
 
@@ -82,6 +83,8 @@ def make_channel_group_2d(
         Total number of pre-allocated pool slots.
     transparency_mode : str
         pygfx alpha_mode for the pool nodes. Default ``"add"``.
+    interpolation : str
+        Sampler filter for all pool nodes. Default ``"nearest"``.
 
     Returns
     -------
@@ -100,6 +103,7 @@ def make_channel_group_2d(
                 clim=(0.0, 1.0),
                 map=gfx.cm.viridis,
                 alpha_mode=alpha_mode,
+                interpolation=interpolation,
             ),
         )
         node.visible = False
@@ -114,6 +118,7 @@ def make_channel_group_3d(
     max_channels: int,
     *,
     transparency_mode: str = "add",
+    interpolation: str = "nearest",
 ) -> tuple[gfx.Group, list[gfx.Volume]]:
     """Allocate a 3D node pool as a Group containing ``max_channels`` Volume nodes.
 
@@ -125,6 +130,8 @@ def make_channel_group_3d(
         Total number of pre-allocated pool slots.
     transparency_mode : str
         pygfx alpha_mode for the pool nodes. Default ``"add"``.
+    interpolation : str
+        Sampler filter for all pool nodes. Default ``"nearest"``.
 
     Returns
     -------
@@ -143,6 +150,7 @@ def make_channel_group_3d(
                 clim=(0.0, 1.0),
                 map=gfx.cm.viridis,
                 alpha_mode=alpha_mode,
+                interpolation=interpolation,
             ),
         )
         node.visible = False
@@ -167,7 +175,7 @@ def apply_channel_appearance_2d(
     """
     material = node.material
     material.clim = appearance.clim
-    material.map = _make_colormap(appearance.colormap)
+    material.map = _make_colormap(appearance.color_map)
     material.opacity = appearance.opacity
     material.alpha_mode = appearance.transparency_mode
     node.visible = appearance.visible
@@ -188,7 +196,7 @@ def apply_channel_appearance_3d(
     """
     material = node.material
     material.clim = appearance.clim
-    material.map = _make_colormap(appearance.colormap)
+    material.map = _make_colormap(appearance.color_map)
     material.opacity = appearance.opacity
     material.alpha_mode = appearance.transparency_mode
     node.visible = appearance.visible

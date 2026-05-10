@@ -34,7 +34,7 @@ from cellier.v2.events._events import (
     CanvasMouseRelease2DEvent,
 )
 from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance
+from cellier.v2.visuals._image_memory import InMemoryImageAppearance
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance
 
 RNG = np.random.default_rng(0)
@@ -68,7 +68,7 @@ def main() -> None:
         render_modes={"2d"},
     )
 
-    appearance = ImageMemoryAppearance(color_map="grays", clim=(0.0, 1.0))
+    appearance = InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0))
     image_visual = controller.add_image(
         data=image_store,
         scene_id=scene.id,

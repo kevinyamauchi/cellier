@@ -34,7 +34,10 @@ from PySide6.QtWidgets import (
 from cellier.v2.controller import CellierController
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._labels import LabelAppearance, MultiscaleLabelRenderConfig
+from cellier.v2.visuals._labels import (
+    MultiscaleLabelRenderConfig,
+    MultiscaleLabelsAppearance,
+)
 
 # World geometry for the synthetic example
 _SCALE_ZYX = (4.0, 1.0, 1.0)  # µm per voxel at finest level
@@ -221,7 +224,7 @@ def main(label_uri: str):
     transform = AffineTransform.from_scale_and_translation(scale=level0_scale)
 
     # ── Appearance + visual ───────────────────────────────────────────────
-    appearance = LabelAppearance(
+    appearance = MultiscaleLabelsAppearance(
         colormap_mode="random",
         background_label=0,
         salt=0,

@@ -27,7 +27,7 @@ from skimage.data import binary_blobs
 from cellier.v2.controller import CellierController
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance
+from cellier.v2.visuals._image_memory import InMemoryImageAppearance
 
 
 def main() -> None:
@@ -51,7 +51,7 @@ def main() -> None:
         render_modes={"2d", "3d"},
     )
 
-    appearance = ImageMemoryAppearance(color_map="viridis", clim=(0.0, 1.0))
+    appearance = InMemoryImageAppearance(color_map="viridis", clim=(0.0, 1.0))
     visual = controller.add_image(
         data=store,
         scene_id=scene.id,

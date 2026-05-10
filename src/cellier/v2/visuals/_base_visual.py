@@ -57,35 +57,33 @@ class BaseVisual(EventedModel):
 
     Parameters
     ----------
-    id : UUID4
-        The unique identifier for the visual.
-        The default value is a UUID4 id.
-    appearance : BaseAppearance
-        The appearance of the visual.
-        This should be overridden with the visual-specific
-        implementation in the subclasses.
-    pick_write : bool
-        If True, the visual can be picked in the canvas via
-        the picking buffer.
-        Default value is True.
     name : str
-        The name of the data store.
+        Human-readable label for the visual.
+    data_store_id : str
+        UUID string of the data store this visual reads from.
+    pick_write : bool
+        If True, the visual can be picked in the canvas via the picking
+        buffer. Default True.
     transform : AffineTransform
-        The data-to-world affine transform.
-        Default is identity.
+        The data-to-world affine transform. Default is identity.
+    aabb : AABBParams
+        Axis-aligned bounding box wireframe parameters. Default disabled.
+    id : UUID4
+        Unique identifier for the visual. Auto-generated; do not set manually.
 
-    Attributes
-    ----------
-    id : str
-        The unique identifier for the data store.
+    Notes
+    -----
+    Each concrete visual subclass declares its own typed ``appearance`` field.
+    Multichannel visuals do not carry a single ``appearance`` field; their
+    per-channel appearance is held in ``channels: dict[int, ChannelAppearance]``.
     """
 
     name: str
-    appearance: BaseAppearance
+    data_store_id: str
     pick_write: bool = True
     transform: AffineTransform = Field(default_factory=AffineTransform.identity)
-
     requires_camera_reslice: bool = Field(default=False, frozen=True)
+    aabb: AABBParams = Field(default_factory=AABBParams)
 
     # store a UUID to identify this specific visual
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (

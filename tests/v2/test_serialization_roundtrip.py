@@ -6,7 +6,10 @@ from cellier.v2.data.points._points_memory_store import PointsMemoryStore
 from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.v2.scene.scene import Scene
 from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageRenderConfig
+from cellier.v2.visuals._image import (
+    MultiscaleImageAppearance,
+    MultiscaleImageRenderConfig,
+)
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
@@ -62,7 +65,10 @@ def test_viewer_model_roundtrip_json(tmp_path):
 
 
 def test_multiscale_render_config_roundtrip():
-    """MultiscaleImageRenderConfig fields survive JSON serialization."""
+    """MultiscaleImageRenderConfig fields survive JSON serialization.
+
+    interpolation is now on MultiscaleImageAppearance, not MultiscaleImageRenderConfig.
+    """
     from cmap import Colormap
 
     from cellier.v2.transform import AffineTransform
@@ -71,9 +77,10 @@ def test_multiscale_render_config_roundtrip():
     render_config = MultiscaleImageRenderConfig(
         block_size=64,
         gpu_budget_bytes=512 * 1024**2,
-        interpolation="nearest",
     )
-    appearance = ImageAppearance(color_map=Colormap("viridis"), clim=(0.0, 1.0))
+    appearance = MultiscaleImageAppearance(
+        color_map=Colormap("viridis"), clim=(0.0, 1.0), interpolation="linear"
+    )
     visual = MultiscaleImageVisual(
         name="img",
         data_store_id="00000000-0000-0000-0000-000000000001",
@@ -83,4 +90,4 @@ def test_multiscale_render_config_roundtrip():
     )
     reloaded = MultiscaleImageVisual.model_validate_json(visual.model_dump_json())
     assert reloaded.render_config.block_size == 64
-    assert reloaded.render_config.interpolation == "nearest"
+    assert reloaded.appearance.interpolation == "linear"

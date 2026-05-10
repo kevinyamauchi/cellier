@@ -5,7 +5,7 @@ import pytest
 
 from cellier.v2.data.image._image_memory_store import ImageMemoryStore
 from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-from cellier.v2.visuals._image_memory import ImageMemoryAppearance, ImageVisual
+from cellier.v2.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ def visual_model_3d(store_3d):
     return ImageVisual(
         name="test",
         data_store_id=str(store_3d.id),
-        appearance=ImageMemoryAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(color_map="viridis"),
     )
 
 
@@ -110,12 +110,12 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
         name="test",
         render_modes={"2d", "3d"},
     )
-    from cellier.v2.visuals._image_memory import ImageMemoryAppearance
+    from cellier.v2.visuals._image_memory import InMemoryImageAppearance
 
     controller.add_image(
         data=store_3d,
         scene_id=scene.id,
-        appearance=ImageMemoryAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(color_map="viridis"),
     )
 
     scene_manager = controller._render_manager._scenes[scene.id]

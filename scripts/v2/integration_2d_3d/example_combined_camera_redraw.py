@@ -39,7 +39,7 @@ from cellier.v2.controller import CellierController
 from cellier.v2.data.image import MultiscaleZarrDataStore
 from cellier.v2.render._config import RenderManagerConfig, SlicingConfig
 from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image import ImageAppearance
+from cellier.v2.visuals._image import MultiscaleImageAppearance
 
 # ---------------------------------------------------------------------------
 # Debug-logging CLI helper (power-user per-category:level syntax)
@@ -202,7 +202,7 @@ def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
         name="image_2d",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             lod_bias=LOD_BIAS,
@@ -245,7 +245,7 @@ def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
         name="volume_3d",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             lod_bias=LOD_BIAS,

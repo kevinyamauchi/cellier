@@ -90,6 +90,5 @@ class MeshVisual(BaseVisual):
     """
 
     visual_type: Literal["mesh_memory"] = "mesh_memory"
-    data_store_id: str
     appearance: MeshAppearance
     requires_camera_reslice: bool = Field(default=False, frozen=True)

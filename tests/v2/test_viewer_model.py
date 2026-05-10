@@ -7,7 +7,7 @@ from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsMa
 from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
+from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
 
 
 def _build_viewer(small_zarr_store):
@@ -24,7 +24,7 @@ def _build_viewer(small_zarr_store):
     )
     data = DataManager(stores={store.id: store})
 
-    appearance = ImageAppearance(
+    appearance = MultiscaleImageAppearance(
         color_map="viridis",
         clim=(0.0, 1.0),
         lod_bias=1.0,

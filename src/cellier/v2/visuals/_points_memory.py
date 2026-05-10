@@ -1,9 +1,9 @@
 # src/cellier/v2/visuals/_points_memory.py
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
@@ -28,7 +28,6 @@ class PointsMarkerAppearance(BaseAppearance):
         Master opacity multiplier in [0, 1].
     """
 
-    appearance_type: Literal["points_marker"] = "points_marker"
     color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     size: float = 5.0
     size_space: Literal["screen", "world"] = "screen"
@@ -40,18 +39,20 @@ class PointsVisual(BaseVisual):
 
     Parameters
     ----------
-    name : str
-        Human-readable label.
-    data_store_id : str
-        UUID of the backing PointsMemoryStore, as a string.
     appearance : PointsMarkerAppearance
         Initial appearance.
     requires_camera_reslice : bool
-        Always False — points do not depend on camera position.
+        Always False — points do not depend on camera position. Frozen.
     """
 
-    visual_type: Literal["points"] = "points"
-    name: str
-    data_store_id: str
+    visual_type: Literal["points_memory"] = "points_memory"
     appearance: PointsMarkerAppearance = Field(default_factory=PointsMarkerAppearance)
-    requires_camera_reslice: bool = False
+    requires_camera_reslice: bool = Field(default=False, frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_visual_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("visual_type") == "points":
+            data = dict(data)
+            data["visual_type"] = "points_memory"
+        return data

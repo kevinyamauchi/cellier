@@ -34,6 +34,51 @@ class AppearanceChangedEvent(NamedTuple):
     requires_reslice: bool
 
 
+class ChannelAppearanceChangedEvent(NamedTuple):
+    """Emitted when a field on one ``ChannelAppearance`` object changes.
+
+    Routed from the psygnal bridge in ``CellierController._wire_channels``
+    to subscribers that hold a ``GFXMultichannel*Visual``.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (typically the controller).
+    visual_id : UUID
+        Model-layer ID of the multichannel visual that owns the channel.
+    channel_index : int
+        Index of the channel whose appearance changed.
+    field_name : str
+        Name of the field that changed (e.g. ``"color_map"``, ``"clim"``).
+    new_value : Any
+        The new field value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    channel_index: int
+    field_name: str
+    new_value: Any
+
+
+class PickWriteChangedEvent(NamedTuple):
+    """Emitted when ``BaseVisual.pick_write`` changes.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (typically the controller).
+    visual_id : UUID
+        Model-layer ID of the visual whose pick_write changed.
+    pick_write : bool
+        The new pick_write value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    pick_write: bool
+
+
 class AABBChangedEvent(NamedTuple):
     source_id: UUID
     visual_id: UUID
@@ -248,6 +293,8 @@ CellierEventTypes = (
     DimsChangedEvent
     | CameraChangedEvent
     | AppearanceChangedEvent
+    | ChannelAppearanceChangedEvent
+    | PickWriteChangedEvent
     | AABBChangedEvent
     | VisualVisibilityChangedEvent
     | DataStoreMetadataChangedEvent

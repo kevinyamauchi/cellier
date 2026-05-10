@@ -39,7 +39,7 @@ from cellier.v2.scene.scene import Scene
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import DataManager, ViewerModel
 from cellier.v2.visuals._image import (
-    ImageAppearance,
+    MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
@@ -473,7 +473,7 @@ def _build_viewer_model(
     clim = (0, 8)
 
     # ── Appearance shared across 2D image visuals ─────────────────────────
-    common_2d_image_appearance = ImageAppearance(
+    common_2d_image_appearance = MultiscaleImageAppearance(
         color_map=OCTANT_CMAP,
         clim=clim,
         lod_bias=1.0,
@@ -488,7 +488,7 @@ def _build_viewer_model(
         gpu_budget_bytes_2d=64 * 1024**2,
     )
 
-    vol_image_appearance = ImageAppearance(
+    vol_image_appearance = MultiscaleImageAppearance(
         color_map=OCTANT_CMAP,
         clim=clim,
         lod_bias=1.0,
@@ -536,7 +536,7 @@ def _build_viewer_model(
     # ── Helper: build a visual model for one panel ────────────────────────
     def _make_image_visual(
         name: str,
-        appearance: ImageAppearance,
+        appearance: MultiscaleImageAppearance,
         render_config: MultiscaleImageRenderConfig,
     ) -> MultiscaleImageVisual:
         return MultiscaleImageVisual(

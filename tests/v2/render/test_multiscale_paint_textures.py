@@ -16,7 +16,7 @@ from cellier.v2.data.image import OMEZarrImageDataStore
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._image import (
-    ImageAppearance,
+    MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
@@ -73,7 +73,7 @@ def visual_setup(qtbot, tmp_path):
         name="t",
         data_store_id=str(data_store.id),
         level_transforms=data_store.level_transforms,
-        appearance=ImageAppearance(color_map="grays", clim=(0.0, 1.0)),
+        appearance=MultiscaleImageAppearance(color_map="grays", clim=(0.0, 1.0)),
         render_config=rc,
         transform=AffineTransform.identity(ndim=2),
     )

@@ -1,4 +1,4 @@
-"""Tests for ImageAppearance and MultiscaleImageVisual models."""
+"""Tests for MultiscaleImageAppearance and MultiscaleImageVisual models."""
 
 import uuid
 
@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from cellier.v2.transform import AffineTransform
 from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
-from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
+from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
 
 
 def _make_level_transforms_3d(factors):
@@ -29,7 +29,7 @@ def _make_level_transforms_3d(factors):
 
 def test_image_appearance_roundtrip(tmp_path):
     # Non-default values including the new LOD/frustum fields
-    original = ImageAppearance(
+    original = MultiscaleImageAppearance(
         color_map="viridis",
         clim=(0.1, 0.9),
         lod_bias=2.0,
@@ -38,17 +38,17 @@ def test_image_appearance_roundtrip(tmp_path):
     )
     path = tmp_path / "appearance.json"
     path.write_text(original.model_dump_json())
-    deserialized = ImageAppearance.model_validate_json(path.read_text())
+    deserialized = MultiscaleImageAppearance.model_validate_json(path.read_text())
     assert original.model_dump_json() == deserialized.model_dump_json()
 
     # force_level=None roundtrip
-    original_none = ImageAppearance(
+    original_none = MultiscaleImageAppearance(
         color_map="gray",
         force_level=None,
     )
     path2 = tmp_path / "appearance_none.json"
     path2.write_text(original_none.model_dump_json())
-    deserialized_none = ImageAppearance.model_validate_json(path2.read_text())
+    deserialized_none = MultiscaleImageAppearance.model_validate_json(path2.read_text())
     assert original_none.model_dump_json() == deserialized_none.model_dump_json()
 
 
@@ -59,7 +59,7 @@ def test_multiscale_image_visual_roundtrip(tmp_path):
         name="volume",
         data_store_id=store_id,
         level_transforms=transforms,
-        appearance=ImageAppearance(
+        appearance=MultiscaleImageAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             lod_bias=1.5,
@@ -78,7 +78,7 @@ def test_multiscale_image_visual_migration_from_downscale_factors():
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
         downscale_factors=[1, 2, 4],
-        appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
     )
     assert len(v.level_transforms) == 3
     np.testing.assert_allclose(
@@ -104,7 +104,9 @@ class _MinimalVisual(BaseVisual):
 
 
 def test_base_visual_requires_camera_reslice_defaults_false():
-    v = _MinimalVisual(name="test")
+    v = _MinimalVisual(
+        name="test", data_store_id="00000000-0000-0000-0000-000000000000"
+    )
     assert v.requires_camera_reslice is False
 
 
@@ -113,7 +115,7 @@ def test_multiscale_image_visual_requires_camera_reslice_true():
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
         level_transforms=_make_level_transforms_3d([1, 2]),
-        appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
     )
     assert v.requires_camera_reslice is True
 
@@ -123,7 +125,7 @@ def test_requires_camera_reslice_is_frozen():
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
         level_transforms=_make_level_transforms_3d([1, 2]),
-        appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
     )
     with pytest.raises((ValidationError, TypeError)):
         v.requires_camera_reslice = False
@@ -135,12 +137,16 @@ def test_requires_camera_reslice_is_frozen():
 
 
 def test_transform_defaults_to_identity():
-    v = _MinimalVisual(name="test")
+    v = _MinimalVisual(
+        name="test", data_store_id="00000000-0000-0000-0000-000000000000"
+    )
     np.testing.assert_array_equal(v.transform.matrix, np.eye(4, dtype=np.float32))
 
 
 def test_transform_field_fires_psygnal():
-    v = _MinimalVisual(name="test")
+    v = _MinimalVisual(
+        name="test", data_store_id="00000000-0000-0000-0000-000000000000"
+    )
     received = []
     v.events.transform.connect(lambda t: received.append(t))
     new_t = AffineTransform.from_scale((2.0, 2.0, 2.0))
@@ -155,9 +161,28 @@ def test_visual_roundtrip_with_non_identity_transform():
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",
         level_transforms=_make_level_transforms_3d([1, 2]),
-        appearance=ImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
         transform=t,
     )
     json_str = v.model_dump_json()
     v2 = MultiscaleImageVisual.model_validate_json(json_str)
     np.testing.assert_allclose(v2.transform.matrix, t.matrix, atol=1e-6)
+
+
+# ── Phase 2: MultiscaleImageAppearance inherits from BaseImageAppearance ──────────────
+
+
+def test_image_appearance_inherits_color_map_and_clim():
+    a = MultiscaleImageAppearance(color_map="viridis")
+    assert a.clim == (0.0, 1.0)
+    assert a.color_map is not None
+
+
+def test_image_appearance_inherits_interpolation():
+    a = MultiscaleImageAppearance(color_map="viridis", interpolation="linear")
+    assert a.interpolation == "linear"
+
+
+def test_image_appearance_interpolation_default():
+    a = MultiscaleImageAppearance(color_map="viridis")
+    assert a.interpolation == "nearest"

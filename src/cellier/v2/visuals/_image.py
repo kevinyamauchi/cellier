@@ -2,55 +2,43 @@
 
 from typing import Any, Literal
 
-from cmap import Colormap
-from psygnal import EventedModel
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import BaseVisual
 from cellier.v2.visuals._channel_appearance import ChannelAppearance
+from cellier.v2.visuals._image_memory import BaseImageAppearance
 
 
-class ImageAppearance(BaseAppearance):
-    """Appearance parameters for an image visual.
+class MultiscaleImageAppearance(BaseImageAppearance):
+    """Appearance parameters for a multiscale image visual.
+
+    Extends ``BaseImageAppearance`` with LOD-control and volume rendering
+    fields needed for multiscale brick-streamed visuals.
 
     Parameters
     ----------
     color_map : cmap.Colormap
-        The color map to use for the image. This is a cmap Colormap object.
-        You can pass the object or the name of a cmap colormap as a string.
-        https://cmap-docs.readthedocs.io/en/stable/
+        Inherited from ``BaseImageAppearance``.
     clim : tuple[float, float]
-        The contrast limits (min, max) used to normalise the image data
-        before colour mapping.  Default is (0.0, 1.0).
-    visible : bool
-        If True, the visual is visible.  Default is True.
+        Inherited from ``BaseImageAppearance``.
+    interpolation : str
+        Inherited from ``BaseImageAppearance``. Controls the shader sampler filter.
     lod_bias : float
-        Multiplier on the screen-space LOD threshold. Higher values force
-        finer levels. Default is 1.0.
+        Multiplier on the screen-space LOD threshold. Default 1.0.
     force_level : int | None
-        When set, overrides automatic LOD selection and always uses this
-        scale index. ``None`` means automatic. Default is None.
+        Overrides automatic LOD selection when set. Default None.
     frustum_cull : bool
-        When True, bricks outside the camera frustum are skipped during
-        brick planning. Default is True.
+        Skip bricks outside the camera frustum. Default True.
     iso_threshold : float
-        Isosurface threshold for 3D raycast rendering. Default is 0.2.
-    render_mode : Literal["iso", "mip", "smooth_iso", "attenuated_mip"]
-        Volume rendering mode.  ``"iso"`` for isosurface rendering,
-        ``"mip"`` for Maximum Intensity Projection.  ``"smooth_iso"`` uses a
-        soft trilinear density field for bisection and a 3x3x3 Sobel normal
-        kernel for smooth curved shading.  ``"attenuated_mip"`` is a
-        depth-attenuated MIP that biases the maximum toward the near surface.
-        Default is ``"iso"``.
+        Isosurface threshold for 3D raycast rendering. Default 0.2.
+    render_mode : str
+        Volume rendering mode. Default ``"iso"``.
     attenuation : float
         Depth attenuation coefficient for ``"attenuated_mip"`` mode.
-        Higher values penalise depth more aggressively; ``0`` degenerates to
-        standard MIP.  Default is ``1.0``.
+        Default 1.0.
     """
 
-    color_map: Colormap
-    clim: tuple[float, float] = (0.0, 1.0)
     lod_bias: float = 1.0
     force_level: int | None = None
     frustum_cull: bool = True
@@ -59,7 +47,8 @@ class ImageAppearance(BaseAppearance):
     attenuation: float = 1.0
 
 
-class MultiscaleImageRenderConfig(EventedModel):
+class MultiscaleImageRenderConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
     """Render-layer configuration for a multiscale image visual.
 
     These parameters control GPU resource allocation and shader selection.
@@ -73,8 +62,6 @@ class MultiscaleImageRenderConfig(EventedModel):
         Maximum GPU memory for the 3-D brick cache. Default 1 GiB.
     gpu_budget_bytes_2d : int
         Maximum GPU memory for the 2-D tile cache. Default 64 MiB.
-    interpolation : Literal["linear", "nearest"]
-        Sampler filter for the block shader. Default ``"linear"``.
     paint_max_tiles : int
         Maximum number of finest-level tiles that can be simultaneously
         painted on during one paint session.  Each slot consumes
@@ -87,7 +74,6 @@ class MultiscaleImageRenderConfig(EventedModel):
     block_size: int = 32
     gpu_budget_bytes: int = 1 * 1024**3
     gpu_budget_bytes_2d: int = 64 * 1024**2
-    interpolation: Literal["linear", "nearest"] = "nearest"
     paint_max_tiles: int = 512
 
 
@@ -105,7 +91,7 @@ class MultiscaleImageVisual(BaseVisual):
     level_transforms : list[AffineTransform]
         Per-level transforms mapping level-k voxel coords to level-0
         voxel coords.  ``level_transforms[0]`` is the identity.
-    appearance : ImageAppearance
+    appearance : MultiscaleImageAppearance
         The material to use for the labels visual.
     pick_write : bool
         If True, the visual can be picked.
@@ -117,10 +103,8 @@ class MultiscaleImageVisual(BaseVisual):
     """
 
     visual_type: Literal["multiscale_image"] = "multiscale_image"
-    data_store_id: str
     level_transforms: list[AffineTransform]
-    appearance: ImageAppearance
-    aabb: AABBParams = Field(default_factory=AABBParams)
+    appearance: MultiscaleImageAppearance
     render_config: MultiscaleImageRenderConfig = Field(
         default_factory=MultiscaleImageRenderConfig
     )
@@ -163,6 +147,9 @@ class MultichannelMultiscaleImageVisual(BaseVisual):
         Data-axis index for the channel dimension. Immutable after construction.
     channels : dict[int, ChannelAppearance]
         Per-channel appearance; keys are channel indices.
+    interpolation : str
+        Texture sampler filter applied to all channels. ``"nearest"`` or
+        ``"linear"``. Default ``"nearest"``.
     level_transforms : list[AffineTransform]
         Per-level voxel-level-k → voxel-level-0 AffineTransforms.
     render_config : MultiscaleImageRenderConfig
@@ -180,15 +167,11 @@ class MultichannelMultiscaleImageVisual(BaseVisual):
     )
     channel_axis: int = Field(frozen=True)
     channels: dict[int, ChannelAppearance]
-    data_store_id: str
+    interpolation: Literal["linear", "nearest"] = "nearest"
     level_transforms: list[AffineTransform]
-    aabb: AABBParams = Field(default_factory=AABBParams)
     render_config: MultiscaleImageRenderConfig = Field(
         default_factory=MultiscaleImageRenderConfig
     )
     max_channels_2d: int = 8
     max_channels_3d: int = 4
     requires_camera_reslice: bool = Field(default=True, frozen=True)
-
-    # BaseVisual requires an `appearance` field; provide a minimal placeholder.
-    appearance: BaseAppearance = Field(default_factory=BaseAppearance)

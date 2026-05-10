@@ -87,6 +87,7 @@ if TYPE_CHECKING:
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
         DataStoreMetadataChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -1130,14 +1131,9 @@ class GFXMultiscaleLabelVisual:
                 self.material_2d.label_keys_texture = keys_tex
                 self.material_2d.label_colors_texture = colors_tex
                 self.material_2d.n_entries = n_entries
-        elif field in ("colormap_mode", "render_mode"):
-            import warnings
-
-            warnings.warn(
-                f"LabelAppearance.{field} is frozen after construction; "
-                "create a new visual to change it.",
-                stacklevel=2,
-            )
+        elif field == "render_mode":
+            if self.material_3d is not None:
+                self.material_3d.render_mode = val
         # LOD fields — these affect planning, not GPU state; nothing to push.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
@@ -1145,6 +1141,12 @@ class GFXMultiscaleLabelVisual:
             self.node_3d.visible = event.visible
         if self.node_2d is not None:
             self.node_2d.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        """Update pick_write on all active materials."""
+        for mat in (self.material_3d, self.material_2d):
+            if mat is not None:
+                mat.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         if event.field_name == "enabled":

@@ -11,7 +11,7 @@ class ChannelAppearance(BaseAppearance):
 
     Parameters
     ----------
-    colormap : cmap.Colormap
+    color_map : cmap.Colormap
         Colormap applied to this channel's intensity values.
     clim : tuple[float, float]
         Contrast limits (min, max) for normalisation before colour-mapping.
@@ -23,7 +23,7 @@ class ChannelAppearance(BaseAppearance):
         Inherited from ``BaseAppearance``. Default ``True``.
     """
 
-    colormap: Colormap
+    color_map: Colormap
     clim: tuple[float, float] = (0.0, 1.0)
     render_mode_3d: Literal["mip", "iso"] = "mip"
     transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"] = (

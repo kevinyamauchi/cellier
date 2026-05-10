@@ -36,7 +36,7 @@ from cellier.v2.controller import CellierController
 from cellier.v2.data.label._label_memory_store import LabelMemoryStore
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._label_memory import LabelMemoryAppearance
+from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance
 
 # ── Data parameters ─────────────────────────────────────────────────────────
 N_T = 4
@@ -106,7 +106,7 @@ def main() -> None:
         render_modes={"2d", "3d"},
     )
 
-    appearance = LabelMemoryAppearance(
+    appearance = InMemoryLabelsAppearance(
         colormap_mode="random",
         render_mode="iso_categorical",
     )

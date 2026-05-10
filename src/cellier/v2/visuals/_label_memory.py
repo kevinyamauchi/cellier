@@ -4,16 +4,16 @@ from typing import Literal
 
 from pydantic import Field
 
-from cellier.v2.visuals._base_visual import AABBParams, BaseAppearance, BaseVisual
+from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
 
 
-class LabelMemoryAppearance(BaseAppearance):
-    """Appearance for in-memory label visuals.
+class BaseLabelsAppearance(BaseAppearance):
+    """Base appearance parameters shared by all label visuals.
 
     Parameters
     ----------
     colormap_mode : "random" or "direct"
-        Frozen after construction — changing requires a new visual.
+        Frozen — raises ``ValidationError`` on mutation.
     background_label : int
         Label ID treated as transparent (discarded). Default 0.
     salt : int
@@ -24,7 +24,7 @@ class LabelMemoryAppearance(BaseAppearance):
         3D rendering mode.
     """
 
-    colormap_mode: Literal["random", "direct"] = "random"
+    colormap_mode: Literal["random", "direct"] = Field(default="random", frozen=True)
     background_label: int = 0
     salt: int = 0
     color_dict: dict[int, tuple[float, float, float, float]] = Field(
@@ -33,21 +33,19 @@ class LabelMemoryAppearance(BaseAppearance):
     render_mode: Literal["iso_categorical", "flat_categorical"] = "iso_categorical"
 
 
+class InMemoryLabelsAppearance(BaseLabelsAppearance):
+    """Appearance parameters for an in-memory label visual."""
+
+
 class LabelMemoryVisual(BaseVisual):
     """Model-layer visual for in-memory label arrays.
 
     Parameters
     ----------
-    data_store_id : str
-        UUID string of a registered LabelMemoryStore.
-    appearance : LabelMemoryAppearance
+    appearance : InMemoryLabelsAppearance
         Colormap and rendering appearance.
-    aabb : AABBParams
-        Bounding box wireframe parameters.
     """
 
     visual_type: Literal["label_memory"] = "label_memory"
-    data_store_id: str
-    appearance: LabelMemoryAppearance
-    aabb: AABBParams = Field(default_factory=AABBParams)
+    appearance: InMemoryLabelsAppearance
     requires_camera_reslice: bool = Field(default=False, frozen=True)

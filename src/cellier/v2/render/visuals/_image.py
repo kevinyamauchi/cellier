@@ -77,6 +77,7 @@ if TYPE_CHECKING:
         AppearanceChangedEvent,
         DataStoreContentsChangedEvent,
         DataStoreMetadataChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -785,8 +786,8 @@ class GFXMultiscaleImageVisual:
     ) -> GFXMultiscaleImageVisual:
         """Build a ``GFXMultiscaleImageVisual`` from a ``MultiscaleImageVisual`` model.
 
-        All render-layer parameters (block size, GPU budgets, interpolation,
-        brick shader flag) are read from ``model.render_config``.
+        Block size and GPU budgets are read from ``model.render_config``.
+        Interpolation is read from ``model.appearance.interpolation``.
 
         Parameters
         ----------
@@ -808,7 +809,7 @@ class GFXMultiscaleImageVisual:
         """
         render_config = model.render_config
         block_size = render_config.block_size
-        interpolation = render_config.interpolation
+        interpolation = model.appearance.interpolation
         gpu_budget_bytes = render_config.gpu_budget_bytes
         gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
         threshold = model.appearance.iso_threshold
@@ -2481,6 +2482,10 @@ class GFXMultiscaleImageVisual:
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:
                     setattr(mat, event.field_name, event.new_value)
+        elif event.field_name == "interpolation":
+            for mat in (self.material_3d, self.material_2d):
+                if mat is not None:
+                    mat.interpolation = event.new_value
         elif event.field_name == "transparency_mode":
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:
@@ -2492,6 +2497,12 @@ class GFXMultiscaleImageVisual:
             self.node_3d.visible = event.visible
         if self.node_2d is not None:
             self.node_2d.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        """Update pick_write on all active materials."""
+        for mat in (self.material_3d, self.material_2d):
+            if mat is not None:
+                mat.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Apply an AABB parameter change.

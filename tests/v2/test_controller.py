@@ -22,7 +22,7 @@ from cellier.v2.render._config import CameraConfig, RenderManagerConfig
 from cellier.v2.scene.dims import CoordinateSystem
 from cellier.v2.transform import AffineTransform
 from cellier.v2.viewer_model import ViewerModel
-from cellier.v2.visuals._image import ImageAppearance, MultiscaleImageVisual
+from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
 from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
 from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
 from cellier.v2.visuals._points_memory import PointsMarkerAppearance
@@ -36,10 +36,10 @@ def _make_cs() -> CoordinateSystem:
     return CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
 
-def _make_appearance(**kwargs) -> ImageAppearance:
+def _make_appearance(**kwargs) -> MultiscaleImageAppearance:
     defaults = {"color_map": "viridis", "clim": (0.0, 1.0)}
     defaults.update(kwargs)
-    return ImageAppearance(**defaults)
+    return MultiscaleImageAppearance(**defaults)
 
 
 def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
@@ -255,7 +255,7 @@ def test_get_scene_by_name():
 
 
 def test_reslice_scene_reads_appearance_fields(small_zarr_store):
-    """reslice_scene must translate ImageAppearance fields into VisualRenderConfig."""
+    """reslice_scene must translate MultiscaleImageAppearance fields into VisualRenderConfig."""  # noqa: E501
     controller = CellierController()
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
@@ -393,10 +393,16 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
     controller._event_bus.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
+    reslice_calls = []
+    controller._render_manager.reslice_visual = (
+        lambda vid, dims, cfg: reslice_calls.append(vid)
+    )
 
     visual.appearance.lod_bias = 2.0
     assert len(events) == 1
     assert events[0].requires_reslice is True
+    assert len(reslice_calls) == 1
+    assert reslice_calls[0] == visual.id
 
 
 def test_appearance_bridge_force_level(small_zarr_store):
@@ -414,10 +420,61 @@ def test_appearance_bridge_force_level(small_zarr_store):
     controller._event_bus.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
+    reslice_calls = []
+    controller._render_manager.reslice_visual = (
+        lambda vid, dims, cfg: reslice_calls.append(vid)
+    )
 
     visual.appearance.force_level = 1
     assert len(events) == 1
     assert events[0].requires_reslice is True
+    assert len(reslice_calls) == 1
+    assert reslice_calls[0] == visual.id
+
+
+def test_appearance_bridge_frustum_cull(small_zarr_store):
+    from cellier.v2.events import AppearanceChangedEvent
+
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    store = _make_store(small_zarr_store)
+    visual = controller.add_image_multiscale(
+        data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
+    )
+
+    events = []
+    controller._event_bus.subscribe(
+        AppearanceChangedEvent, events.append, entity_id=visual.id
+    )
+    reslice_calls = []
+    controller._render_manager.reslice_visual = (
+        lambda vid, dims, cfg: reslice_calls.append(vid)
+    )
+
+    visual.appearance.frustum_cull = False
+
+    assert events[0].requires_reslice is True
+    assert len(reslice_calls) == 1
+    assert reslice_calls[0] == visual.id
+
+
+def test_appearance_bridge_clim_does_not_reslice(small_zarr_store):
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    store = _make_store(small_zarr_store)
+    visual = controller.add_image_multiscale(
+        data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
+    )
+    reslice_calls = []
+    controller._render_manager.reslice_visual = (
+        lambda vid, dims, cfg: reslice_calls.append(vid)
+    )
+
+    visual.appearance.clim = (0.2, 0.8)
+
+    assert len(reslice_calls) == 0
 
 
 def test_appearance_bridge_visible(small_zarr_store):
@@ -649,7 +706,9 @@ async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_
     )
 
     # Append a non-camera-reslice visual directly to the scene model.
-    non_reslice = _NonResliceVisual(name="static")
+    non_reslice = _NonResliceVisual(
+        name="static", data_store_id="00000000-0000-0000-0000-000000000000"
+    )
     scene.visuals.append(non_reslice)
 
     event = _make_camera_event(canvas_id, scene.id)

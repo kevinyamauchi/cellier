@@ -21,7 +21,7 @@ class QtClimRangeSlider:
     """Bidirectional contrast-limits slider wired to the cellier v2 bus.
 
     Wraps a ``superqt.QLabeledDoubleRangeSlider`` and keeps it in sync with
-    ``ImageAppearance.clim`` via ``AppearanceChangedEvent``.  Follows the v2
+    ``MultiscaleImageAppearance.clim`` via ``AppearanceChangedEvent``.  Follows the v2
     widget pattern: one UUID per widget, source-ID echo filtering, and signal
     blocking when applying model-driven updates.
 
