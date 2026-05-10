@@ -1535,15 +1535,17 @@ class CellierController:
             all canvases attached to *scene_id* are fitted.
         """
         gfx_scene = self._render_manager.get_scene(scene_id)
-        if canvas_id is not None:
-            canvas = self._render_manager._canvases.get(canvas_id)
+        targets = (
+            [canvas_id]
+            if canvas_id is not None
+            else list(self._scene_to_canvases.get(scene_id, []))
+        )
+        for cid in targets:
+            canvas = self._render_manager._canvases.get(cid)
             if canvas is not None:
                 canvas.show_object(gfx_scene)
-        else:
-            for cid in self._scene_to_canvases.get(scene_id, []):
-                canvas = self._render_manager._canvases.get(cid)
-                if canvas is not None:
-                    canvas.show_object(gfx_scene)
+                state = canvas.capture_camera_state()
+                self._update_camera_model(scene_id, cid, state)
 
     def add_canvas_overlay_model(
         self,
@@ -2410,6 +2412,9 @@ class CellierController:
             Camera up vector.
         """
         self._render_manager.look_at_visual(visual_id, canvas_id, view_direction, up)
+        scene_id = self._visual_to_scene[visual_id]
+        state = self.get_canvas_view(canvas_id).capture_camera_state()
+        self._update_camera_model(scene_id, canvas_id, state)
 
     def set_camera_depth_range(
         self,
@@ -2591,6 +2596,46 @@ class CellierController:
         # 7. Notify external observers.
         self._event_bus.emit(SceneRemovedEvent(source_id=self._id, scene_id=scene_id))
 
+    def remove_canvas(self, canvas_id: UUID) -> None:
+        """Remove a canvas from its scene, disconnecting all wiring.
+
+        Teardown order mirrors ``remove_scene`` for the canvas-level steps:
+        1. Cancel any pending camera-settle task.
+        2. Remove bus subscriptions owned by this canvas.
+        3. Update controller lookup maps.
+        4. Remove from the model layer.
+        5. Render-layer teardown (drops widget and GPU references).
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``canvas_id`` is not registered.
+        """
+        scene_id = self._canvas_to_scene[canvas_id]
+
+        # 1. Cancel any pending camera-settle task.
+        task = self._settle_tasks.pop(canvas_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+        # 2. Remove bus subscriptions owned by this canvas.
+        self._event_bus.unsubscribe_all(canvas_id)
+
+        # 3. Update controller lookup maps.
+        self._canvas_to_scene.pop(canvas_id)
+        self._scene_to_canvases[scene_id].remove(canvas_id)
+
+        # 4. Remove from the model layer.
+        self._model.scenes[scene_id].canvases.pop(canvas_id)
+
+        # 5. Render-layer teardown.
+        self._render_manager.remove_canvas(canvas_id)
+
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene, disconnecting all wiring.
 
@@ -2673,13 +2718,6 @@ class CellierController:
                 f"still referenced by visuals: {names}"
             )
         self._model.data.stores.pop(data_store_id)
-
-    def get_dims_widget(self, scene_id: UUID, parent: QWidget | None = None):
-        """Return a dims slider widget for a scene.
-
-        Not implemented in Phase 1.
-        """
-        raise NotImplementedError("get_dims_widget is not implemented in Phase 1.")
 
     # ------------------------------------------------------------------
     # External event subscriptions
@@ -2967,7 +3005,7 @@ class CellierController:
         """
         self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
 
-    def invalidate_painted_tiles_2d(
+    def _invalidate_painted_tiles_2d(
         self, visual_id: UUID, dirty_grid_coords: set[tuple[int, int]]
     ) -> int:
         """Evict the visible 2D-cache tiles for *visual_id* listed in dirty grid coords.
@@ -2997,7 +3035,7 @@ class CellierController:
             return 0
         return gfx_visual.invalidate_painted_tiles_2d(dirty_grid_coords)
 
-    def patch_painted_tiles_2d(
+    def _patch_painted_tiles_2d(
         self,
         visual_id: UUID,
         voxel_indices: np.ndarray,
@@ -3008,7 +3046,7 @@ class CellierController:
 
         Used by :class:`MultiscalePaintController._write_values` for
         sub-frame visible feedback in 2-D paint sessions.  Mirrors the
-        architectural pattern of :meth:`invalidate_painted_tiles_2d`.
+        architectural pattern of :meth:`_invalidate_painted_tiles_2d`.
 
         Parameters
         ----------
@@ -3036,7 +3074,7 @@ class CellierController:
             return 0
         return gfx_visual.patch_paint_texture(voxel_indices, values, displayed_axes)
 
-    def clear_painted_tiles_2d(self, visual_id: UUID) -> None:
+    def _clear_painted_tiles_2d(self, visual_id: UUID) -> None:
         """Clear the GPU paint textures for *visual_id*.
 
         Called by :class:`MultiscalePaintController.commit` and ``abort`` at
@@ -3049,7 +3087,7 @@ class CellierController:
             return
         gfx_visual.clear_paint_textures()
 
-    def on_visual_changed(
+    def on_appearance_changed(
         self,
         visual_id: UUID,
         callback: Callable[[AppearanceChangedEvent], None],
@@ -3087,6 +3125,213 @@ class CellierController:
             owner_id=owner_id,
             weak=weak,
         )
+
+    def on_visual_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[AppearanceChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Deprecated. Use ``on_appearance_changed`` instead."""
+        import warnings
+
+        warnings.warn(
+            "on_visual_changed is deprecated; use on_appearance_changed instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.on_appearance_changed(
+            visual_id, callback, owner_id=owner_id, weak=weak
+        )
+
+    def on_visibility_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualVisibilityChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired whenever the visibility of *visual_id* changes.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualVisibilityChangedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualVisibilityChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def set_visual_visible(self, visual_id: UUID, visible: bool) -> None:
+        """Show or hide a visual.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        visible :
+            ``True`` to show, ``False`` to hide.
+        """
+        self.update_appearance_field(visual_id, "visible", visible)
+
+    def on_scene_added(
+        self,
+        scene_id: UUID,
+        callback: Callable[[SceneAddedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *scene_id* is added.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``SceneAddedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            SceneAddedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_scene_removed(
+        self,
+        scene_id: UUID,
+        callback: Callable[[SceneRemovedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *scene_id* is removed.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``SceneRemovedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            SceneRemovedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_visual_added(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualAddedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *visual_id* is added.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualAddedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualAddedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_visual_removed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[VisualRemovedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when *visual_id* is removed.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``VisualRemovedEvent``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._event_bus.subscribe(
+            VisualRemovedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def cancel_pending_slices(self, scene_id: UUID) -> None:
+        """Cancel all in-flight slice requests for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id :
+            ID of the scene whose pending slices to cancel.
+        """
+        self._render_manager._slice_coordinator.cancel_scene(scene_id)
 
     def on_aabb_changed(
         self,

@@ -214,9 +214,8 @@ class OmeBrickViewer:
     def _on_toggle_clicked(self) -> None:
         from cellier.v2.events import DimsUpdateEvent
 
-        coordinator = self._controller._render_manager._slice_coordinator
         if self._active_mode == "3d":
-            coordinator.cancel_scene(self._scene.id)
+            self._controller.cancel_pending_slices(self._scene.id)
             self._active_mode = "2d"
             self._mode_label.setText("Mode: 2D")
             # Set slice_indices before changing displayed_axes so the dims
@@ -234,7 +233,7 @@ class OmeBrickViewer:
             for w in self._widget_3d:
                 w.setVisible(False)
         else:
-            coordinator.cancel_scene(self._scene.id)
+            self._controller.cancel_pending_slices(self._scene.id)
             self._active_mode = "3d"
             self._mode_label.setText("Mode: 3D")
             self._controller.incoming_events.emit(

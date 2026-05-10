@@ -163,33 +163,22 @@ def main() -> None:
     color_btn.clicked.connect(_randomize)
 
     # ── 5. Camera fit on first data delivery ─────────────────────────
-    scene_mgr = controller._render_manager._scenes[scene.id]
-    gfx_vis = scene_mgr.get_visual(visual.id)
     _fitted: set[str] = set()
 
-    _orig_3d = gfx_vis.on_data_ready
+    def _on_data_ready(event):
+        mode = _dim[0]
+        if mode not in _fitted:
+            _fitted.add(mode)
+            if mode == "3d":
+                controller.look_at_visual(
+                    visual.id, canvas_id, view_direction=(-1, -1, -1), up=(0, 0, 1)
+                )
+            else:
+                controller.look_at_visual(
+                    visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
+                )
 
-    def _patch_3d(batch):
-        _orig_3d(batch)
-        if "3d" not in _fitted:
-            _fitted.add("3d")
-            controller.look_at_visual(
-                visual.id, canvas_id, view_direction=(-1, -1, -1), up=(0, 0, 1)
-            )
-
-    gfx_vis.on_data_ready = _patch_3d
-
-    _orig_2d = gfx_vis.on_data_ready_2d
-
-    def _patch_2d(batch):
-        _orig_2d(batch)
-        if "2d" not in _fitted:
-            _fitted.add("2d")
-            controller.look_at_visual(
-                visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
-            )
-
-    gfx_vis.on_data_ready_2d = _patch_2d
+    controller.on_reslice_completed(visual.id, _on_data_ready, owner_id=controller._id)
 
     # ── 6. Initial reslice ───────────────────────────────────────────
     QTimer.singleShot(0, controller.reslice_all)

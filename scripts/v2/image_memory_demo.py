@@ -124,34 +124,22 @@ def main() -> None:
     aabb_check.toggled.connect(_on_aabb_toggled)
 
     # ── 5. Initial reslice + camera fit ────────────────────────────────
-    # Patch on_data_ready to fit the camera on the first delivery.
-    scene_mgr = controller._render_manager._scenes[scene.id]
-    gfx_vis = scene_mgr.get_visual(visual.id)
     _camera_fitted: set[str] = set()
 
-    _orig_3d = gfx_vis.on_data_ready
+    def _on_data_ready(event):
+        mode = _current_dim[0]
+        if mode not in _camera_fitted:
+            _camera_fitted.add(mode)
+            if mode == "3d":
+                controller.look_at_visual(
+                    visual.id, canvas_id, view_direction=(-1, -1, -1), up=(0, 0, 1)
+                )
+            else:
+                controller.look_at_visual(
+                    visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
+                )
 
-    def _patched_3d(batch):
-        _orig_3d(batch)
-        if "3d" not in _camera_fitted:
-            _camera_fitted.add("3d")
-            controller.look_at_visual(
-                visual.id, canvas_id, view_direction=(-1, -1, -1), up=(0, 0, 1)
-            )
-
-    gfx_vis.on_data_ready = _patched_3d
-
-    _orig_2d = gfx_vis.on_data_ready_2d
-
-    def _patched_2d(batch):
-        _orig_2d(batch)
-        if "2d" not in _camera_fitted:
-            _camera_fitted.add("2d")
-            controller.look_at_visual(
-                visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
-            )
-
-    gfx_vis.on_data_ready_2d = _patched_2d
+    controller.on_reslice_completed(visual.id, _on_data_ready, owner_id=controller._id)
 
     QTimer.singleShot(0, controller.reslice_all)
 

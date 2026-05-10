@@ -244,8 +244,7 @@ class MultichannelCells3dViewer:
     def _on_toggle_clicked(self) -> None:
         from cellier.v2.events import DimsUpdateEvent
 
-        coordinator = self._controller._render_manager._slice_coordinator
-        coordinator.cancel_scene(self._scene.id)
+        self._controller.cancel_pending_slices(self._scene.id)
 
         if self._is_3d:
             z = self._z_slider.value()

@@ -744,18 +744,16 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     # ── Post-construction: wire vol camera-fit on first data delivery ─────────
     vol_scene = controller.get_scene_by_name("vol")
     vol_image_visual = image_visuals["vol"]
-    vol_scene_manager = controller._render_manager._scenes[vol_scene.id]
-    vol_gfx_visual = vol_scene_manager.get_visual(vol_image_visual.id)
     vol_camera_fitted = [False]
-    original_on_data_ready = vol_gfx_visual.on_data_ready
 
-    def _on_vol_data_ready(batch):
-        original_on_data_ready(batch)
+    def _on_vol_data_ready(event):
         if not vol_camera_fitted[0]:
             vol_camera_fitted[0] = True
             controller.fit_camera(vol_scene.id)
 
-    vol_gfx_visual.on_data_ready = _on_vol_data_ready
+    controller.on_reslice_completed(
+        vol_image_visual.id, _on_vol_data_ready, owner_id=controller._id
+    )
 
     # ── Build canvas widgets ──────────────────────────────────────────────────
     axis_ranges = {0: (0, 300), 1: (0, 300), 2: (0, 300)}

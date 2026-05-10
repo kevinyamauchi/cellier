@@ -298,12 +298,6 @@ def test_to_file_roundtrip(tmp_path, small_zarr_store):
     assert len(next(iter(restored.scenes.values())).visuals) == 1
 
 
-def test_stubs_raise():
-    controller = CellierController()
-    with pytest.raises(NotImplementedError):
-        controller.get_dims_widget(uuid4())
-
-
 # ---------------------------------------------------------------------------
 # Event bus tests (headless — no Qt, no GPU)
 # ---------------------------------------------------------------------------

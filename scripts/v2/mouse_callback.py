@@ -103,23 +103,20 @@ def main() -> None:
 
     root.resize(600, 550)
 
-    # ── 4. Camera fit — patch on_data_ready_2d to fit once on first delivery ──
-    scene_mgr = controller._render_manager._scenes[scene.id]
-    gfx_vis = scene_mgr.get_visual(image_visual.id)
+    # ── 4. Camera fit on first delivery ──────────────────────────────────────
     _fitted = False
 
-    _orig = gfx_vis.on_data_ready_2d
-
-    def _patched(batch):
+    def _on_first_data(event):
         nonlocal _fitted
-        _orig(batch)
         if not _fitted:
             _fitted = True
             controller.look_at_visual(
                 image_visual.id, canvas_id, view_direction=(0, 0, -1), up=(0, 1, 0)
             )
 
-    gfx_vis.on_data_ready_2d = _patched
+    controller.on_reslice_completed(
+        image_visual.id, _on_first_data, owner_id=controller._id
+    )
     QTimer.singleShot(0, controller.reslice_all)
 
     # ── 5. Mouse callbacks ───────────────────────────────────────────────
