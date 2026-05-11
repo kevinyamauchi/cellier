@@ -552,6 +552,7 @@ class GFXMultiscaleImageVisual:
         clim: tuple[float, float] = (0.0, 1.0),
         threshold: float = 0.5,
         attenuation: float = 1.0,
+        render_mode: str = "iso",
         interpolation: str = "nearest",
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
@@ -627,6 +628,22 @@ class GFXMultiscaleImageVisual:
         self._aabb_enabled: bool = aabb_enabled
         self._aabb_color: str = aabb_color
         self._aabb_line_width: float = aabb_line_width
+
+        # Shadow appearance/config fields so lazy init can use up-to-date
+        # values even before the corresponding material has been built.
+        self._threshold: float = threshold
+        self._attenuation: float = attenuation
+        self._volume_render_mode: str = render_mode
+        self._interpolation: str = interpolation
+        self._pick_write: bool = pick_write
+        self._block_size: int = (
+            volume_geometry.block_size
+            if volume_geometry is not None
+            else image_geometry_2d.block_size
+            if image_geometry_2d is not None
+            else 32
+        )
+        self._gpu_budget_bytes_2d: int = gpu_budget_bytes_2d
 
         # ── 3D GPU resources (only when volume_geometry is provided) ───
         self._block_cache_3d: BlockCache3D | None = None
@@ -739,6 +756,7 @@ class GFXMultiscaleImageVisual:
                 pick_write=pick_write,
             )
             self._inner_node_3d = inner
+            self.material_3d.render_mode = self._volume_render_mode
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
             # Build AABB line with known geometry (geometry available at construction).
@@ -814,10 +832,11 @@ class GFXMultiscaleImageVisual:
         gpu_budget_bytes_2d = render_config.gpu_budget_bytes_2d
         threshold = model.appearance.iso_threshold
         attenuation = model.appearance.attenuation
+        render_mode = model.appearance.render_mode
 
         if len(displayed_axes) == 3:
             axes_3d: tuple[int, ...] | None = displayed_axes
-            axes_2d: tuple[int, ...] = displayed_axes[-2:]
+            axes_2d: tuple[int, ...] | None = None
         else:
             axes_3d = None
             axes_2d = displayed_axes
@@ -837,10 +856,11 @@ class GFXMultiscaleImageVisual:
                 block_size=block_size,
             )
 
-        # Build 2D geometry when 2D rendering is requested.  Same pattern:
-        # project shapes and transforms onto the 2 displayed data axes.
+        # Build 2D geometry when 2D rendering is requested and axes are known.
+        # When starting in 3D mode, axes_2d is None and geometry is deferred
+        # to the first call to rebuild_geometry with len(displayed_axes)==2.
         image_geometry_2d: ImageGeometry3D | None = None
-        if "2d" in render_modes:
+        if "2d" in render_modes and axes_2d is not None:
             shapes_2d = [select_axes(s, axes_2d) for s in level_shapes]
             transforms_2d = [t.select_axes(axes_2d) for t in model.level_transforms]
             image_geometry_2d = ImageGeometry3D(
@@ -863,6 +883,7 @@ class GFXMultiscaleImageVisual:
             clim=clim,
             threshold=threshold,
             attenuation=attenuation,
+            render_mode=render_mode,
             interpolation=interpolation,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
@@ -894,6 +915,8 @@ class GFXMultiscaleImageVisual:
             return self._volume_geometry.n_levels
         if self._image_geometry_2d is not None:
             return self._image_geometry_2d.n_levels
+        if self._full_level_shapes:
+            return len(self._full_level_shapes)
         raise RuntimeError("No geometry available")
 
     # ── Node selection ───────────────────────────────────────────────
@@ -956,18 +979,22 @@ class GFXMultiscaleImageVisual:
 
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
-            if self._volume_geometry is not None:
+            if self._volume_geometry is None:
+                self._lazy_init_3d(displayed_axes)
+            else:
                 shapes_3d = [
                     tuple(s[ax] for ax in displayed_axes) for s in level_shapes
                 ]
                 if shapes_3d != self._volume_geometry.level_shapes:
                     self._volume_geometry.update(shapes_3d)
                     self._rebuild_3d_resources()
-                new_node = self.node_3d
+            new_node = self.node_3d
 
         if "2d" in self.render_modes and len(displayed_axes) == 2:
             old_node = self.node_2d
-            if self._image_geometry_2d is not None:
+            if self._image_geometry_2d is None:
+                self._lazy_init_2d(displayed_axes)
+            else:
                 shapes_2d_full = [
                     tuple(s[ax] for ax in displayed_axes) for s in level_shapes
                 ]
@@ -975,9 +1002,136 @@ class GFXMultiscaleImageVisual:
                 if shapes_2d != self._image_geometry_2d.level_shapes:
                     self._image_geometry_2d.update(shapes_2d)
                     self._rebuild_2d_resources()
-                new_node = self.node_2d
+            new_node = self.node_2d
 
         return old_node, new_node
+
+    def _lazy_init_3d(self, displayed_axes: tuple[int, ...]) -> None:
+        """Build 3D GPU resources on first entry into 3D mode.
+
+        Called by ``rebuild_geometry`` when ``_volume_geometry is None`` and
+        the viewer is switching to 3D for the first time.  Sets
+        ``node_3d.local.matrix`` directly — does NOT call
+        ``_update_node_matrix`` so ``node_2d`` (if already built) is left
+        unchanged.
+        """
+        shapes_3d = [select_axes(s, displayed_axes) for s in self._full_level_shapes]
+        transforms_3d = [t.select_axes(displayed_axes) for t in self._level_transforms]
+        self._volume_geometry = MultiscaleBrickLayout3D(
+            level_shapes=shapes_3d,
+            level_transforms=transforms_3d,
+            block_size=self._block_size,
+        )
+        cache_parameters_3d = compute_block_cache_parameters_3d(
+            block_size=self._volume_geometry.block_size,
+            gpu_budget_bytes=self._gpu_budget_bytes,
+            overlap=3,
+        )
+        self._block_cache_3d = BlockCache3D(cache_parameters=cache_parameters_3d)
+        self._lut_manager_3d = LutIndirectionManager3D(
+            base_layout=self._volume_geometry.base_layout,
+            n_levels=self._volume_geometry.n_levels,
+            level_scale_vecs_data=self._volume_geometry._scale_vecs_data,
+        )
+        ds = self._volume_geometry.level_shapes[0]
+        self._dataset_size = np.asarray(
+            swap_axes(tuple(float(s) for s in ds), (2, 1, 0)),
+            dtype=np.float64,
+        )
+        _check_transform_no_rotation(self._transform)
+        self._norm_size = _norm_size_from_transform(
+            self._transform, displayed_axes, self._dataset_size
+        )
+        self._norm_size_axes = displayed_axes
+        self._vol_params_buffer = build_vol_params_buffer(
+            norm_size=self._norm_size,
+            dataset_size=self._dataset_size,
+            base_layout=self._volume_geometry.base_layout,
+            cache_info=self._block_cache_3d.info,
+        )
+        self._brick_scales_buffer = build_brick_scales_buffer(
+            self._volume_geometry._scale_vecs_data
+        )
+        if self.material_2d is not None:
+            colormap = self.material_2d.map
+            clim = self.material_2d.clim
+        else:
+            colormap = gfx.cm.viridis
+            clim = (0.0, 1.0)
+        inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+            colormap=colormap,
+            clim=clim,
+            threshold=self._threshold,
+            attenuation=self._attenuation,
+            pick_write=self._pick_write,
+        )
+        self.material_3d.render_mode = self._volume_render_mode
+        self._inner_node_3d = inner
+        self._aabb_line_3d = self._build_aabb_line_3d()
+        self.node_3d = gfx.Group()
+        self.node_3d.add(inner)
+        self.node_3d.add(self._aabb_line_3d)
+        sub = self._transform.select_axes(displayed_axes)
+        data_to_world = _pygfx_matrix(sub)
+        m = compose_world_transform(data_to_world, self._dataset_size, self._norm_size)
+        self.node_3d.local.matrix = m
+
+    def _lazy_init_2d(self, displayed_axes: tuple[int, ...]) -> None:
+        """Build 2D GPU resources on first entry into 2D mode.
+
+        Called by ``rebuild_geometry`` when ``_image_geometry_2d is None`` and
+        the viewer is switching to 2D for the first time.  Sets
+        ``node_2d.local.matrix`` directly — does NOT call
+        ``_update_node_matrix`` so ``node_3d`` (if already built) is left
+        unchanged.
+        """
+        shapes_2d_full = [
+            select_axes(s, displayed_axes) for s in self._full_level_shapes
+        ]
+        shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
+        transforms_2d = [t.select_axes(displayed_axes) for t in self._level_transforms]
+        self._image_geometry_2d = ImageGeometry3D(
+            level_shapes=shapes_2d,
+            block_size=self._block_size,
+            n_levels=len(self._full_level_shapes),
+            level_transforms=transforms_2d,
+        )
+        cache_parameters_2d = compute_block_cache_parameters_2d(
+            gpu_budget_bytes=self._gpu_budget_bytes_2d,
+            block_size=self._image_geometry_2d.block_size,
+        )
+        self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
+        self._lut_manager_2d = LutIndirectionManager2D(
+            base_layout=self._image_geometry_2d.base_layout,
+            n_levels=self._image_geometry_2d.n_levels,
+            scale_vecs_data=self._image_geometry_2d._scale_vecs_data,
+        )
+        self._lut_params_buffer_2d = build_lut_params_buffer_2d(
+            self._image_geometry_2d.base_layout, cache_parameters_2d
+        )
+        self._block_scales_buffer_2d = build_block_scales_buffer_2d(
+            level_scale_vecs_data=self._image_geometry_2d._scale_vecs_data,
+        )
+        self._allocate_paint_resources_2d()
+        if self.material_3d is not None:
+            colormap = self.material_3d.map
+            clim = self.material_3d.clim
+        else:
+            colormap = gfx.cm.viridis
+            clim = (0.0, 1.0)
+        inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
+            colormap=colormap,
+            clim=clim,
+            interpolation=self._interpolation,
+            pick_write=self._pick_write,
+        )
+        self._inner_node_2d = inner
+        self._aabb_line_2d = self._build_aabb_line_2d()
+        self.node_2d = gfx.Group()
+        self.node_2d.add(inner)
+        self.node_2d.add(self._aabb_line_2d)
+        sub = self._transform.select_axes(displayed_axes)
+        self.node_2d.local.matrix = _pygfx_matrix(sub)
 
     def _rebuild_3d_resources(self) -> None:
         """Rebuild 3D GPU resources after geometry update."""
@@ -2338,14 +2492,17 @@ class GFXMultiscaleImageVisual:
             if self.material_2d is not None:
                 self.material_2d.clim = event.new_value
         elif event.field_name == "iso_threshold":
+            self._threshold = float(event.new_value)
             if self.material_3d is not None:
-                self.material_3d.threshold = float(event.new_value)
+                self.material_3d.threshold = self._threshold
         elif event.field_name == "attenuation":
+            self._attenuation = float(event.new_value)
             if self.material_3d is not None:
-                self.material_3d.attenuation = float(event.new_value)
+                self.material_3d.attenuation = self._attenuation
         elif event.field_name == "render_mode":
+            self._volume_render_mode = event.new_value
             if self.material_3d is not None:
-                self.material_3d.render_mode = event.new_value
+                self.material_3d.render_mode = self._volume_render_mode
         elif event.field_name == "render_order":
             if self.node_3d is not None:
                 self.node_3d.render_order = event.new_value
@@ -2360,9 +2517,10 @@ class GFXMultiscaleImageVisual:
                 if mat is not None:
                     setattr(mat, event.field_name, event.new_value)
         elif event.field_name == "interpolation":
+            self._interpolation = event.new_value
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:
-                    mat.interpolation = event.new_value
+                    mat.interpolation = self._interpolation
         elif event.field_name == "transparency_mode":
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:
