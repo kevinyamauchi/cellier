@@ -40,7 +40,7 @@ class QtLodBiasSlider:
     initial_lod_bias :
         Starting value — typically ``visual_model.appearance.lod_bias``.
     lod_range :
-        ``(min, max)`` for the slider range.  Defaults to ``(0.0, 5.0)``.
+        ``(min, max)`` for the slider range.  Defaults to ``(1e-6, 5.0)``.
     decimals :
         Number of decimal places shown in the slider label.  Default is ``2``.
     parent :
@@ -55,7 +55,7 @@ class QtLodBiasSlider:
         visual_id: UUID,
         *,
         initial_lod_bias: float = 1.0,
-        lod_range: tuple[float, float] = (0.0, 5.0),
+        lod_range: tuple[float, float] = (1e-6, 5.0),
         decimals: int = 2,
         parent=None,
     ) -> None:

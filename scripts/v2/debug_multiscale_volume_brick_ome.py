@@ -252,7 +252,6 @@ class OmeBrickViewer:
     # ── Shared callbacks ──────────────────────────────────────────────
 
     def _on_reslice_clicked(self) -> None:
-        print("[DEBUG] Manual reslice triggered")
         self._controller.reslice_scene(self._scene.id)
 
     # ── 3D-only callbacks ─────────────────────────────────────────────
@@ -275,11 +274,6 @@ class OmeBrickViewer:
                 self._visual_model.id, "frustum_cull", False
             )
             self._status_label.setText(f"Mode: Level {coarsest} all bricks (flat)")
-        print(
-            f"[DEBUG] Pipeline mode changed: "
-            f"force_level={self._visual_model.appearance.force_level}, "
-            f"frustum_cull={self._visual_model.appearance.frustum_cull}"
-        )
 
 
 # ---------------------------------------------------------------------------

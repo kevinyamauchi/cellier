@@ -321,10 +321,18 @@ class TileManager3D:
 
         ``tilemap`` is not touched -- only committed (valid) bricks remain
         renderable after this call.
+
+        ``_pending_plan_count`` and ``_pending_demote`` are reset so that
+        a subsequent ``stage()`` starts from a clean accounting state.
+        Without this reset, a cancel followed by a plan whose miss count
+        happens to equal the old stale ``_pending_plan_count`` would
+        cause ``_flush_pending_demote`` to fire at the wrong time.
         """
         for slot_idx in self._in_flight:
             self.free_slots.append(slot_idx)
         self._in_flight.clear()
+        self._pending_plan_count = 0
+        self._pending_demote.clear()
 
     # -- Internal helpers ------------------------------------------------
 

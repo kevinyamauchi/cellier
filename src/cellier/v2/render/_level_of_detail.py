@@ -45,9 +45,9 @@ CORNER_OFFSETS = np.array(
 def build_level_grids(
     base_layout: BlockLayout3D,
     n_levels: int,
+    scale_vecs_shader: list[np.ndarray],
+    translation_vecs_shader: list[np.ndarray],
     level_shapes: list[tuple[int, ...]] | None = None,
-    scale_vecs_shader: list[np.ndarray] | None = None,
-    translation_vecs_shader: list[np.ndarray] | None = None,
 ) -> list[dict]:
     """Precompute static per-level coarse grid arrays.  Called once at startup.
 
@@ -64,13 +64,14 @@ def build_level_grids(
         Layout of the finest (level 1) resolution.
     n_levels : int
         Total number of LOD levels.
+    scale_vecs_shader : list[np.ndarray]
+        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
+    translation_vecs_shader : list[np.ndarray]
+        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
     level_shapes : list[tuple[int, ...]] or None
         ``(D, H, W)`` shape per level (data order).  When ``None``,
-        falls back to power-of-2 derivation from ``base_layout``.
-    scale_vecs_shader : list[np.ndarray] or None
-        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
-    translation_vecs_shader : list[np.ndarray] or None
-        ``(3,)`` per level in shader order ``(x=W, y=H, z=D)``.
+        coarse grid dims are derived from ``base_layout`` using
+        power-of-2 downsampling.
 
     Returns
     -------
@@ -81,6 +82,8 @@ def build_level_grids(
             ``[level, gz_c, gy_c, gx_c]`` for every coarse brick.
         ``centres`` : ndarray, shape (M_k, 3), dtype float64
             World-space ``(x, y, z)`` centre of each coarse brick.
+        ``half_extents`` : ndarray, shape (3,), dtype float64
+            Half-brick-width per axis in world space ``(x, y, z)``.
     """
     bs = base_layout.block_size
     gd, gh, gw = base_layout.grid_dims
@@ -116,23 +119,17 @@ def build_level_grids(
         arr = np.stack([lvl_col, gz_c, gy_c, gx_c], axis=1)  # (M_k, 4)
 
         centres = np.empty((len(gz_c), 3), dtype=np.float64)
-        if scale_vecs_shader is not None and translation_vecs_shader is not None:
-            sv = scale_vecs_shader[k]  # (sx, sy, sz) = (W, H, D)
-            tv = translation_vecs_shader[k]  # (tx, ty, tz)
-            bw_x = float(bs * sv[0])  # W axis
-            bw_y = float(bs * sv[1])  # H axis
-            bw_z = float(bs * sv[2])  # D axis
-            centres[:, 0] = (gx_c + 0.5) * bw_x + tv[0]  # x = W
-            centres[:, 1] = (gy_c + 0.5) * bw_y + tv[1]  # y = H
-            centres[:, 2] = (gz_c + 0.5) * bw_z + tv[2]  # z = D
-        else:
-            scale = 1 << k
-            bw = float(bs * scale)
-            centres[:, 0] = (gx_c + 0.5) * bw  # x = W axis
-            centres[:, 1] = (gy_c + 0.5) * bw  # y = H axis
-            centres[:, 2] = (gz_c + 0.5) * bw  # z = D axis
+        sv = scale_vecs_shader[k]  # (sx, sy, sz) = (W, H, D)
+        tv = translation_vecs_shader[k]  # (tx, ty, tz)
+        bw_x = float(bs * sv[0])  # W axis
+        bw_y = float(bs * sv[1])  # H axis
+        bw_z = float(bs * sv[2])  # D axis
+        centres[:, 0] = (gx_c + 0.5) * bw_x + tv[0]  # x = W
+        centres[:, 1] = (gy_c + 0.5) * bw_y + tv[1]  # y = H
+        centres[:, 2] = (gz_c + 0.5) * bw_z + tv[2]  # z = D
 
-        grids.append({"arr": arr, "centres": centres})
+        half_extents = np.array([bw_x / 2.0, bw_y / 2.0, bw_z / 2.0], dtype=np.float64)
+        grids.append({"arr": arr, "centres": centres, "half_extents": half_extents})
 
     return grids
 
@@ -201,14 +198,22 @@ def select_levels_from_cache(
         diff = centres - cam
         dist = np.sqrt((diff * diff).sum(axis=1))
 
+        if level > 1:
+            abs_d = np.abs(diff)
+            max_corner_dist = np.sqrt(((abs_d + grid["half_extents"]) ** 2).sum(axis=1))
+        else:
+            max_corner_dist = dist
+
         if level == 1:
             mask = (
                 dist < thresholds[0] if thresholds else np.ones(len(dist), dtype=bool)
             )
         elif level == n_levels:
-            mask = dist >= thresholds[level - 2]
+            mask = max_corner_dist >= thresholds[level - 2]
         else:
-            mask = (dist >= thresholds[level - 2]) & (dist < thresholds[level - 1])
+            mask = (max_corner_dist >= thresholds[level - 2]) & (
+                dist < thresholds[level - 1]
+            )
 
         if mask.any():
             parts.append(arr_k[mask])
