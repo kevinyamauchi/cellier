@@ -321,9 +321,9 @@ class MultiscaleBrickLayout3D:
         self._level_grids = build_level_grids(
             self.base_layout,
             self.n_levels,
+            self._scale_vecs_shader,
+            self._translation_vecs_shader,
             level_shapes=self.level_shapes,
-            scale_vecs_shader=self._scale_vecs_shader,
-            translation_vecs_shader=self._translation_vecs_shader,
         )
 
     def update(self, level_shapes: list[tuple[int, ...]]) -> None:
@@ -1113,7 +1113,8 @@ class GFXMultiscaleImageVisual:
         screen_height_px : float
             Viewport height in pixels.
         lod_bias : float
-            Multiplicative LOD bias.
+            Bias applied to LOD distance thresholds. Values > 1 prefer coarser
+            levels; values < 1 prefer finer. Clamped to a minimum of 1e-6.
         force_level : int or None
             Override level; ``None`` lets LOD selection choose.
 
@@ -1127,7 +1128,7 @@ class GFXMultiscaleImageVisual:
             return np.empty((0, 4), dtype=np.int64)
 
         if self._last_displayed_axes is None:
-            raise RuntimeError("build_slice_request requires displayed_axes to be set.")
+            raise RuntimeError("_plan_bricks requires displayed_axes to be set.")
         if len(self._last_displayed_axes) != 3:
             raise ValueError(
                 f"_plan_bricks expects 3D display, got "
@@ -1140,9 +1141,10 @@ class GFXMultiscaleImageVisual:
         camera_pos_data = cam_data_zyx[[2, 1, 0]]
 
         if force_level is None and fov_y_rad > 0:
+            safe_bias = max(lod_bias, 1e-6)
             focal_half_height_world = (screen_height_px / 2.0) / np.tan(fov_y_rad / 2.0)
             thresholds: list[float] | None = [
-                geo._level_scale_factors[k - 1] * focal_half_height_world * lod_bias
+                geo._level_scale_factors[k - 1] * focal_half_height_world / safe_bias
                 for k in range(1, geo.n_levels)
             ]
         else:
@@ -1195,6 +1197,12 @@ class GFXMultiscaleImageVisual:
         # 4. Budget truncation
         n_budget = self._block_cache_3d.info.n_slots - 1
         if len(brick_arr) > n_budget:
+            _GPU_LOGGER.warning(
+                "budget_truncation  pre=%d  budget=%d  dropped=%d",
+                len(brick_arr),
+                n_budget,
+                len(brick_arr) - n_budget,
+            )
             brick_arr = brick_arr[:n_budget]
 
         return brick_arr
@@ -1501,8 +1509,8 @@ class GFXMultiscaleImageVisual:
         screen_height_px : float
             Viewport height in logical pixels.
         lod_bias : float
-            Multiplier on the computed LOD thresholds. Values > 1 favour
-            coarser levels; values < 1 favour finer levels.
+            Bias applied to LOD distance thresholds. Values > 1 prefer coarser
+            levels; values < 1 prefer finer. Clamped to a minimum of 1e-6.
         dims_state : DimsState or None
             Current dimension state.
         force_level : int or None
@@ -1515,6 +1523,8 @@ class GFXMultiscaleImageVisual:
         t_plan_start = time.perf_counter()
         self._frame_number += 1
         geo = self._volume_geometry
+        if geo is None or self._block_cache_3d is None:
+            return []
 
         # Record the current slice coordinate so non-displayed axis positions
         # are embedded in every BlockKey3D (mirrors the 2D path).
@@ -1529,9 +1539,6 @@ class GFXMultiscaleImageVisual:
             if displayed != self._last_displayed_axes:
                 self._update_node_matrix(displayed)
 
-        # Camera / frustum are always 3D from pygfx -- use the 3D
-        # sub-transform projected onto the displayed axes.  Display rank
-        # must be 3 here (validated upstream by AxisAlignedSelection).
         if self._last_displayed_axes is None:
             raise RuntimeError(
                 "build_slice_request requires displayed_axes to be set. "
@@ -1542,120 +1549,20 @@ class GFXMultiscaleImageVisual:
                 f"build_slice_request expects 3D display, got "
                 f"displayed_axes={self._last_displayed_axes}"
             )
-        sub_3d = self._transform.select_axes(self._last_displayed_axes)
-        # level_grids["centres"], bricks_in_frustum_arr, and sort_arr_by_distance
-        # all work in shader order (x=W, y=H, z=D) level-0 voxel space.
-        # sub_3d (AffineTransform) operates in data-axis order (z,y,x), whereas
-        # pygfx world coords are in (x,y,z). Reverse axes before imap and back
-        # after to land in the correct (x,y,z) voxel space.
-        cam_zyx = camera_pos_world[[2, 1, 0]]
-        cam_data_zyx = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()
-        camera_pos_data = cam_data_zyx[[2, 1, 0]]  # back to shader (x,y,z)
 
-        # Compute LOD thresholds in level-0 voxel space.
-        # Derivation: a level-k brick is (block_size x scale_k) voxels wide =
-        # (block_size x scale_k x voxel_world_size) world units wide.  At
-        # voxel-space distance d, the world distance is (d x voxel_world_size),
-        # so apparent pixels = (block_size x scale_k x voxel_world_size) /
-        # (d x voxel_world_size) x focal_half_height_world.  The voxel_world_size
-        # terms cancel, leaving threshold = scale_k x focal_half_height_world.
-        # focal_half_height_world is therefore used directly as a voxel-space
-        # distance with no unit conversion required.
-        if force_level is None and fov_y_rad > 0:
-            focal_half_height_world = (screen_height_px / 2.0) / np.tan(fov_y_rad / 2.0)
-            thresholds: list[float] | None = [
-                geo._level_scale_factors[k - 1] * focal_half_height_world * lod_bias
-                for k in range(1, geo.n_levels)
-            ]
-        else:
-            thresholds = None
-
-        if frustum_corners_world is not None:
-            corners_flat = frustum_corners_world.reshape(-1, 3)
-            corners_flat_zyx = corners_flat[:, [2, 1, 0]]
-            corners_data_flat_zyx = sub_3d.imap_coordinates(corners_flat_zyx)
-            corners_data = corners_data_flat_zyx[:, [2, 1, 0]].reshape(
-                frustum_corners_world.shape
-            )
-            frustum_planes = frustum_planes_from_corners(corners_data)
-        else:
-            frustum_planes = None
-
-        # Slice indices are mapped per-level via composed transforms
-        # (world → level-k) inside _build_axis_selections.
-        # 1. LOAD selection
-        _PERF_LOGGER.debug(
-            "[frame %d]  camera_pos_world_xyz=%s  camera_pos_voxel_xyz=%s",
-            self._frame_number,
-            np.round(camera_pos_world, 1).tolist(),
-            np.round(camera_pos_data, 1).tolist(),
+        # Steps 1-4: LOD selection, distance sort, frustum cull, budget truncation.
+        brick_arr = self._plan_bricks(
+            camera_pos_world,
+            frustum_corners_world,
+            fov_y_rad,
+            screen_height_px,
+            lod_bias,
+            force_level,
         )
-        t0 = time.perf_counter()
-        if force_level is not None:
-            brick_arr = select_levels_arr_forced(
-                geo.base_layout, force_level, geo._level_grids
-            )
-        else:
-            brick_arr = select_levels_from_cache(
-                geo._level_grids,
-                geo.n_levels,
-                camera_pos_data,
-                thresholds=thresholds,
-                base_layout=geo.base_layout,
-            )
-        lod_select_ms = (time.perf_counter() - t0) * 1000
+        if not len(brick_arr):
+            return []
 
-        # Log min/max brick-centre distances at the finest level for diagnosis.
-        finest_centres = geo._level_grids[0]["centres"]  # (M, 3) voxel space
-        if len(finest_centres):
-            cam = np.asarray(camera_pos_data, dtype=np.float64)
-            dists = np.sqrt(((finest_centres - cam) ** 2).sum(axis=1))
-            _PERF_LOGGER.debug(
-                "[frame %d]  brick_dist  min=%.1f  max=%.1f  median=%.1f"
-                "  (finest level, voxel space)",
-                self._frame_number,
-                dists.min(),
-                dists.max(),
-                float(np.median(dists)),
-            )
-
-        # 2. Distance sort — brick centres and camera are both in level-0 voxel space.
-        t0 = time.perf_counter()
-        brick_arr = sort_arr_by_distance(
-            brick_arr,
-            camera_pos_data,
-            geo.block_size,
-            scale_vecs_shader=geo._scale_arr_shader,
-            translation_vecs_shader=geo._translation_arr_shader,
-        )
-        distance_sort_ms = (time.perf_counter() - t0) * 1000
-
-        n_total = len(brick_arr)
-
-        # 3. Frustum cull
-        cull_timings: dict = {}
-        n_culled = 0
-        frustum_cull_ms = 0.0
-        if frustum_planes is not None:
-            t0 = time.perf_counter()
-            brick_arr, cull_timings = bricks_in_frustum_arr(
-                brick_arr,
-                geo.block_size,
-                frustum_planes,
-                level_scale_arr_shader=geo._scale_arr_shader,
-                level_translation_arr_shader=geo._translation_arr_shader,
-            )
-            frustum_cull_ms = (time.perf_counter() - t0) * 1000
-            n_culled = n_total - len(brick_arr)
-
-        # 4. Budget truncation
-        n_needed = len(brick_arr)
-        n_budget = self._block_cache_3d.info.n_slots - 1
-        n_dropped = max(0, n_needed - n_budget)
-        if n_dropped:
-            brick_arr = brick_arr[:n_budget]
-
-        # 5. Stage: find cache hits/misses, reserve slots for misses
+        # 5. Stage: find cache hits/misses, reserve slots for misses.
         # When force_level is set every brick is at a single level; evict
         # finer bricks proactively so their slots are immediately reusable.
         if force_level is not None:
@@ -1669,16 +1576,19 @@ class GFXMultiscaleImageVisual:
         )
         stage_ms = (time.perf_counter() - t0) * 1000
 
-        # When all required bricks are cache hits, on_data_ready never fires
-        # so the LUT would remain stale (pointing to a different slice position).
-        # Rebuild immediately in that case — mirrors the 2D all-hits guard.
-        if not fill_plan:
-            self._lut_manager_3d.rebuild(
-                self._block_cache_3d.tile_manager,
-                current_slice_coord=self._current_slice_coord_3d,
-            )
+        # Rebuild the LUT immediately so that:
+        #   • reserve-promoted bricks (moved to tilemap by stage()) are
+        #     visible right away, not only after the first on_data_ready batch.
+        #   • when there are no misses at all, on_data_ready never fires so
+        #     this is the only rebuild opportunity for that plan.
+        # When there are misses, on_data_ready will rebuild again after each
+        # arriving batch, progressively filling the remaining positions.
+        self._lut_manager_3d.rebuild(
+            self._block_cache_3d.tile_manager,
+            current_slice_coord=self._current_slice_coord_3d,
+        )
 
-        # 6. Build ChunkRequests and populate the pending slot map
+        # 6. Build ChunkRequests and populate the pending slot map.
         slice_id = uuid4()
         chunk_requests: list[ChunkRequest] = []
         self._pending_slot_map = {}
@@ -1712,57 +1622,25 @@ class GFXMultiscaleImageVisual:
 
         plan_total_ms = (time.perf_counter() - t_plan_start) * 1000
 
-        # 7. Snapshot LUT level breakdown for debug reporting
-        level_counts: dict[int, int] = {}
-        gd, gh, gw = geo.base_layout.grid_dims
-        for gz in range(gd):
-            for gy in range(gh):
-                for gx in range(gw):
-                    lv = int(self._lut_manager_3d.lut_data[gz, gy, gx, 3])
-                    level_counts[lv] = level_counts.get(lv, 0) + 1
-
         self._last_plan_stats = stats = {
             "hits": len(sorted_required) - len(fill_plan),
             "misses": len(fill_plan),
             "fills": len(fill_plan),
-            "total_required": n_total,
-            "n_culled": n_culled,
-            "n_needed": n_needed,
-            "n_budget": n_budget,
-            "n_dropped": n_dropped,
-            "level_counts": level_counts,
-            "cull_timings": cull_timings,
-            "lod_select_ms": lod_select_ms,
-            "distance_sort_ms": distance_sort_ms,
-            "frustum_cull_ms": frustum_cull_ms,
+            "total_required": len(brick_arr),
             "stage_ms": stage_ms,
             "plan_total_ms": plan_total_ms,
         }
 
-        if n_dropped > 0:
-            _PERF_LOGGER.warning(
-                "budget_exceeded  required=%d  budget=%d  dropped=%d  "
-                "(consider larger cache or tighter LOD thresholds)",
-                n_needed,
-                n_budget,
-                n_dropped,
-            )
-
         _PERF_LOGGER.info(
-            "[frame %d]  lod_select=%.1fms  dist_sort=%.1fms  frustum_cull=%.1fms  "
-            "stage=%.1fms  |  required=%d  culled=%d  hits=%d  misses=%d",
+            "[frame %d]  plan=%.1fms  stage=%.1fms  |  required=%d  hits=%d  misses=%d",
             self._frame_number,
-            stats["lod_select_ms"],
-            stats["distance_sort_ms"],
-            stats.get("frustum_cull_ms", 0.0),
-            stats.get("stage_ms", 0.0),
+            plan_total_ms,
+            stage_ms,
             stats["total_required"],
-            stats.get("n_culled", 0),
             stats["hits"],
             stats["misses"],
         )
 
-        # Log per-level breakdown of what was requested this frame.
         if len(brick_arr):
             level_col = brick_arr[:, 0]
             requested_by_level = {
@@ -1771,10 +1649,9 @@ class GFXMultiscaleImageVisual:
         else:
             requested_by_level = {}
         _PERF_LOGGER.debug(
-            "[frame %d]  requested_by_level=%s  thresholds=%s",
+            "[frame %d]  requested_by_level=%s",
             self._frame_number,
             requested_by_level,
-            [f"{t:.1f}" for t in (thresholds or [])],
         )
 
         return chunk_requests
