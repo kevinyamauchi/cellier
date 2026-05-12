@@ -455,6 +455,39 @@ class GFXMultiscaleLabelVisual:
         )
         return new_node
 
+    # ── GFXVisual protocol ──────────────────────────────────────────────
+
+    def has_node(self, mode: str) -> bool:
+        return self.node_3d is not None if mode == "3d" else self.node_2d is not None
+
+    def get_node(self, mode: str) -> gfx.Group | None:
+        return self.node_3d if mode == "3d" else self.node_2d
+
+    def build_node(
+        self,
+        mode: str,
+        visual_model,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.Group | None:
+        # Label multiscale builds both nodes at construction when both render
+        # modes are requested; lazy-init is not currently supported.
+        return self.node_3d if mode == "3d" else self.node_2d
+
+    def rebuild_node_geometry(
+        self,
+        mode: str,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.Group | None:
+        _old, new_node = self.rebuild_geometry(level_shapes, displayed_axes)
+        return new_node
+
+    def on_stacked_axes_changed(self, stacked_axes: tuple[int, ...]) -> None:
+        pass
+
     # ── Geometry rebuild ─────────────────────────────────────────────────
 
     def rebuild_geometry(

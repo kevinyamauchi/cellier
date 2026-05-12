@@ -176,6 +176,27 @@ class GFXLinesMemoryVisual:
             self._update_node_matrix(displayed_axes)
         return self.node
 
+    # ── GFXVisual protocol ──────────────────────────────────────────────
+
+    def has_node(self, mode: str) -> bool:
+        return True
+
+    def get_node(self, mode: str) -> gfx.Line:
+        return self.node
+
+    def build_node(
+        self, mode, visual_model, displayed_axes, level_shapes, level_transforms
+    ):
+        return self.get_node_for_dims(displayed_axes)
+
+    def rebuild_node_geometry(
+        self, mode, displayed_axes, level_shapes, level_transforms
+    ):
+        return self.get_node_for_dims(displayed_axes)
+
+    def on_stacked_axes_changed(self, stacked_axes: tuple[int, ...]) -> None:
+        pass
+
     # ------------------------------------------------------------------
     # Node matrix
     # ------------------------------------------------------------------

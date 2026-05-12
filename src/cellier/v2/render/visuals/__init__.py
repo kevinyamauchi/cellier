@@ -13,6 +13,7 @@ from cellier.v2.render.visuals._image_multiscale_multichannel import (
 )
 from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
 from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+from cellier.v2.render.visuals._protocol import GFXVisual
 
 __all__ = [
     "GFXImageMemoryVisual",
@@ -21,5 +22,6 @@ __all__ = [
     "GFXMultichannelMultiscaleImageVisual",
     "GFXMultiscaleImageVisual",
     "GFXMultiscaleLabelVisual",
+    "GFXVisual",
     "MultiscaleBrickLayout3D",
 ]
