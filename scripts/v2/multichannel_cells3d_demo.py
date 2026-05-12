@@ -198,11 +198,13 @@ class MultichannelCells3dViewer:
 
         # colormap
         combo = QColormapComboBox()
-        combo.setCurrentColormap(ch.colormap)
+        combo.setCurrentColormap(ch.color_map)
         combo.currentColormapChanged.connect(
-            lambda cmap_obj, _ch=ch: setattr(_ch, "colormap", cmap_obj)
+            lambda cmap_obj, _ch=ch: setattr(_ch, "color_map", cmap_obj)
         )
-        ch.events.colormap.connect(lambda v, _combo=combo: _combo.setCurrentColormap(v))
+        ch.events.color_map.connect(
+            lambda v, _combo=combo: _combo.setCurrentColormap(v)
+        )
         layout.addWidget(combo)
 
         # clim
@@ -254,6 +256,7 @@ class MultichannelCells3dViewer:
                     scene_id=self._scene.id,
                     slice_indices={1: z},
                     displayed_axes=(2, 3),
+                    stacked_axes=(0,),
                 )
             )
             self._z_group.setVisible(True)
@@ -264,6 +267,7 @@ class MultichannelCells3dViewer:
                     scene_id=self._scene.id,
                     slice_indices={},
                     displayed_axes=(1, 2, 3),
+                    stacked_axes=(0,),
                 )
             )
             self._z_group.setVisible(False)
@@ -279,6 +283,7 @@ class MultichannelCells3dViewer:
                 scene_id=self._scene.id,
                 slice_indices={1: z},
                 displayed_axes=(2, 3),
+                stacked_axes=(0,),
             )
         )
 
@@ -321,7 +326,8 @@ async def async_main(zarr_path: str) -> None:
     controller.add_data_store(store)
 
     # Data is (c, z, y, x); channel_axis=0. displayed_axes=(1,2,3) covers the
-    # three spatial axes while the channel axis (0) is handled via fill=.
+    # three spatial axes; stacked_axes=(0,) marks the channel as composited by
+    # the render layer rather than sliced to a single index.
     cs = CoordinateSystem(name="world", axis_labels=("c", "z", "y", "x"))
     scene = controller.add_scene_model(
         Scene(
@@ -330,7 +336,8 @@ async def async_main(zarr_path: str) -> None:
                 coordinate_system=cs,
                 selection=AxisAlignedSelection(
                     displayed_axes=(1, 2, 3),
-                    slice_indices={0: 0},
+                    slice_indices={},
+                    stacked_axes=(0,),
                 ),
             ),
             render_modes={"2d", "3d"},
@@ -338,8 +345,8 @@ async def async_main(zarr_path: str) -> None:
         )
     )
 
-    ch0 = ChannelAppearance(colormap="green", clim=(0, 40000), render_mode_3d="mip")
-    ch1 = ChannelAppearance(colormap="magenta", clim=(0, 65535), render_mode_3d="mip")
+    ch0 = ChannelAppearance(color_map="green", clim=(0, 40000), render_mode_3d="mip")
+    ch1 = ChannelAppearance(color_map="magenta", clim=(0, 65535), render_mode_3d="mip")
 
     visual_model = controller.add_multichannel_image_multiscale(
         data=store,

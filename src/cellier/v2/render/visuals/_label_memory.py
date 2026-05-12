@@ -187,6 +187,10 @@ class GFXLabelMemoryVisual:
                 inner.material.depth_compare = appearance.depth_compare
                 inner.material.alpha_mode = appearance.transparency_mode
 
+        for node in (self.node_2d, self.node_3d):
+            if node is not None:
+                node.visible = appearance.visible
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------

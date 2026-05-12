@@ -42,12 +42,16 @@ class AxisAlignedSelection(EventedModel):
         Indices into the coordinate system that are rendered.
         Length 2 → 2D; length 3 → 3D.
     slice_indices : dict[int, int]
-        Mapping of axis index → slice value for non-displayed axes.
+        Mapping of axis index → slice value for non-displayed, non-stacked axes.
+    stacked_axes : tuple[int, ...]
+        Axes whose full extent is composited by the render layer (e.g. channel).
+        These axes are neither displayed nor sliced to a single index.
     """
 
     selector_type: Literal["axis_aligned"] = "axis_aligned"
     displayed_axes: tuple[int, ...]
     slice_indices: dict[int, int] = Field(default_factory=dict)
+    stacked_axes: tuple[int, ...] = ()
 
     @model_validator(mode="after")
     def _validate_displayed_rank(self) -> AxisAlignedSelection:
@@ -70,6 +74,7 @@ class AxisAlignedSelection(EventedModel):
         return AxisAlignedSelectionState(
             displayed_axes=self.displayed_axes,
             slice_indices=dict(self.slice_indices),
+            stacked_axes=self.stacked_axes,
         )
 
 
@@ -118,16 +123,19 @@ class DimsManager(EventedModel):
 
     @model_validator(mode="after")
     def _validate_axis_coverage(self) -> DimsManager:
-        """Verify displayed + sliced axes cover all coordinate axes."""
+        """Verify displayed + sliced + stacked axes cover all coordinate axes."""
         if isinstance(self.selection, AxisAlignedSelection):
             ndim = len(self.coordinate_system.axis_labels)
-            covered = set(self.selection.displayed_axes) | set(
-                self.selection.slice_indices.keys()
+            covered = (
+                set(self.selection.displayed_axes)
+                | set(self.selection.slice_indices.keys())
+                | set(self.selection.stacked_axes)
             )
             expected = set(range(ndim))
             if covered != expected:
                 raise ValueError(
-                    f"Axis coverage mismatch: displayed_axes | slice_indices.keys() "
+                    f"Axis coverage mismatch: "
+                    f"displayed_axes | slice_indices.keys() | stacked_axes "
                     f"= {covered}, expected {expected} for ndim={ndim}"
                 )
         return self
