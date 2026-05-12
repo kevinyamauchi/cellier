@@ -139,6 +139,7 @@ class QtDimsSliders:
         *,
         initial_slice_indices: dict[int, int] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
+        initial_stacked_axes: tuple[int, ...] = (),
         non_displayed_sliders: set[int] | None = None,
         debounce_ms: int = 50,
         parent: QWidget | None = None,
@@ -147,6 +148,7 @@ class QtDimsSliders:
         self._id = uuid4()
         self._scene_id = scene_id
         self._non_displayed_sliders: set[int] = non_displayed_sliders or set()
+        self._stacked_axes: tuple[int, ...] = initial_stacked_axes
 
         # Single-shot QTimer for rate-limiting rapid slider moves.
         # Fires at most once per interval; a dirty flag ensures the final
@@ -181,7 +183,7 @@ class QtDimsSliders:
             layout.addRow(axis_labels.get(axis, str(axis)), sld)
             self._sliders[axis] = sld
 
-        self._update_visibility(initial_displayed_axes)
+        self._update_visibility(initial_displayed_axes, initial_stacked_axes)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -236,8 +238,10 @@ class QtDimsSliders:
             if value is not None:
                 self._set_value(axis, value)
 
-        # Show/hide sliders based on which axes are now displayed.
-        self._update_visibility(event.dims_state.selection.displayed_axes)
+        # Show/hide sliders based on which axes are now displayed or stacked.
+        sel = event.dims_state.selection
+        stacked = getattr(sel, "stacked_axes", ())
+        self._update_visibility(sel.displayed_axes, stacked)
 
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
@@ -260,6 +264,7 @@ class QtDimsSliders:
             for axis, sld in self._sliders.items()
             if axis not in self._displayed_axes
             and axis not in self._non_displayed_sliders
+            and axis not in self._stacked_axes
         }
         self.changed.emit(
             DimsUpdateEvent(
@@ -280,12 +285,19 @@ class QtDimsSliders:
 
     # ── Visibility helper ────────────────────────────────────────────────────
 
-    def _update_visibility(self, displayed_axes: tuple[int, ...]) -> None:
+    def _update_visibility(
+        self,
+        displayed_axes: tuple[int, ...],
+        stacked_axes: tuple[int, ...] = (),
+    ) -> None:
         self._displayed_axes = displayed_axes
+        self._stacked_axes = stacked_axes
         layout: QFormLayout = self._container.layout()
         for axis, sld in self._sliders.items():
             visible = (
-                axis not in displayed_axes and axis not in self._non_displayed_sliders
+                axis not in displayed_axes
+                and axis not in self._non_displayed_sliders
+                and axis not in stacked_axes
             )
             layout.setRowVisible(sld, visible)
 
@@ -370,6 +382,7 @@ class QtCanvasWidget:
         selection = scene.dims.selection
         initial_slice_indices = dict(getattr(selection, "slice_indices", {}))
         initial_displayed_axes = getattr(selection, "displayed_axes", ())
+        initial_stacked_axes = getattr(selection, "stacked_axes", ())
 
         dims_sliders = QtDimsSliders(
             scene_id=scene.id,
@@ -377,6 +390,7 @@ class QtCanvasWidget:
             axis_labels=axis_labels,
             initial_slice_indices=initial_slice_indices,
             initial_displayed_axes=initial_displayed_axes,
+            initial_stacked_axes=initial_stacked_axes,
             parent=parent,
         )
         return cls(canvas_view=canvas_view, dims_sliders=dims_sliders, parent=parent)

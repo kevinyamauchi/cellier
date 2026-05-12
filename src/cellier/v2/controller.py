@@ -928,6 +928,7 @@ class CellierController:
         else:
             spatial_transform = None
 
+        extra = {} if spatial_transform is None else {"transform": spatial_transform}
         visual_model = MultichannelMultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
@@ -937,7 +938,7 @@ class CellierController:
             render_config=render_config,
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
-            transform=spatial_transform,
+            **extra,
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
@@ -2233,6 +2234,36 @@ class CellierController:
         finally:
             _source_id_override.reset(token)
 
+    def update_stacked_axes(
+        self,
+        scene_id: UUID,
+        stacked_axes: tuple[int, ...],
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set ``stacked_axes`` on a scene's dims.
+
+        Tags the emitted bus event with *source_id*.
+        GUI widgets should pass ``source_id=self._id`` so their own
+        ``DimsChangedEvent`` subscription can ignore the echo.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        stacked_axes :
+            Tuple of axis indices whose full extent is composited by the render
+            layer (e.g. channel axis).  Pass ``()`` for no stacked axes.
+        source_id :
+            UUID to stamp on the emitted ``DimsChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        token = _source_id_override.set(source_id)
+        try:
+            self._model.scenes[scene_id].dims.selection.stacked_axes = stacked_axes
+        finally:
+            _source_id_override.reset(token)
+
     # ------------------------------------------------------------------
     # IncomingEventBus handlers
     # ------------------------------------------------------------------
@@ -2250,6 +2281,10 @@ class CellierController:
         if event.displayed_axes is not None:
             self.update_displayed_axes(
                 event.scene_id, event.displayed_axes, source_id=event.source_id
+            )
+        if event.stacked_axes is not None:
+            self.update_stacked_axes(
+                event.scene_id, event.stacked_axes, source_id=event.source_id
             )
 
     def _on_aabb_update(self, event: AABBUpdateEvent) -> None:

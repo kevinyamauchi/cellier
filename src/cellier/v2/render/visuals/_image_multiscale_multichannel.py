@@ -367,7 +367,8 @@ class GFXMultichannelMultiscaleImageVisual:
         group = self._group_3d if is_3d else self._group_2d
         if group is None:
             return
-        for slot in self._slots:
+        slot_to_channel = {v: k for k, v in self._channel_to_slot.items()}
+        for slot_idx, slot in enumerate(self._slots):
             old_node, new_node = slot.rebuild_geometry(
                 self._full_level_shapes, displayed_axes
             )
@@ -376,6 +377,36 @@ class GFXMultichannelMultiscaleImageVisual:
                     group.remove(old_node)
                 if new_node is not None:
                     group.add(new_node)
+                    # _claim_channel ran before this node existed, so appearance
+                    # (visible, colormap, clim, render_mode, alpha_mode) was
+                    # never applied.  Re-apply now from the current channel
+                    # appearance model.
+                    ch_idx = slot_to_channel.get(slot_idx)
+                    if ch_idx is not None:
+                        appearance = self._visual_model.channels.get(ch_idx)
+                        if appearance is not None:
+                            cm = _make_colormap(appearance.color_map)
+                            if is_3d and slot.material_3d is not None:
+                                slot.material_3d.map = cm
+                                slot.material_3d.clim = appearance.clim
+                                slot.material_3d.opacity = appearance.opacity
+                                slot.material_3d.render_mode = appearance.render_mode_3d
+                                slot.material_3d.alpha_mode = (
+                                    appearance.transparency_mode
+                                )
+                            elif not is_3d and slot.material_2d is not None:
+                                slot.material_2d.map = cm
+                                slot.material_2d.clim = appearance.clim
+                                slot.material_2d.opacity = appearance.opacity
+                                slot.material_2d.alpha_mode = (
+                                    appearance.transparency_mode
+                                )
+                                slot.material_2d.depth_test = False
+                                slot.material_2d.depth_write = False
+                            new_node.visible = appearance.visible
+                    else:
+                        # Unclaimed pool slots must not contribute to the render.
+                        new_node.visible = False
 
     def get_channel_node_for_dims(
         self, channel_index: int, displayed_axes: tuple[int, ...]

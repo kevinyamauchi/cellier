@@ -432,6 +432,9 @@ class GFXMultiscaleLabelVisual:
                 mat.depth_write = app.depth_write
                 mat.depth_compare = app.depth_compare
                 mat.alpha_mode = app.transparency_mode
+        for node in (instance.node_3d, instance.node_2d):
+            if node is not None:
+                node.visible = app.visible
         return instance
 
     # ── Properties ──────────────────────────────────────────────────────

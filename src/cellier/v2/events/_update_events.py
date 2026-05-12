@@ -56,12 +56,17 @@ class DimsUpdateEvent(NamedTuple):
     displayed_axes :
         Tuple of axis indices to display, or ``None`` to leave the
         current displayed axes unchanged.
+    stacked_axes :
+        Tuple of axis indices whose full extent is composited by the render
+        layer (e.g. channel axis), or ``None`` to leave the current
+        stacked axes unchanged.
     """
 
     source_id: UUID
     scene_id: UUID
     slice_indices: dict[int, int] | None
     displayed_axes: tuple[int, ...] | None
+    stacked_axes: tuple[int, ...] | None = None
 
 
 class AABBUpdateEvent(NamedTuple):

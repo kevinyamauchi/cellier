@@ -631,6 +631,7 @@ class GFXMultiscaleImageVisual:
 
         # Shadow appearance/config fields so lazy init can use up-to-date
         # values even before the corresponding material has been built.
+        self._visible: bool = True
         self._threshold: float = threshold
         self._attenuation: float = attenuation
         self._volume_render_mode: str = render_mode
@@ -904,6 +905,10 @@ class GFXMultiscaleImageVisual:
                 mat.depth_write = model.appearance.depth_write
                 mat.depth_compare = model.appearance.depth_compare
                 mat.alpha_mode = model.appearance.transparency_mode
+        instance._visible = model.appearance.visible
+        for node in (instance.node_3d, instance.node_2d):
+            if node is not None:
+                node.visible = model.appearance.visible
         return instance
 
     # ── Properties ─────────────────────────────────────────────────────
@@ -1075,6 +1080,7 @@ class GFXMultiscaleImageVisual:
         data_to_world = _pygfx_matrix(sub)
         m = compose_world_transform(data_to_world, self._dataset_size, self._norm_size)
         self.node_3d.local.matrix = m
+        self.node_3d.visible = self._visible
 
     def _lazy_init_2d(self, displayed_axes: tuple[int, ...]) -> None:
         """Build 2D GPU resources on first entry into 2D mode.
@@ -1132,6 +1138,7 @@ class GFXMultiscaleImageVisual:
         self.node_2d.add(self._aabb_line_2d)
         sub = self._transform.select_axes(displayed_axes)
         self.node_2d.local.matrix = _pygfx_matrix(sub)
+        self.node_2d.visible = self._visible
 
     def _rebuild_3d_resources(self) -> None:
         """Rebuild 3D GPU resources after geometry update."""
@@ -2528,6 +2535,7 @@ class GFXMultiscaleImageVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Apply visibility change to all render nodes."""
+        self._visible = event.visible
         if self.node_3d is not None:
             self.node_3d.visible = event.visible
         if self.node_2d is not None:

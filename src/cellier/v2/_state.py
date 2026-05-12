@@ -10,6 +10,7 @@ class AxisAlignedSelectionState(NamedTuple):
 
     displayed_axes: tuple[int, ...]
     slice_indices: dict[int, int]
+    stacked_axes: tuple[int, ...] = ()
 
     def to_index_selection(self, ndim: int) -> tuple[int | slice, ...]:
         """Return a per-axis numpy indexer in axis order.
