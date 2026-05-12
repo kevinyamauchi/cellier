@@ -1779,23 +1779,42 @@ class CellierController:
 
         return _on_dims_psygnal
 
+    def _level_shapes_for(self, visual_model) -> list[tuple[int, ...]]:
+        """Return the level shapes for *visual_model* from its data store."""
+        data_store_id = getattr(visual_model, "data_store_id", None)
+        if data_store_id:
+            store = self._model.data.stores.get(UUID(data_store_id))
+            if store is not None:
+                return list(store.level_shapes)
+        return []
+
     def _rebuild_visuals_geometry(
         self, scene_id: UUID, displayed_axes: tuple[int, ...]
     ) -> None:
         """Swap each visual's active node after a displayed_axes change.
 
-        Calls ``gfx_visual.get_node_for_dims(displayed_axes)`` on each visual
-        to obtain the new node, then delegates scene-graph surgery to
-        ``SceneManager.swap_node``.  Single-node visuals (mesh, lines) are
-        handled transparently because ``swap_node`` no-ops when the old and
-        new nodes are the same object.
+        Uses the GFXVisual protocol: calls ``build_node`` on the first visit
+        to a mode (passing the model so the renderer reads appearance at call
+        time without caching it), or ``rebuild_node_geometry`` when the node
+        already exists.  Single-node visuals (mesh, lines) handle both as
+        no-ops and return the same node, so ``swap_node`` is a no-op too.
         """
+        mode = "3d" if len(displayed_axes) == 3 else "2d"
         scene = self._model.scenes[scene_id]
         scene_manager = self._render_manager._scenes[scene_id]
 
         for visual_model in scene.visuals:
             gfx_visual = scene_manager.get_visual(visual_model.id)
-            new_node = gfx_visual.get_node_for_dims(displayed_axes)
+            level_shapes = self._level_shapes_for(visual_model)
+            level_transforms = list(getattr(visual_model, "level_transforms", []))
+            if not gfx_visual.has_node(mode):
+                new_node = gfx_visual.build_node(
+                    mode, visual_model, displayed_axes, level_shapes, level_transforms
+                )
+            else:
+                new_node = gfx_visual.rebuild_node_geometry(
+                    mode, displayed_axes, level_shapes, level_transforms
+                )
             scene_manager.swap_node(visual_model.id, new_node)
 
     def _switch_canvas_cameras(
@@ -2263,6 +2282,60 @@ class CellierController:
             self._model.scenes[scene_id].dims.selection.stacked_axes = stacked_axes
         finally:
             _source_id_override.reset(token)
+
+    def set_displayed_axes(
+        self,
+        scene_id: UUID,
+        displayed_axes: tuple[int, ...],
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set displayed axes on a scene's dims (preferred public API).
+
+        Equivalent to :meth:`update_displayed_axes`.  The controller's
+        psygnal bridge fires ``_rebuild_visuals_geometry`` and
+        ``_switch_canvas_cameras`` automatically when the model field changes.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        displayed_axes :
+            Tuple of axis indices to display; length 2 for 2D, 3 for 3D.
+        source_id :
+            UUID stamped on the emitted ``DimsChangedEvent``.
+        """
+        self.update_displayed_axes(scene_id, displayed_axes, source_id=source_id)
+
+    def set_stacked_axes(
+        self,
+        scene_id: UUID,
+        stacked_axes: tuple[int, ...],
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set stacked axes on a scene's dims (preferred public API).
+
+        Equivalent to :meth:`update_stacked_axes`.  After updating the model,
+        notifies each visual via ``on_stacked_axes_changed`` so they can
+        adjust internal state (e.g. LUT channel routing) without a node swap.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        stacked_axes :
+            Tuple of axis indices whose full extent is composited by the
+            render layer (e.g. channel axis).  Pass ``()`` for none.
+        source_id :
+            UUID stamped on the emitted ``DimsChangedEvent``.
+        """
+        self.update_stacked_axes(scene_id, stacked_axes, source_id=source_id)
+        scene = self._model.scenes[scene_id]
+        scene_manager = self._render_manager._scenes[scene_id]
+        for visual_model in scene.visuals:
+            gfx_visual = scene_manager.get_visual(visual_model.id)
+            gfx_visual.on_stacked_axes_changed(stacked_axes)
 
     # ------------------------------------------------------------------
     # IncomingEventBus handlers
@@ -3224,7 +3297,14 @@ class CellierController:
         visible :
             ``True`` to show, ``False`` to hide.
         """
-        self.update_appearance_field(visual_id, "visible", visible)
+        visual = self.get_visual_model(visual_id)
+        if isinstance(
+            visual, (MultichannelImageVisual, MultichannelMultiscaleImageVisual)
+        ):
+            for ch in visual.channels.values():
+                ch.visible = visible
+        else:
+            self.update_appearance_field(visual_id, "visible", visible)
 
     def on_scene_added(
         self,

@@ -361,6 +361,50 @@ class GFXMultichannelMultiscaleImageVisual:
             self._rebuild_slot_geometries(displayed_axes)
         return self._group_3d if len(displayed_axes) == 3 else self._group_2d
 
+    # ── GFXVisual protocol ──────────────────────────────────────────────
+
+    def has_node(self, mode: str) -> bool:
+        """Return True if the wrapper group for *mode* has been built."""
+        if mode == "3d":
+            return self._group_3d is not None
+        return self._group_2d is not None
+
+    def get_node(self, mode: str) -> gfx.WorldObject | None:
+        """Return the already-built wrapper group for *mode*."""
+        if mode == "3d":
+            return self._group_3d
+        return self._group_2d
+
+    def build_node(
+        self,
+        mode: str,
+        visual_model,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.WorldObject | None:
+        """Build the wrapper group for *mode* if not already built.
+
+        Multichannel groups are built at construction, so this is a no-op
+        in normal use.  Returns the existing group.
+        """
+        return self._group_3d if mode == "3d" else self._group_2d
+
+    def rebuild_node_geometry(
+        self,
+        mode: str,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.WorldObject | None:
+        """Rebuild slot geometries after a dims change."""
+        if displayed_axes != self._last_displayed_axes:
+            self._rebuild_slot_geometries(displayed_axes)
+        return self._group_3d if mode == "3d" else self._group_2d
+
+    def on_stacked_axes_changed(self, stacked_axes: tuple[int, ...]) -> None:
+        pass
+
     def _rebuild_slot_geometries(self, displayed_axes: tuple[int, ...]) -> None:
         self._last_displayed_axes = displayed_axes
         is_3d = len(displayed_axes) == 3

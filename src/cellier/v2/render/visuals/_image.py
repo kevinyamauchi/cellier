@@ -629,14 +629,12 @@ class GFXMultiscaleImageVisual:
         self._aabb_color: str = aabb_color
         self._aabb_line_width: float = aabb_line_width
 
-        # Shadow appearance/config fields so lazy init can use up-to-date
-        # values even before the corresponding material has been built.
+        # _visible is kept so that visibility set via on_visibility_changed
+        # before a lazy-init'd node is built can be applied when it is built.
+        # All other appearance values are read from the model at build time
+        # via build_node / _lazy_init_*.
         self._visible: bool = True
-        self._threshold: float = threshold
-        self._attenuation: float = attenuation
-        self._volume_render_mode: str = render_mode
-        self._interpolation: str = interpolation
-        self._pick_write: bool = pick_write
+        # Construction-time config: not appearance, not event-driven, safe to cache.
         self._block_size: int = (
             volume_geometry.block_size
             if volume_geometry is not None
@@ -757,7 +755,7 @@ class GFXMultiscaleImageVisual:
                 pick_write=pick_write,
             )
             self._inner_node_3d = inner
-            self.material_3d.render_mode = self._volume_render_mode
+            self.material_3d.render_mode = render_mode
             self.node_3d = gfx.Group()
             self.node_3d.add(inner)
             # Build AABB line with known geometry (geometry available at construction).
@@ -1011,15 +1009,96 @@ class GFXMultiscaleImageVisual:
 
         return old_node, new_node
 
-    def _lazy_init_3d(self, displayed_axes: tuple[int, ...]) -> None:
+    # ── GFXVisual protocol ──────────────────────────────────────────────
+
+    def has_node(self, mode: str) -> bool:
+        """Return True if the node for *mode* has already been built."""
+        if mode == "3d":
+            return self.node_3d is not None
+        return self.node_2d is not None
+
+    def get_node(self, mode: str) -> gfx.WorldObject | None:
+        """Return the already-built node for *mode*, or None if not built."""
+        if mode == "3d":
+            return self.node_3d
+        return self.node_2d
+
+    def build_node(
+        self,
+        mode: str,
+        visual_model,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.WorldObject | None:
+        """Build the 2D or 3D node for the first time.
+
+        Reads appearance and render_config from *visual_model* at call time.
+        Does NOT store *visual_model*.
+        """
+        self._full_level_shapes = list(level_shapes)
+        if mode == "3d":
+            if self._volume_geometry is None:
+                self._lazy_init_3d(displayed_axes, visual_model)
+            return self.node_3d
+        else:
+            if self._image_geometry_2d is None:
+                self._lazy_init_2d(displayed_axes, visual_model)
+            return self.node_2d
+
+    def rebuild_node_geometry(
+        self,
+        mode: str,
+        displayed_axes: tuple[int, ...],
+        level_shapes: list[tuple[int, ...]],
+        level_transforms: list,
+    ) -> gfx.WorldObject | None:
+        """Rebuild geometry on an already-built node after a dims change."""
+        self._full_level_shapes = list(level_shapes)
+        self._last_displayed_axes = displayed_axes
+        if mode == "3d" and self._volume_geometry is not None:
+            shapes_3d = [tuple(s[ax] for ax in displayed_axes) for s in level_shapes]
+            if shapes_3d != self._volume_geometry.level_shapes:
+                self._volume_geometry.update(shapes_3d)
+                self._rebuild_3d_resources()
+            return self.node_3d
+        if mode == "2d" and self._image_geometry_2d is not None:
+            shapes_2d_full = [
+                tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+            ]
+            shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
+            if shapes_2d != self._image_geometry_2d.level_shapes:
+                self._image_geometry_2d.update(shapes_2d)
+                self._rebuild_2d_resources()
+            return self.node_2d
+        return None
+
+    def on_stacked_axes_changed(self, stacked_axes: tuple[int, ...]) -> None:
+        pass
+
+    def _lazy_init_3d(self, displayed_axes: tuple[int, ...], visual_model=None) -> None:
         """Build 3D GPU resources on first entry into 3D mode.
 
-        Called by ``rebuild_geometry`` when ``_volume_geometry is None`` and
-        the viewer is switching to 3D for the first time.  Sets
-        ``node_3d.local.matrix`` directly — does NOT call
+        When *visual_model* is provided (controller-driven path), appearance
+        values are read from it at call time and not stored.  When it is
+        ``None`` (e.g. multichannel slot path), safe defaults are used and
+        the caller is responsible for applying per-channel appearance afterward.
+
+        Sets ``node_3d.local.matrix`` directly — does NOT call
         ``_update_node_matrix`` so ``node_2d`` (if already built) is left
         unchanged.
         """
+        if visual_model is not None:
+            threshold = float(visual_model.appearance.iso_threshold)
+            attenuation = float(visual_model.appearance.attenuation)
+            render_mode = visual_model.appearance.render_mode
+            pick_write = visual_model.pick_write
+        else:
+            threshold = 0.5
+            attenuation = 1.0
+            render_mode = "mip"
+            pick_write = False
+
         shapes_3d = [select_axes(s, displayed_axes) for s in self._full_level_shapes]
         transforms_3d = [t.select_axes(displayed_axes) for t in self._level_transforms]
         self._volume_geometry = MultiscaleBrickLayout3D(
@@ -1066,11 +1145,11 @@ class GFXMultiscaleImageVisual:
         inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
             colormap=colormap,
             clim=clim,
-            threshold=self._threshold,
-            attenuation=self._attenuation,
-            pick_write=self._pick_write,
+            threshold=threshold,
+            attenuation=attenuation,
+            pick_write=pick_write,
         )
-        self.material_3d.render_mode = self._volume_render_mode
+        self.material_3d.render_mode = render_mode
         self._inner_node_3d = inner
         self._aabb_line_3d = self._build_aabb_line_3d()
         self.node_3d = gfx.Group()
@@ -1080,17 +1159,35 @@ class GFXMultiscaleImageVisual:
         data_to_world = _pygfx_matrix(sub)
         m = compose_world_transform(data_to_world, self._dataset_size, self._norm_size)
         self.node_3d.local.matrix = m
-        self.node_3d.visible = self._visible
+        if visual_model is not None:
+            self.material_3d.opacity = visual_model.appearance.opacity
+            self.material_3d.depth_test = visual_model.appearance.depth_test
+            self.material_3d.depth_write = visual_model.appearance.depth_write
+            self.material_3d.depth_compare = visual_model.appearance.depth_compare
+            self.material_3d.alpha_mode = visual_model.appearance.transparency_mode
+            self.node_3d.visible = visual_model.appearance.visible
+        else:
+            self.node_3d.visible = self._visible
 
-    def _lazy_init_2d(self, displayed_axes: tuple[int, ...]) -> None:
+    def _lazy_init_2d(self, displayed_axes: tuple[int, ...], visual_model=None) -> None:
         """Build 2D GPU resources on first entry into 2D mode.
 
-        Called by ``rebuild_geometry`` when ``_image_geometry_2d is None`` and
-        the viewer is switching to 2D for the first time.  Sets
-        ``node_2d.local.matrix`` directly — does NOT call
+        When *visual_model* is provided (controller-driven path), appearance
+        values are read from it at call time and not stored.  When it is
+        ``None`` (e.g. multichannel slot path), safe defaults are used and
+        the caller is responsible for applying per-channel appearance afterward.
+
+        Sets ``node_2d.local.matrix`` directly — does NOT call
         ``_update_node_matrix`` so ``node_3d`` (if already built) is left
         unchanged.
         """
+        if visual_model is not None:
+            interpolation = visual_model.appearance.interpolation
+            pick_write = visual_model.pick_write
+        else:
+            interpolation = "linear"
+            pick_write = False
+
         shapes_2d_full = [
             select_axes(s, displayed_axes) for s in self._full_level_shapes
         ]
@@ -1128,8 +1225,8 @@ class GFXMultiscaleImageVisual:
         inner, self.material_2d, self._proxy_tex_2d = self._build_2d_node(
             colormap=colormap,
             clim=clim,
-            interpolation=self._interpolation,
-            pick_write=self._pick_write,
+            interpolation=interpolation,
+            pick_write=pick_write,
         )
         self._inner_node_2d = inner
         self._aabb_line_2d = self._build_aabb_line_2d()
@@ -1138,7 +1235,15 @@ class GFXMultiscaleImageVisual:
         self.node_2d.add(self._aabb_line_2d)
         sub = self._transform.select_axes(displayed_axes)
         self.node_2d.local.matrix = _pygfx_matrix(sub)
-        self.node_2d.visible = self._visible
+        if visual_model is not None:
+            self.material_2d.opacity = visual_model.appearance.opacity
+            self.material_2d.depth_test = visual_model.appearance.depth_test
+            self.material_2d.depth_write = visual_model.appearance.depth_write
+            self.material_2d.depth_compare = visual_model.appearance.depth_compare
+            self.material_2d.alpha_mode = visual_model.appearance.transparency_mode
+            self.node_2d.visible = visual_model.appearance.visible
+        else:
+            self.node_2d.visible = self._visible
 
     def _rebuild_3d_resources(self) -> None:
         """Rebuild 3D GPU resources after geometry update."""
@@ -2499,17 +2604,14 @@ class GFXMultiscaleImageVisual:
             if self.material_2d is not None:
                 self.material_2d.clim = event.new_value
         elif event.field_name == "iso_threshold":
-            self._threshold = float(event.new_value)
             if self.material_3d is not None:
-                self.material_3d.threshold = self._threshold
+                self.material_3d.threshold = float(event.new_value)
         elif event.field_name == "attenuation":
-            self._attenuation = float(event.new_value)
             if self.material_3d is not None:
-                self.material_3d.attenuation = self._attenuation
+                self.material_3d.attenuation = float(event.new_value)
         elif event.field_name == "render_mode":
-            self._volume_render_mode = event.new_value
             if self.material_3d is not None:
-                self.material_3d.render_mode = self._volume_render_mode
+                self.material_3d.render_mode = event.new_value
         elif event.field_name == "render_order":
             if self.node_3d is not None:
                 self.node_3d.render_order = event.new_value
@@ -2524,10 +2626,9 @@ class GFXMultiscaleImageVisual:
                 if mat is not None:
                     setattr(mat, event.field_name, event.new_value)
         elif event.field_name == "interpolation":
-            self._interpolation = event.new_value
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:
-                    mat.interpolation = self._interpolation
+                    mat.interpolation = event.new_value
         elif event.field_name == "transparency_mode":
             for mat in (self.material_3d, self.material_2d):
                 if mat is not None:

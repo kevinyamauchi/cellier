@@ -235,6 +235,30 @@ class GFXLabelMemoryVisual:
             self._update_node_matrix(displayed_axes)
         return node
 
+    # ── GFXVisual protocol ──────────────────────────────────────────────
+
+    def has_node(self, mode: str) -> bool:
+        return self.node_3d is not None if mode == "3d" else self.node_2d is not None
+
+    def get_node(self, mode: str) -> gfx.Group | None:
+        node = self.node_3d if mode == "3d" else self.node_2d
+        if node is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+        return node
+
+    def build_node(
+        self, mode, visual_model, displayed_axes, level_shapes, level_transforms
+    ):
+        return self.get_node_for_dims(displayed_axes)
+
+    def rebuild_node_geometry(
+        self, mode, displayed_axes, level_shapes, level_transforms
+    ):
+        return self.get_node_for_dims(displayed_axes)
+
+    def on_stacked_axes_changed(self, stacked_axes: tuple[int, ...]) -> None:
+        pass
+
     # ------------------------------------------------------------------
     # Slice request planning
     # ------------------------------------------------------------------
