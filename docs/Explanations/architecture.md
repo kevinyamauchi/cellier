@@ -15,7 +15,6 @@ The architecture of Cellier was designed to make Cellier a versatile library of 
 The Cellier library uses a [model-view-controller ](https://en.wikipedia.org/wiki/Model%E2%80%93view%E2%80%93controller) architecture. The viewer state is encapsulated in the model. The visualizations of the viewer state are encapsulated in the view. These visualizations include both the graphical user interface elements to update parameters (e.g., a slider to change the contrast limits) and the rendered scene on the canvas. The controller coordinates between the model and view. There is bidirectional synchronization between the model and view. That means that changes to the model update the view and changes to the view update the model. 
 
 ```mermaid
-%%{init: {'themeVariables': {'edgeLabelBackground': 'transparent'}}}%%
 flowchart TB
     subgraph MODEL["Model"]
         VM["ViewerModel"]

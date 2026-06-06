@@ -1,5 +1,0 @@
-/* Transparent mermaid edge label backgrounds */
-.edgeLabel rect {
-    fill: transparent !important;
-    opacity: 0;
-}
