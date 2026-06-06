@@ -215,6 +215,67 @@ def test_gfx_multichannel_memory_visual_on_data_ready_2d_routes_to_correct_slot(
         assert node.geometry is not None
 
 
+def test_gfx_multichannel_memory_visual_on_data_ready_3d_no_transpose():
+    """3-D volumes are uploaded as-is -- no transpose -- like single-channel.
+
+    Each channel's data arrives as (Z, Y, X) = (z, y, x). pygfx maps a numpy
+    texture's last axis to texture-x, so (Z, Y, X) already lands as local
+    (x=X, y=Y, z=Z). A ``data.T`` here would double-reverse the axes and swap
+    data-x with data-z in the rendered volume (regression guard).
+    """
+    # Asymmetric spatial sizes so a transpose is detectable: (Z, C, Y, X).
+    store = _make_4d_store(shape=(4, 2, 8, 16))
+    channels = {0: _make_channel_appearance(), 1: _make_channel_appearance()}
+    visual_model = MultichannelImageVisual(
+        name="test",
+        data_store_id=str(store.id),
+        channel_axis=1,
+        channels=channels,
+    )
+    gfx = GFXMultichannelImageMemoryVisual(
+        visual_model=visual_model,
+        data_store=store,
+        render_modes={"3d"},
+    )
+
+    # 3-D dims: channel axis (1) sliced, the three spatial axes displayed.
+    dims = DimsState(
+        axis_labels=("z", "c", "y", "x"),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(0, 2, 3),
+            slice_indices={1: 0},
+        ),
+    )
+
+    requests = gfx.build_slice_request(
+        camera_pos_world=np.zeros(3, dtype=np.float32),
+        frustum_corners_world=None,
+        fov_y_rad=1.0,
+        screen_height_px=512.0,
+        dims_state=dims,
+    )
+    assert len(requests) == 2
+
+    # Deliver each channel a distinct (Z, Y, X) = (4, 8, 16) volume.
+    batch = []
+    for req in requests:
+        ch = int(req.axis_selections[1])
+        data = np.full((4, 8, 16), float(ch), dtype=np.float32)
+        batch.append((req, data))
+
+    gfx.on_data_ready(batch)
+
+    # Each channel node's uploaded texture must keep (Z, Y, X) order verbatim.
+    for ch_idx in (0, 1):
+        slot_idx = gfx._channel_to_slot_3d[ch_idx]
+        node = gfx._pool_3d[slot_idx]
+        assert node.geometry.grid.data.shape == (4, 8, 16)
+        np.testing.assert_array_equal(
+            node.geometry.grid.data,
+            np.full((4, 8, 16), float(ch_idx), dtype=np.float32),
+        )
+
+
 def test_gfx_multichannel_memory_visual_channels_replaced_updates_pool():
     gfx, model, _store = _make_gfx_visual()
 
