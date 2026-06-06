@@ -197,6 +197,94 @@ def build_brick_scales_buffer(
     return Buffer(data, force_contiguous=True)
 
 
+def _norm_to_data_params(
+    dataset_size: np.ndarray,
+    norm_size: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the ``(scale, offset)`` of the normalized -> data-voxel map.
+
+    The map is ``data = scale * norm + offset`` with
+    ``scale = dataset_size / norm_size`` and ``offset = 0.5 * dataset_size - 0.5``.
+    The ``-0.5`` makes the proxy box ``[-norm/2, +norm/2]`` span the full
+    voxel extent ``[-0.5, N-0.5]`` in data space (voxel ``i`` is centred on
+    integer ``i``, so its outer edges are at ``i +/- 0.5``), matching the
+    in-memory ``gfx.Volume`` convention.  The WGSL shader applies the same
+    ``-0.5`` in its centred ``norm_to_voxel`` so the rendered slab fills this
+    box.  Both ``compose_world_transform`` (forward) and
+    ``norm_full_extent_box`` (inverse) read these same values so the render
+    transform and the bounding box can never disagree on the convention.
+
+    Parameters
+    ----------
+    dataset_size : ndarray, shape (3,)
+        Finest-level voxel counts (shader order: x, y, z).
+    norm_size : ndarray, shape (3,)
+        Normalized physical extent (shader order: x, y, z).
+
+    Returns
+    -------
+    scale, offset : ndarray, shape (3,)
+        Per-axis scale and offset of the normalized -> data map.
+    """
+    dataset_size = np.asarray(dataset_size, dtype=np.float64)
+    norm_size = np.asarray(norm_size, dtype=np.float64)
+    scale = dataset_size / norm_size
+    offset = 0.5 * dataset_size - 0.5
+    return scale, offset
+
+
+def data_full_extent_box(dataset_size: np.ndarray) -> np.ndarray:
+    """Return the full voxel-extent box in data space.
+
+    Voxels are centred on the integer grid, so the box that wraps the
+    *outer edges* of the boundary voxels spans ``[-0.5, N-0.5]`` on each
+    axis.  This is the single source of truth for the multiscale bounding
+    box; both the ``NormSizedVolume`` bounds and the AABB wireframe derive
+    from it (via :func:`norm_full_extent_box`).
+
+    Parameters
+    ----------
+    dataset_size : ndarray, shape (3,)
+        Finest-level voxel counts (shader order: x, y, z).
+
+    Returns
+    -------
+    ndarray, shape (2, 3)
+        ``[min; max]`` corners in data space (shader order: x, y, z).
+    """
+    dataset_size = np.asarray(dataset_size, dtype=np.float64)
+    return np.stack([np.full(3, -0.5), dataset_size - 0.5])
+
+
+def norm_full_extent_box(
+    dataset_size: np.ndarray,
+    norm_size: np.ndarray,
+) -> np.ndarray:
+    """Map :func:`data_full_extent_box` into normalized (proxy-box) space.
+
+    Inverts the normalized -> data map (see :func:`_norm_to_data_params`)
+    so the returned box, once pushed through ``compose_world_transform``,
+    lands exactly on the data-space full voxel extent ``[-0.5, N-0.5]``.
+    Used for the ``NormSizedVolume`` local bounds and the 3D AABB wireframe,
+    both of which live in the node's normalized local space.
+
+    Parameters
+    ----------
+    dataset_size : ndarray, shape (3,)
+        Finest-level voxel counts (shader order: x, y, z).
+    norm_size : ndarray, shape (3,)
+        Normalized physical extent (shader order: x, y, z).
+
+    Returns
+    -------
+    ndarray, shape (2, 3)
+        ``[min; max]`` corners in normalized space (shader order: x, y, z).
+    """
+    scale, offset = _norm_to_data_params(dataset_size, norm_size)
+    data_box = data_full_extent_box(dataset_size)
+    return (data_box - offset) / scale
+
+
 def compose_world_transform(
     data_to_world: np.ndarray,
     dataset_size: np.ndarray,
@@ -223,8 +311,7 @@ def compose_world_transform(
     ndarray, shape (4, 4)
         The composed world_transform matrix.
     """
-    scale = dataset_size / norm_size
-    offset = 0.5 * dataset_size
+    scale, offset = _norm_to_data_params(dataset_size, norm_size)
 
     norm_to_data = np.eye(4, dtype=np.float64)
     norm_to_data[0, 0] = scale[0]

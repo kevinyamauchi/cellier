@@ -55,6 +55,7 @@ from cellier.v2.render.shaders._multiscale_volume_brick import (
     build_vol_params_buffer,
     compose_world_transform,
     compute_normalized_size,
+    norm_full_extent_box,
 )
 from cellier.v2.render.visuals._image_memory import (
     _box_wireframe_positions,
@@ -100,16 +101,30 @@ class NormSizedVolume(gfx.Volume):
     The standard gfx.Volume derives its local bounding box from the proxy
     texture dimensions, which for a 2x2x2 dummy produces an asymmetric box
     that offsets the orbit center by half the scene size.  This subclass
-    overrides get_bounding_box() to return the correct [-norm_size/2,
-    norm_size/2] box in normalized local space.
+    overrides get_bounding_box() to return the full voxel-extent box in
+    normalized local space, i.e. the box that maps (via the node's
+    norm->world matrix) to data ``[-0.5, N-0.5]`` so the corners sit on the
+    *outer edges* of the boundary voxels (see ``norm_full_extent_box``).
     """
 
     def __init__(
-        self, geometry, material, *, norm_size: np.ndarray | None = None, **kwargs
+        self,
+        geometry,
+        material,
+        *,
+        norm_size: np.ndarray | None = None,
+        dataset_size: np.ndarray | None = None,
+        **kwargs,
     ):
         super().__init__(geometry, material, **kwargs)
         self._norm_size: np.ndarray | None = (
             np.asarray(norm_size, dtype=np.float64) if norm_size is not None else None
+        )
+        # Voxel counts are constant across transform changes, so store once.
+        self._dataset_size: np.ndarray | None = (
+            np.asarray(dataset_size, dtype=np.float64)
+            if dataset_size is not None
+            else None
         )
 
     def update_norm_size(self, norm_size: np.ndarray) -> None:
@@ -117,10 +132,9 @@ class NormSizedVolume(gfx.Volume):
         self._norm_size = np.asarray(norm_size, dtype=np.float64)
 
     def get_bounding_box(self) -> np.ndarray | None:
-        if self._norm_size is None:
+        if self._norm_size is None or self._dataset_size is None:
             return super().get_bounding_box()
-        half = self._norm_size / 2.0
-        return np.array([-half, half])
+        return norm_full_extent_box(self._dataset_size, self._norm_size)
 
 
 def _extract_scale_and_translation(
@@ -2579,6 +2593,13 @@ class GFXMultiscaleImageVisual:
                 self._vol_params_buffer.update_full()
             if self._inner_node_3d is not None:
                 self._inner_node_3d.update_norm_size(self._norm_size)
+            # The wireframe lives in normalized space, which rescales with
+            # norm_size, so its geometry must be rebuilt (not just the matrix).
+            if self._aabb_line_3d is not None and self._dataset_size is not None:
+                box = norm_full_extent_box(self._dataset_size, self._norm_size)
+                self._aabb_line_3d.geometry = gfx.Geometry(
+                    positions=_box_wireframe_positions(box[0], box[1])
+                )
 
         if self._last_displayed_axes is not None:
             self._update_node_matrix(self._last_displayed_axes)
@@ -2697,10 +2718,15 @@ class GFXMultiscaleImageVisual:
     # ── Private helpers ─────────────────────────────────────────────────
 
     def _build_aabb_line_3d(self) -> gfx.Line:
-        """Build the 3D AABB wireframe line in normalized space."""
-        if self._norm_size is not None:
-            half = self._norm_size / 2.0
-            positions = _box_wireframe_positions(-half, half)
+        """Build the 3D AABB wireframe line in normalized space.
+
+        The wireframe lives in the node's normalized local space, so it uses
+        the same ``norm_full_extent_box`` as ``NormSizedVolume.get_bounding_box``
+        — both wrap the full voxel extent (data ``[-0.5, N-0.5]``).
+        """
+        if self._norm_size is not None and self._dataset_size is not None:
+            box = norm_full_extent_box(self._dataset_size, self._norm_size)
+            positions = _box_wireframe_positions(box[0], box[1])
         else:
             positions = _box_wireframe_positions(np.zeros(3), np.ones(3))
         return _make_aabb_line(positions, self._aabb_color, self._aabb_line_width)
@@ -2754,7 +2780,12 @@ class GFXMultiscaleImageVisual:
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
-        vol = NormSizedVolume(geometry, material, norm_size=self._norm_size)
+        vol = NormSizedVolume(
+            geometry,
+            material,
+            norm_size=self._norm_size,
+            dataset_size=self._dataset_size,
+        )
         # No inner transform — vertex shader uses normalized space.
 
         return vol, material, proxy_tex
