@@ -91,7 +91,7 @@ class AbstractPaintController(ABC):
                 "before calling AbstractPaintController.__init__."
             )
 
-        bus = cellier_controller._event_bus
+        bus = cellier_controller._outgoing_events
         bus.subscribe(
             CanvasMousePress2DEvent,
             self._on_mouse_press,
@@ -257,7 +257,7 @@ class AbstractPaintController(ABC):
 
     def _teardown(self) -> None:
         """Unsubscribe bus events and re-enable the camera controller."""
-        self._controller._event_bus.unsubscribe_all(self._id)
+        self._controller._outgoing_events.unsubscribe_all(self._id)
         self._controller.set_camera_controller_enabled(self._canvas_id, True)
 
     # ------------------------------------------------------------------

@@ -354,8 +354,13 @@ def test_on_data_ready_2d_transposes_correctly(mock_gfx):
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")
-def test_on_data_ready_3d_transposes_correctly(mock_gfx):
-    """Data (D=10, H=20, W=30) → (W=30, H=20, D=10) for pygfx."""
+def test_on_data_ready_3d_no_transpose(mock_gfx):
+    """Data (D=10, H=20, W=30) is uploaded as-is -- no transpose.
+
+    pygfx maps a numpy texture's last axis to texture-x, so (D, H, W) =
+    (z, y, x) already lands as local (x=W, y=H, z=D). Transposing here would
+    double-reverse the axes and swap data-x with data-z in the rendered volume.
+    """
     from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
@@ -378,8 +383,8 @@ def test_on_data_ready_3d_transposes_correctly(mock_gfx):
 
     assert len(captured_arrays) == 1
     arr = captured_arrays[0]
-    assert arr.shape == (30, 20, 10)
-    np.testing.assert_array_equal(arr, data.T)
+    assert arr.shape == (10, 20, 30)
+    np.testing.assert_array_equal(arr, data)
 
 
 @patch("cellier.v2.render.visuals._image_memory.gfx")

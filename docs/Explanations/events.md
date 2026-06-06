@@ -910,7 +910,7 @@ Each bridge handler reads the var before emitting:
 ```python
 # Inside _on_appearance_psygnal (returned by _make_appearance_handler)
 resolved_source_id = _source_id_override.get() or self._id
-self._event_bus.emit(
+self._outgoing_events.emit(
     AppearanceChangedEvent(source_id=resolved_source_id, ...)
 )
 ```
@@ -1023,22 +1023,23 @@ re-read from the model object.
 def _make_appearance_handler(self, visual_id: UUID) -> Callable:
     def _on_appearance_psygnal(info: EmissionInfo) -> None:
         field_name: str = info.signal.name
-        new_value = info.args[0]            # new value from psygnal args
+        new_value = info.args[0]  # new value from psygnal args
         resolved_source_id = _source_id_override.get() or self._id
         if field_name == "visible":
-            self._event_bus.emit(VisualVisibilityChangedEvent(
+            self._outgoing_events.emit(VisualVisibilityChangedEvent(
                 source_id=resolved_source_id,
                 visual_id=visual_id,
                 visible=new_value,
             ))
         else:
-            self._event_bus.emit(AppearanceChangedEvent(
+            self._outgoing_events.emit(AppearanceChangedEvent(
                 source_id=resolved_source_id,
                 visual_id=visual_id,
                 field_name=field_name,
                 new_value=new_value,
                 requires_reslice=(field_name in _RESLICE_FIELDS),
             ))
+
     return _on_appearance_psygnal
 ```
 
@@ -1087,6 +1088,7 @@ def _wire_dims_model(self, scene: Scene) -> None:
     self._dims_cache[scene.id] = scene.dims.selection.displayed_axes
     scene.dims.events.connect(self._make_dims_handler(scene.id))
 
+
 def _make_dims_handler(self, scene_id: UUID) -> Callable:
     def _on_dims_psygnal(info: EmissionInfo) -> None:
         new_state = self._model.scenes[scene_id].dims.to_state()
@@ -1097,12 +1099,13 @@ def _make_dims_handler(self, scene_id: UUID) -> Callable:
             self._rebuild_visuals_geometry(scene_id, new_state.selection.displayed_axes)
             self._switch_canvas_cameras(scene_id, new_state.selection.displayed_axes)
         resolved_source_id = _source_id_override.get() or self._id
-        self._event_bus.emit(DimsChangedEvent(
+        self._outgoing_events.emit(DimsChangedEvent(
             source_id=resolved_source_id,
             scene_id=scene_id,
             dims_state=new_state,
             displayed_axes_changed=displayed_axes_changed,
         ))
+
     return _on_dims_psygnal
 ```
 
@@ -1117,17 +1120,19 @@ change, not through bus subscriptions.
 def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
     visual.aabb.events.connect(self._make_aabb_handler(visual.id))
 
+
 def _make_aabb_handler(self, visual_id: UUID) -> Callable:
     def _on_aabb_psygnal(info: EmissionInfo) -> None:
         field_name: str = info.signal.name
         new_value = info.args[0]
         resolved_source_id = _aabb_source_id_override.get() or self._id
-        self._event_bus.emit(AABBChangedEvent(
+        self._outgoing_events.emit(AABBChangedEvent(
             source_id=resolved_source_id,
             visual_id=visual_id,
             field_name=field_name,
             new_value=new_value,
         ))
+
     return _on_aabb_psygnal
 ```
 
@@ -1140,7 +1145,7 @@ by GUI sliders — they come from application code via `set_visual_transform`. T
 ```python
 def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
     def _on_transform(new_transform: AffineTransform) -> None:
-        self._event_bus.emit(TransformChangedEvent(
+        self._outgoing_events.emit(TransformChangedEvent(
             source_id=self._id,
             scene_id=scene_id,
             visual_id=visual_id,
@@ -1148,6 +1153,7 @@ def _make_transform_handler(self, visual_id: UUID, scene_id: UUID) -> Callable:
         ))
         if not self._suppress_reslice:
             self.reslice_scene(scene_id)
+
     return _on_transform
 ```
 
@@ -1338,10 +1344,10 @@ synchronously before `setattr` returns.
 
 ```python
 def _on_appearance_psygnal(info: EmissionInfo) -> None:
-    field_name = info.signal.name          # "clim"
-    new_value = info.args[0]               # (0.0, 1.0)
+    field_name = info.signal.name  # "clim"
+    new_value = info.args[0]  # (0.0, 1.0)
     resolved_source_id = _source_id_override.get() or self._id  # widget._id
-    self._event_bus.emit(AppearanceChangedEvent(
+    self._outgoing_events.emit(AppearanceChangedEvent(
         source_id=resolved_source_id,
         visual_id=visual_id,
         field_name="clim",

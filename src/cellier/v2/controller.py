@@ -158,7 +158,7 @@ class CellierController:
         self._scene_to_canvases: dict[UUID, list[UUID]] = {}
         # Event buses
         self._id: UUID = uuid4()
-        self._event_bus: EventBus = EventBus()
+        self._outgoing_events: EventBus = EventBus()
         self._incoming_events: EventBus = EventBus()
         # Cache of last-known displayed_axes per scene for change detection
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
@@ -178,7 +178,7 @@ class CellierController:
         # nested suppress_reslice calls or concurrent async transform mutations
         # will interfere — use a depth counter if that ever becomes necessary.
         self._suppress_reslice: bool = False
-        self._event_bus.subscribe(
+        self._outgoing_events.subscribe(
             CameraChangedEvent,
             self._on_camera_changed,
             owner_id=self._id,
@@ -186,15 +186,15 @@ class CellierController:
         # Must be called before subscribing _on_dims_changed_bus below so the
         # SliceCoordinator invalidates stale 2D caches before the controller
         # submits new slice requests.
-        self._render_manager.connect_event_bus(self._event_bus)
+        self._render_manager.connect_event_bus(self._outgoing_events)
         # Controller's own dims handler: reslice the affected scene.
-        self._event_bus.subscribe(
+        self._outgoing_events.subscribe(
             DimsChangedEvent,
             self._on_dims_changed_bus,
             owner_id=self._id,
         )
         # Subscribe to internal raw pointer events emitted by RenderManager.
-        self._event_bus.subscribe(
+        self._outgoing_events.subscribe(
             _CanvasRawPointerEvent,
             self._on_raw_pointer_event,
             owner_id=self._id,
@@ -363,7 +363,9 @@ class CellierController:
         self._render_manager.add_scene(scene.id, lighting=scene.lighting)
         self._scene_to_canvases[scene.id] = []
         self._wire_dims_model(scene)
-        self._event_bus.emit(SceneAddedEvent(source_id=self._id, scene_id=scene.id))
+        self._outgoing_events.emit(
+            SceneAddedEvent(source_id=self._id, scene_id=scene.id)
+        )
         return scene
 
     def add_scene(
@@ -1068,14 +1070,14 @@ class CellierController:
         ):
             handler = getattr(gfx_visual, handler_name, None)
             if handler is not None:
-                self._event_bus.subscribe(
+                self._outgoing_events.subscribe(
                     event_type,
                     handler,
                     entity_id=visual_model.id,
                     owner_id=visual_model.id,
                 )
 
-        self._event_bus.emit(
+        self._outgoing_events.emit(
             VisualAddedEvent(
                 source_id=self._id,
                 scene_id=scene_id,
@@ -1145,6 +1147,7 @@ class CellierController:
             visual_model=visual_model,
             data_store=data_store,
             render_modes=render_modes,
+            transform=visual_model.transform,
         )
         self._register_visual(
             scene_id, visual_model, gfx_visual, data_store, displayed_axes
@@ -1167,6 +1170,7 @@ class CellierController:
             visual_model=visual_model,
             data_store=data_store,
             render_modes=render_modes,
+            transform=visual_model.transform,
         )
         self._register_visual(
             scene_id, visual_model, gfx_visual, data_store, displayed_axes
@@ -1494,7 +1498,7 @@ class CellierController:
                 depth_range=depth_range,
             )
 
-        canvas_view.set_event_bus(self._event_bus)
+        canvas_view.set_event_bus(self._outgoing_events)
 
         # Wire any overlays already stored on this canvas model to the render
         # layer.  For canvases created via add_canvas() this loop is a no-op
@@ -1768,7 +1772,7 @@ class CellierController:
                 resolved_source_id,
                 _source_id_override.get() is not None,
             )
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 DimsChangedEvent(
                     source_id=resolved_source_id,
                     scene_id=scene_id,
@@ -1853,7 +1857,7 @@ class CellierController:
         """
 
         def _on_transform(new_transform: AffineTransform) -> None:
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 TransformChangedEvent(
                     source_id=self._id,
                     scene_id=scene_id,
@@ -1907,7 +1911,7 @@ class CellierController:
             field_name: str = info.signal.name
             new_value = info.args[0]
             resolved_source_id = _source_id_override.get() or self._id
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 ChannelAppearanceChangedEvent(
                     source_id=resolved_source_id,
                     visual_id=visual_id,
@@ -1942,7 +1946,7 @@ class CellierController:
                 resolved_source_id,
                 _aabb_source_id_override.get() is not None,
             )
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 AABBChangedEvent(
                     source_id=resolved_source_id,
                     visual_id=visual_id,
@@ -1965,7 +1969,7 @@ class CellierController:
         """Return a handler that emits PickWriteChangedEvent on pick_write changes."""
 
         def _on_pick_write(new_value: bool) -> None:
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 PickWriteChangedEvent(
                     source_id=self._id,
                     visual_id=visual_id,
@@ -1997,7 +2001,7 @@ class CellierController:
                 _source_id_override.get() is not None,
             )
             if field_name == "visible":
-                self._event_bus.emit(
+                self._outgoing_events.emit(
                     VisualVisibilityChangedEvent(
                         source_id=resolved_source_id,
                         visual_id=visual_id,
@@ -2005,7 +2009,7 @@ class CellierController:
                     )
                 )
             else:
-                self._event_bus.emit(
+                self._outgoing_events.emit(
                     AppearanceChangedEvent(
                         source_id=resolved_source_id,
                         visual_id=visual_id,
@@ -2687,9 +2691,9 @@ class CellierController:
 
         # 3. Bus cleanup for canvases and the scene itself.
         for canvas_id in self._scene_to_canvases.pop(scene_id, []):
-            self._event_bus.unsubscribe_all(canvas_id)
+            self._outgoing_events.unsubscribe_all(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
-        self._event_bus.unsubscribe_all(scene_id)
+        self._outgoing_events.unsubscribe_all(scene_id)
 
         # 4. Clean up controller-side scene maps.
         self._dims_cache.pop(scene_id, None)
@@ -2702,7 +2706,9 @@ class CellierController:
         self._render_manager.remove_scene(scene_id)
 
         # 7. Notify external observers.
-        self._event_bus.emit(SceneRemovedEvent(source_id=self._id, scene_id=scene_id))
+        self._outgoing_events.emit(
+            SceneRemovedEvent(source_id=self._id, scene_id=scene_id)
+        )
 
     def remove_canvas(self, canvas_id: UUID) -> None:
         """Remove a canvas from its scene, disconnecting all wiring.
@@ -2732,7 +2738,7 @@ class CellierController:
             task.cancel()
 
         # 2. Remove bus subscriptions owned by this canvas.
-        self._event_bus.unsubscribe_all(canvas_id)
+        self._outgoing_events.unsubscribe_all(canvas_id)
 
         # 3. Update controller lookup maps.
         self._canvas_to_scene.pop(canvas_id)
@@ -2777,7 +2783,7 @@ class CellierController:
             signal.disconnect(handler)
 
         # 3. Remove bus subscriptions for this visual's GFX handlers.
-        self._event_bus.unsubscribe_all(visual_id)
+        self._outgoing_events.unsubscribe_all(visual_id)
 
         # 4. Remove from controller lookup maps.
         self._visual_to_scene.pop(visual_id)
@@ -2786,7 +2792,7 @@ class CellierController:
         self._render_manager.remove_visual(visual_id)
 
         # 6. Notify external observers.
-        self._event_bus.emit(
+        self._outgoing_events.emit(
             VisualRemovedEvent(
                 source_id=self._id,
                 scene_id=scene_id,
@@ -2864,7 +2870,7 @@ class CellierController:
         SubscriptionHandle
             Pass to ``EventBus.unsubscribe()`` for individual removal.
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             DimsChangedEvent,
             callback,
             entity_id=scene_id,
@@ -2903,7 +2909,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CameraChangedEvent,
             callback,
             entity_id=scene_id,
@@ -2949,7 +2955,7 @@ class CellierController:
                 "move": CanvasMouseMove2DEvent,
                 "release": CanvasMouseRelease2DEvent,
             }
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 _CLS_2D[event.action](
                     source_id=event.canvas_id,
                     scene_id=event.scene_id,
@@ -2963,7 +2969,7 @@ class CellierController:
                 "move": CanvasMouseMove3DEvent,
                 "release": CanvasMouseRelease3DEvent,
             }
-            self._event_bus.emit(
+            self._outgoing_events.emit(
                 _CLS_3D[event.action](
                     source_id=event.canvas_id,
                     scene_id=event.scene_id,
@@ -2994,7 +3000,7 @@ class CellierController:
         weak :
             If True, hold only a weak reference to *callback*.
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMousePress2DEvent,
             callback,
             entity_id=canvas_id,
@@ -3011,7 +3017,7 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-move event on a 2D canvas."""
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMouseMove2DEvent,
             callback,
             entity_id=canvas_id,
@@ -3028,7 +3034,7 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-up event on a 2D canvas."""
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMouseRelease2DEvent,
             callback,
             entity_id=canvas_id,
@@ -3058,7 +3064,7 @@ class CellierController:
         weak :
             If True, hold only a weak reference to *callback*.
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMousePress3DEvent,
             callback,
             entity_id=canvas_id,
@@ -3075,7 +3081,7 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-move event on a 3D canvas."""
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMouseMove3DEvent,
             callback,
             entity_id=canvas_id,
@@ -3092,7 +3098,7 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-up event on a 3D canvas."""
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             CanvasMouseRelease3DEvent,
             callback,
             entity_id=canvas_id,
@@ -3226,7 +3232,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             AppearanceChangedEvent,
             callback,
             entity_id=visual_id,
@@ -3279,7 +3285,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             VisualVisibilityChangedEvent,
             callback,
             entity_id=visual_id,
@@ -3331,7 +3337,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             SceneAddedEvent,
             callback,
             entity_id=scene_id,
@@ -3364,7 +3370,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             SceneRemovedEvent,
             callback,
             entity_id=scene_id,
@@ -3397,7 +3403,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             VisualAddedEvent,
             callback,
             entity_id=visual_id,
@@ -3430,7 +3436,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             VisualRemovedEvent,
             callback,
             entity_id=visual_id,
@@ -3478,7 +3484,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             AABBChangedEvent,
             callback,
             entity_id=visual_id,
@@ -3516,7 +3522,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             ResliceStartedEvent,
             callback,
             entity_id=scene_id,
@@ -3554,7 +3560,7 @@ class CellierController:
         -------
         SubscriptionHandle
         """
-        return self._event_bus.subscribe(
+        return self._outgoing_events.subscribe(
             ResliceCompletedEvent,
             callback,
             entity_id=visual_id,
@@ -3575,7 +3581,7 @@ class CellierController:
             The UUID used as ``owner_id`` when the subscriptions were
             registered (typically the widget's own ``self._id``).
         """
-        self._event_bus.unsubscribe_all(owner_id)
+        self._outgoing_events.unsubscribe_all(owner_id)
 
     def connect_widget(
         self,
@@ -3615,7 +3621,7 @@ class CellierController:
         owner_id = widget._id
         widget.closed.connect(lambda: self.unsubscribe_owner(owner_id))
         for spec in subscription_specs or []:
-            self._event_bus.subscribe(
+            self._outgoing_events.subscribe(
                 spec.event_type,
                 spec.handler,
                 entity_id=spec.entity_id,

@@ -60,7 +60,7 @@ describing every callback registered for a given event type.
 ```python
 from cellier.v2.events import DimsChangedEvent, AppearanceChangedEvent
 
-subscribers = controller._event_bus.get_subscribers(DimsChangedEvent)
+subscribers = controller._outgoing_events.get_subscribers(DimsChangedEvent)
 for info in subscribers:
     print(info.callback_qualname, info.owner_id, info.entity_id, info.is_alive)
 ```
@@ -81,7 +81,7 @@ include both subscriptions scoped to that entity **and** unscoped subscriptions
 
 ```python
 # Everything that fires when scene X's dims change.
-subscribers = controller._event_bus.get_subscribers(
+subscribers = controller._outgoing_events.get_subscribers(
     DimsChangedEvent, entity_id=scene.id
 )
 ```
@@ -92,7 +92,7 @@ subscribers = controller._event_bus.get_subscribers(
 Use this in a debugging session to inspect the subscriber directly:
 
 ```python
-for info in controller._event_bus.get_subscribers(AppearanceChangedEvent):
+for info in controller._outgoing_events.get_subscribers(AppearanceChangedEvent):
     print(type(info.callback_instance).__name__, info.callback_qualname)
     # e.g. GFXMultiscaleImageVisual  on_appearance_changed
 ```
@@ -118,7 +118,7 @@ or inspect `_subs` directly in a debugger:
 
 ```python
 # In a debugger, evaluate:
-controller._event_bus._subs[DimsChangedEvent]
+controller._outgoing_events._subs[DimsChangedEvent]
 ```
 
 Each entry now prints as:
@@ -185,7 +185,7 @@ changes.
 
 1. Check that the subscription exists and is alive:
    ```python
-   subscribers = controller._event_bus.get_subscribers(
+   subscribers = controller._outgoing_events.get_subscribers(
        AppearanceChangedEvent, entity_id=visual.id
    )
    for info in subscribers:

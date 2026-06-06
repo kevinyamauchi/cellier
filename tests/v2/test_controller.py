@@ -322,7 +322,7 @@ def test_dims_bridge_displayed_axes_flag_true():
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         __import__("cellier.v2.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
         events.append,
         entity_id=scene.id,
@@ -339,7 +339,7 @@ def test_dims_bridge_displayed_axes_flag_false():
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         __import__("cellier.v2.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
         events.append,
         entity_id=scene.id,
@@ -362,7 +362,7 @@ def test_appearance_bridge_color_map(small_zarr_store):
     )
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
 
@@ -384,7 +384,7 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
     )
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
@@ -411,7 +411,7 @@ def test_appearance_bridge_force_level(small_zarr_store):
     )
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
@@ -438,7 +438,7 @@ def test_appearance_bridge_frustum_cull(small_zarr_store):
     )
 
     events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
@@ -484,10 +484,10 @@ def test_appearance_bridge_visible(small_zarr_store):
 
     appearance_events = []
     visibility_events = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, appearance_events.append, entity_id=visual.id
     )
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         VisualVisibilityChangedEvent, visibility_events.append, entity_id=visual.id
     )
 
@@ -502,7 +502,7 @@ def test_scene_added_event_emitted():
 
     controller = CellierController()
     events = []
-    controller._event_bus.subscribe(SceneAddedEvent, events.append)
+    controller._outgoing_events.subscribe(SceneAddedEvent, events.append)
 
     cs = _make_cs()
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
@@ -520,7 +520,7 @@ def test_visual_added_event_emitted(small_zarr_store):
     store = _make_store(small_zarr_store)
 
     events = []
-    controller._event_bus.subscribe(VisualAddedEvent, events.append)
+    controller._outgoing_events.subscribe(VisualAddedEvent, events.append)
 
     visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
@@ -556,13 +556,13 @@ def test_unsubscribe_all_cleans_up(small_zarr_store):
     )
 
     fired = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent,
         fired.append,
         entity_id=visual.id,
         owner_id=visual.id,
     )
-    controller._event_bus.unsubscribe_all(visual.id)
+    controller._outgoing_events.unsubscribe_all(visual.id)
 
     visual.appearance.color_map = "plasma"
     assert fired == []
@@ -791,7 +791,7 @@ def test_wire_transform_emits_event(small_zarr_store):
     )
 
     fired = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         TransformChangedEvent, fired.append, entity_id=visual.id
     )
 
@@ -874,7 +874,7 @@ def test_remove_visual_disconnects_psygnal_bridge(small_zarr_store):
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     fired = []
-    controller._event_bus.subscribe(
+    controller._outgoing_events.subscribe(
         AppearanceChangedEvent, fired.append, entity_id=visual.id
     )
 
@@ -891,7 +891,7 @@ def test_remove_visual_emits_event(small_zarr_store):
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     events = []
-    controller._event_bus.subscribe(VisualRemovedEvent, events.append)
+    controller._outgoing_events.subscribe(VisualRemovedEvent, events.append)
 
     controller.remove_visual(visual.id)
 
@@ -956,7 +956,7 @@ def test_remove_scene_emits_event(small_zarr_store):
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     events = []
-    controller._event_bus.subscribe(SceneRemovedEvent, events.append)
+    controller._outgoing_events.subscribe(SceneRemovedEvent, events.append)
 
     controller.remove_scene(scene.id)
 

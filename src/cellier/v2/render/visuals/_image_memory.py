@@ -628,8 +628,13 @@ class GFXImageMemoryVisual:
 
         _request, data = batch[0]
 
-        # pygfx Volume expects (W, H, D) -- transpose from numpy (D, H, W).
-        data_wgpu = np.ascontiguousarray(data.T)
+        # No transpose: pygfx maps a numpy texture's *last* axis to texture-x,
+        # so (D, H, W) = (z, y, x) already lands as local (x=W, y=H, z=D) -- the
+        # desired data(z, y, x) -> world(x, y, z) mapping. This mirrors the 2-D
+        # path, which also uploads without transposing. (A previous ``data.T``
+        # double-reversed the axes -- pygfx already reverses once -- which
+        # transposed data-x and data-z in the rendered volume.)
+        data_wgpu = np.ascontiguousarray(data)
         tex = gfx.Texture(data_wgpu, dim=3, format="1xf4")
         self._inner_node_3d.geometry = gfx.Geometry(grid=tex)
 
