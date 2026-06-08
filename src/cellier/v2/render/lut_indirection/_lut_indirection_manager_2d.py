@@ -46,6 +46,7 @@ class LutIndirectionManager2D:
         self,
         tile_manager: TileManager2D,
         current_slice_coord: tuple[tuple[int, int], ...] | None = None,
+        viewport_cells: tuple[int, int, int, int] | None = None,
     ) -> None:
         """Rewrite ``lut_data`` from current tilemap state and schedule GPU upload.
 
@@ -62,6 +63,12 @@ class LutIndirectionManager2D:
             The slice coordinate set at the start of the most-recent
             ``build_slice_request_2d`` call.  When ``None`` all tiles are
             treated as foreground (backward-compatible single-phase sweep).
+        viewport_cells : tuple[int, int, int, int] or None
+            Base-grid cell bounds ``(gy0, gx0, gy1, gx1)`` (half-open) of the
+            current viewport.  When provided, old-slice **background** tiles are
+            clipped to this region so stale tiles outside the view are no longer
+            referenced in the LUT.  ``None`` disables clipping (background tiles
+            written across the full grid, backward-compatible).
         """
         rebuild_lut_2d(
             self._base_layout,
@@ -71,6 +78,7 @@ class LutIndirectionManager2D:
             self.lut_tex,
             scale_vecs_data=self._scale_vecs_data,
             current_slice_coord=current_slice_coord,
+            viewport_cells=viewport_cells,
         )
 
 
@@ -106,6 +114,7 @@ def rebuild_lut_2d(
     lut_tex: gfx.Texture,
     scale_vecs_data: list[np.ndarray] | None = None,
     current_slice_coord: tuple[tuple[int, int], ...] | None = None,
+    viewport_cells: tuple[int, int, int, int] | None = None,
 ) -> None:
     """Rebuild the full 2D LUT from the current tile manager state.
 
@@ -113,10 +122,13 @@ def rebuild_lut_2d(
 
     - **Phase 1 (background):** Write tiles whose ``slice_coord`` differs from
       ``current_slice_coord``, coarsest-to-finest.  These are old-slice tiles
-      that serve as a visual placeholder while new data loads.
+      that serve as a visual placeholder while new data loads.  When
+      ``viewport_cells`` is provided, these writes are clipped to the viewport
+      so stale tiles outside the view are not referenced.
     - **Phase 2 (foreground):** Write tiles whose ``slice_coord`` matches
       ``current_slice_coord``, coarsest-to-finest.  These overwrite the
-      background wherever new data has arrived.
+      background wherever new data has arrived.  Foreground tiles are always
+      written across the full grid (never clipped).
 
     When ``current_slice_coord`` is ``None``, all tiles are written in a single
     coarsest-to-finest sweep (backward-compatible behaviour).
@@ -149,13 +161,23 @@ def rebuild_lut_2d(
     current_slice_coord : tuple of (axis_index, world_value) pairs or None
         The slice coordinate to use for phase separation.  ``None`` disables
         the two-phase sweep.
+    viewport_cells : tuple[int, int, int, int] or None
+        Base-grid cell bounds ``(gy0, gx0, gy1, gx1)`` (half-open) used to clip
+        background (old-slice) writes.  ``None`` disables clipping.
     """
     gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset to out-of-bounds (level 0).
 
-    def _write_tiles(tiles_by_level: dict[int, list]) -> None:
-        """Write one group of tiles coarsest-to-finest into lut_data."""
+    def _write_tiles(
+        tiles_by_level: dict[int, list],
+        clip: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """Write one group of tiles coarsest-to-finest into lut_data.
+
+        When ``clip`` is provided, each tile's base-grid span is intersected
+        with the clip bounds ``(cy0, cx0, cy1, cx1)`` before writing.
+        """
         for level in range(n_levels, 0, -1):
             if level not in tiles_by_level:
                 continue
@@ -175,6 +197,14 @@ def rebuild_lut_2d(
                 gy1 = min(gy0 + scale_y, gh)
                 gx0 = key.g1 * scale_x
                 gx1 = min(gx0 + scale_x, gw)
+                if clip is not None:
+                    cy0, cx0, cy1, cx1 = clip
+                    gy0 = max(gy0, cy0)
+                    gy1 = min(gy1, cy1)
+                    gx0 = max(gx0, cx0)
+                    gx1 = min(gx1, cx1)
+                    if gy0 >= gy1 or gx0 >= gx1:
+                        continue  # Tile lies entirely outside the viewport.
                 lut_data[gy0:gy1, gx0:gx1] = (sx, sy, level, 0)
 
     if current_slice_coord is None:
@@ -195,7 +225,9 @@ def rebuild_lut_2d(
                 fg_by_level.setdefault(key.level, []).append((key, slot))
             else:
                 bg_by_level.setdefault(key.level, []).append((key, slot))
-        _write_tiles(bg_by_level)
+        # Clip stale background tiles to the viewport so out-of-view stale data
+        # is no longer referenced; foreground (current-slice) is never clipped.
+        _write_tiles(bg_by_level, clip=viewport_cells)
         _write_tiles(fg_by_level)
 
     lut_tex.update_range((0, 0, 0), lut_tex.size)

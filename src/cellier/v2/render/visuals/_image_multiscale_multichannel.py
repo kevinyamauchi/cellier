@@ -593,6 +593,10 @@ class GFXMultichannelMultiscaleImageVisual:
             force_level=force_level,
             use_culling=use_culling,
         )
+        # Propagate the viewport region (computed inside _plan_tiles_2d) to all
+        # slots so per-slot LUT rebuilds clip stale background tiles to the view.
+        for slot in self._slots:
+            slot._current_viewport_cells = planner._current_viewport_cells
         if not required:
             return []
 

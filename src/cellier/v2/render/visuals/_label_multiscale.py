@@ -265,6 +265,9 @@ class GFXMultiscaleLabelVisual:
         self._lut_params_buffer_2d = None
         self._block_scales_buffer_2d = None
         self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
+        # Viewport base-grid cell bounds (gy0, gx0, gy1, gx1) for clipping stale
+        # background tiles out of the LUT.  None disables clipping.
+        self._current_viewport_cells: tuple[int, int, int, int] | None = None
         self._current_slice_coord_3d: tuple[tuple[int, int], ...] | None = None
         if image_geometry_2d is not None:
             cache_parameters_2d = compute_block_cache_parameters_2d(
@@ -913,9 +916,19 @@ class GFXMultiscaleLabelVisual:
             corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)[:, [1, 0]]
             view_min = corners_data_2d.min(axis=0)
             view_max = corners_data_2d.max(axis=0)
+            # Base-grid cell bounds (gy0, gx0, gy1, gx1) for clipping stale
+            # background tiles out of the LUT.  view_min/max are level-0 voxels
+            # in (gx, gy) order; convert to half-open cell bounds and clamp.
+            gh_grid, gw_grid = geo2d.base_layout.grid_dims
+            cx0 = max(0, int(np.floor(view_min[0] / block_size)))
+            cx1 = min(gw_grid, int(np.ceil(view_max[0] / block_size)))
+            cy0 = max(0, int(np.floor(view_min[1] / block_size)))
+            cy1 = min(gh_grid, int(np.ceil(view_max[1] / block_size)))
+            self._current_viewport_cells = (cy0, cx0, cy1, cx1)
         else:
             view_min = None
             view_max = None
+            self._current_viewport_cells = None
 
         t0 = time.perf_counter()
         tile_arr = select_lod_2d(
@@ -976,6 +989,7 @@ class GFXMultiscaleLabelVisual:
             self._lut_manager_2d.rebuild(
                 self._block_cache_2d.tile_manager,
                 current_slice_coord=self._current_slice_coord,
+                viewport_cells=self._current_viewport_cells,
             )
 
         slice_id = uuid4()
@@ -1075,6 +1089,7 @@ class GFXMultiscaleLabelVisual:
         self._lut_manager_2d.rebuild(
             self._block_cache_2d.tile_manager,
             current_slice_coord=self._current_slice_coord,
+            viewport_cells=self._current_viewport_cells,
         )
 
         _GPU_LOGGER.info(

@@ -683,6 +683,10 @@ class GFXMultiscaleImageVisual:
         # Used by the two-phase LUT rebuild to separate current-slice tiles from
         # old-slice fallback tiles.
         self._current_slice_coord: tuple[tuple[int, int], ...] | None = None
+        # Viewport base-grid cell bounds (gy0, gx0, gy1, gx1), half-open, from the
+        # most-recent plan.  Used to clip stale-slice background tiles out of the
+        # LUT so out-of-view old data is not referenced.  None disables clipping.
+        self._current_viewport_cells: tuple[int, int, int, int] | None = None
         # 3D equivalent: embeds non-displayed axis positions into BlockKey3D so
         # that bricks from different slice positions are not treated as cache hits.
         self._current_slice_coord_3d: tuple[tuple[int, int], ...] | None = None
@@ -1570,6 +1574,37 @@ class GFXMultiscaleImageVisual:
 
     # ── 2D planning helpers ───────────────────────────────────────────
 
+    def _viewport_cells_from_view_bounds(
+        self,
+        view_min: np.ndarray | None,
+        view_max: np.ndarray | None,
+        block_size: int,
+    ) -> tuple[int, int, int, int] | None:
+        """Convert a data-space viewport AABB to base-grid cell bounds.
+
+        Parameters
+        ----------
+        view_min, view_max : ndarray, shape (2,) or None
+            Viewport AABB in level-0 voxel space, ``(gx, gy)`` order (as
+            produced by the culling block).  ``None`` returns ``None``.
+        block_size : int
+            Finest-level tile side length in voxels.
+
+        Returns
+        -------
+        tuple[int, int, int, int] or None
+            Half-open cell bounds ``(gy0, gx0, gy1, gx1)`` clamped to the base
+            grid, or ``None`` when no viewport is available.
+        """
+        if view_min is None or view_max is None:
+            return None
+        gh_grid, gw_grid = self._image_geometry_2d.base_layout.grid_dims
+        cx0 = max(0, int(np.floor(view_min[0] / block_size)))
+        cx1 = min(gw_grid, int(np.ceil(view_max[0] / block_size)))
+        cy0 = max(0, int(np.floor(view_min[1] / block_size)))
+        cy1 = min(gh_grid, int(np.ceil(view_max[1] / block_size)))
+        return (cy0, cx0, cy1, cx1)
+
     def _plan_tiles_2d(
         self,
         camera_pos_world: np.ndarray,
@@ -1637,6 +1672,10 @@ class GFXMultiscaleImageVisual:
         else:
             view_min = None
             view_max = None
+
+        self._current_viewport_cells = self._viewport_cells_from_view_bounds(
+            view_min, view_max, block_size
+        )
 
         # 1. LOD selection
         tile_arr = select_lod_2d(
@@ -1718,6 +1757,7 @@ class GFXMultiscaleImageVisual:
             self._lut_manager_2d.rebuild(
                 self._block_cache_2d.tile_manager,
                 current_slice_coord=self._current_slice_coord,
+                viewport_cells=self._current_viewport_cells,
             )
 
         chunk_requests: list[ChunkRequest] = []
@@ -2102,6 +2142,10 @@ class GFXMultiscaleImageVisual:
             view_min = None
             view_max = None
 
+        self._current_viewport_cells = self._viewport_cells_from_view_bounds(
+            view_min, view_max, block_size
+        )
+
         # ── DEBUG: print camera & viewport in level-0 voxel space ──────────
         import logging as _logging
 
@@ -2198,6 +2242,7 @@ class GFXMultiscaleImageVisual:
             self._lut_manager_2d.rebuild(
                 self._block_cache_2d.tile_manager,
                 current_slice_coord=self._current_slice_coord,
+                viewport_cells=self._current_viewport_cells,
             )
 
         # 6. Build ChunkRequests
@@ -2326,6 +2371,7 @@ class GFXMultiscaleImageVisual:
         self._lut_manager_2d.rebuild(
             self._block_cache_2d.tile_manager,
             current_slice_coord=self._current_slice_coord,
+            viewport_cells=self._current_viewport_cells,
         )
 
         _GPU_LOGGER.info(
