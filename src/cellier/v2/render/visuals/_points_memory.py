@@ -75,11 +75,17 @@ class GFXPointsMemoryVisual:
     column 1 is axis 1 (y), column 2 is axis 2 (x).
 
     In ``_commit``:
-    - **3D path** — ``positions[:, [2, 1, 0]]`` reverses to pygfx ``(x, y, z)``
-      order.  This is the single axis-reversal site; do not reorder elsewhere.
+    - **3D path** — ``positions[:, [2, 1, 0]]`` reverses (z, y, x) data order
+      to pygfx ``(x, y, z)``.
     - **2D path** — incoming ``(N, 2)`` positions (already projected by the
-      store) are padded with a zero column.  The node matrix handles
-      orientation; no column reversal is applied.
+      store) are padded with a zero column, then swapped ``[1, 0, 2]`` so the
+      stored ``(row, col)`` becomes pygfx ``(x=col, y=row, z=0)``.
+
+    Both paths reorder the position buffer directly. The node matrix
+    (``_pygfx_matrix``) separately axis-reverses the affine *transform* so any
+    scale/translation acts on the correct pygfx axes; for an identity transform
+    it is a no-op, so under identity the buffer swap above is what carries the
+    orientation.
 
     Parameters
     ----------

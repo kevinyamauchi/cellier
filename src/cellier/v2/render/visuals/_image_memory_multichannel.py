@@ -428,7 +428,12 @@ class GFXMultichannelImageMemoryVisual:
             if slot is None:
                 continue
             node = self._pool_3d[slot]
-            data_wgpu = np.ascontiguousarray(data.T)
+            # No transpose: pygfx maps a numpy texture's *last* axis to
+            # texture-x, so (D, H, W) = (z, y, x) already lands as local
+            # (x=W, y=H, z=D) -- matching the single-channel path. A previous
+            # ``data.T`` double-reversed the axes (pygfx already reverses once),
+            # transposing data-x and data-z in the rendered volume.
+            data_wgpu = np.ascontiguousarray(data)
             tex = gfx.Texture(data_wgpu, dim=3, format="1xf4")
             node.geometry = gfx.Geometry(grid=tex)
 

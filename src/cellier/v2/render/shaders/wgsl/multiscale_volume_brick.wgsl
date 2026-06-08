@@ -50,16 +50,36 @@ fn get_lod_color(lut_w: u32) -> vec3<f32> {
 
 
 // ── Coordinate conversions ────────────────────────────────────────────────
+//
+// Two conventions are used, differing by half a voxel:
+//
+//   *_index   — INDEX space. The proxy box [-norm/2, +norm/2] maps to
+//               voxel-index range [0, N]. Brick boundaries fall on integers
+//               (g*block_size), so this is what brick selection, brick AABBs,
+//               the DDA grid, and gradient probes use. Identical to the
+//               original convention, so their ghost-border budget is unchanged.
+//
+//   centred   — CENTRED space, = index - 0.5. The proxy box maps to the full
+//               voxel extent [-0.5, N-0.5], i.e. voxel i is centred on integer
+//               i and spans [i-0.5, i+0.5]. This is what the forward density
+//               samples (and ISO bisection) feed to sample_atlas, so the
+//               rendered slab fills [-0.5, N-0.5] and matches the in-memory
+//               gfx.Volume / the AABB box. The Python offset in
+//               _norm_to_data_params carries the same -0.5.
 
-// Normalized space → finest-level voxel space.
-// Normalized box: [-normalizedSize/2, +normalizedSize/2]
-// Voxel box:      [0, datasetSize)
-fn norm_to_voxel(pos: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
+// Normalized space → finest-level voxel INDEX space ([0, N]).
+fn norm_to_voxel_index(pos: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
     return ((pos / norm_size) + 0.5) * dataset_size;
 }
 
-fn voxel_to_norm(voxel: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
+// Finest-level voxel INDEX space → normalized space (inverse of the above).
+fn index_to_norm(voxel: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
     return (voxel / dataset_size - 0.5) * norm_size;
+}
+
+// Normalized space → CENTRED voxel space ([-0.5, N-0.5]); voxel i centred on i.
+fn norm_to_voxel(pos: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
+    return norm_to_voxel_index(pos, norm_size, dataset_size) - vec3<f32>(0.5);
 }
 
 
@@ -176,9 +196,10 @@ fn setup_brick(
                                i32(u_vol_params.lut_size_z));
 
     // 1. Current ray position → finest-level voxel → brick index.
+    //    Brick selection uses INDEX space so boundaries fall on g*block_size.
     let sample_pos = ray_origin + ray_dir * t;
     let voxel_pos  = clamp(
-        norm_to_voxel(sample_pos, norm_size, dataset_size),
+        norm_to_voxel_index(sample_pos, norm_size, dataset_size),
         vec3<f32>(0.0),
         dataset_size - vec3<f32>(0.001)
     );
@@ -190,8 +211,8 @@ fn setup_brick(
     // 2. Brick AABB in normalized space.
     let brick_min_v = brick_f * block_size;
     let brick_max_v = brick_min_v + block_size;
-    let brick_min_n = voxel_to_norm(brick_min_v, norm_size, dataset_size);
-    let brick_max_n = voxel_to_norm(brick_max_v, norm_size, dataset_size);
+    let brick_min_n = index_to_norm(brick_min_v, norm_size, dataset_size);
+    let brick_max_n = index_to_norm(brick_max_v, norm_size, dataset_size);
 
     // 3. Ray exits at min(brick tFar, ray tEnd).
     let t_brick    = intersect_box(ray_origin, inv_ray_dir, brick_min_n, brick_max_n);
@@ -664,10 +685,14 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             $$ endif
 
             let pos     = ray_origin + ray_dir * t_sample;
+            // CENTRED sampling: voxel i is read over [i-0.5, i+0.5], so the
+            // rendered slab fills [-0.5, N-0.5]. Clamp to that valid range
+            // (round() stays in [0, N-1]); brick_corner_k from setup_brick is
+            // index-based, which sample_atlas's +0.5 reconciles.
             let voxel   = clamp(
                 norm_to_voxel(pos, norm_size, dataset_size),
-                vec3<f32>(0.0),
-                dataset_size - vec3<f32>(0.001)
+                vec3<f32>(-0.5),
+                dataset_size - vec3<f32>(0.501)
             );
             let density = sample_atlas(voxel, brick.lut_entry, brick.lod_scale, brick.brick_corner_k);
 
@@ -797,7 +822,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let grad_in_prev = refined_t < brick_boundary_t;
     let grad_lut     = select(surface_lut_entry, prev_lut_entry, grad_in_prev);
     let grad_lod     = select(surface_lod_scale, prev_lod_scale, grad_in_prev);
-    let refined_v    = norm_to_voxel(refined_pos, norm_size, dataset_size);
+    // INDEX space for the gradient: a normal is the gradient *direction* of the
+    // density field, invariant to the global half-voxel shift, so evaluating it
+    // in index space keeps the original +/-1.5-voxel probes within the same
+    // BORDER ghost-margin (the centred convention would cost half a voxel of it).
+    let refined_v    = norm_to_voxel_index(refined_pos, norm_size, dataset_size);
 
     // Fix 3: compute brick corner once from the refined position so gradient
     // probes that cross a brick boundary use a direct offset rather than fmod,
