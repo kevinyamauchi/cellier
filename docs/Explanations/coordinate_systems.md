@@ -89,6 +89,7 @@ In order to align the images with the other visuals (e.g., points or meshes), th
 
 ## Pygfx GPU coordinates
 
-This is an implementation detail for the Pygfx backend and is likely not relevant to most Cellier users.
+!!! note
+	This is an implementation detail for the Pygfx backend and is likely not relevant to most Cellier users.
 
 In Pygfx, textures and buffers get read differently. Textures get read row-wise whereas buffers get read column-wise. Cellier in-memory and multiscale image visuals use textures to store the voxel values whereas the points, lines, and meshes use a buffer to store the coordinates. Thus, the coordinates in the first and last axis get swapped before they are uploaded to the GPU for the points, lines, and mesh visuals. Note that this is the coordinates being uploaded to the GPU and thus it means the displayed world coordinates. For example, in a `TCZYX` image where `TYX` are being rendered, the coordinates would be uploaded to the GPU as `XYT`.

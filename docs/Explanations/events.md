@@ -2,7 +2,7 @@
 
 ## Overview
 
-The v2 EventBus is the sole communication channel between the model layer (psygnal
+The EventBus is the sole communication channel between the model layer (psygnal
 `EventedModel` instances held by the controller) and the render layer (`RenderManager`,
 `CanvasView`, `GFX*Visual`). No model class ever imports a render-layer class. No
 render-layer class ever imports a model class. Every cross-layer communication passes

@@ -1,6 +1,6 @@
 # Debug Logging
 
-Cellier v2 includes structured debug logging for the rendering pipeline. By
+Cellier includes structured debug logging to aid developers in understanding what is going on under the hood. By
 default all loggers are silent (level `WARNING`). You opt in to the output you
 need — by category and by level — so there is zero noise until you ask for it
 and zero runtime cost in production.
