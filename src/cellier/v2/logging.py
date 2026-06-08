@@ -1,8 +1,8 @@
 """Structured debug logging for the Cellier v2 rendering pipeline.
 
-Provides four named loggers (perf, gpu, cache, slicer) and convenience
-functions to enable/disable them.  All log calls in instrumented modules
-are guarded so they have zero cost when disabled.
+Provides six named loggers (perf, gpu, cache, slicer, camera, source_id)
+and convenience functions to enable/disable them.  All log calls in
+instrumented modules are guarded so they have zero cost when disabled.
 
 Usage
 -----
@@ -53,7 +53,7 @@ def enable_debug_logging(
     Parameters
     ----------
     categories :
-        Which loggers to enable.  Defaults to all four.
+        Which loggers to enable.  Defaults to all six.
     use_rich :
         If ``True`` (default), attempt to use ``rich.logging.RichHandler``
         for colored output.  Falls back to a plain ``StreamHandler`` if

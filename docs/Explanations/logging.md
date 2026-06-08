@@ -7,7 +7,7 @@ and zero runtime cost in production.
 
 ## Categories
 
-There are four independent loggers, each covering a different part of the
+There are six independent loggers, each covering a different part of the
 pipeline:
 
 | Category | Logger name | What it covers |
@@ -19,7 +19,7 @@ pipeline:
 | `camera` | `cellier.render.camera` | Camera change detection, settle timer, reslice trigger |
 | `source_id` | `cellier.render.source_id` | Source ID injection through the ContextVar → psygnal → bus bridge |
 
-All four live under the `cellier.render` parent logger, so standard Python
+All six live under the `cellier.render` parent logger, so standard Python
 logging hierarchy applies.
 
 ## Log levels
@@ -44,8 +44,8 @@ PERF  budget_exceeded  required=500  budget=256  dropped=244
 
 ```
 PERF   [frame 7]  lod_select=1.2ms  dist_sort=0.3ms  frustum_cull=0.8ms  stage=0.1ms  |  required=142  culled=40  hits=130  misses=12
-PERF   fetch_summary  status=complete  bricks=12  batches=2  total=58ms  per_batch=28.3±5.1ms  min=23.2ms  max=33.4ms
-CACHE  cache_state  frame=7  occupied=130/512  free=382  hits=130  misses=12  evictions=0
+PERF   fetch_summary  status=complete  slice_id=d4e5...  bricks=12  batches=2  total=58ms  per_batch=28.3±5.1ms  min=23.2ms  max=33.4ms
+CACHE  cache_state  frame=7  hot=130  reserve=8  free=374  hot_hits=120  reserve_hits=10  misses=12  evictions=0  pending_demote=0
 SLICER batch_done  1/2  bricks=8  scales={0: 5, 1: 3}
 GPU    gpu_flush  bricks_in_batch=8  resident=138
 ```
@@ -55,9 +55,13 @@ GPU    gpu_flush  bricks_in_batch=8  resident=138
 ```
 PERF     fetch_batch  1/2  bricks=8  elapsed=23.2ms
 SLICER     brick_received  id=abc123  scale=0  shape=(34, 34, 34)
-CACHE    evict  victim=BlockKey3D(level=1, gz=0, gy=2, gx=3)  slot=42
+CACHE    evict_hot  victim=BlockKey3D(level=1, gz=0, gy=2, gx=3)  slot=42
 GPU      brick_written  key=BlockKey3D(level=1, gz=0, gy=1, gx=2)  slot=7  grid_pos=(0, 0, 7)
 ```
+
+The `cache` examples above are from the 3D (hot/reserve) tile manager. The 2D
+tile manager emits a simpler `cache_state  frame=…  occupied=…/…  free=…
+hits=…  misses=…  evictions=…` line and a plain `evict` (no `evict_hot`).
 
 ## Quick start
 
@@ -77,29 +81,32 @@ enable_debug_logging(categories=("perf", "cache"))
 
 ### Summaries only (INFO level)
 
+Pass `level` to set the minimum level for every enabled category. `INFO`
+suppresses the per-brick / per-tile detail and keeps the per-frame and
+per-batch summaries:
+
 ```python
 import logging
-from cellier.v2.logging import enable_debug_logging, _CATEGORY_MAP
+from cellier.v2.logging import enable_debug_logging
 
-# Enable the handler infrastructure (sets everything to DEBUG).
-enable_debug_logging()
-
-# Override: set all categories to INFO so per-brick detail is suppressed.
-for logger in _CATEGORY_MAP.values():
-    logger.setLevel(logging.INFO)
+enable_debug_logging(level=logging.INFO)
 ```
 
 ### Mixed levels
 
+`enable_debug_logging` applies a single `level` to all the categories it
+enables. To run different categories at different levels, enable the most
+verbose set first: the shared handler is created on the first call and keeps
+that call's `level`, so the most verbose level must be installed up front or
+the handler will filter the finer records out.
+
 ```python
 import logging
-from cellier.v2.logging import enable_debug_logging, _CATEGORY_MAP
+from cellier.v2.logging import enable_debug_logging
 
-enable_debug_logging(categories=("perf", "cache"))
-
-# Summaries for perf, full detail for cache.
-_CATEGORY_MAP["perf"].setLevel(logging.INFO)
-_CATEGORY_MAP["cache"].setLevel(logging.DEBUG)
+# Full detail for cache (installs the handler at DEBUG), summaries for perf.
+enable_debug_logging(categories=("cache",), level=logging.DEBUG)
+enable_debug_logging(categories=("perf",), level=logging.INFO)
 ```
 
 ### Disable logging
@@ -142,7 +149,7 @@ automatically.
 
 The `source_id` category traces how `source_id` is injected into bus events.
 It is useful when debugging echo-filtering issues or unexpected widget updates.
-See [debugging_events](./debugging_events.md) for a full walkthrough.
+See [debugging_events](../How_To/debug_events.md) for a full walkthrough.
 
 Enable it with:
 
@@ -169,17 +176,15 @@ Each model mutation through a controller method produces three lines:
   `source_id` fell back to the controller's own ID.
 - **`reset`** — the `ContextVar` was restored after the mutation completed.
 
-| Color | Category |
-|-------|----------|
-| red | SOURCE_ID |
-
 ## How it works under the hood
 
 All cellier loggers start at Python's default level (`WARNING`).
 `enable_debug_logging()` does two things:
 
-1. Sets the requested category loggers to `DEBUG`.
-2. Attaches a handler to the `cellier.render` parent logger (once only).
+1. Sets the requested category loggers to the requested `level` (`DEBUG` by
+   default).
+2. Attaches a handler to the `cellier.render` parent logger (once only), at
+   that same level.
 
 Every log call in the instrumented code is either:
 
@@ -202,7 +207,7 @@ At **INFO**, a single summary line is emitted when a fetch task completes
 (or is cancelled):
 
 ```
-PERF  fetch_summary  status=complete  bricks=96  batches=12  total=340ms  per_batch=28.3±5.1ms  min=19.0ms  max=42.0ms
+PERF  fetch_summary  status=complete  slice_id=d4e5...  bricks=96  batches=12  total=340ms  per_batch=28.3±5.1ms  min=19.0ms  max=42.0ms
 ```
 
 - `total` — wall-clock time from first batch to last, including callback

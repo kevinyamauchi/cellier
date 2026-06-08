@@ -35,6 +35,7 @@ src/cellier/v2/
     └── visuals/
         ├── _contrast_limits.py
         ├── _colormap.py
+        ├── _lod_bias.py
         ├── _image.py
         └── _aabb.py
 ```
@@ -210,10 +211,15 @@ class AxisAlignedSelectionState(NamedTuple):
     slice_indices :
         Mapping of axis index to the current integer slice position for
         each non-displayed axis.  Empty for a pure 3-D view.
+    stacked_axes :
+        Axes whose full extent is composited by the render layer rather
+        than sliced to a single index — e.g. a channel axis blended into
+        one image.  Empty by default.
     """
 
     displayed_axes: tuple[int, ...]
     slice_indices: dict[int, int]
+    stacked_axes: tuple[int, ...] = ()
 
     def to_index_selection(self, ndim: int) -> tuple[int | slice, ...]:
         """Return a per-axis numpy indexer in axis order.
@@ -408,6 +414,65 @@ class AppearanceChangedEvent(NamedTuple):
     field_name: str
     new_value: Any
     requires_reslice: bool
+
+
+class ChannelAppearanceChangedEvent(NamedTuple):
+    """Fired when a field on one channel's appearance model changes.
+
+    Emitted by the controller's per-channel psygnal bridge (one handler
+    per ``ChannelAppearance``, wired in ``_wire_channels``) for
+    multichannel image visuals.  Whole-dict replacement of
+    ``visual.channels`` is handled separately by a direct psygnal
+    connect inside the GFX visual and does not flow through this event.
+
+    Primary consumers:
+    - ``GFXMultichannel*Visual``: update the per-channel material
+
+    Parameters
+    ----------
+    source_id :
+        UUID of the object that caused the change.  Widget-driven
+        changes carry the widget's own ID; direct model mutations fall
+        back to the controller's ID.
+    visual_id :
+        The multichannel visual that owns the channel.
+    channel_index :
+        Index of the channel whose appearance changed.
+    field_name :
+        The name of the changed field, e.g. ``"color_map"`` or ``"clim"``.
+    new_value :
+        The new value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    channel_index: int
+    field_name: str
+    new_value: Any
+
+
+class PickWriteChangedEvent(NamedTuple):
+    """Fired when ``BaseVisual.pick_write`` changes.
+
+    ``source_id`` is always the controller's own ID; ``pick_write`` is
+    not driven through the ContextVar widget pattern.
+
+    Primary consumers:
+    - ``GFX*Visual``: toggle whether the node writes to the pick buffer
+
+    Parameters
+    ----------
+    source_id :
+        Always the controller's own ID.
+    visual_id :
+        The visual whose ``pick_write`` changed.
+    pick_write :
+        The new ``pick_write`` value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    pick_write: bool
 
 
 class VisualVisibilityChangedEvent(NamedTuple):
@@ -638,6 +703,113 @@ class SceneRemovedEvent(NamedTuple):
     scene_id: UUID
 ```
 
+### Canvas mouse events
+
+Pointer interaction is surfaced as a family of typed events, one per
+action (press / move / release) and per camera dimensionality (2D / 3D).
+The 2D variants carry a `world_coordinate`; the 3D variants carry a
+`ViewRay` instead, because a single screen point maps to a ray rather
+than one world position under a perspective camera. Both carry a
+`CanvasPickInfo` describing what the pointer landed on, translated to a
+model-layer `visual_id` by the render layer (no `gfx.*` types leak out).
+
+For these events the `source_id` is the originating canvas's ID and is
+also the entity-filter key (there is no separate canvas field).
+
+```python
+class CanvasPickInfo(NamedTuple):
+    """Model-layer pick result attached to canvas mouse events.
+
+    Parameters
+    ----------
+    hit_visual_id :
+        Model-layer ID of the visual whose active scene-graph node was
+        hit, or ``None`` if the pointer landed on the background.
+    """
+
+    hit_visual_id: UUID | None
+
+
+class ViewRay(NamedTuple):
+    """A view ray from the camera through a screen-space point.
+
+    Used by 3D canvas mouse events in place of a single world coordinate.
+
+    Parameters
+    ----------
+    origin :
+        Near-plane world position where the ray starts.  Shape ``(3,)``,
+        float64.
+    direction :
+        Unit vector in world space giving the ray direction.  Shape
+        ``(3,)``, float64.
+    """
+
+    origin: np.ndarray
+    direction: np.ndarray
+
+
+class CanvasMousePress2DEvent(NamedTuple):
+    """Primary pointer button pressed on a 2D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    world_coordinate: np.ndarray
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseMove2DEvent(NamedTuple):
+    """Pointer moved on a 2D canvas (button up or down)."""
+
+    source_id: UUID
+    scene_id: UUID
+    world_coordinate: np.ndarray
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseRelease2DEvent(NamedTuple):
+    """Primary pointer button released on a 2D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    world_coordinate: np.ndarray
+    pick_info: CanvasPickInfo
+
+
+class CanvasMousePress3DEvent(NamedTuple):
+    """Primary pointer button pressed on a 3D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseMove3DEvent(NamedTuple):
+    """Pointer moved on a 3D canvas (button up or down)."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
+    pick_info: CanvasPickInfo
+
+
+class CanvasMouseRelease3DEvent(NamedTuple):
+    """Primary pointer button released on a 3D canvas."""
+
+    source_id: UUID
+    scene_id: UUID
+    ray: ViewRay
+    pick_info: CanvasPickInfo
+```
+
+`RenderManager` additionally emits an internal `_CanvasRawPointerEvent`
+that carries the un-dispatched pointer data (canvas/scene IDs, action,
+camera type, raw 2D position or ray, hit visual, button, modifiers). It
+is consumed only by `CellierController._on_raw_pointer_event`, which
+translates it into the public 2D/3D events above. It is **not** part of
+the public event catalogue and subscribers should not depend on it.
+
 ### Union alias
 
 ```python
@@ -645,9 +817,10 @@ CellierEventTypes = (
     DimsChangedEvent
     | CameraChangedEvent
     | AppearanceChangedEvent
+    | ChannelAppearanceChangedEvent
+    | PickWriteChangedEvent
     | AABBChangedEvent
     | VisualVisibilityChangedEvent
-    | TransformChangedEvent
     | DataStoreMetadataChangedEvent
     | DataStoreContentsChangedEvent
     | ResliceStartedEvent
@@ -656,8 +829,15 @@ CellierEventTypes = (
     | FrameRenderedEvent
     | VisualAddedEvent
     | VisualRemovedEvent
+    | TransformChangedEvent
     | SceneAddedEvent
     | SceneRemovedEvent
+    | CanvasMousePress2DEvent
+    | CanvasMouseMove2DEvent
+    | CanvasMouseRelease2DEvent
+    | CanvasMousePress3DEvent
+    | CanvasMouseMove3DEvent
+    | CanvasMouseRelease3DEvent
 )
 ```
 
@@ -702,7 +882,7 @@ class _Subscription:
 
 `get_subscribers()` returns `SubscriberInfo` dataclass instances (not raw
 `_Subscription` objects) for external inspection. See
-[debugging_events.md](debugging_events.md) for usage.
+[debug_events.md](../How_To/debug_events.md) for usage.
 
 ```python
 @dataclass
@@ -800,9 +980,10 @@ _ENTITY_FIELD: dict[type, str] = {
     DimsChangedEvent:                  "scene_id",
     CameraChangedEvent:                "scene_id",
     AppearanceChangedEvent:            "visual_id",
+    ChannelAppearanceChangedEvent:     "visual_id",
+    PickWriteChangedEvent:             "visual_id",
     AABBChangedEvent:                  "visual_id",
     VisualVisibilityChangedEvent:      "visual_id",
-    TransformChangedEvent:             "visual_id",
     DataStoreMetadataChangedEvent:     "data_store_id",
     DataStoreContentsChangedEvent:     "data_store_id",
     ResliceStartedEvent:               "scene_id",
@@ -811,8 +992,15 @@ _ENTITY_FIELD: dict[type, str] = {
     FrameRenderedEvent:                "canvas_id",
     VisualAddedEvent:                  "scene_id",
     VisualRemovedEvent:                "scene_id",
+    TransformChangedEvent:             "visual_id",
     SceneAddedEvent:                   "scene_id",
     SceneRemovedEvent:                 "scene_id",
+    CanvasMousePress2DEvent:           "source_id",
+    CanvasMouseMove2DEvent:            "source_id",
+    CanvasMouseRelease2DEvent:         "source_id",
+    CanvasMousePress3DEvent:           "source_id",
+    CanvasMouseMove3DEvent:            "source_id",
+    CanvasMouseRelease3DEvent:         "source_id",
 }
 ```
 
@@ -965,8 +1153,15 @@ class QtDimsSliders:
             scene_id=self._scene_id,
             slice_indices=updates,
             displayed_axes=None,
+            # stacked_axes defaults to None — set it to request a change to
+            # which axes the render layer composites (e.g. a channel axis).
         ))
 ```
+
+`DimsUpdateEvent` carries `source_id`, `scene_id`, `slice_indices`,
+`displayed_axes`, and `stacked_axes`. Every field except `source_id` and
+`scene_id` is optional (`None` = leave unchanged), so a widget sets only the
+fields it owns.
 
 Both guards are necessary and serve different roles:
 
@@ -1039,6 +1234,8 @@ def _make_appearance_handler(self, visual_id: UUID) -> Callable:
                 new_value=new_value,
                 requires_reslice=(field_name in _RESLICE_FIELDS),
             ))
+            if field_name in _RESLICE_FIELDS:
+                self.reslice_visual(visual_id)
 
     return _on_appearance_psygnal
 ```
@@ -1058,15 +1255,31 @@ self._visual_psygnal_handlers: dict[UUID, list[tuple]] = {}
 
 The `(signal, handler)` pair form is used rather than storing the handler alone so
 that teardown can call `signal.disconnect(handler)` without branching on visual type.
-Handlers are appended in wiring order:
 
-| Visual type | Wired signals (in order) |
-|---|---|
-| `MultiscaleImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
-| `ImageVisual` | `appearance.events`, `aabb.events`, `events.transform` |
-| `MeshVisual`, `PointsVisual`, `LinesVisual` | `appearance.events`, `events.transform` |
+Wiring is **per-capability, not per-visual-type**. At `add_visual` time the
+controller probes the model and wires whichever signals it exposes:
 
-Each `_wire_*` method creates the handler, connects it, and appends the pair:
+```python
+# In add_visual, after the model is registered
+if hasattr(visual_model, "appearance"):
+    self._wire_appearance(visual_model)
+if hasattr(visual_model, "channels"):
+    self._wire_channels(visual_model)
+self._wire_aabb(visual_model)        # always
+self._wire_transform(visual_model, scene_id)  # always
+self._wire_pick_write(visual_model)  # always
+```
+
+| Wiring step | When | Emits |
+|---|---|---|
+| `_wire_appearance` | model has an `appearance` | `AppearanceChangedEvent` / `VisualVisibilityChangedEvent` |
+| `_wire_channels` | model has `channels` (multichannel visuals) | `ChannelAppearanceChangedEvent` (one handler per channel) |
+| `_wire_aabb` | always | `AABBChangedEvent` |
+| `_wire_transform` | always | `TransformChangedEvent` |
+| `_wire_pick_write` | always | `PickWriteChangedEvent` |
+
+Each `_wire_*` method creates the handler, connects it, and appends the
+`(signal, handler)` pair to `_visual_psygnal_handlers[visual.id]`:
 
 ```python
 def _wire_appearance(self, visual) -> None:
@@ -1116,9 +1329,15 @@ change, not through bus subscriptions.
 
 ### AABB wiring
 
+AABB is wired for every visual (`visual: BaseVisual`), not just image visuals.
+
 ```python
-def _wire_aabb(self, visual: MultiscaleImageVisual | ImageVisual) -> None:
-    visual.aabb.events.connect(self._make_aabb_handler(visual.id))
+def _wire_aabb(self, visual: BaseVisual) -> None:
+    handler = self._make_aabb_handler(visual.id)
+    visual.aabb.events.connect(handler)
+    self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+        (visual.aabb.events, handler)
+    )
 
 
 def _make_aabb_handler(self, visual_id: UUID) -> Callable:
@@ -1134,6 +1353,64 @@ def _make_aabb_handler(self, visual_id: UUID) -> Callable:
         ))
 
     return _on_aabb_psygnal
+```
+
+### Channel wiring
+
+Multichannel visuals expose a `channels` mapping of per-channel
+`ChannelAppearance` models. `_wire_channels` connects one handler per channel,
+each emitting a `ChannelAppearanceChangedEvent` tagged with that channel's index.
+Whole-dict replacement (`visual.channels = new_dict`) is a structural
+pool-management operation handled by a direct psygnal connect inside the GFX
+visual, and does **not** flow through this per-field bridge.
+
+```python
+def _wire_channels(self, visual) -> None:
+    for channel_index, appearance in visual.channels.items():
+        handler = self._make_channel_appearance_handler(visual.id, channel_index)
+        appearance.events.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (appearance.events, handler)
+        )
+
+
+def _make_channel_appearance_handler(self, visual_id, channel_index) -> Callable:
+    def _on_channel_appearance_psygnal(info: EmissionInfo) -> None:
+        resolved_source_id = _source_id_override.get() or self._id
+        self._outgoing_events.emit(ChannelAppearanceChangedEvent(
+            source_id=resolved_source_id,
+            visual_id=visual_id,
+            channel_index=channel_index,
+            field_name=info.signal.name,
+            new_value=info.args[0],
+        ))
+
+    return _on_channel_appearance_psygnal
+```
+
+### pick_write wiring
+
+`pick_write` is wired for every visual. Like transforms, it does not use the
+ContextVar pattern — `source_id` is always the controller's own ID.
+
+```python
+def _wire_pick_write(self, visual: BaseVisual) -> None:
+    handler = self._make_pick_write_handler(visual.id)
+    visual.events.pick_write.connect(handler)
+    self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+        (visual.events.pick_write, handler)
+    )
+
+
+def _make_pick_write_handler(self, visual_id: UUID) -> Callable:
+    def _on_pick_write(new_value: bool) -> None:
+        self._outgoing_events.emit(PickWriteChangedEvent(
+            source_id=self._id,
+            visual_id=visual_id,
+            pick_write=new_value,
+        ))
+
+    return _on_pick_write
 ```
 
 ### Transform wiring
@@ -1386,9 +1663,11 @@ dirty material and uploads the updated parameters to the GPU.
 
 When a field in `_RESLICE_FIELDS` changes, `AppearanceChangedEvent` carries
 `requires_reslice=True`. The `GFX*Visual` handler does nothing for these fields. The
-controller's `_on_dims_changed_bus` analogue for appearance changes triggers a reslice.
-The updated field value is read from the live model at planning time — the event payload
-itself does not need to carry planning parameters.
+reslice is triggered **directly inside the psygnal bridge** `_on_appearance_psygnal`,
+which calls `self.reslice_visual(visual_id)` after emitting the event — it is not
+driven by a separate controller bus subscription. The updated field value is read from
+the live model at planning time, so the event payload itself does not need to carry
+planning parameters.
 
 ---
 
@@ -1412,22 +1691,33 @@ itself does not need to carry planning parameters.
 ```python
 # src/cellier/v2/events/__init__.py
 
+from cellier.v2._state import CameraState, DimsState
 from cellier.v2.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.v2.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
+    CanvasMouseMove2DEvent,
+    CanvasMouseMove3DEvent,
+    CanvasMousePress2DEvent,
+    CanvasMousePress3DEvent,
+    CanvasMouseRelease2DEvent,
+    CanvasMouseRelease3DEvent,
+    CanvasPickInfo,
     CellierEventTypes,
+    ChannelAppearanceChangedEvent,
     DataStoreContentsChangedEvent,
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
     FrameRenderedEvent,
+    PickWriteChangedEvent,
     ResliceCancelledEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
     SceneAddedEvent,
     SceneRemovedEvent,
     TransformChangedEvent,
+    ViewRay,
     VisualAddedEvent,
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
@@ -1435,18 +1725,18 @@ from cellier.v2.events._events import (
 from cellier.v2.events._update_events import (
     AABBUpdateEvent,
     AppearanceUpdateEvent,
+    CellierUpdateEventTypes,
     DimsUpdateEvent,
     SubscriptionSpec,
 )
-# Re-export shared state types — single import location for all subscribers
-from cellier.v2._state import CameraState, DimsState
 ```
 
 ---
 
 ## Pending
 
-- **`MouseEvent` family.** To be designed once the interaction model for picking,
-  selection, and annotation is specified. Will follow the same NamedTuple / `source_id`
-  pattern. Likely types: `CanvasMouseClickEvent`, `VisualPickedEvent`,
-  `SelectionChangedEvent`.
+- **Higher-level interaction events.** The low-level canvas pointer events
+  (press / move / release, 2D and 3D — see §Canvas mouse events) are implemented.
+  Higher-level semantic events for selection and annotation — e.g. a
+  `SelectionChangedEvent` — are still to be designed once that interaction model is
+  specified. They will follow the same NamedTuple / `source_id` pattern.
