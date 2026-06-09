@@ -408,8 +408,13 @@ class RenderManager:
         -------
         VisualPickDetails or None
         """
-        from cellier.v2.events._events import LinesPickInfo, PointsPickInfo
+        from cellier.v2.events._events import (
+            LinesPickInfo,
+            MeshPickInfo,
+            PointsPickInfo,
+        )
         from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+        from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
         from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
 
         scene_manager = self._scenes[scene_id]
@@ -428,7 +433,10 @@ class RenderManager:
             return LinesPickInfo(
                 edge_index=gfx_visual.edge_index_for_vertex(int(index))
             )
-        # image / mesh / labels element details land in a later phase.
+        if isinstance(gfx_visual, GFXMeshMemoryVisual):
+            index = pick_info.get("face_index")
+            return None if index is None else MeshPickInfo(face_index=int(index))
+        # image / labels element details land in a later phase.
         return None
 
     def remove_visual(self, visual_id: UUID) -> None:
