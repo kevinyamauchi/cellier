@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -126,6 +127,9 @@ class GFXLinesMemoryVisual:
 
         appearance = visual_model.appearance
         self._material = _build_material(appearance)
+        # Plumb the model's pick_write flag into the pygfx material so the
+        # pick buffer records this visual; pygfx materials default to False.
+        self._material.pick_write = visual_model.pick_write
         self._empty_material = gfx.LineSegmentMaterial(color=(0, 0, 0, 0), opacity=0.0)
 
         # Track color_mode as instance state to detect transitions in _commit.
@@ -150,6 +154,29 @@ class GFXLinesMemoryVisual:
     def n_levels(self) -> int:
         """Always 1 — single-resolution in-memory store."""
         return 1
+
+    # ------------------------------------------------------------------
+    # Picking
+    # ------------------------------------------------------------------
+
+    def edge_index_for_vertex(self, vertex_index: int) -> int:
+        """Map a pygfx pick vertex index to this visual's edge index.
+
+        ``gfx.LineSegmentMaterial`` lays out one explicit vertex pair per edge:
+        edge ``k`` occupies positions ``2k`` and ``2k + 1``.  The pick buffer
+        reports the hit vertex index, so the edge index is the integer half.
+
+        Parameters
+        ----------
+        vertex_index : int
+            ``vertex_index`` from the pygfx pick payload.
+
+        Returns
+        -------
+        int
+            Index of the edge (vertex pair) that was hit.
+        """
+        return vertex_index // 2
 
     # ------------------------------------------------------------------
     # Node selection
@@ -368,6 +395,9 @@ class GFXLinesMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        self._material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""

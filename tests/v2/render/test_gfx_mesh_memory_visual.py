@@ -44,6 +44,29 @@ def test_single_node_for_both_modes():
     assert v.node_3d is v.node
 
 
+def test_pick_write_enabled_by_default():
+    v = _visual(_store())
+    assert v._material_2d.pick_write is True
+    assert v._material_3d.pick_write is True
+
+
+def test_pick_write_follows_model_flag():
+    store = _store()
+    model = MeshVisual(
+        name="test",
+        data_store_id=str(store.id),
+        appearance=MeshFlatAppearance(),
+        pick_write=False,
+    )
+    v = GFXMeshMemoryVisual(
+        visual_model=model,
+        render_modes={"2d", "3d"},
+        transform=AffineTransform.identity(ndim=store.positions.shape[1]),
+    )
+    assert v._material_2d.pick_write is False
+    assert v._material_3d.pick_write is False
+
+
 def test_node_2d_is_node_3d():
     v = _visual(_store())
     assert v.node_2d is v.node_3d

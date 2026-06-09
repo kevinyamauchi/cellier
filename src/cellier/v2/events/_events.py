@@ -159,20 +159,77 @@ class SceneRemovedEvent(NamedTuple):
     scene_id: UUID
 
 
+class PointsPickInfo(NamedTuple):
+    """Element-level pick result for a points visual.
+
+    Attributes
+    ----------
+    point_index : int
+        Index of the picked point within the visual's point array.
+    """
+
+    point_index: int
+
+
+class LinesPickInfo(NamedTuple):
+    """Element-level pick result for a lines visual.
+
+    Attributes
+    ----------
+    edge_index : int
+        Index of the picked edge (vertex *pair*) within the visual's edge
+        array.  See the GFX line visual for the vertex-index-to-edge-index
+        mapping.
+    """
+
+    edge_index: int
+
+
+class ImagePickInfo(NamedTuple):
+    """Element-level pick result for an image visual (stub; filled in a later phase)."""
+
+    row: int
+    col: int
+
+
+class MeshPickInfo(NamedTuple):
+    """Element-level pick result for a mesh visual (stub; filled in a later phase)."""
+
+    face_index: int
+
+
+class LabelsPickInfo(NamedTuple):
+    """Element-level pick result for a labels visual (stub; filled in a later phase)."""
+
+    row: int
+    col: int
+    label_value: int
+
+
+VisualPickDetails = (
+    PointsPickInfo | LinesPickInfo | ImagePickInfo | MeshPickInfo | LabelsPickInfo
+)
+
+
 class CanvasPickInfo(NamedTuple):
     """Model-layer pick result attached to canvas mouse events.
 
     No ``gfx.*`` types appear here.  The render layer translates the
-    hit world object to a model-layer UUID before emission.
+    hit world object to a model-layer UUID and the pygfx pick payload to a
+    typed ``VisualPickDetails`` before emission.
 
     Attributes
     ----------
     hit_visual_id : UUID or None
         Model-layer ID of the visual whose active scene-graph node was
         hit, or None if the pointer landed on the background.
+    details : VisualPickDetails or None
+        Element-level identity within the hit visual, typed per visual kind.
+        None on a background miss.
     """
 
     hit_visual_id: UUID | None
+    details: VisualPickDetails | None = None
 
 
 class ViewRay(NamedTuple):
@@ -199,6 +256,10 @@ class CanvasMousePress2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseMove2DEvent(NamedTuple):
@@ -208,6 +269,10 @@ class CanvasMouseMove2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseRelease2DEvent(NamedTuple):
@@ -217,6 +282,10 @@ class CanvasMouseRelease2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMousePress3DEvent(NamedTuple):
@@ -226,6 +295,10 @@ class CanvasMousePress3DEvent(NamedTuple):
     scene_id: UUID
     ray: ViewRay
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseMove3DEvent(NamedTuple):
@@ -235,6 +308,10 @@ class CanvasMouseMove3DEvent(NamedTuple):
     scene_id: UUID
     ray: ViewRay
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseRelease3DEvent(NamedTuple):
@@ -244,6 +321,10 @@ class CanvasMouseRelease3DEvent(NamedTuple):
     scene_id: UUID
     ray: ViewRay
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class _CanvasRawPointerEvent(NamedTuple):
@@ -276,6 +357,14 @@ class _CanvasRawPointerEvent(NamedTuple):
         Mouse button identifier from the pygfx event.
     modifiers : tuple[str, ...]
         Active keyboard modifiers from the pygfx event.
+    buttons : tuple
+        Held-button mask from the pygfx event (``PointerEvent.buttons``).
+    gesture_id : UUID or None
+        Synthesized id correlating one press->move->release bracket.  Set on
+        press, carried through moves, cleared on release.
+    pick_details : VisualPickDetails or None
+        Typed element-level pick identity extracted in the render layer, or
+        None on a miss or stubbed visual kind.
     """
 
     canvas_id: UUID
@@ -287,6 +376,9 @@ class _CanvasRawPointerEvent(NamedTuple):
     hit_visual_id: UUID | None
     button: int
     modifiers: tuple
+    buttons: tuple = ()
+    gesture_id: UUID | None = None
+    pick_details: VisualPickDetails | None = None
 
 
 CellierEventTypes = (

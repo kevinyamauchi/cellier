@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         ChannelAppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -107,13 +108,19 @@ class GFXMultichannelImageMemoryVisual:
 
         if "2d" in render_modes:
             self._group_2d, self._pool_2d = make_channel_group_2d(
-                visual_model.channels, max_2d, interpolation=interpolation
+                visual_model.channels,
+                max_2d,
+                interpolation=interpolation,
+                pick_write=visual_model.pick_write,
             )
             self._free_slots_2d = list(range(max_2d))
 
         if "3d" in render_modes:
             self._group_3d, self._pool_3d = make_channel_group_3d(
-                visual_model.channels, max_3d, interpolation=interpolation
+                visual_model.channels,
+                max_3d,
+                interpolation=interpolation,
+                pick_write=visual_model.pick_write,
             )
             self._free_slots_3d = list(range(max_3d))
 
@@ -452,6 +459,12 @@ class GFXMultichannelImageMemoryVisual:
         for node in (self._group_2d, self._group_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        for node in self._pool_2d:
+            node.material.pick_write = event.pick_write
+        for node in self._pool_3d:
+            node.material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """No-op — multichannel memory visual has no AABB wireframe."""

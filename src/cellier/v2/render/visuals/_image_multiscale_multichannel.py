@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         ChannelAppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -224,6 +225,7 @@ class GFXMultichannelMultiscaleImageVisual:
             aabb_enabled=visual_model.aabb.enabled,
             aabb_color=visual_model.aabb.color,
             aabb_line_width=visual_model.aabb.line_width,
+            pick_write=visual_model.pick_write,
         )
 
     # ------------------------------------------------------------------
@@ -682,6 +684,10 @@ class GFXMultichannelMultiscaleImageVisual:
         for g in (self._group_2d, self._group_3d):
             if g is not None:
                 g.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        for slot in self._slots:
+            slot.on_pick_write_changed(event)
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Propagate AABB toggle to all slots."""

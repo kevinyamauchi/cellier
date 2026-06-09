@@ -142,6 +142,14 @@ class AbstractPaintController(ABC):
     # ------------------------------------------------------------------
 
     def _on_mouse_press(self, event: CanvasMousePress2DEvent) -> None:
+        # A previous stroke may never have received its release (pointer
+        # capture broken by focus loss).  Finalise it so its voxels are
+        # preserved in history rather than silently overwritten.
+        if self._active_stroke is not None:
+            command = self._active_stroke.finalise()
+            self._active_stroke = None
+            self._history.push(command)
+            self._on_stroke_completed(command)
         # Label visuals discard background fragments so they never write to the
         # pick buffer when all-background.  Use a data-bounds check instead of
         # pick detection so a blank label array is still paintable.
@@ -150,6 +158,7 @@ class AbstractPaintController(ABC):
         self._active_stroke = ActiveStroke(
             visual_id=self._visual_id,
             data_store_id=self._data_store_id,
+            gesture_id=event.gesture_id,
         )
         self._apply_brush(event.world_coordinate)
 
@@ -174,6 +183,13 @@ class AbstractPaintController(ABC):
 
     def _on_mouse_move(self, event: CanvasMouseMove2DEvent) -> None:
         if self._active_stroke is None:
+            return
+        # Ignore moves that belong to a different gesture than the active
+        # stroke (guards against interleaved or spurious moves).
+        if (
+            self._active_stroke.gesture_id is not None
+            and event.gesture_id != self._active_stroke.gesture_id
+        ):
             return
         self._apply_brush(event.world_coordinate)
 

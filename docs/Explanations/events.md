@@ -716,7 +716,54 @@ model-layer `visual_id` by the render layer (no `gfx.*` types leak out).
 For these events the `source_id` is the originating canvas's ID and is
 also the entity-filter key (there is no separate canvas field).
 
+Each event additionally carries the *gesture context* — `button` (the
+button that triggered this event), `buttons` (the held-button mask, the
+cross-backend-consistent signal for drag-vs-hover), `modifiers` (active
+keyboard modifiers), and `gesture_id`. `gesture_id` is a UUID synthesized
+by the render layer on press, carried verbatim through every move, and
+cleared on release, so the phases of one click-drag share an id; a
+hover-move with no active press carries `None`. Phase stays encoded as the
+event type (press / move / release).
+
+#### Element-level pick details
+
+`CanvasPickInfo.details` carries the *element* within the hit visual,
+typed per visual kind (`PointsPickInfo.point_index`,
+`LinesPickInfo.edge_index`, …) under the `VisualPickDetails` union. The
+render layer extracts it from the pygfx pick payload: points report
+`vertex_index` directly; the `LineSegmentMaterial` lays out one explicit
+vertex pair per edge, so the line visual maps the picked vertex to
+`edge_index = vertex_index // 2`. `details` is `None` on a background miss
+and for visual kinds whose extraction is still stubbed (image / mesh /
+labels).
+
+Detail extraction is **gated**: it runs only when a canvas has at least
+one `on_mouse_*` subscriber (`RenderManager.set_pick_details_enabled`,
+driven by the controller's per-canvas subscriber count). Consumers that
+subscribe directly on the bus (e.g. the paint controller) do not enable
+it, so they never pay for the per-type dispatch. `hit_visual_id` is always
+computed — it is needed for visual-level hits and misses and is already
+paid for upstream by pygfx. Note that the upstream GPU→CPU pick-buffer
+readback itself is performed by pygfx before our handler runs; this gate
+only suppresses our own cheap dispatch, not the readback.
+
 ```python
+class PointsPickInfo(NamedTuple):
+    point_index: int
+
+
+class LinesPickInfo(NamedTuple):
+    edge_index: int
+
+
+# ImagePickInfo / MeshPickInfo / LabelsPickInfo are stubbed pending a
+# consumer.
+
+VisualPickDetails = (
+    PointsPickInfo | LinesPickInfo | ImagePickInfo | MeshPickInfo | LabelsPickInfo
+)
+
+
 class CanvasPickInfo(NamedTuple):
     """Model-layer pick result attached to canvas mouse events.
 
@@ -725,9 +772,13 @@ class CanvasPickInfo(NamedTuple):
     hit_visual_id :
         Model-layer ID of the visual whose active scene-graph node was
         hit, or ``None`` if the pointer landed on the background.
+    details :
+        Element-level identity within the hit visual, typed per visual
+        kind.  ``None`` on a background miss.
     """
 
     hit_visual_id: UUID | None
+    details: VisualPickDetails | None = None
 
 
 class ViewRay(NamedTuple):
@@ -749,6 +800,8 @@ class ViewRay(NamedTuple):
     direction: np.ndarray
 
 
+# The 2D events (the 3D events are identical but carry `ray: ViewRay`
+# in place of `world_coordinate`).
 class CanvasMousePress2DEvent(NamedTuple):
     """Primary pointer button pressed on a 2D canvas."""
 
@@ -756,6 +809,10 @@ class CanvasMousePress2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseMove2DEvent(NamedTuple):
@@ -765,6 +822,10 @@ class CanvasMouseMove2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 
 
 class CanvasMouseRelease2DEvent(NamedTuple):
@@ -774,41 +835,19 @@ class CanvasMouseRelease2DEvent(NamedTuple):
     scene_id: UUID
     world_coordinate: np.ndarray
     pick_info: CanvasPickInfo
-
-
-class CanvasMousePress3DEvent(NamedTuple):
-    """Primary pointer button pressed on a 3D canvas."""
-
-    source_id: UUID
-    scene_id: UUID
-    ray: ViewRay
-    pick_info: CanvasPickInfo
-
-
-class CanvasMouseMove3DEvent(NamedTuple):
-    """Pointer moved on a 3D canvas (button up or down)."""
-
-    source_id: UUID
-    scene_id: UUID
-    ray: ViewRay
-    pick_info: CanvasPickInfo
-
-
-class CanvasMouseRelease3DEvent(NamedTuple):
-    """Primary pointer button released on a 3D canvas."""
-
-    source_id: UUID
-    scene_id: UUID
-    ray: ViewRay
-    pick_info: CanvasPickInfo
+    button: int = 0
+    buttons: tuple = ()
+    modifiers: tuple = ()
+    gesture_id: UUID | None = None
 ```
 
 `RenderManager` additionally emits an internal `_CanvasRawPointerEvent`
 that carries the un-dispatched pointer data (canvas/scene IDs, action,
-camera type, raw 2D position or ray, hit visual, button, modifiers). It
-is consumed only by `CellierController._on_raw_pointer_event`, which
-translates it into the public 2D/3D events above. It is **not** part of
-the public event catalogue and subscribers should not depend on it.
+camera type, raw 2D position or ray, hit visual, button, modifiers,
+`buttons`, `gesture_id`, and the extracted `pick_details`). It is consumed
+only by `CellierController._on_raw_pointer_event`, which translates it
+into the public 2D/3D events above. It is **not** part of the public event
+catalogue and subscribers should not depend on it.
 
 ### Union alias
 
@@ -1542,6 +1581,8 @@ object registration time.
 | External callback | `AABBChangedEvent` | `visual_id` | Fire `on_aabb_changed` user callback |
 | External callback | `ResliceStartedEvent` | `scene_id` | Fire `on_reslice_started` user callback |
 | External callback | `ResliceCompletedEvent` | `visual_id` | Fire `on_reslice_completed` user callback |
+| External callback | `CanvasMouse{Press,Move,Release}{2D,3D}Event` | `canvas_id` | Fire `on_mouse_*` user callback; enables pick-detail extraction |
+| Paint controller | `CanvasMouse{Press,Move,Release}2DEvent` | `canvas_id` | Accumulate brush stroke (direct bus subscription; does not enable pick details) |
 
 `SliceCoordinator` and the controller subscribe without `entity_id` filters because
 they manage all scenes centrally. Camera switching and visual geometry rebuilding on
@@ -1710,7 +1751,12 @@ from cellier.v2.events._events import (
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
     FrameRenderedEvent,
+    ImagePickInfo,
+    LabelsPickInfo,
+    LinesPickInfo,
+    MeshPickInfo,
     PickWriteChangedEvent,
+    PointsPickInfo,
     ResliceCancelledEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -1719,6 +1765,7 @@ from cellier.v2.events._events import (
     TransformChangedEvent,
     ViewRay,
     VisualAddedEvent,
+    VisualPickDetails,
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
@@ -1736,7 +1783,18 @@ from cellier.v2.events._update_events import (
 ## Pending
 
 - **Higher-level interaction events.** The low-level canvas pointer events
-  (press / move / release, 2D and 3D — see §Canvas mouse events) are implemented.
-  Higher-level semantic events for selection and annotation — e.g. a
-  `SelectionChangedEvent` — are still to be designed once that interaction model is
-  specified. They will follow the same NamedTuple / `source_id` pattern.
+  (press / move / release, 2D and 3D — see §Canvas mouse events) are implemented,
+  including per-element pick details and synthesized `gesture_id`. A library
+  gesture layer (compound `on_drag`, double-click via `event.clicks`) is
+  deliberately deferred; apps assemble gestures from the phase events plus
+  `gesture_id`, as the paint controller does. Higher-level semantic events for
+  selection and annotation — e.g. a `SelectionChangedEvent` — are still to be
+  designed once that interaction model is specified. They will follow the same
+  NamedTuple / `source_id` pattern.
+- **Image / mesh / labels pick details.** `ImagePickInfo`, `MeshPickInfo`, and
+  `LabelsPickInfo` are defined but `_extract_pick_details` returns `None` for
+  these kinds; fill them in per kind when a consumer needs them.
+- **Upstream pick-readback suppression.** The true Decision-4 perf win — stopping
+  pygfx from performing the GPU→CPU readback when no consumer needs it — is pending
+  a pygfx pick-configuration investigation. The current gate only skips our own
+  cheap dispatch.

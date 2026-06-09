@@ -165,6 +165,7 @@ class GFXLabelMemoryVisual:
                 label_colors_texture=colors_tex,
                 n_entries=n_entries,
                 label_params_buffer=label_params_buf,
+                pick_write=visual_model.pick_write,
             )
             self._inner_node_3d = gfx.Volume(gfx.Geometry(grid=tex), mat3d)
             placeholder_pos = _box_wireframe_positions(np.zeros(3), np.ones(3))

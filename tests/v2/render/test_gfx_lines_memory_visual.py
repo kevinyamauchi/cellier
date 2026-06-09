@@ -61,6 +61,27 @@ def test_single_node_for_both_modes():
     assert v.node_3d is v.node
 
 
+def test_pick_write_enabled_by_default():
+    v = _visual(_store())
+    assert v._material.pick_write is True
+
+
+def test_pick_write_follows_model_flag():
+    store = _store()
+    model = LinesVisual(
+        name="test",
+        data_store_id=str(store.id),
+        appearance=LinesMemoryAppearance(),
+        pick_write=False,
+    )
+    v = GFXLinesMemoryVisual(
+        visual_model=model,
+        render_modes={"2d", "3d"},
+        transform=AffineTransform.identity(ndim=store.ndim),
+    )
+    assert v._material.pick_write is False
+
+
 def test_initial_material_is_empty():
     v = _visual(_store())
     assert v.node.material is v._empty_material

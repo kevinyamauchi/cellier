@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -149,6 +150,10 @@ class GFXMeshMemoryVisual:
         appearance = visual_model.appearance
         self._material_3d = _build_material_3d(appearance)
         self._material_2d = _build_material_2d(appearance)
+        # Plumb the model's pick_write flag into both pygfx materials so the
+        # pick buffer records this visual; pygfx materials default to False.
+        self._material_3d.pick_write = visual_model.pick_write
+        self._material_2d.pick_write = visual_model.pick_write
         self._empty_material = gfx.MeshBasicMaterial(color=(0, 0, 0, 0), opacity=0.0)
         # Track color_mode as instance state to detect transitions.
         self._current_color_mode: str = appearance.color_mode
@@ -426,6 +431,10 @@ class GFXMeshMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        self._material_3d.pick_write = event.pick_write
+        self._material_2d.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""

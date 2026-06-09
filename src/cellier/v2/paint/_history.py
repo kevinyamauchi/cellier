@@ -45,13 +45,24 @@ class ActiveStroke:
     ``record`` calls are permitted.
     """
 
-    def __init__(self, visual_id: UUID, data_store_id: UUID) -> None:
+    def __init__(
+        self,
+        visual_id: UUID,
+        data_store_id: UUID,
+        gesture_id: UUID | None = None,
+    ) -> None:
         self._visual_id = visual_id
         self._data_store_id = data_store_id
+        self._gesture_id = gesture_id
         self._voxel_chunks: list[np.ndarray] = []
         self._old_chunks: list[np.ndarray] = []
         self._new_chunks: list[np.ndarray] = []
         self._finalised = False
+
+    @property
+    def gesture_id(self) -> UUID | None:
+        """The gesture this stroke belongs to, if known."""
+        return self._gesture_id
 
     def record(
         self,

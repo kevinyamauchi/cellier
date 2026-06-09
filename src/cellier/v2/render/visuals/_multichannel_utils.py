@@ -69,6 +69,7 @@ def make_channel_group_2d(
     *,
     transparency_mode: str = "add",
     interpolation: str = "nearest",
+    pick_write: bool = True,
 ) -> tuple[gfx.Group, list[gfx.Image]]:
     """Allocate a 2D node pool as a Group containing ``max_channels`` Image nodes.
 
@@ -85,6 +86,8 @@ def make_channel_group_2d(
         pygfx alpha_mode for the pool nodes. Default ``"add"``.
     interpolation : str
         Sampler filter for all pool nodes. Default ``"nearest"``.
+    pick_write : bool
+        Whether pool materials write to the pick buffer.  Default ``True``.
 
     Returns
     -------
@@ -104,6 +107,7 @@ def make_channel_group_2d(
                 map=gfx.cm.viridis,
                 alpha_mode=alpha_mode,
                 interpolation=interpolation,
+                pick_write=pick_write,
             ),
         )
         node.visible = False
@@ -119,6 +123,7 @@ def make_channel_group_3d(
     *,
     transparency_mode: str = "add",
     interpolation: str = "nearest",
+    pick_write: bool = True,
 ) -> tuple[gfx.Group, list[gfx.Volume]]:
     """Allocate a 3D node pool as a Group containing ``max_channels`` Volume nodes.
 
@@ -132,6 +137,8 @@ def make_channel_group_3d(
         pygfx alpha_mode for the pool nodes. Default ``"add"``.
     interpolation : str
         Sampler filter for all pool nodes. Default ``"nearest"``.
+    pick_write : bool
+        Whether pool materials write to the pick buffer.  Default ``True``.
 
     Returns
     -------
@@ -151,6 +158,7 @@ def make_channel_group_3d(
                 map=gfx.cm.viridis,
                 alpha_mode=alpha_mode,
                 interpolation=interpolation,
+                pick_write=pick_write,
             ),
         )
         node.visible = False
