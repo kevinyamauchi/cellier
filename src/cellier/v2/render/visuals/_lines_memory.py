@@ -136,6 +136,13 @@ class GFXLinesMemoryVisual:
         self._current_color_mode: str = appearance.color_mode
         self._is_empty: bool = True
 
+        # Maps each rendered segment to its edge index in the store's full
+        # segment array.  In a sliced view the rendered buffer is a filtered
+        # subset, so the pick's rendered edge index is NOT the original edge
+        # index; this map (the slab's surviving segments) translates it.
+        # None means identity (no filtering / placeholder).
+        self._original_edge_indices: np.ndarray | None = None
+
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Line(geom, self._empty_material)
         self.node.render_order = appearance.render_order
@@ -164,7 +171,11 @@ class GFXLinesMemoryVisual:
 
         ``gfx.LineSegmentMaterial`` lays out one explicit vertex pair per edge:
         edge ``k`` occupies positions ``2k`` and ``2k + 1``.  The pick buffer
-        reports the hit vertex index, so the edge index is the integer half.
+        reports the hit vertex index, so the rendered edge index is the integer
+        half.  In a sliced view the rendered buffer holds only the segments that
+        survived the slab filter, so that rendered edge index is translated back
+        to the store's original edge index via ``_original_edge_indices`` (None
+        means identity / no filtering).
 
         Parameters
         ----------
@@ -174,9 +185,13 @@ class GFXLinesMemoryVisual:
         Returns
         -------
         int
-            Index of the edge (vertex pair) that was hit.
+            Index of the edge (vertex pair) in the store's full segment array.
         """
-        return vertex_index // 2
+        rendered_edge = vertex_index // 2
+        idx_map = self._original_edge_indices
+        if idx_map is None or not (0 <= rendered_edge < len(idx_map)):
+            return rendered_edge
+        return int(idx_map[rendered_edge])
 
     # ------------------------------------------------------------------
     # Node selection
@@ -335,6 +350,10 @@ class GFXLinesMemoryVisual:
             self.node.material = target
 
         self._is_empty = lines_data.is_empty
+        # Keep the pick edge map in lockstep with the uploaded buffer.
+        self._original_edge_indices = (
+            None if lines_data.is_empty else lines_data.original_edge_indices
+        )
 
     def on_data_ready(self, batch: list[tuple[LinesSliceRequest, LinesData]]) -> None:
         """3-D callback — called on the main thread by SliceCoordinator."""

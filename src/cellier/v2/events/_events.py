@@ -186,10 +186,24 @@ class LinesPickInfo(NamedTuple):
 
 
 class ImagePickInfo(NamedTuple):
-    """Element-level pick result for an image visual (stub; filled in a later phase)."""
+    """Element-level pick result for an image or volume visual.
 
-    row: int
-    col: int
+    Attributes
+    ----------
+    data_coordinate : tuple[float, ...]
+        Position of the picked point in the visual's level-0 data-array
+        coordinate system — all axes of the scene, including non-displayed
+        ones.  Length equals the total number of axes (e.g. 5 for TCZYX).
+        ``floor`` of each component yields the integer voxel index: the
+        coordinate uses the ``[i, i + 1)`` convention where voxel ``i`` spans
+        ``[i, i + 1)`` and its center is ``i + 0.5``.
+        Displayed axes carry the pick-decoded position (for 3-D canvases this
+        is the actual surface hit — MIP maximum or ISO surface — snapped into
+        data space); non-displayed axes carry the current slice index from the
+        dims state.
+    """
+
+    data_coordinate: tuple[float, ...]
 
 
 class MeshPickInfo(NamedTuple):
@@ -199,11 +213,17 @@ class MeshPickInfo(NamedTuple):
 
 
 class LabelsPickInfo(NamedTuple):
-    """Element-level pick result for a labels visual (stub; filled in a later phase)."""
+    """Element-level pick result for a labels visual.
 
-    row: int
-    col: int
-    label_value: int
+    Attributes
+    ----------
+    data_coordinate : tuple[float, ...]
+        Same convention as ``ImagePickInfo.data_coordinate``.  ``floor`` of the
+        displayed-axis components indexes the label array to recover the label
+        id under the cursor.
+    """
+
+    data_coordinate: tuple[float, ...]
 
 
 VisualPickDetails = (
@@ -365,6 +385,15 @@ class _CanvasRawPointerEvent(NamedTuple):
     pick_details : VisualPickDetails or None
         Typed element-level pick identity extracted in the render layer, or
         None on a miss or stubbed visual kind.
+
+        For image and labels visuals the render layer stores the render-layer
+        intermediate types ``_ImageDisplayedDataCoord`` or
+        ``_LabelsDisplayedDataCoord`` (defined in ``render_manager.py``) here
+        rather than the public ``ImagePickInfo`` / ``LabelsPickInfo``.  The
+        controller promotes them to full-N-dim public types in
+        ``_on_raw_pointer_event`` after filling the non-displayed axes from the
+        dims state.  At runtime ``VisualPickDetails`` is not enforced, so the
+        wider set of internal types flows through transparently.
     """
 
     canvas_id: UUID
@@ -378,7 +407,7 @@ class _CanvasRawPointerEvent(NamedTuple):
     modifiers: tuple
     buttons: tuple = ()
     gesture_id: UUID | None = None
-    pick_details: VisualPickDetails | None = None
+    pick_details: Any = None
 
 
 CellierEventTypes = (

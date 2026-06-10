@@ -67,6 +67,13 @@ class LinesData:
     is_empty : bool
         True when the slab filter produced zero surviving segments and a
         placeholder geometry was returned.
+    original_edge_indices : np.ndarray | None
+        (n_segments,) int array mapping each rendered segment to its edge
+        index in the store's full segment array.  This is the slab filter's
+        surviving-segment list; in a full 3-D view it is the identity
+        ``arange(n_segments)``.  Used by the render layer to translate a
+        pick's rendered-buffer edge index into the original edge index.
+        None on the empty-placeholder path.
     """
 
     request_id: UUID
@@ -74,6 +81,7 @@ class LinesData:
     colors: np.ndarray | None
     color_mode: str = "uniform"
     is_empty: bool = False
+    original_edge_indices: np.ndarray | None = None
 
     @property
     def shape(self) -> str:

@@ -685,6 +685,20 @@ class GFXMultichannelMultiscaleImageVisual:
             if g is not None:
                 g.visible = event.visible
 
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on a channel slot (displayed axes).
+
+        All slots share the same multiscale geometry, so any slot decodes the
+        payload identically; delegate to slot 0.  (The 3-D path reads
+        ``norm_size`` / ``dataset_size`` from the slot, which are shared across
+        channels.)
+        """
+        if not self._slots:
+            return None
+        return self._slots[0].pick_data_coordinate(hit_object, pick_info)
+
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         for slot in self._slots:
             slot.on_pick_write_changed(event)

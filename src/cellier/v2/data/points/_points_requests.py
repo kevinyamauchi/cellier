@@ -71,6 +71,13 @@ class PointsData:
     is_empty : bool
         True when the proximity filter produced zero surviving points
         and a placeholder geometry was returned.
+    original_indices : np.ndarray | None
+        (n_points,) int array mapping each row of ``positions`` back to its
+        index in the store's full point array.  This is the proximity
+        filter's surviving-index list; in a full 3-D view it is the identity
+        ``arange(N)``.  Used by the render layer to translate a pick's
+        rendered-buffer vertex index into the original point index.  None on
+        the empty-placeholder path.
     """
 
     request_id: UUID
@@ -80,6 +87,7 @@ class PointsData:
     color_mode: str = "uniform"
     size_mode: str = "uniform"
     is_empty: bool = False
+    original_indices: np.ndarray | None = None
 
     @property
     def shape(self) -> str:

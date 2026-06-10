@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from cellier.v2.events._events import ResliceCompletedEvent, ResliceStartedEvent
+
 if TYPE_CHECKING:
     from cellier.v2.data.image import MultiscaleZarrDataStore
+    from cellier.v2.events._bus import EventBus
     from cellier.v2.events._events import DimsChangedEvent
     from cellier.v2.render._requests import ReslicingRequest
     from cellier.v2.render._scene_config import VisualRenderConfig
@@ -47,6 +50,10 @@ class SliceCoordinator:
         self._slicer = slicer
         self._data_stores = data_stores
         self._active_slice_ids: dict[tuple[UUID, UUID, UUID], UUID] = {}
+        # Set by RenderManager.connect_event_bus so the coordinator can emit
+        # ResliceStartedEvent / ResliceCompletedEvent.  None until wired (e.g.
+        # in unit tests that drive submit() directly without a bus).
+        self._event_bus: EventBus | None = None
 
     def submit(
         self,
@@ -89,6 +96,16 @@ class SliceCoordinator:
 
         requests_by_visual = scene_manager.build_slice_requests(request, visual_configs)
 
+        # Announce the start of the reslice cycle for the visuals being loaded.
+        if self._event_bus is not None and requests_by_visual:
+            self._event_bus.emit(
+                ResliceStartedEvent(
+                    source_id=self.id,
+                    scene_id=request.scene_id,
+                    visual_ids=frozenset(requests_by_visual.keys()),
+                )
+            )
+
         is_2d = len(request.dims_state.selection.displayed_axes) == 2
 
         for visual_id, chunk_requests in requests_by_visual.items():
@@ -98,16 +115,59 @@ class SliceCoordinator:
             # Use the appropriate callback for the scene dimensionality.
             callback = visual.on_data_ready_2d if is_2d else visual.on_data_ready
 
+            brick_count = len(chunk_requests)
+
+            # Closure fired once all bricks/tiles for this visual have committed.
+            # Bind the loop variables as defaults so each visual gets its own.
+            def _on_complete(
+                vid: UUID = visual_id,
+                sid: UUID = request.scene_id,
+                n: int = brick_count,
+            ) -> None:
+                self._emit_reslice_completed(sid, vid, n)
+
             slice_id = self._slicer.submit(
                 chunk_requests,
                 fetch_fn=data_store.get_data,
                 callback=callback,
                 consumer_id=str(visual_id),
+                on_complete=_on_complete,
             )
             if slice_id is not None:
                 self._active_slice_ids[
                     (request.scene_id, request.canvas_id, visual_id)
                 ] = slice_id
+            else:
+                # No bricks to load (e.g. an empty slab); the reslice for this
+                # visual is already complete, so signal it immediately — the
+                # async on_complete path never runs for an empty submission.
+                self._emit_reslice_completed(request.scene_id, visual_id, brick_count)
+
+    def _emit_reslice_completed(
+        self, scene_id: UUID, visual_id: UUID, brick_count: int
+    ) -> None:
+        """Emit a ``ResliceCompletedEvent`` for *visual_id* if a bus is wired.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            Scene that owns the visual.
+        visual_id : UUID
+            Visual whose reslice cycle just completed.  Used by the bus as the
+            routing key for ``on_reslice_completed`` subscribers.
+        brick_count : int
+            Number of bricks/tiles committed during the cycle.
+        """
+        if self._event_bus is None:
+            return
+        self._event_bus.emit(
+            ResliceCompletedEvent(
+                source_id=self.id,
+                scene_id=scene_id,
+                visual_id=visual_id,
+                brick_count=brick_count,
+            )
+        )
 
     def cancel_scene(self, scene_id: UUID) -> None:
         """Cancel all in-flight tasks for a scene.

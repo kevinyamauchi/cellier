@@ -187,4 +187,5 @@ class PointsMemoryStore(BaseDataStore):
             color_mode=self.color_mode,
             size_mode=self.size_mode,
             is_empty=False,
+            original_indices=surviving_indices,
         )

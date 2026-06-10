@@ -163,6 +163,35 @@ def test_get_data_2d_colors_gathered():
     assert result.colors.shape[0] == result.positions.shape[0]
 
 
+# ── original_edge_indices (pick index mapping) ────────────────────────────────
+
+
+def test_original_edge_indices_identity_in_3d():
+    """A full 3-D view keeps every segment, so the map is the identity arange."""
+    positions = np.zeros((8, 3), dtype=np.float32)  # 4 segments
+    store = LinesMemoryStore(positions=positions)
+    result = asyncio.run(store.get_data(_req()))
+    assert list(result.original_edge_indices) == [0, 1, 2, 3]
+
+
+def test_original_edge_indices_track_surviving_subset_in_2d():
+    """A 2-D slab keeping one segment reports that segment's original index.
+
+    The pick reports the rendered edge index (here 0, the only survivor);
+    ``original_edge_indices`` maps it back to original segment 2.
+    """
+    positions = np.empty((8, 3), dtype=np.float32)
+    for k, z in enumerate((0, 10, 20, 30)):
+        positions[2 * k] = (z, 0.0, 0.0)
+        positions[2 * k + 1] = (z, 1.0, 1.0)
+    store = LinesMemoryStore(positions=positions)
+    result = asyncio.run(
+        store.get_data(_req(displayed=(1, 2), sliced={0: 20}, thickness=0.5))
+    )
+    assert result.positions.shape[0] == 2  # one segment (two vertices)
+    assert list(result.original_edge_indices) == [2]
+
+
 # ── Checkpoint cancellation ───────────────────────────────────────────────────
 
 

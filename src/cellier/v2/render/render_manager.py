@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import numpy as np
@@ -39,6 +39,44 @@ if TYPE_CHECKING:
         | GFXLinesMemoryVisual
         | GFXMeshMemoryVisual
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal render-layer intermediates (not exported)
+# ---------------------------------------------------------------------------
+
+
+class _ImageDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for image/volume pick — displayed axes only.
+
+    ``_extract_pick_details`` can only decode the rendered axes; the
+    controller promotes this to a full-N-dim ``ImagePickInfo`` in
+    ``_on_raw_pointer_event`` by filling non-displayed axes from dims state.
+
+    Parameters
+    ----------
+    displayed_data_coord : tuple[float, ...]
+        Level-0 data-array position on the displayed axes only (``floor`` gives
+        the index).  Length 2 for a 2-D canvas, 3 for a 3-D canvas.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+class _LabelsDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for labels pick — displayed axes only.
+
+    Same semantics as ``_ImageDisplayedDataCoord``; separate type so the
+    controller can produce the correct public ``LabelsPickInfo``.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+# Union used to annotate _CanvasRawPointerEvent.pick_details
+_RawPickDetails = (
+    "_ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None"
+)
 
 
 class RenderManager:
@@ -81,6 +119,8 @@ class RenderManager:
         handler so the SliceCoordinator invalidates stale 2D caches first.
         """
         self._event_bus = event_bus
+        # Let the coordinator emit ResliceStartedEvent / ResliceCompletedEvent.
+        self._slice_coordinator._event_bus = event_bus
         event_bus.subscribe(
             DimsChangedEvent,
             self._slice_coordinator._on_dims_changed,
@@ -386,14 +426,27 @@ class RenderManager:
         self._pick_details_enabled[canvas_id] = enabled
 
     def _extract_pick_details(
-        self, scene_id: UUID, hit_object: gfx.WorldObject, pick_info: dict
-    ) -> VisualPickDetails | None:
+        self,
+        scene_id: UUID,
+        hit_object: gfx.WorldObject,
+        pick_info: dict,
+    ) -> (
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
+    ):
         """Translate a pygfx pick payload into a typed, gfx-free pick detail.
 
         All ``gfx.*`` and pick-dict access stays inside this helper so nothing
         leaks past the render layer.  Returns None when the hit object has no
         element-level identity yet (stubbed visual kinds) or when there is no
         usable index in the payload.
+
+        For image and labels visuals this returns the intermediate
+        ``_ImageDisplayedDataCoord`` / ``_LabelsDisplayedDataCoord`` types
+        carrying level-0 data coordinates on the displayed axes; the per-visual
+        ``pick_data_coordinate`` does the node-specific decode so this helper
+        never touches the world matrix.  The controller promotes them to
+        full-N-dim public types in ``_on_raw_pointer_event`` once it has access
+        to the dims state.
 
         Parameters
         ----------
@@ -406,13 +459,23 @@ class RenderManager:
 
         Returns
         -------
-        VisualPickDetails or None
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
         """
         from cellier.v2.events._events import (
             LinesPickInfo,
             MeshPickInfo,
             PointsPickInfo,
         )
+        from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+        from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+        from cellier.v2.render.visuals._image_memory_multichannel import (
+            GFXMultichannelImageMemoryVisual,
+        )
+        from cellier.v2.render.visuals._image_multiscale_multichannel import (
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+        from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
         from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
         from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
         from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
@@ -423,9 +486,14 @@ class RenderManager:
             return None
         gfx_visual = scene_manager.get_visual(visual_id)
 
+        # ── Points / Lines / Mesh ──────────────────────────────────────────
         if isinstance(gfx_visual, GFXPointsMemoryVisual):
             index = pick_info.get("vertex_index")
-            return None if index is None else PointsPickInfo(point_index=int(index))
+            if index is None:
+                return None
+            return PointsPickInfo(
+                point_index=gfx_visual.point_index_for_vertex(int(index))
+            )
         if isinstance(gfx_visual, GFXLinesMemoryVisual):
             index = pick_info.get("vertex_index")
             if index is None:
@@ -435,9 +503,32 @@ class RenderManager:
             )
         if isinstance(gfx_visual, GFXMeshMemoryVisual):
             index = pick_info.get("face_index")
-            return None if index is None else MeshPickInfo(face_index=int(index))
-        # image / labels element details land in a later phase.
-        return None
+            if index is None:
+                return None
+            return MeshPickInfo(face_index=gfx_visual.face_index_for_pick(int(index)))
+
+        # ── Image / Labels ─────────────────────────────────────────────────
+        # Each visual decodes its own node payload into level-0 data coordinates
+        # on the displayed axes; no world-matrix or proxy/norm details here.
+        _IMAGE_TYPES = (
+            GFXImageMemoryVisual,
+            GFXMultiscaleImageVisual,
+            GFXMultichannelImageMemoryVisual,
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        _LABELS_TYPES = (
+            GFXLabelMemoryVisual,
+            GFXMultiscaleLabelVisual,
+        )
+        if not isinstance(gfx_visual, _IMAGE_TYPES + _LABELS_TYPES):
+            return None
+
+        coord = gfx_visual.pick_data_coordinate(hit_object, pick_info)
+        if coord is None:
+            return None
+        if isinstance(gfx_visual, _LABELS_TYPES):
+            return _LabelsDisplayedDataCoord(displayed_data_coord=coord)
+        return _ImageDisplayedDataCoord(displayed_data_coord=coord)
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.

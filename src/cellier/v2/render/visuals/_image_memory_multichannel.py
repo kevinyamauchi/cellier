@@ -23,6 +23,7 @@ from cellier.v2.render.visuals._multichannel_utils import (
     make_channel_group_2d,
     make_channel_group_3d,
 )
+from cellier.v2.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
@@ -459,6 +460,18 @@ class GFXMultichannelImageMemoryVisual:
         for node in (self._group_2d, self._group_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on a channel node (displayed axes).
+
+        Every pool node renders the same data geometry over a real data
+        texture, so the channel that was hit is irrelevant: pygfx's ``index`` is
+        already the data index.
+        """
+        ndim = 3 if isinstance(hit_object, gfx.Volume) else 2
+        return memory_image_data_coordinate(pick_info, ndim)
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         for node in self._pool_2d:

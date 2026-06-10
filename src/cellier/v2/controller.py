@@ -1796,7 +1796,9 @@ class CellierController:
         if data_store_id:
             store = self._model.data.stores.get(UUID(data_store_id))
             if store is not None:
-                return list(store.level_shapes)
+                # Single-node memory stores (points/lines/mesh) have no levels;
+                # only image/label stores expose ``level_shapes``.
+                return list(getattr(store, "level_shapes", []))
         return []
 
     def _rebuild_visuals_geometry(
@@ -2932,7 +2934,15 @@ class CellierController:
         the full world coordinate, then emits the public canvas mouse event.
         No render-layer access occurs here.
         """
-        from cellier.v2.events._events import CanvasPickInfo
+        from cellier.v2.events._events import (
+            CanvasPickInfo,
+            ImagePickInfo,
+            LabelsPickInfo,
+        )
+        from cellier.v2.render.render_manager import (
+            _ImageDisplayedDataCoord,
+            _LabelsDisplayedDataCoord,
+        )
 
         scene_model = self._model.scenes[event.scene_id]
         dims = scene_model.dims
@@ -2941,8 +2951,35 @@ class CellierController:
         axis_labels = dims.coordinate_system.axis_labels
         n_dims = len(axis_labels)
 
+        # Promote render-layer intermediates to full-N-dim public pick types.
+        # The render layer decodes the displayed axes into level-0 data
+        # coordinates; the controller fills the remaining (non-displayed) axes
+        # from the dims slice state — which are already data indices, so every
+        # axis of the result is in the same (data) coordinate system.
+        raw_pick = event.pick_details
+        if isinstance(raw_pick, (_ImageDisplayedDataCoord, _LabelsDisplayedDataCoord)):
+            data_coord_pick = np.empty(n_dims, dtype=np.float64)
+            # The render layer decodes displayed-axis coordinates in pygfx
+            # (x, y[, z]) order, which is the reverse of cellier's ascending
+            # ``displayed_axes`` (..., row, col) order.  Reverse so each value
+            # lands on its true data axis (e.g. the column coordinate on the x
+            # axis, not on the first displayed axis) — otherwise the displayed
+            # axes come out transposed.
+            disp_coord = tuple(raw_pick.displayed_data_coord)[::-1]
+            for i, axis in enumerate(displayed_axes):
+                data_coord_pick[axis] = disp_coord[i]
+            for axis, idx in slice_indices.items():
+                data_coord_pick[axis] = float(idx)
+            full_coord: tuple[float, ...] = tuple(float(v) for v in data_coord_pick)
+            if isinstance(raw_pick, _ImageDisplayedDataCoord):
+                promoted_pick = ImagePickInfo(data_coordinate=full_coord)
+            else:
+                promoted_pick = LabelsPickInfo(data_coordinate=full_coord)
+        else:
+            promoted_pick = raw_pick
+
         pick_info = CanvasPickInfo(
-            hit_visual_id=event.hit_visual_id, details=event.pick_details
+            hit_visual_id=event.hit_visual_id, details=promoted_pick
         )
 
         if event.camera_type == "2d":

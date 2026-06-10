@@ -191,6 +191,7 @@ class MeshMemoryStore(BaseDataStore):
 
         # ── Phase 2: reindex surviving faces ─────────────────────────
         surviving = indices[face_mask]  # (n_surv, 3)
+        surviving_faces = np.where(face_mask)[0]  # original face index per row
 
         if surviving.shape[0] == 0:
             # Empty slab — return placeholder so the node stays valid.
@@ -246,4 +247,5 @@ class MeshMemoryStore(BaseDataStore):
             colors=new_colors,
             color_mode=color_mode,
             is_empty=False,
+            original_face_indices=surviving_faces,
         )

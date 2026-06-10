@@ -9,6 +9,7 @@ import pygfx as gfx
 
 from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image._image_requests import ChunkRequest
+from cellier.v2.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
@@ -752,6 +753,18 @@ class GFXImageMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on this visual (displayed axes).
+
+        The texture holds the displayed data slice/volume directly, so pygfx's
+        ``index`` is already the data index; see
+        :func:`cellier.v2.render.visuals._pick.memory_image_data_coordinate`.
+        """
+        ndim = 3 if isinstance(hit_object, gfx.Volume) else 2
+        return memory_image_data_coordinate(pick_info, ndim)
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all inner node materials."""
