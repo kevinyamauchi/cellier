@@ -166,6 +166,13 @@ class CellierController:
         self._scene_render_modes: dict[UUID, set[Literal["2d", "3d"]]] = {}
         # Camera settle
         self._settle_tasks: dict[UUID, asyncio.Task] = {}
+        # Per-canvas count of active element-picking subscribers (the six
+        # on_mouse_* registrations).  Drives RenderManager pick-detail gating
+        # (Decision 4).  Keyed by canvas_id.
+        self._pick_subscriber_counts: dict[UUID, int] = {}
+        # Map a mouse SubscriptionHandle's id to its canvas so that
+        # unsubscribe_mouse can decrement the right counter.
+        self._mouse_handle_canvas: dict[int, UUID] = {}
         # Stored psygnal bridge handlers keyed by visual_id.
         # Each entry is a list of (signal, handler) pairs.  psygnal
         # disconnect() requires the exact handler object; closures are not
@@ -1789,7 +1796,9 @@ class CellierController:
         if data_store_id:
             store = self._model.data.stores.get(UUID(data_store_id))
             if store is not None:
-                return list(store.level_shapes)
+                # Single-node memory stores (points/lines/mesh) have no levels;
+                # only image/label stores expose ``level_shapes``.
+                return list(getattr(store, "level_shapes", []))
         return []
 
     def _rebuild_visuals_geometry(
@@ -2739,6 +2748,7 @@ class CellierController:
 
         # 2. Remove bus subscriptions owned by this canvas.
         self._outgoing_events.unsubscribe_all(canvas_id)
+        self._pick_subscriber_counts.pop(canvas_id, None)
 
         # 3. Update controller lookup maps.
         self._canvas_to_scene.pop(canvas_id)
@@ -2924,7 +2934,15 @@ class CellierController:
         the full world coordinate, then emits the public canvas mouse event.
         No render-layer access occurs here.
         """
-        from cellier.v2.events._events import CanvasPickInfo
+        from cellier.v2.events._events import (
+            CanvasPickInfo,
+            ImagePickInfo,
+            LabelsPickInfo,
+        )
+        from cellier.v2.render.render_manager import (
+            _ImageDisplayedDataCoord,
+            _LabelsDisplayedDataCoord,
+        )
 
         scene_model = self._model.scenes[event.scene_id]
         dims = scene_model.dims
@@ -2933,7 +2951,36 @@ class CellierController:
         axis_labels = dims.coordinate_system.axis_labels
         n_dims = len(axis_labels)
 
-        pick_info = CanvasPickInfo(hit_visual_id=event.hit_visual_id)
+        # Promote render-layer intermediates to full-N-dim public pick types.
+        # The render layer decodes the displayed axes into level-0 data
+        # coordinates; the controller fills the remaining (non-displayed) axes
+        # from the dims slice state — which are already data indices, so every
+        # axis of the result is in the same (data) coordinate system.
+        raw_pick = event.pick_details
+        if isinstance(raw_pick, (_ImageDisplayedDataCoord, _LabelsDisplayedDataCoord)):
+            data_coord_pick = np.empty(n_dims, dtype=np.float64)
+            # The render layer decodes displayed-axis coordinates in pygfx
+            # (x, y[, z]) order, which is the reverse of cellier's ascending
+            # ``displayed_axes`` (..., row, col) order.  Reverse so each value
+            # lands on its true data axis (e.g. the column coordinate on the x
+            # axis, not on the first displayed axis) — otherwise the displayed
+            # axes come out transposed.
+            disp_coord = tuple(raw_pick.displayed_data_coord)[::-1]
+            for i, axis in enumerate(displayed_axes):
+                data_coord_pick[axis] = disp_coord[i]
+            for axis, idx in slice_indices.items():
+                data_coord_pick[axis] = float(idx)
+            full_coord: tuple[float, ...] = tuple(float(v) for v in data_coord_pick)
+            if isinstance(raw_pick, _ImageDisplayedDataCoord):
+                promoted_pick = ImagePickInfo(data_coordinate=full_coord)
+            else:
+                promoted_pick = LabelsPickInfo(data_coordinate=full_coord)
+        else:
+            promoted_pick = raw_pick
+
+        pick_info = CanvasPickInfo(
+            hit_visual_id=event.hit_visual_id, details=promoted_pick
+        )
 
         if event.camera_type == "2d":
             world_coord = np.empty(n_dims, dtype=np.float64)
@@ -2961,6 +3008,10 @@ class CellierController:
                     scene_id=event.scene_id,
                     world_coordinate=world_coord,
                     pick_info=pick_info,
+                    button=event.button,
+                    buttons=event.buttons,
+                    modifiers=event.modifiers,
+                    gesture_id=event.gesture_id,
                 )
             )
         else:
@@ -2975,8 +3026,62 @@ class CellierController:
                     scene_id=event.scene_id,
                     ray=event.ray,
                     pick_info=pick_info,
+                    button=event.button,
+                    buttons=event.buttons,
+                    modifiers=event.modifiers,
+                    gesture_id=event.gesture_id,
                 )
             )
+
+    def _register_pick_subscriber(
+        self, canvas_id: UUID, handle: SubscriptionHandle
+    ) -> SubscriptionHandle:
+        """Record a mouse subscription and enable pick details for its canvas.
+
+        Increments the per-canvas picking-subscriber count; the first
+        subscriber flips on element-detail extraction in the render layer.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas the subscription watches.
+        handle : SubscriptionHandle
+            The handle returned by the bus subscription.
+
+        Returns
+        -------
+        SubscriptionHandle
+            The same handle, for convenient return from the callers.
+        """
+        self._mouse_handle_canvas[id(handle)] = canvas_id
+        count = self._pick_subscriber_counts.get(canvas_id, 0)
+        self._pick_subscriber_counts[canvas_id] = count + 1
+        if count == 0:
+            self._render_manager.set_pick_details_enabled(canvas_id, True)
+        return handle
+
+    def unsubscribe_mouse(self, handle: SubscriptionHandle) -> None:
+        """Remove a mouse subscription created by an ``on_mouse_*`` method.
+
+        Use this in place of ``EventBus.unsubscribe`` for handles returned by
+        the six ``on_mouse_*`` methods so the per-canvas picking-subscriber
+        count stays accurate; the last unsubscribe disables element-detail
+        extraction for that canvas.
+
+        Parameters
+        ----------
+        handle : SubscriptionHandle
+            A handle returned by one of the ``on_mouse_*`` methods.
+        """
+        canvas_id = self._mouse_handle_canvas.pop(id(handle), None)
+        if canvas_id is not None:
+            count = self._pick_subscriber_counts.get(canvas_id, 0) - 1
+            if count <= 0:
+                self._pick_subscriber_counts.pop(canvas_id, None)
+                self._render_manager.set_pick_details_enabled(canvas_id, False)
+            else:
+                self._pick_subscriber_counts[canvas_id] = count
+        self._outgoing_events.unsubscribe(handle)
 
     def on_mouse_press_2d(
         self,
@@ -3000,13 +3105,14 @@ class CellierController:
         weak :
             If True, hold only a weak reference to *callback*.
         """
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMousePress2DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def on_mouse_move_2d(
         self,
@@ -3017,13 +3123,14 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-move event on a 2D canvas."""
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMouseMove2DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def on_mouse_release_2d(
         self,
@@ -3034,13 +3141,14 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-up event on a 2D canvas."""
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMouseRelease2DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def on_mouse_press_3d(
         self,
@@ -3064,13 +3172,14 @@ class CellierController:
         weak :
             If True, hold only a weak reference to *callback*.
         """
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMousePress3DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def on_mouse_move_3d(
         self,
@@ -3081,13 +3190,14 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-move event on a 3D canvas."""
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMouseMove3DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def on_mouse_release_3d(
         self,
@@ -3098,13 +3208,14 @@ class CellierController:
         weak: bool = False,
     ) -> SubscriptionHandle:
         """Register a callback fired on every pointer-up event on a 3D canvas."""
-        return self._outgoing_events.subscribe(
+        handle = self._outgoing_events.subscribe(
             CanvasMouseRelease3DEvent,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
         )
+        return self._register_pick_subscriber(canvas_id, handle)
 
     def set_camera_controller_enabled(self, canvas_id: UUID, enabled: bool) -> None:
         """Enable or disable the camera controller for one canvas.

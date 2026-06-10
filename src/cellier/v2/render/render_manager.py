@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
 
 import numpy as np
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.v2.data._base_data_store import BaseDataStore
+    from cellier.v2.events._events import VisualPickDetails
     from cellier.v2.render._requests import DimsState
     from cellier.v2.render.visuals._canvas_overlay import GFXCanvasOverlay
     from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
@@ -37,6 +39,44 @@ if TYPE_CHECKING:
         | GFXLinesMemoryVisual
         | GFXMeshMemoryVisual
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal render-layer intermediates (not exported)
+# ---------------------------------------------------------------------------
+
+
+class _ImageDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for image/volume pick — displayed axes only.
+
+    ``_extract_pick_details`` can only decode the rendered axes; the
+    controller promotes this to a full-N-dim ``ImagePickInfo`` in
+    ``_on_raw_pointer_event`` by filling non-displayed axes from dims state.
+
+    Parameters
+    ----------
+    displayed_data_coord : tuple[float, ...]
+        Level-0 data-array position on the displayed axes only (``floor`` gives
+        the index).  Length 2 for a 2-D canvas, 3 for a 3-D canvas.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+class _LabelsDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for labels pick — displayed axes only.
+
+    Same semantics as ``_ImageDisplayedDataCoord``; separate type so the
+    controller can produce the correct public ``LabelsPickInfo``.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+# Union used to annotate _CanvasRawPointerEvent.pick_details
+_RawPickDetails = (
+    "_ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None"
+)
 
 
 class RenderManager:
@@ -60,6 +100,8 @@ class RenderManager:
         self._visual_to_scene: dict[UUID, UUID] = {}
         self._data_stores: dict[UUID, BaseDataStore] = {}
         self._event_bus: EventBus | None = None
+        self._active_gestures: dict[UUID, UUID] = {}
+        self._pick_details_enabled: dict[UUID, bool] = {}
         self._slicer = AsyncSlicer(
             batch_size=config.slicing.batch_size,
             render_every=config.slicing.render_every,
@@ -77,6 +119,8 @@ class RenderManager:
         handler so the SliceCoordinator invalidates stale 2D caches first.
         """
         self._event_bus = event_bus
+        # Let the coordinator emit ResliceStartedEvent / ResliceCompletedEvent.
+        self._slice_coordinator._event_bus = event_bus
         event_bus.subscribe(
             DimsChangedEvent,
             self._slice_coordinator._on_dims_changed,
@@ -261,14 +305,32 @@ class RenderManager:
         cam = canvas_view._camera
         hit_object = event.pick_info.get("world_object")
         hit_visual_id: UUID | None = None
+        pick_details: VisualPickDetails | None = None
         if hit_object is not None:
             hit_visual_id = self._scenes[scene_id].get_visual_id_for_node(hit_object)
+            # Gate the cheap per-type extraction on whether any picking
+            # subscriber exists for this canvas (Decision 4).  hit_visual_id
+            # is always computed; it is already paid for upstream and is
+            # needed for visual-level hits and misses.
+            if self._pick_details_enabled.get(canvas_id, False):
+                pick_details = self._extract_pick_details(
+                    scene_id, hit_object, event.pick_info
+                )
 
         _ACTION = {
             "pointer_down": "press",
             "pointer_up": "release",
             "pointer_move": "move",
         }
+        action = _ACTION[event.type]
+        if action == "press":
+            gesture_id: UUID | None = uuid4()
+            self._active_gestures[canvas_id] = gesture_id
+        elif action == "release":
+            gesture_id = self._active_gestures.pop(canvas_id, None)
+        else:  # move
+            gesture_id = self._active_gestures.get(canvas_id)
+        buttons = tuple(event.buttons)
 
         if canvas_view._dim == "2d":
             # OrthographicCamera with maintain_aspect=True stretches one axis
@@ -301,13 +363,16 @@ class RenderManager:
                 _CanvasRawPointerEvent(
                     canvas_id=canvas_id,
                     scene_id=scene_id,
-                    action=_ACTION[event.type],
+                    action=action,
                     camera_type="2d",
                     position_2d=position_2d,
                     ray=None,
                     hit_visual_id=hit_visual_id,
                     button=event.button,
                     modifiers=tuple(event.modifiers),
+                    buttons=buttons,
+                    gesture_id=gesture_id,
+                    pick_details=pick_details,
                 )
             )
         else:
@@ -331,15 +396,139 @@ class RenderManager:
                 _CanvasRawPointerEvent(
                     canvas_id=canvas_id,
                     scene_id=scene_id,
-                    action=_ACTION[event.type],
+                    action=action,
                     camera_type="3d",
                     position_2d=None,
                     ray=ray,
                     hit_visual_id=hit_visual_id,
                     button=event.button,
                     modifiers=tuple(event.modifiers),
+                    buttons=buttons,
+                    gesture_id=gesture_id,
+                    pick_details=pick_details,
                 )
             )
+
+    def set_pick_details_enabled(self, canvas_id: UUID, enabled: bool) -> None:
+        """Enable or disable element-level pick extraction for one canvas.
+
+        When disabled (the default), pointer events still carry
+        ``hit_visual_id`` but ``pick_details`` is left ``None`` so non-picking
+        consumers do not pay for the per-type dispatch.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose extraction state should change.
+        enabled : bool
+            True to extract typed ``VisualPickDetails`` on each pointer event.
+        """
+        self._pick_details_enabled[canvas_id] = enabled
+
+    def _extract_pick_details(
+        self,
+        scene_id: UUID,
+        hit_object: gfx.WorldObject,
+        pick_info: dict,
+    ) -> (
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
+    ):
+        """Translate a pygfx pick payload into a typed, gfx-free pick detail.
+
+        All ``gfx.*`` and pick-dict access stays inside this helper so nothing
+        leaks past the render layer.  Returns None when the hit object has no
+        element-level identity yet (stubbed visual kinds) or when there is no
+        usable index in the payload.
+
+        For image and labels visuals this returns the intermediate
+        ``_ImageDisplayedDataCoord`` / ``_LabelsDisplayedDataCoord`` types
+        carrying level-0 data coordinates on the displayed axes; the per-visual
+        ``pick_data_coordinate`` does the node-specific decode so this helper
+        never touches the world matrix.  The controller promotes them to
+        full-N-dim public types in ``_on_raw_pointer_event`` once it has access
+        to the dims state.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            Scene owning the hit object.
+        hit_object : gfx.WorldObject
+            The picked world object from the pick buffer.
+        pick_info : dict
+            The pygfx pick payload (``event.pick_info``).
+
+        Returns
+        -------
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
+        """
+        from cellier.v2.events._events import (
+            LinesPickInfo,
+            MeshPickInfo,
+            PointsPickInfo,
+        )
+        from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
+        from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+        from cellier.v2.render.visuals._image_memory_multichannel import (
+            GFXMultichannelImageMemoryVisual,
+        )
+        from cellier.v2.render.visuals._image_multiscale_multichannel import (
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+        from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+        from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
+        from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
+        from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
+
+        scene_manager = self._scenes[scene_id]
+        visual_id = scene_manager.get_visual_id_for_node(hit_object)
+        if visual_id is None:
+            return None
+        gfx_visual = scene_manager.get_visual(visual_id)
+
+        # ── Points / Lines / Mesh ──────────────────────────────────────────
+        if isinstance(gfx_visual, GFXPointsMemoryVisual):
+            index = pick_info.get("vertex_index")
+            if index is None:
+                return None
+            return PointsPickInfo(
+                point_index=gfx_visual.point_index_for_vertex(int(index))
+            )
+        if isinstance(gfx_visual, GFXLinesMemoryVisual):
+            index = pick_info.get("vertex_index")
+            if index is None:
+                return None
+            return LinesPickInfo(
+                edge_index=gfx_visual.edge_index_for_vertex(int(index))
+            )
+        if isinstance(gfx_visual, GFXMeshMemoryVisual):
+            index = pick_info.get("face_index")
+            if index is None:
+                return None
+            return MeshPickInfo(face_index=gfx_visual.face_index_for_pick(int(index)))
+
+        # ── Image / Labels ─────────────────────────────────────────────────
+        # Each visual decodes its own node payload into level-0 data coordinates
+        # on the displayed axes; no world-matrix or proxy/norm details here.
+        _IMAGE_TYPES = (
+            GFXImageMemoryVisual,
+            GFXMultiscaleImageVisual,
+            GFXMultichannelImageMemoryVisual,
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        _LABELS_TYPES = (
+            GFXLabelMemoryVisual,
+            GFXMultiscaleLabelVisual,
+        )
+        if not isinstance(gfx_visual, _IMAGE_TYPES + _LABELS_TYPES):
+            return None
+
+        coord = gfx_visual.pick_data_coordinate(hit_object, pick_info)
+        if coord is None:
+            return None
+        if isinstance(gfx_visual, _LABELS_TYPES):
+            return _LabelsDisplayedDataCoord(displayed_data_coord=coord)
+        return _ImageDisplayedDataCoord(displayed_data_coord=coord)
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.
@@ -376,6 +565,8 @@ class RenderManager:
         for cid in canvas_ids:
             self._canvas_to_scene.pop(cid)
             self._canvases.pop(cid)
+            self._active_gestures.pop(cid, None)
+            self._pick_details_enabled.pop(cid, None)
         # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
 
     def remove_canvas(self, canvas_id: UUID) -> None:
@@ -393,6 +584,8 @@ class RenderManager:
         """
         self._canvas_to_scene.pop(canvas_id)
         self._canvases.pop(canvas_id)
+        self._active_gestures.pop(canvas_id, None)
+        self._pick_details_enabled.pop(canvas_id, None)
         # CanvasView reference dropped; GC handles Qt widget + wgpu renderer.
 
     def _make_tick_fn(self, scene_id: UUID):

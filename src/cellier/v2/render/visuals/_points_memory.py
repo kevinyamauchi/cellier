@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -126,12 +127,22 @@ class GFXPointsMemoryVisual:
 
         appearance = visual_model.appearance
         self._material = _build_material(appearance)
+        # Plumb the model's pick_write flag into the pygfx material so the
+        # pick buffer records this visual; pygfx materials default to False.
+        self._material.pick_write = visual_model.pick_write
         self._empty_material = gfx.PointsMaterial(color=(0, 0, 0, 0), opacity=0.0)
 
         # Track color_mode and size_mode as instance state to detect transitions.
         self._current_color_mode: str = appearance.color_mode
         self._current_size_mode: str = "uniform"
         self._is_empty: bool = True
+
+        # Maps each rendered-buffer row to its index in the store's full point
+        # array.  In a sliced (2-D or collapsed-axis) view the rendered buffer
+        # is a filtered subset, so pygfx's vertex_index is NOT the original
+        # point index; this map (the slice's surviving indices) translates it.
+        # None means identity (no filtering / placeholder).
+        self._original_indices: np.ndarray | None = None
 
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Points(geom, self._empty_material)
@@ -176,6 +187,30 @@ class GFXPointsMemoryVisual:
         if displayed_axes != self._last_displayed_axes:
             self._update_node_matrix(displayed_axes)
         return self.node
+
+    def point_index_for_vertex(self, vertex_index: int) -> int:
+        """Map a pygfx pick vertex index to the store's original point index.
+
+        In a sliced view the rendered geometry holds only the points that
+        survived the proximity filter, so ``vertex_index`` is a row in that
+        subset, not the original array index.  ``_original_indices`` (the
+        slice's surviving-index list) recovers the original index; when it is
+        None (no filtering / placeholder) the index passes through unchanged.
+
+        Parameters
+        ----------
+        vertex_index : int
+            ``vertex_index`` from the pygfx pick payload.
+
+        Returns
+        -------
+        int
+            Index into the store's full point array.
+        """
+        idx_map = self._original_indices
+        if idx_map is None or not (0 <= vertex_index < len(idx_map)):
+            return vertex_index
+        return int(idx_map[vertex_index])
 
     # ── GFXVisual protocol ──────────────────────────────────────────────
 
@@ -315,6 +350,11 @@ class GFXPointsMemoryVisual:
             self.node.material = target
 
         self._is_empty = points_data.is_empty
+        # Keep the pick index map in lockstep with the uploaded buffer so a
+        # pick on the rendered frame resolves to the right original index.
+        self._original_indices = (
+            None if points_data.is_empty else points_data.original_indices
+        )
 
     def on_data_ready(self, batch: list[tuple[PointsSliceRequest, PointsData]]) -> None:
         """3-D callback — called on the main thread by SliceCoordinator."""
@@ -375,6 +415,9 @@ class GFXPointsMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        self._material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""

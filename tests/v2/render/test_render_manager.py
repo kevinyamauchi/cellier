@@ -74,6 +74,7 @@ class _StubSlicer:
     def __init__(self) -> None:
         self.submitted: list[tuple[list[ChunkRequest], str | None]] = []
         self.cancelled: list[UUID] = []
+        self.on_complete_callbacks: list = []
         self._next_id = 0
 
     def submit(
@@ -82,10 +83,12 @@ class _StubSlicer:
         fetch_fn,
         callback,
         consumer_id=None,
+        on_complete=None,
     ) -> UUID | None:
         if not requests:
             return None
         self.submitted.append((requests, consumer_id))
+        self.on_complete_callbacks.append(on_complete)
         result = uuid4()
         return result
 

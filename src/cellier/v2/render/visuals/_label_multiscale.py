@@ -75,6 +75,10 @@ from cellier.v2.render.visuals._image_memory import (
     _rect_wireframe_positions,
 )
 from cellier.v2.render.visuals._paint_tile_slot_manager import PaintTileSlotManager
+from cellier.v2.render.visuals._pick import (
+    multiscale_image_data_coordinate,
+    multiscale_volume_data_coordinate,
+)
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes, swap_axes
 
@@ -1192,6 +1196,31 @@ class GFXMultiscaleLabelVisual:
             self.node_3d.visible = event.visible
         if self.node_2d is not None:
             self.node_2d.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on this visual (displayed axes).
+
+        Same decode as the multiscale image: 3-D bricks via ``norm_pos`` and the
+        2-D tile proxy via rescaled ``index``.  ``floor`` of the displayed-axis
+        components indexes the label array.
+        """
+        if isinstance(hit_object, NormSizedVolume):
+            if self._norm_size is None or self._dataset_size is None:
+                return None
+            return multiscale_volume_data_coordinate(
+                pick_info, self._norm_size, self._dataset_size
+            )
+        if isinstance(hit_object, gfx.Image):
+            if self._image_geometry_2d is None:
+                return None
+            return multiscale_image_data_coordinate(
+                pick_info,
+                self._image_geometry_2d.level_shapes[0],
+                self._image_geometry_2d.base_layout.grid_dims,
+            )
+        return None
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all active materials."""

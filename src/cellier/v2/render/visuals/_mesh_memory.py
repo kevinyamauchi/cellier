@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -149,10 +150,21 @@ class GFXMeshMemoryVisual:
         appearance = visual_model.appearance
         self._material_3d = _build_material_3d(appearance)
         self._material_2d = _build_material_2d(appearance)
+        # Plumb the model's pick_write flag into both pygfx materials so the
+        # pick buffer records this visual; pygfx materials default to False.
+        self._material_3d.pick_write = visual_model.pick_write
+        self._material_2d.pick_write = visual_model.pick_write
         self._empty_material = gfx.MeshBasicMaterial(color=(0, 0, 0, 0), opacity=0.0)
         # Track color_mode as instance state to detect transitions.
         self._current_color_mode: str = appearance.color_mode
         self._is_empty: bool = True
+
+        # Maps each rendered face to its face index in the store's full face
+        # array.  In a sliced view the rendered buffer holds only the faces
+        # that survived the slab filter, so pygfx's face_index is NOT the
+        # original face index; this map (the slab's surviving faces) translates
+        # it.  None means identity (no filtering / placeholder).
+        self._original_face_indices: np.ndarray | None = None
 
         geom = gfx.Geometry(
             positions=_PLACEHOLDER_POSITIONS.copy(),
@@ -348,6 +360,34 @@ class GFXMeshMemoryVisual:
             self.node.material = target
 
         self._is_empty = mesh_data.is_empty
+        # Keep the pick face map in lockstep with the uploaded buffer.
+        self._original_face_indices = (
+            None if mesh_data.is_empty else mesh_data.original_face_indices
+        )
+
+    def face_index_for_pick(self, face_index: int) -> int:
+        """Map a pygfx pick face index to the store's original face index.
+
+        In a sliced view the rendered geometry holds only the faces that
+        survived the slab filter, so ``face_index`` is a row in that subset,
+        not the original face index.  ``_original_face_indices`` (the slab's
+        surviving-face list) recovers the original index; when it is None
+        (no filtering / placeholder) the index passes through unchanged.
+
+        Parameters
+        ----------
+        face_index : int
+            ``face_index`` from the pygfx pick payload.
+
+        Returns
+        -------
+        int
+            Index into the store's full face array.
+        """
+        idx_map = self._original_face_indices
+        if idx_map is None or not (0 <= face_index < len(idx_map)):
+            return face_index
+        return int(idx_map[face_index])
 
     def on_data_ready(self, batch: list[tuple[MeshSliceRequest, MeshData]]) -> None:
         """3-D callback — called on the main thread by SliceCoordinator."""
@@ -426,6 +466,10 @@ class GFXMeshMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        self._material_3d.pick_write = event.pick_write
+        self._material_2d.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""

@@ -783,9 +783,9 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let mip_pick_coord = (max_pos / norm_size) + vec3<f32>(0.5);
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(mip_pick_coord.x * 16383.0), 14) +
-        pick_pack(u32(mip_pick_coord.y * 16383.0), 14) +
-        pick_pack(u32(mip_pick_coord.z * 16383.0), 14)
+        pick_pack(u32(clamp(mip_pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(mip_pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(mip_pick_coord.z, 0.0, 1.0) * 16383.0), 14)
     );
     $$ endif
 
@@ -900,9 +900,9 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let iso_pick_coord = (refined_pos / norm_size) + vec3<f32>(0.5);
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(iso_pick_coord.x * 16383.0), 14) +
-        pick_pack(u32(iso_pick_coord.y * 16383.0), 14) +
-        pick_pack(u32(iso_pick_coord.z * 16383.0), 14)
+        pick_pack(u32(clamp(iso_pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(iso_pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(iso_pick_coord.z, 0.0, 1.0) * 16383.0), 14)
     );
     $$ endif
     $$ endif

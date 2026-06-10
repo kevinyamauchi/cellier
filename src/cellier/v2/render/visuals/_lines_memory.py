@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -126,11 +127,21 @@ class GFXLinesMemoryVisual:
 
         appearance = visual_model.appearance
         self._material = _build_material(appearance)
+        # Plumb the model's pick_write flag into the pygfx material so the
+        # pick buffer records this visual; pygfx materials default to False.
+        self._material.pick_write = visual_model.pick_write
         self._empty_material = gfx.LineSegmentMaterial(color=(0, 0, 0, 0), opacity=0.0)
 
         # Track color_mode as instance state to detect transitions in _commit.
         self._current_color_mode: str = appearance.color_mode
         self._is_empty: bool = True
+
+        # Maps each rendered segment to its edge index in the store's full
+        # segment array.  In a sliced view the rendered buffer is a filtered
+        # subset, so the pick's rendered edge index is NOT the original edge
+        # index; this map (the slab's surviving segments) translates it.
+        # None means identity (no filtering / placeholder).
+        self._original_edge_indices: np.ndarray | None = None
 
         geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
         self.node = gfx.Line(geom, self._empty_material)
@@ -150,6 +161,37 @@ class GFXLinesMemoryVisual:
     def n_levels(self) -> int:
         """Always 1 — single-resolution in-memory store."""
         return 1
+
+    # ------------------------------------------------------------------
+    # Picking
+    # ------------------------------------------------------------------
+
+    def edge_index_for_vertex(self, vertex_index: int) -> int:
+        """Map a pygfx pick vertex index to this visual's edge index.
+
+        ``gfx.LineSegmentMaterial`` lays out one explicit vertex pair per edge:
+        edge ``k`` occupies positions ``2k`` and ``2k + 1``.  The pick buffer
+        reports the hit vertex index, so the rendered edge index is the integer
+        half.  In a sliced view the rendered buffer holds only the segments that
+        survived the slab filter, so that rendered edge index is translated back
+        to the store's original edge index via ``_original_edge_indices`` (None
+        means identity / no filtering).
+
+        Parameters
+        ----------
+        vertex_index : int
+            ``vertex_index`` from the pygfx pick payload.
+
+        Returns
+        -------
+        int
+            Index of the edge (vertex pair) in the store's full segment array.
+        """
+        rendered_edge = vertex_index // 2
+        idx_map = self._original_edge_indices
+        if idx_map is None or not (0 <= rendered_edge < len(idx_map)):
+            return rendered_edge
+        return int(idx_map[rendered_edge])
 
     # ------------------------------------------------------------------
     # Node selection
@@ -308,6 +350,10 @@ class GFXLinesMemoryVisual:
             self.node.material = target
 
         self._is_empty = lines_data.is_empty
+        # Keep the pick edge map in lockstep with the uploaded buffer.
+        self._original_edge_indices = (
+            None if lines_data.is_empty else lines_data.original_edge_indices
+        )
 
     def on_data_ready(self, batch: list[tuple[LinesSliceRequest, LinesData]]) -> None:
         """3-D callback — called on the main thread by SliceCoordinator."""
@@ -368,6 +414,9 @@ class GFXLinesMemoryVisual:
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         self.node.visible = event.visible
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        self._material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""

@@ -71,6 +71,13 @@ class MeshData:
     is_empty : bool
         True when the slab contained no surviving faces and a
         placeholder geometry was returned.
+    original_face_indices : np.ndarray | None
+        (n_faces,) int array mapping each row of ``indices`` back to its face
+        index in the store's full face array.  This is the slab filter's
+        surviving-face list; in a full 3-D view it is the identity
+        ``arange(n_faces)``.  Used by the render layer to translate a pick's
+        rendered face index into the original face index.  None on the
+        empty-placeholder path.
     """
 
     request_id: UUID
@@ -80,6 +87,7 @@ class MeshData:
     colors: np.ndarray | None
     color_mode: str = "vertex"
     is_empty: bool = False
+    original_face_indices: np.ndarray | None = None
 
     @property
     def shape(self) -> str:

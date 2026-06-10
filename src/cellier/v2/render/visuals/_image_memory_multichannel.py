@@ -23,12 +23,14 @@ from cellier.v2.render.visuals._multichannel_utils import (
     make_channel_group_2d,
     make_channel_group_3d,
 )
+from cellier.v2.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
     from cellier.v2.events._events import (
         AABBChangedEvent,
         ChannelAppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -107,13 +109,19 @@ class GFXMultichannelImageMemoryVisual:
 
         if "2d" in render_modes:
             self._group_2d, self._pool_2d = make_channel_group_2d(
-                visual_model.channels, max_2d, interpolation=interpolation
+                visual_model.channels,
+                max_2d,
+                interpolation=interpolation,
+                pick_write=visual_model.pick_write,
             )
             self._free_slots_2d = list(range(max_2d))
 
         if "3d" in render_modes:
             self._group_3d, self._pool_3d = make_channel_group_3d(
-                visual_model.channels, max_3d, interpolation=interpolation
+                visual_model.channels,
+                max_3d,
+                interpolation=interpolation,
+                pick_write=visual_model.pick_write,
             )
             self._free_slots_3d = list(range(max_3d))
 
@@ -452,6 +460,24 @@ class GFXMultichannelImageMemoryVisual:
         for node in (self._group_2d, self._group_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on a channel node (displayed axes).
+
+        Every pool node renders the same data geometry over a real data
+        texture, so the channel that was hit is irrelevant: pygfx's ``index`` is
+        already the data index.
+        """
+        ndim = 3 if isinstance(hit_object, gfx.Volume) else 2
+        return memory_image_data_coordinate(pick_info, ndim)
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        for node in self._pool_2d:
+            node.material.pick_write = event.pick_write
+        for node in self._pool_3d:
+            node.material.pick_write = event.pick_write
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """No-op — multichannel memory visual has no AABB wireframe."""

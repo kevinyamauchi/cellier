@@ -179,6 +179,45 @@ def test_get_data_2d_vertex_colors_gathered():
         assert result.color_mode == "vertex"
 
 
+# ── original_face_indices (pick index mapping) ────────────────────────────────
+
+
+def _stacked_faces_store() -> MeshMemoryStore:
+    """Three independent triangles, each planar at z = 0, 10, 20."""
+    verts = []
+    faces = []
+    for z in (0, 10, 20):
+        b = len(verts)
+        verts += [[z, 0, 0], [z, 1, 0], [z, 0, 1]]
+        faces.append([b, b + 1, b + 2])
+    return MeshMemoryStore(
+        positions=np.array(verts, dtype=np.float32),
+        indices=np.array(faces, dtype=np.int32),
+    )
+
+
+def test_original_face_indices_identity_in_3d():
+    """A full 3-D view keeps every face, so the map is the identity arange."""
+    store = _stacked_faces_store()
+    result = asyncio.run(store.get_data(_req(displayed=(0, 1, 2), sliced={})))
+    assert list(result.original_face_indices) == [0, 1, 2]
+
+
+def test_original_face_indices_track_surviving_subset_in_2d():
+    """A 2-D slab keeping one face reports that face's original index.
+
+    pygfx reports the rendered face index (here 0, the only survivor);
+    ``original_face_indices`` maps it back to original face 1.
+    """
+    store = _stacked_faces_store()
+    result = asyncio.run(
+        store.get_data(_req(displayed=(1, 2), sliced={0: 10}, thickness=0.5))
+    )
+    assert not result.is_empty
+    assert result.indices.shape[0] == 1
+    assert list(result.original_face_indices) == [1]
+
+
 # ── Checkpoint cancellation ───────────────────────────────────────────────────
 
 

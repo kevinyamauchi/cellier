@@ -66,6 +66,10 @@ from cellier.v2.render.visuals._image_memory import (
 from cellier.v2.render.visuals._paint_tile_slot_manager import (
     PaintTileSlotManager,
 )
+from cellier.v2.render.visuals._pick import (
+    multiscale_image_data_coordinate,
+    multiscale_volume_data_coordinate,
+)
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes, swap_axes
 
@@ -135,6 +139,44 @@ class NormSizedVolume(gfx.Volume):
         if self._norm_size is None or self._dataset_size is None:
             return super().get_bounding_box()
         return norm_full_extent_box(self._dataset_size, self._norm_size)
+
+    def _wgpu_get_pick_info(self, pick_value: int) -> dict:
+        """Decode the custom 3x14-bit pick encoding written by the brick shader.
+
+        The inherited ``gfx.Volume._wgpu_get_pick_info`` normalises by
+        ``tex.size`` (the 2x2x2 proxy), which destroys all positional
+        information.  This override decodes the three 14-bit fields directly
+        as normalised [0, 1] floats and converts them to centred normalised
+        object space using ``self._norm_size``.
+
+        The shader writes::
+
+            pick_pack(global_id, 20)
+            +pick_pack((pos / norm_size + 0.5).x * 16383, 14)
+            +pick_pack((pos / norm_size + 0.5).y * 16383, 14)
+            +pick_pack((pos / norm_size + 0.5).z * 16383, 14)
+
+        where ``pos`` is the surface position in centred normalised space.
+
+        Returns a dict with keys ``"world_object"`` and ``"norm_pos"``.
+        ``"norm_pos"`` is a 3-tuple of floats in centred normalised object
+        space (same space that ``u_wobject.world_transform`` acts on).
+        ``"index"`` is intentionally absent so callers cannot accidentally
+        use the wrong decode path.
+        """
+        from pygfx.utils import unpack_bitfield
+
+        values = unpack_bitfield(pick_value, wobject_id=20, x=14, y=14, z=14)
+        nx = values["x"] / 16383.0
+        ny = values["y"] / 16383.0
+        nz = values["z"] / 16383.0
+        if self._norm_size is not None:
+            px = (nx - 0.5) * float(self._norm_size[0])
+            py = (ny - 0.5) * float(self._norm_size[1])
+            pz = (nz - 0.5) * float(self._norm_size[2])
+        else:
+            px, py, pz = nx - 0.5, ny - 0.5, nz - 0.5
+        return {"world_object": self, "norm_pos": (px, py, pz)}
 
 
 def _extract_scale_and_translation(
@@ -2708,6 +2750,32 @@ class GFXMultiscaleImageVisual:
             self.node_3d.visible = event.visible
         if self.node_2d is not None:
             self.node_2d.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on this visual (displayed axes).
+
+        3-D bricks decode a centred-normalised surface hit (``norm_pos``) mapped
+        back to voxels via ``norm_size`` / ``dataset_size``; the 2-D node is a
+        tile-grid proxy whose ``index`` is rescaled to level-0 pixels.  See
+        :mod:`cellier.v2.render.visuals._pick`.
+        """
+        if isinstance(hit_object, NormSizedVolume):
+            if self._norm_size is None or self._dataset_size is None:
+                return None
+            return multiscale_volume_data_coordinate(
+                pick_info, self._norm_size, self._dataset_size
+            )
+        if isinstance(hit_object, gfx.Image):
+            if self._image_geometry_2d is None:
+                return None
+            return multiscale_image_data_coordinate(
+                pick_info,
+                self._image_geometry_2d.level_shapes[0],
+                self._image_geometry_2d.base_layout.grid_dims,
+            )
+        return None
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all active materials."""

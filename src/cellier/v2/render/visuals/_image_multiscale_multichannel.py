@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from cellier.v2.events._events import (
         AABBChangedEvent,
         ChannelAppearanceChangedEvent,
+        PickWriteChangedEvent,
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
@@ -224,6 +225,7 @@ class GFXMultichannelMultiscaleImageVisual:
             aabb_enabled=visual_model.aabb.enabled,
             aabb_color=visual_model.aabb.color,
             aabb_line_width=visual_model.aabb.line_width,
+            pick_write=visual_model.pick_write,
         )
 
     # ------------------------------------------------------------------
@@ -682,6 +684,24 @@ class GFXMultichannelMultiscaleImageVisual:
         for g in (self._group_2d, self._group_3d):
             if g is not None:
                 g.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on a channel slot (displayed axes).
+
+        All slots share the same multiscale geometry, so any slot decodes the
+        payload identically; delegate to slot 0.  (The 3-D path reads
+        ``norm_size`` / ``dataset_size`` from the slot, which are shared across
+        channels.)
+        """
+        if not self._slots:
+            return None
+        return self._slots[0].pick_data_coordinate(hit_object, pick_info)
+
+    def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
+        for slot in self._slots:
+            slot.on_pick_write_changed(event)
 
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Propagate AABB toggle to all slots."""

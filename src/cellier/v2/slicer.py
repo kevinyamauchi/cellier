@@ -96,6 +96,10 @@ FetchFn = Callable[[ChunkRequest], Coroutine[Any, Any, np.ndarray]]
 # Callable fired once per batch with (request, data) pairs.
 BatchCallback = Callable[[list[tuple[ChunkRequest, np.ndarray]]], None]
 
+# Callable fired once after every batch in the task has committed (normal
+# completion only — never on cancellation).
+CompleteCallback = Callable[[], None]
+
 
 class AsyncSlicer:
     """Generic cancellable async batch-fetch service.
@@ -138,6 +142,7 @@ class AsyncSlicer:
         fetch_fn: FetchFn,
         callback: BatchCallback,
         consumer_id: str | None = None,
+        on_complete: CompleteCallback | None = None,
     ) -> UUID | None:
         """Submit a batch of chunk requests for async loading.
 
@@ -162,6 +167,11 @@ class AsyncSlicer:
             rebuilding the LUT.
         consumer_id :
             Optional label for logging and future priority routing.
+        on_complete :
+            Optional zero-argument callable fired once, on the Qt main
+            thread, after every batch has committed via ``callback``.  It is
+            **not** called if the task is cancelled before all batches finish.
+            Used to signal that a visual's reslice cycle is fully complete.
 
         Returns
         -------
@@ -182,7 +192,9 @@ class AsyncSlicer:
         if slice_id in self._tasks:
             self._tasks[slice_id].cancel()
 
-        task = asyncio.ensure_future(self._run(requests, fetch_fn, callback, slice_id))
+        task = asyncio.ensure_future(
+            self._run(requests, fetch_fn, callback, slice_id, on_complete)
+        )
         self._tasks[slice_id] = task
 
         _SLICER_LOGGER.info(
@@ -227,6 +239,7 @@ class AsyncSlicer:
         fetch_fn: FetchFn,
         callback: BatchCallback,
         slice_id: UUID,
+        on_complete: CompleteCallback | None = None,
     ) -> None:
         """Drive the batched read loop.
 
@@ -321,6 +334,12 @@ class AsyncSlicer:
                 is_last_batch = batch_idx == n_batches - 1
                 if is_last_batch or (batch_idx + 1) % self._render_every == 0:
                     await asyncio.sleep(0)
+
+            # All batches committed without cancellation — signal completion.
+            # Placed inside the try (after the loop) so it never fires on the
+            # cancellation path, which re-raises CancelledError above.
+            if on_complete is not None:
+                on_complete()
 
         except asyncio.CancelledError:
             _cancelled = True

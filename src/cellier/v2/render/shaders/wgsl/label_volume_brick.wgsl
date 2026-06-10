@@ -746,5 +746,17 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     out.color = vec4<f32>(lit_color, color.a * u_material.opacity);
     out.depth = ndc_surface.z / ndc_surface.w;
+
+    $$ if write_pick
+    // surface_pos is in centred normalised object space; encode as [0, 1].
+    let pick_coord = (surface_pos / norm_size) + vec3<f32>(0.5);
+    out.pick = (
+        pick_pack(u32(u_wobject.global_id), 20) +
+        pick_pack(u32(clamp(pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+    );
+    $$ endif
+
     return out;
 }

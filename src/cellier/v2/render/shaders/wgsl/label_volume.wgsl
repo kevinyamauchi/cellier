@@ -244,5 +244,20 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var out: FragmentOutput;
     out.color = vec4<f32>(lit_color, color.a * u_material.opacity);
     out.depth = ndc_surface.z / ndc_surface.w;
+
+    $$ if write_pick
+    // Encode surface position in normalised [0, 1] voxel space.
+    // Local convention: voxel i centred at i, so shift by +0.5 then divide
+    // by texture dimensions to get [0, 1].
+    let vol_dimsf_pick = vec3<f32>(textureDimensions(t_img));
+    let pick_coord = (surface_pos + vec3<f32>(0.5)) / vol_dimsf_pick;
+    out.pick = (
+        pick_pack(u32(u_wobject.global_id), 20) +
+        pick_pack(u32(clamp(pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
+        pick_pack(u32(clamp(pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+    );
+    $$ endif
+
     return out;
 }

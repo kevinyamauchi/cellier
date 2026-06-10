@@ -26,6 +26,7 @@ from cellier.v2.render.visuals._image_memory import (
     _rect_wireframe_positions,
     _transform_slice_indices,
 )
+from cellier.v2.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
     from cellier.v2.data.label._label_memory_store import LabelMemoryStore
@@ -165,6 +166,7 @@ class GFXLabelMemoryVisual:
                 label_colors_texture=colors_tex,
                 n_entries=n_entries,
                 label_params_buffer=label_params_buf,
+                pick_write=visual_model.pick_write,
             )
             self._inner_node_3d = gfx.Volume(gfx.Geometry(grid=tex), mat3d)
             placeholder_pos = _box_wireframe_positions(np.zeros(3), np.ones(3))
@@ -489,6 +491,18 @@ class GFXLabelMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_data_coordinate(
+        self, hit_object, pick_info: dict
+    ) -> tuple[float, ...] | None:
+        """Level-0 data coordinate of a pick on this visual (displayed axes).
+
+        The texture holds the displayed label slice/volume directly, so pygfx's
+        ``index`` is already the data index; ``floor`` of the displayed-axis
+        components indexes the label array.
+        """
+        ndim = 3 if isinstance(hit_object, gfx.Volume) else 2
+        return memory_image_data_coordinate(pick_info, ndim)
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all inner node materials."""

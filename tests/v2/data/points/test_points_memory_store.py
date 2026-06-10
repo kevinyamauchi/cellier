@@ -124,6 +124,33 @@ def test_get_data_2d_colors_gathered():
     assert result.colors.shape[0] == result.positions.shape[0]
 
 
+# ── original_indices (pick index mapping) ─────────────────────────────────────
+
+
+def test_original_indices_identity_in_3d():
+    """A full 3-D view applies no filter, so the map is the identity arange."""
+    positions = np.zeros((5, 3), dtype=np.float32)
+    store = PointsMemoryStore(positions=positions)
+    result = asyncio.run(store.get_data(_req()))
+    assert list(result.original_indices) == list(range(5))
+
+
+def test_original_indices_track_surviving_subset_in_2d():
+    """A 2-D slice keeping one point reports that point's original index.
+
+    This is the invariant element-level picking depends on: pygfx reports the
+    row in the rendered subset, and ``original_indices`` maps it back so the
+    correct point (here original index 3) is identified — not row 0.
+    """
+    positions = np.array([[z, 1.0, 1.0] for z in (0, 10, 20, 30, 40)], dtype=np.float32)
+    store = PointsMemoryStore(positions=positions)
+    result = asyncio.run(
+        store.get_data(_req(displayed=(1, 2), sliced={0: 30}, thickness=0.5))
+    )
+    assert result.positions.shape[0] == 1
+    assert list(result.original_indices) == [3]
+
+
 # ── Checkpoint cancellation ───────────────────────────────────────────────────
 
 

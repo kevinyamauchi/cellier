@@ -154,10 +154,12 @@ class LinesMemoryStore(BaseDataStore):
                 vertex_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
             # Reshape to (n_segments, 2) and require BOTH endpoints True.
             segment_mask = vertex_mask.reshape(-1, 2).all(axis=1)  # (n_segments,)
+            surviving_edges = np.where(segment_mask)[0]
             vertex_mask = np.repeat(segment_mask, 2)  # (n_vertices,)
         else:
             # 3D view — all segments survive.
             vertex_mask = np.ones(n_vertices, dtype=bool)
+            surviving_edges = np.arange(n_vertices // 2)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)
@@ -183,4 +185,5 @@ class LinesMemoryStore(BaseDataStore):
             colors=proj_colors,
             color_mode=self.color_mode,
             is_empty=False,
+            original_edge_indices=surviving_edges,
         )
