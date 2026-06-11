@@ -83,7 +83,12 @@ def multiscale_image_data_coordinate(
     The node is a ``gfx.Image`` over a *tile-grid* proxy texture (one texel per
     block), so pygfx's ``index`` is a tile, not a data pixel.  Reconstruct the
     continuous proxy-texel position (``index`` + ``pixel_coord``) and scale by
-    ``level0 / grid`` (data pixels per proxy texel) to recover level-0 pixels.
+    ``level0 / grid`` (data pixels per proxy texel) to recover level-0 pixels in
+    the ``[i, i + 1)`` convention (voxel ``i`` spans ``[i, i + 1)``, center
+    ``i + 0.5``) — identical to :func:`memory_image_data_coordinate` and
+    :func:`multiscale_volume_data_coordinate`.  The 2-D proxy node is placed
+    center-at-integer (see ``_build_2d_node``), so a consumer converts this to a
+    world position with a uniform ``- 0.5``, just like every other node.
 
     Parameters
     ----------
