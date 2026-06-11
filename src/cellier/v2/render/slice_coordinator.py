@@ -64,11 +64,16 @@ class SliceCoordinator:
 
         Cancels in-flight tasks for visuals that will be re-submitted, subject
         to each visual's ``cancellable`` property.  Visuals with
-        ``cancellable = False`` (all in-memory visual types) are never cancelled;
-        their tasks run to completion so every intermediate position reaches the
-        GPU.  ``GFXMultiscaleImageVisual`` defaults to ``cancellable = True``.
-        All render-layer visual classes must expose ``cancellable`` as part of
-        their public API; an ``AttributeError`` indicates a missing implementation.
+        ``cancellable = False`` are never cancelled; their tasks run to
+        completion so every intermediate position reaches the GPU.  This is the
+        case for the static-geometry in-memory visuals (mesh, lines, points).
+        The image and label visuals -- both in-memory
+        (``GFXImageMemoryVisual``, ``GFXLabelMemoryVisual``) and multiscale
+        (``GFXMultiscaleImageVisual``, ``GFXMultiscaleLabelVisual``) -- default
+        to ``cancellable = True``, so a superseding reslice cancels their
+        in-flight reads.  All render-layer visual classes must expose
+        ``cancellable`` as part of their public API; an ``AttributeError``
+        indicates a missing implementation.
 
         Parameters
         ----------

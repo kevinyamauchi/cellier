@@ -64,7 +64,7 @@ from cellier.v2.render.visuals._image import (
     NormSizedVolume,
     _block_key_2d_to_padded_coords,
     _brick_key_to_padded_coords,
-    _build_axis_selections,
+    _build_axis_selections_multiscale,
     _check_transform_no_rotation,
     _norm_size_from_transform,
 )
@@ -751,7 +751,7 @@ class GFXMultiscaleLabelVisual:
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
-                axis_selections = _build_axis_selections(
+                axis_selections = _build_axis_selections_multiscale(
                     dims_state.selection,
                     ndim,
                     display_coords,
@@ -1011,7 +1011,7 @@ class GFXMultiscaleLabelVisual:
             )
             level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections(
+            axis_selections = _build_axis_selections_multiscale(
                 sel,
                 ndim,
                 display_coords,

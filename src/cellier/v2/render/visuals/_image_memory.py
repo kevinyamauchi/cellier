@@ -10,6 +10,7 @@ import pygfx as gfx
 from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image._image_requests import ChunkRequest
 from cellier.v2.render.visuals._pick import memory_image_data_coordinate
+from cellier.v2.render.visuals._slicing import round_world_to_voxel
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
@@ -145,8 +146,9 @@ def _transform_slice_indices(
 
     The transform is N-dimensional and covers every data axis.  Each
     world-space slice position is placed into an N-D point, the inverse
-    transform is applied, and the result is rounded and clamped to valid
-    voxel indices.
+    transform is applied, and the result is snapped to the nearest voxel
+    index via :func:`round_world_to_voxel` (round-half-up) and clamped to
+    valid voxel indices.
 
     Parameters
     ----------
@@ -175,13 +177,11 @@ def _transform_slice_indices(
     result: dict[int, int] = {}
     for data_axis in slice_indices:
         raw = float(data_pt[data_axis])
-        idx = int(round(raw))
-        idx = max(0, min(idx, store_shape[data_axis] - 1))
-        result[data_axis] = idx
+        result[data_axis] = round_world_to_voxel(raw, store_shape[data_axis])
     return result
 
 
-def _build_axis_selections(
+def _build_axis_selections_memory(
     dims_state: DimsState,
     store_shape: tuple[int, ...],
 ) -> tuple[int | tuple[int, int], ...]:
@@ -521,7 +521,7 @@ class GFXImageMemoryVisual:
                 slice_indices=transformed_indices,
             ),
         )
-        axis_selections = _build_axis_selections(
+        axis_selections = _build_axis_selections_memory(
             transformed_dims, self._data_store.shape
         )
         return [
@@ -595,7 +595,7 @@ class GFXImageMemoryVisual:
                     slice_indices=transformed_indices,
                 ),
             )
-            axis_selections = _build_axis_selections(
+            axis_selections = _build_axis_selections_memory(
                 transformed_dims, self._data_store.shape
             )
 
