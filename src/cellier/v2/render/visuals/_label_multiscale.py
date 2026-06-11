@@ -1435,9 +1435,11 @@ class GFXMultiscaleLabelVisual:
     def _build_aabb_line_2d(self) -> gfx.Line:
         if self._image_geometry_2d is not None:
             h, w = self._image_geometry_2d.level_shapes[0]
+            # pixel i center at i, edges at i±0.5: rect spans [-0.5, N-0.5],
+            # matching the center-at-integer node placement in _build_2d_node.
             positions = _rect_wireframe_positions(
-                np.array([0.0, 0.0]),
-                np.array([float(w), float(h)]),
+                np.array([-0.5, -0.5]),
+                np.array([float(w) - 0.5, float(h) - 0.5]),
             )
         else:
             positions = _rect_wireframe_positions(np.zeros(2), np.ones(2))
@@ -1517,6 +1519,10 @@ class GFXMultiscaleLabelVisual:
         scale_x = float(bs) * sx
         scale_y = float(bs) * sy
         image.local.scale = (scale_x, scale_y, 1.0)
-        image.local.position = (scale_x * 0.5, scale_y * 0.5, 0.0)
+        # pygfx places proxy texel 0's center at the local origin, so the scaled
+        # quad spans [-0.5*scale, W-0.5*scale]. Shift by (scale - 1)/2 so the
+        # footprint is [-0.5, W-0.5]: data pixel i centered on world i, matching
+        # the memory gfx.Image and the multiscale volume (center-at-integer).
+        image.local.position = ((scale_x - 1.0) * 0.5, (scale_y - 1.0) * 0.5, 0.0)
 
         return image, material, proxy_tex
