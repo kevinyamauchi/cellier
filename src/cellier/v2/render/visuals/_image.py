@@ -70,7 +70,7 @@ from cellier.v2.render.visuals._pick import (
     multiscale_image_data_coordinate,
     multiscale_volume_data_coordinate,
 )
-from cellier.v2.render.visuals._slicing import round_world_to_voxel
+from cellier.v2.render.visuals._slicing import map_world_slice_to_voxel
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes, swap_axes
 
@@ -525,21 +525,23 @@ def _build_axis_selections_multiscale(
     """
     display_pos = {ax: i for i, ax in enumerate(sel.displayed_axes)}
 
-    # Build N-D world-space point from slice indices.
-    world_pt = np.zeros(ndim, dtype=np.float64)
-    for ax, idx in sel.slice_indices.items():
-        world_pt[ax] = float(idx)
-
-    # Map to level-k voxel coords in one call.
-    level_k_pt = world_to_level_k.map_coordinates(world_pt.reshape(1, -1)).flatten()
+    # Map every non-displayed axis from world to level-k voxel space via the
+    # shared world->voxel mapper (round-half-up + clamp).  Any non-displayed
+    # axis absent from ``slice_indices`` defaults to world position 0, matching
+    # the previous zero-filled-point behaviour.
+    sliced_indices = {
+        ax: sel.slice_indices.get(ax, 0) for ax in range(ndim) if ax not in display_pos
+    }
+    voxel_indices = map_world_slice_to_voxel(
+        sliced_indices, ndim, world_to_level_k, level_shape
+    )
 
     result: list[int | tuple[int, int]] = []
     for data_axis in range(ndim):
         if data_axis in display_pos:
             result.append(display_coords[display_pos[data_axis]])
         else:
-            raw = float(level_k_pt[data_axis])
-            result.append(round_world_to_voxel(raw, level_shape[data_axis]))
+            result.append(voxel_indices[data_axis])
     return tuple(result)
 
 

@@ -10,7 +10,7 @@ import pygfx as gfx
 from cellier.v2._state import AxisAlignedSelectionState, DimsState
 from cellier.v2.data.image._image_requests import ChunkRequest
 from cellier.v2.render.visuals._pick import memory_image_data_coordinate
-from cellier.v2.render.visuals._slicing import round_world_to_voxel
+from cellier.v2.render.visuals._slicing import map_world_slice_to_voxel
 
 if TYPE_CHECKING:
     from cellier.v2.data.image._image_memory_store import ImageMemoryStore
@@ -144,11 +144,11 @@ def _transform_slice_indices(
 ) -> dict[int, int]:
     """Map world-space slice positions to data-space voxel indices.
 
-    The transform is N-dimensional and covers every data axis.  Each
-    world-space slice position is placed into an N-D point, the inverse
-    transform is applied, and the result is snapped to the nearest voxel
-    index via :func:`round_world_to_voxel` (round-half-up) and clamped to
-    valid voxel indices.
+    Thin adapter over :func:`map_world_slice_to_voxel`: in-memory data is a
+    single-level pyramid, so the world->voxel transform is simply the inverse
+    of the data->world transform and ``store_shape`` is the level shape.  The
+    shared mapper applies the inverse transform, snaps each axis with
+    :func:`round_world_to_voxel` (round-half-up), and clamps to valid indices.
 
     Parameters
     ----------
@@ -167,18 +167,12 @@ def _transform_slice_indices(
     if not slice_indices:
         return slice_indices
 
-    ndim = transform.ndim
-    world_pt = np.zeros(ndim, dtype=np.float64)
-    for data_axis, world_pos in slice_indices.items():
-        world_pt[data_axis] = float(world_pos)
+    from cellier.v2.transform import AffineTransform
 
-    data_pt = transform.imap_coordinates(world_pt.reshape(1, -1)).flatten()
-
-    result: dict[int, int] = {}
-    for data_axis in slice_indices:
-        raw = float(data_pt[data_axis])
-        result[data_axis] = round_world_to_voxel(raw, store_shape[data_axis])
-    return result
+    world_to_voxel = AffineTransform(matrix=transform.inverse_matrix)
+    return map_world_slice_to_voxel(
+        slice_indices, transform.ndim, world_to_voxel, store_shape
+    )
 
 
 def _build_axis_selections_memory(

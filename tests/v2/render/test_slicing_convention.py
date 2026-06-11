@@ -13,7 +13,10 @@ import pytest
 from cellier.v2._state import AxisAlignedSelectionState
 from cellier.v2.render.visuals._image import _build_axis_selections_multiscale
 from cellier.v2.render.visuals._image_memory import _transform_slice_indices
-from cellier.v2.render.visuals._slicing import round_world_to_voxel
+from cellier.v2.render.visuals._slicing import (
+    map_world_slice_to_voxel,
+    round_world_to_voxel,
+)
 from cellier.v2.transform import AffineTransform
 
 # ── round_world_to_voxel ──────────────────────────────────────────────────
@@ -143,6 +146,77 @@ def test_half_integer_tie_rounds_up_both_paths(world_pos):
     )
 
     assert in_memory == multiscale == expected
+
+
+# ── map_world_slice_to_voxel matches the pre-unification imap logic ───────
+#
+# Before unification the in-memory path inlined this logic.  The shared mapper
+# must reproduce it bit-for-bit, including under non-diagonal (rotation/shear)
+# transforms, so the refactor introduces no behavior change.
+
+
+def _reference_imap_indices(
+    slice_indices: dict[int, int],
+    data_to_world: AffineTransform,
+    shape: tuple[int, ...],
+) -> dict[int, int]:
+    """The original in-memory mapping, preserved here as a reference oracle."""
+    if not slice_indices:
+        return {}
+    ndim = data_to_world.ndim
+    world_pt = np.zeros(ndim, dtype=np.float64)
+    for axis, world_pos in slice_indices.items():
+        world_pt[axis] = float(world_pos)
+    data_pt = data_to_world.imap_coordinates(world_pt.reshape(1, -1)).flatten()
+    return {
+        axis: round_world_to_voxel(float(data_pt[axis]), shape[axis])
+        for axis in slice_indices
+    }
+
+
+def _rotation_z_3d(degrees: float) -> AffineTransform:
+    """A 3-D data->world transform with an in-plane rotation (non-diagonal)."""
+    theta = np.radians(degrees)
+    c, s = np.cos(theta), np.sin(theta)
+    m = np.eye(4, dtype=np.float32)
+    # Rotate the (axis1, axis2) plane so the matrix is genuinely non-diagonal.
+    m[1, 1], m[1, 2] = c, -s
+    m[2, 1], m[2, 2] = s, c
+    return AffineTransform(matrix=m)
+
+
+@pytest.mark.parametrize(
+    "data_to_world",
+    [
+        AffineTransform.identity(ndim=3),
+        AffineTransform.from_scale((4.0, 1.0, 1.0)),
+        AffineTransform.from_scale((-2.0, 1.0, 1.0)),  # axis flip
+        AffineTransform.from_scale_and_translation(
+            scale=(3.0, 1.0, 1.0), translation=(0.5, -2.0, 0.0)
+        ),
+        _rotation_z_3d(30.0),
+        _rotation_z_3d(-12.5),
+    ],
+)
+@pytest.mark.parametrize(
+    "slice_indices",
+    [{0: 0}, {0: 7}, {0: 3, 1: 5}, {1: 4, 2: 2}, {}],
+)
+def test_map_world_slice_to_voxel_matches_reference(data_to_world, slice_indices):
+    shape = (12, 8, 10)
+    expected = _reference_imap_indices(slice_indices, data_to_world, shape)
+
+    world_to_voxel = AffineTransform(matrix=data_to_world.inverse_matrix)
+    result = map_world_slice_to_voxel(
+        slice_indices, data_to_world.ndim, world_to_voxel, shape
+    )
+
+    assert result == expected
+
+
+def test_map_world_slice_to_voxel_empty_returns_empty_dict():
+    world_to_voxel = AffineTransform.identity(ndim=3)
+    assert map_world_slice_to_voxel({}, 3, world_to_voxel, (8, 8, 8)) == {}
 
 
 def test_multiple_sliced_axes_agree_4d():

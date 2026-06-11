@@ -10,7 +10,12 @@ regardless of which visual family renders it.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+if TYPE_CHECKING:
+    from cellier.v2.transform import AffineTransform
 
 
 def round_world_to_voxel(raw: float, size: int) -> int:
@@ -44,3 +49,63 @@ def round_world_to_voxel(raw: float, size: int) -> int:
     """
     idx = int(np.floor(raw + 0.5))
     return max(0, min(idx, size - 1))
+
+
+def map_world_slice_to_voxel(
+    slice_indices: dict[int, int],
+    ndim: int,
+    world_to_voxel: AffineTransform,
+    level_shape: tuple[int, ...],
+) -> dict[int, int]:
+    """Map world-space slice positions to rounded level-k voxel indices.
+
+    This is the single world->voxel mapping used by every image and label
+    visual -- in-memory and multiscale alike.  Each family supplies a
+    *forward* transform whose ``map_coordinates`` takes a world-space point to
+    level-k voxel space:
+
+    - In-memory visuals pass ``AffineTransform(matrix=transform.inverse_matrix)``
+      (the inverse of the data->world transform); there is a single level so
+      ``level_shape`` is the store shape.
+    - Multiscale visuals pass the precomposed ``world_to_level_k`` transform
+      (``inv_level_k @ inv_visual``) and the level-k shape.
+
+    Both express the same operation (world -> voxel); keeping it in one place
+    guarantees the same physical world position selects the same data plane
+    regardless of which visual family renders it.  Each sliced axis is snapped
+    with :func:`round_world_to_voxel` (round-half-up) and clamped to a valid
+    index.
+
+    Only the axes present in ``slice_indices`` (the non-displayed axes) are
+    mapped and returned; displayed axes are handled by the caller's
+    axis-selection assembly.
+
+    Parameters
+    ----------
+    slice_indices : dict[int, int]
+        Axis -> world-space slice position, for the sliced (non-displayed) axes.
+    ndim : int
+        Number of data dimensions (the dimensionality of ``world_to_voxel``).
+    world_to_voxel : AffineTransform
+        Forward transform mapping a world-space point to level-k voxel space.
+    level_shape : tuple[int, ...]
+        Shape of the data at this level, used for clamping each axis.
+
+    Returns
+    -------
+    dict[int, int]
+        Axis -> level-k voxel index, for the same axes as ``slice_indices``.
+    """
+    if not slice_indices:
+        return {}
+
+    world_pt = np.zeros(ndim, dtype=np.float64)
+    for axis, world_pos in slice_indices.items():
+        world_pt[axis] = float(world_pos)
+
+    voxel_pt = world_to_voxel.map_coordinates(world_pt.reshape(1, -1)).flatten()
+
+    return {
+        axis: round_world_to_voxel(float(voxel_pt[axis]), level_shape[axis])
+        for axis in slice_indices
+    }
