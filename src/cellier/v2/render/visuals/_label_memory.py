@@ -20,7 +20,7 @@ from cellier.v2.render.shaders._label_image import LabelImageMaterial
 from cellier.v2.render.shaders._label_volume import LabelVolumeMaterial
 from cellier.v2.render.visuals._image_memory import (
     _box_wireframe_positions,
-    _build_axis_selections,
+    _build_axis_selections_memory,
     _make_aabb_line,
     _pygfx_matrix,
     _rect_wireframe_positions,
@@ -293,7 +293,7 @@ class GFXLabelMemoryVisual:
                 slice_indices=transformed_indices,
             ),
         )
-        axis_selections = _build_axis_selections(
+        axis_selections = _build_axis_selections_memory(
             transformed_dims, self._data_store.shape
         )
         return [
@@ -337,7 +337,7 @@ class GFXLabelMemoryVisual:
                     slice_indices=transformed_indices,
                 ),
             )
-            axis_selections = _build_axis_selections(
+            axis_selections = _build_axis_selections_memory(
                 transformed_dims, self._data_store.shape
             )
         return [

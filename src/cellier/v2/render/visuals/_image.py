@@ -70,6 +70,7 @@ from cellier.v2.render.visuals._pick import (
     multiscale_image_data_coordinate,
     multiscale_volume_data_coordinate,
 )
+from cellier.v2.render.visuals._slicing import map_world_slice_to_voxel
 from cellier.v2.transform import AffineTransform
 from cellier.v2.transform._axis_order import select_axes, swap_axes
 
@@ -496,7 +497,7 @@ def _brick_key_to_padded_coords(
     return z0, y0, x0, z0 + padded, y0 + padded, x0 + padded
 
 
-def _build_axis_selections(
+def _build_axis_selections_multiscale(
     sel: AxisAlignedSelectionState,
     ndim: int,
     display_coords: list[tuple[int, int]],
@@ -524,23 +525,23 @@ def _build_axis_selections(
     """
     display_pos = {ax: i for i, ax in enumerate(sel.displayed_axes)}
 
-    # Build N-D world-space point from slice indices.
-    world_pt = np.zeros(ndim, dtype=np.float64)
-    for ax, idx in sel.slice_indices.items():
-        world_pt[ax] = float(idx)
-
-    # Map to level-k voxel coords in one call.
-    level_k_pt = world_to_level_k.map_coordinates(world_pt.reshape(1, -1)).flatten()
+    # Map every non-displayed axis from world to level-k voxel space via the
+    # shared world->voxel mapper (round-half-up + clamp).  Any non-displayed
+    # axis absent from ``slice_indices`` defaults to world position 0, matching
+    # the previous zero-filled-point behaviour.
+    sliced_indices = {
+        ax: sel.slice_indices.get(ax, 0) for ax in range(ndim) if ax not in display_pos
+    }
+    voxel_indices = map_world_slice_to_voxel(
+        sliced_indices, ndim, world_to_level_k, level_shape
+    )
 
     result: list[int | tuple[int, int]] = []
     for data_axis in range(ndim):
         if data_axis in display_pos:
             result.append(display_coords[display_pos[data_axis]])
         else:
-            raw = float(level_k_pt[data_axis])
-            clamped = round(raw)
-            clamped = max(0, min(clamped, level_shape[data_axis] - 1))
-            result.append(clamped)
+            result.append(voxel_indices[data_axis])
     return tuple(result)
 
 
@@ -655,7 +656,7 @@ class GFXMultiscaleImageVisual:
         else:
             self._level_transforms = []
 
-        # Full-ndim level shapes for _build_axis_selections (clamping
+        # Full-ndim level shapes for _build_axis_selections_multiscale (clamping
         # non-displayed slice indices against the correct dimension).
         if full_level_shapes is not None:
             self._full_level_shapes = list(full_level_shapes)
@@ -1556,7 +1557,7 @@ class GFXMultiscaleImageVisual:
             axes.  ``None`` → only display ranges are used.
         fill : dict[int, int] or None
             Axis index → scalar value overrides applied after
-            ``_build_axis_selections``.  For multichannel use, pass
+            ``_build_axis_selections_multiscale``.  For multichannel use, pass
             ``{channel_axis: channel_index}``.
         slice_coord : tuple of (axis_index, world_value) pairs
             Sorted slice-position encoding to embed in every ``BlockKey3D``
@@ -1587,7 +1588,7 @@ class GFXMultiscaleImageVisual:
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
-                axis_selections = _build_axis_selections(
+                axis_selections = _build_axis_selections_multiscale(
                     dims_state.selection,
                     ndim,
                     display_coords,
@@ -1815,7 +1816,7 @@ class GFXMultiscaleImageVisual:
             )
             level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections(
+            axis_selections = _build_axis_selections_multiscale(
                 sel,
                 ndim,
                 display_coords,
@@ -1945,6 +1946,11 @@ class GFXMultiscaleImageVisual:
         #     this is the only rebuild opportunity for that plan.
         # When there are misses, on_data_ready will rebuild again after each
         # arriving batch, progressively filling the remaining positions.
+        #
+        # COUPLING: the 2D path (build_slice_request_2d) rebuilds only when
+        # fill_plan is empty, because TileManager2D has no reserve tier and so
+        # nothing is promoted into tilemap during stage().  See the longer note
+        # there before changing either rebuild policy.
         self._lut_manager_3d.rebuild(
             self._block_cache_3d.tile_manager,
             current_slice_coord=self._current_slice_coord_3d,
@@ -1964,7 +1970,7 @@ class GFXMultiscaleImageVisual:
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
-                axis_selections = _build_axis_selections(
+                axis_selections = _build_axis_selections_multiscale(
                     dims_state.selection,
                     ndim,
                     display_coords,
@@ -2280,6 +2286,24 @@ class GFXMultiscaleImageVisual:
         # When all required tiles are cache hits, on_data_ready_2d never fires
         # so the LUT would remain stale (pointing to a different slice position
         # or freed slots).  Rebuild immediately in that case.
+        #
+        # This is intentionally *conditional*, unlike the 3D path
+        # (build_slice_request), which rebuilds the LUT unconditionally after
+        # stage().  The difference is load-bearing and stems from the caches'
+        # residency models: TileManager3D has a reserve tier whose hits are
+        # promoted into ``tilemap`` *during* stage() with no fetch and no
+        # fill_plan entry (_tile_manager_3d.py stage()), so 3D needs an eager
+        # rebuild or those bricks would be invisible until the next miss-batch
+        # (which may never come).  TileManager2D has no reserve tier: stage()
+        # only refreshes existing hits or reserves slots for misses, so the
+        # only new ``tilemap`` content arrives via commit() -> on_data_ready_2d,
+        # which already rebuilds.  The lone gap is the all-hits frame above.
+        #
+        # COUPLING: if a reserve tier is ever added to TileManager2D, this
+        # conditional MUST become unconditional to match the 3D path, or
+        # reserve-promoted tiles will silently fail to render.  Update both
+        # sites together.  See also build_slice_request and the audit notes
+        # in slice_coordinator._on_dims_changed / invalidate_2d_cache.
         if not fill_plan:
             self._lut_manager_2d.rebuild(
                 self._block_cache_2d.tile_manager,
@@ -2305,7 +2329,7 @@ class GFXMultiscaleImageVisual:
             )
             level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections(
+            axis_selections = _build_axis_selections_multiscale(
                 sel,
                 ndim,
                 display_coords,
