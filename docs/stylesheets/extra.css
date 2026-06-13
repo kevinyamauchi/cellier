@@ -1,0 +1,44 @@
+/* API Reference heading + table-of-contents colors.
+ *
+ * Palette A (indigo + teal): group headings (## ...) are indigo, symbol
+ * headings (the mkdocstrings classes/functions) are teal. The same two
+ * colors are mirrored in the right-hand "on this page" sidebar.
+ *
+ * Scoped to pages that contain mkdocstrings output via :has(.doc-heading),
+ * so the prose pages (Explanations, How-to, ...) keep their default colors.
+ * Dark mode uses lighter tints because the saturated light-mode colors do
+ * not meet contrast on the slate background.
+ */
+
+/* ---- Light mode ---- */
+[data-md-color-scheme="default"]:has(.doc-heading) .md-typeset h2 {
+  color: #303f9f;
+}
+[data-md-color-scheme="default"]:has(.doc-heading) .md-typeset h3.doc-heading {
+  color: #00897b;
+}
+[data-md-color-scheme="default"]:has(.doc-heading) .md-nav--secondary .md-nav__link {
+  color: #303f9f;
+}
+[data-md-color-scheme="default"]:has(.doc-heading) .md-nav--secondary .md-nav .md-nav__link {
+  color: #00897b;
+}
+
+/* ---- Dark mode (slate) ---- */
+[data-md-color-scheme="slate"]:has(.doc-heading) .md-typeset h2 {
+  color: #9fa8da;
+}
+[data-md-color-scheme="slate"]:has(.doc-heading) .md-typeset h3.doc-heading {
+  color: #4db6ac;
+}
+[data-md-color-scheme="slate"]:has(.doc-heading) .md-nav--secondary .md-nav__link {
+  color: #9fa8da;
+}
+[data-md-color-scheme="slate"]:has(.doc-heading) .md-nav--secondary .md-nav .md-nav__link {
+  color: #4db6ac;
+}
+
+/* Keep the active sidebar entry distinguishable regardless of hue. */
+:has(.doc-heading) .md-nav--secondary .md-nav__link--active {
+  font-weight: 700;
+}
