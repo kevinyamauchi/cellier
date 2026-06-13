@@ -24,10 +24,10 @@ from PySide6.QtWidgets import (
 )
 from skimage.data import binary_blobs
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import InMemoryImageAppearance
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 def main() -> None:

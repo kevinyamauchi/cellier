@@ -7,8 +7,8 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.lines._lines_requests import LinesSliceRequest
+from cellier.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.data.lines._lines_requests import LinesSliceRequest
 
 
 def _simple_store() -> LinesMemoryStore:

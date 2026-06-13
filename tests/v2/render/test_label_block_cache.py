@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from cellier.v2.render.block_cache import (
+from cellier.render.block_cache import (
     BlockCache3D,
     compute_block_cache_parameters_3d,
 )
-from cellier.v2.render.block_cache._block_cache_2d import BlockCache2D
-from cellier.v2.render.block_cache._cache_parameters_2d import (
+from cellier.render.block_cache._block_cache_2d import BlockCache2D
+from cellier.render.block_cache._cache_parameters_2d import (
     build_cache_texture_2d,
     compute_block_cache_parameters_2d,
 )
@@ -48,7 +48,7 @@ def test_block_cache_2d_int32_write():
     assert cache.cache_data.dtype == np.int32
 
     # Stage a slot and write
-    from cellier.v2.render.block_cache._tile_manager_2d import BlockKey2D
+    from cellier.render.block_cache._tile_manager_2d import BlockKey2D
 
     key = BlockKey2D(level=1, g0=0, g1=0, slice_coord=())
     fill_plan = cache.tile_manager.stage({key: None}, frame_number=1)
@@ -88,7 +88,7 @@ def test_block_cache_3d_int32_write_brick():
     )
     cache = BlockCache3D(cache_parameters=params, dtype=np.int32)
 
-    from cellier.v2.render.block_cache import BlockKey3D
+    from cellier.render.block_cache import BlockKey3D
 
     key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = cache.tile_manager.stage({key: None}, frame_number=1)
@@ -112,7 +112,7 @@ def test_block_cache_3d_int32_all_background():
     )
     cache = BlockCache3D(cache_parameters=params, dtype=np.int32)
 
-    from cellier.v2.render.block_cache import BlockKey3D
+    from cellier.render.block_cache import BlockKey3D
 
     key = BlockKey3D(level=1, g0=0, g1=0, g2=0)
     fill_plan = cache.tile_manager.stage({key: None}, frame_number=1)

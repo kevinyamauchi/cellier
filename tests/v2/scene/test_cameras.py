@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cellier.v2.scene.cameras import (
+from cellier.scene.cameras import (
     OrbitCameraController,
     OrthographicCamera,
     PanZoomCameraController,

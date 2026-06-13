@@ -12,7 +12,7 @@ import math
 
 import pytest
 
-from cellier.v2.render.visuals._pick import (
+from cellier.render.visuals._pick import (
     memory_image_data_coordinate,
     multiscale_image_data_coordinate,
     multiscale_volume_data_coordinate,

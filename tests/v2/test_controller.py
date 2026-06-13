@@ -11,21 +11,24 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2._state import CameraState
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image import MultiscaleZarrDataStore
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.events._events import CameraChangedEvent, TransformChangedEvent
-from cellier.v2.render._config import CameraConfig, RenderManagerConfig
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.transform import AffineTransform
-from cellier.v2.viewer_model import ViewerModel
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
-from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+from cellier._state import CameraState
+from cellier.controller import CellierController
+from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.events._events import CameraChangedEvent, TransformChangedEvent
+from cellier.render._config import CameraConfig, RenderManagerConfig
+from cellier.scene.dims import CoordinateSystem
+from cellier.transform import AffineTransform
+from cellier.viewer_model import ViewerModel
+from cellier.visuals import (
+    LinesMemoryAppearance,
+    MeshFlatAppearance,
+    MultiscaleImageAppearance,
+    MultiscaleImageVisual,
+)
+from cellier.visuals._points_memory import PointsMarkerAppearance
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -323,7 +326,7 @@ def test_dims_bridge_displayed_axes_flag_true():
 
     events = []
     controller._outgoing_events.subscribe(
-        __import__("cellier.v2.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
+        __import__("cellier.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
         events.append,
         entity_id=scene.id,
     )
@@ -340,7 +343,7 @@ def test_dims_bridge_displayed_axes_flag_false():
 
     events = []
     controller._outgoing_events.subscribe(
-        __import__("cellier.v2.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
+        __import__("cellier.events", fromlist=["DimsChangedEvent"]).DimsChangedEvent,
         events.append,
         entity_id=scene.id,
     )
@@ -351,7 +354,7 @@ def test_dims_bridge_displayed_axes_flag_false():
 
 
 def test_appearance_bridge_color_map(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -373,7 +376,7 @@ def test_appearance_bridge_color_map(small_zarr_store):
 
 
 def test_appearance_bridge_lod_bias(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -400,7 +403,7 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
 
 
 def test_appearance_bridge_force_level(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -427,7 +430,7 @@ def test_appearance_bridge_force_level(small_zarr_store):
 
 
 def test_appearance_bridge_frustum_cull(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -472,7 +475,7 @@ def test_appearance_bridge_clim_does_not_reslice(small_zarr_store):
 
 
 def test_appearance_bridge_visible(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent, VisualVisibilityChangedEvent
+    from cellier.events import AppearanceChangedEvent, VisualVisibilityChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -498,7 +501,7 @@ def test_appearance_bridge_visible(small_zarr_store):
 
 
 def test_scene_added_event_emitted():
-    from cellier.v2.events import SceneAddedEvent
+    from cellier.events import SceneAddedEvent
 
     controller = CellierController()
     events = []
@@ -512,7 +515,7 @@ def test_scene_added_event_emitted():
 
 
 def test_visual_added_event_emitted(small_zarr_store):
-    from cellier.v2.events import VisualAddedEvent
+    from cellier.events import VisualAddedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -545,7 +548,7 @@ def test_on_dims_changed_callback():
 
 
 def test_unsubscribe_all_cleans_up(small_zarr_store):
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     cs = _make_cs()
@@ -688,7 +691,7 @@ async def test_settle_disabled_flag_suppresses_reslice(small_zarr_store):
 
 
 async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_store):
-    from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
+    from cellier.visuals._base_visual import BaseAppearance, BaseVisual
 
     class _NonResliceVisual(BaseVisual):
         appearance: BaseAppearance = BaseAppearance()
@@ -717,10 +720,10 @@ async def test_settle_target_visual_ids_excludes_non_reslice_visuals(small_zarr_
 
 def test_on_camera_changed_updates_orthographic_camera_model():
     """OrthographicCamera.width/height are written back by _on_camera_changed."""
-    from cellier.v2.scene.cameras import OrthographicCamera, PanZoomCameraController
-    from cellier.v2.scene.canvas import Canvas
-    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
-    from cellier.v2.scene.scene import Scene
+    from cellier.scene import Canvas
+    from cellier.scene.cameras import OrthographicCamera, PanZoomCameraController
+    from cellier.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.scene.scene import Scene
 
     cs = _make_cs()
     dims = DimsManager(
@@ -868,7 +871,7 @@ def test_remove_visual_cleans_render_layer(small_zarr_store):
 
 def test_remove_visual_disconnects_psygnal_bridge(small_zarr_store):
     """After removal, mutating appearance must not fire any bus event."""
-    from cellier.v2.events import AppearanceChangedEvent
+    from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
@@ -885,7 +888,7 @@ def test_remove_visual_disconnects_psygnal_bridge(small_zarr_store):
 
 
 def test_remove_visual_emits_event(small_zarr_store):
-    from cellier.v2.events import VisualRemovedEvent
+    from cellier.events import VisualRemovedEvent
 
     controller = CellierController()
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
@@ -950,7 +953,7 @@ async def test_remove_scene_cancels_settle_task(small_zarr_store):
 
 
 def test_remove_scene_emits_event(small_zarr_store):
-    from cellier.v2.events import SceneRemovedEvent
+    from cellier.events import SceneRemovedEvent
 
     controller = CellierController()
     scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)

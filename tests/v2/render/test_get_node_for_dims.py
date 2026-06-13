@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-from cellier.v2.visuals._image_memory import ImageVisual, InMemoryImageAppearance
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.render.visuals import GFXImageMemoryVisual
+from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -99,8 +99,8 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     correct displayed_axes, and confirms swap_node is called on the
     SceneManager.
     """
-    from cellier.v2.controller import CellierController
-    from cellier.v2.scene.dims import CoordinateSystem
+    from cellier.controller import CellierController
+    from cellier.scene.dims import CoordinateSystem
 
     controller = CellierController()
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
@@ -110,7 +110,7 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
         name="test",
         render_modes={"2d", "3d"},
     )
-    from cellier.v2.visuals._image_memory import InMemoryImageAppearance
+    from cellier.visuals._image_memory import InMemoryImageAppearance
 
     controller.add_image(
         data=store_3d,

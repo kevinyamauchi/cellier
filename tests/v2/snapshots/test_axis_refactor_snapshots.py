@@ -34,11 +34,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cellier.v2.render.visuals._image import (
+from cellier.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
 )
-from cellier.v2.transform import AffineTransform
+from cellier.transform import AffineTransform
 
 SNAPSHOT_DIR = Path(__file__).parent
 UPDATE = os.environ.get("CELLIER_UPDATE_SNAPSHOTS", "") not in ("", "0", "false")

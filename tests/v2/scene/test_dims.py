@@ -2,8 +2,8 @@
 
 import pytest
 
-from cellier.v2._state import AxisAlignedSelectionState
-from cellier.v2.scene.dims import (
+from cellier._state import AxisAlignedSelectionState
+from cellier.scene.dims import (
     AxisAlignedSelection,
     CoordinateSystem,
     DimsManager,

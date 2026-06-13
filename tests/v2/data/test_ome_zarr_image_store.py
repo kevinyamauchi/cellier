@@ -12,9 +12,9 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
-from cellier.v2.data.image._axis_info import AxisInfo
-from cellier.v2.data.image._image_requests import ChunkRequest
-from cellier.v2.data.image._ome_zarr_image_store import OMEZarrImageDataStore
+from cellier.data.image._axis_info import AxisInfo
+from cellier.data.image._image_requests import ChunkRequest
+from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
 
 # ---------------------------------------------------------------------------
 # Synthetic OME-Zarr v0.5 fixture

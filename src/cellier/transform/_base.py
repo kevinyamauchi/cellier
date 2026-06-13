@@ -1,41 +1,56 @@
+"""Abstract base class for v2 transforms."""
+
 from abc import ABC, abstractmethod
 
 import numpy as np
-from psygnal import EventedModel
+from pydantic import BaseModel, ConfigDict
 
 
-class BaseTransform(EventedModel, ABC):
-    """Base class for transformations."""
+class BaseTransform(BaseModel, ABC):
+    """Base class for coordinate transforms.
+
+    All v2 transforms are frozen pydantic models. The signal for a transform
+    change travels on the visual's ``EventedModel`` field, not on the
+    transform itself.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     @abstractmethod
-    def map_coordinates(self, array):
-        """Apply the transformation to coordinates.
+    def map_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
+        """Apply the forward transform to coordinates.
 
         Parameters
         ----------
-        array : np.ndarray
-            (n, 4) Array to be transformed.
+        coordinates : np.ndarray
+            ``(n, ndim)`` or ``(n, ndim+1)`` array of points.
+
+        Returns
+        -------
+        np.ndarray
+            ``(n, ndim)`` transformed coordinates.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def imap_coordinates(self, array):
-        """Apply the inverse transformation to coordinates.
+    def imap_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
+        """Apply the inverse transform to coordinates.
 
         Parameters
         ----------
-        array : np.ndarray
-            (n, 4) array to be transformed.
+        coordinates : np.ndarray
+            ``(n, ndim)`` or ``(n, ndim+1)`` array of points.
+
+        Returns
+        -------
+        np.ndarray
+            ``(n, ndim)`` transformed coordinates.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def map_normal_vector(self, normal_vector: np.ndarray):
-        """Apply the transform to a normal vector defining an orientation.
-
-        For example, this would be used to a plane normal.
-
-        https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/transforming-normals.html
+    def map_normal_vector(self, normal_vector: np.ndarray) -> np.ndarray:
+        """Transform a normal vector from data space to world space.
 
         Parameters
         ----------
@@ -44,18 +59,14 @@ class BaseTransform(EventedModel, ABC):
 
         Returns
         -------
-        transformed_vector : np.ndarray
-            The transformed normal vectors as a unit vector.
+        np.ndarray
+            The transformed normal vectors as unit vectors.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def imap_normal_vector(self, normal_vector: np.ndarray):
-        """Apply the inverse transform to a normal vector defining an orientation.
-
-        For example, this would be used to a plane normal.
-
-        https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/transforming-normals.html
+    def imap_normal_vector(self, normal_vector: np.ndarray) -> np.ndarray:
+        """Transform a normal vector from world space to data space.
 
         Parameters
         ----------
@@ -64,7 +75,7 @@ class BaseTransform(EventedModel, ABC):
 
         Returns
         -------
-        transformed_vector : np.ndarray
-            The transformed normal vectors as a unit vector.
+        np.ndarray
+            The transformed normal vectors as unit vectors.
         """
         raise NotImplementedError

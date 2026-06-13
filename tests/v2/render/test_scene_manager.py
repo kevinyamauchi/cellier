@@ -6,7 +6,7 @@ from uuid import uuid4
 import pygfx as gfx
 import pytest
 
-from cellier.v2.render.scene_manager import SceneManager
+from cellier.render.scene_manager import SceneManager
 
 
 @pytest.fixture

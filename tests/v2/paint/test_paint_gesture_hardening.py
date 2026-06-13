@@ -2,7 +2,7 @@
 
 These cover the capture-broken edge cases: a stroke whose release never
 arrives, and stray moves belonging to a different gesture.  The code under
-test lives in ``cellier.v2.paint._abstract`` and ``_history``.
+test lives in ``cellier.paint._abstract`` and ``_history``.
 """
 
 from __future__ import annotations
@@ -12,16 +12,16 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.events._events import (
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.events._events import (
     CanvasMouseMove2DEvent,
     CanvasMousePress2DEvent,
     CanvasMouseRelease2DEvent,
     CanvasPickInfo,
 )
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import InMemoryImageAppearance
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 @pytest.fixture

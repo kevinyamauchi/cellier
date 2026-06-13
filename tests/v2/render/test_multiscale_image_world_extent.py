@@ -16,11 +16,12 @@ import numpy as np
 import pygfx as gfx
 import pytest
 
-from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
-from cellier.v2.visuals._labels import (
+from cellier.render.visuals import GFXMultiscaleLabelVisual
+from cellier.render.visuals._image import GFXMultiscaleImageVisual
+from cellier.transform import AffineTransform
+from cellier.visuals import (
+    MultiscaleImageAppearance,
+    MultiscaleImageVisual,
     MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )

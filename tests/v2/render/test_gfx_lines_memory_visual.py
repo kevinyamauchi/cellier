@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.lines._lines_requests import LinesSliceRequest
-from cellier.v2.render.visuals._lines_memory import GFXLinesMemoryVisual
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+from cellier.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.data.lines._lines_requests import LinesSliceRequest
+from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
+from cellier.transform import AffineTransform
+from cellier.visuals import LinesMemoryAppearance, LinesVisual
 
 
 def _store():

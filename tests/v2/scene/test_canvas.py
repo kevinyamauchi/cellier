@@ -1,12 +1,12 @@
 """Tests for Canvas model."""
 
-from cellier.v2.scene.cameras import (
+from cellier.scene import Canvas
+from cellier.scene.cameras import (
     OrbitCameraController,
     OrthographicCamera,
     PanZoomCameraController,
     PerspectiveCamera,
 )
-from cellier.v2.scene.canvas import Canvas
 
 
 def test_canvas_single_camera_roundtrip(tmp_path):

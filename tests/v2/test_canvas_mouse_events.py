@@ -7,11 +7,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.events._events import (
+from cellier.controller import CellierController
+from cellier.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.events._events import (
     CanvasMouseMove2DEvent,
     CanvasMousePress2DEvent,
     CanvasMouseRelease2DEvent,
@@ -23,11 +23,10 @@ from cellier.v2.events._events import (
     ViewRay,
     _CanvasRawPointerEvent,
 )
-from cellier.v2.render.render_manager import RenderManager, _ImageDisplayedDataCoord
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
-from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+from cellier.render.render_manager import RenderManager, _ImageDisplayedDataCoord
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals import LinesMemoryAppearance, MeshFlatAppearance
+from cellier.visuals._points_memory import PointsMarkerAppearance
 
 
 def _raw_2d(

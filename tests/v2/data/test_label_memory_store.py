@@ -7,8 +7,8 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2.data.image._image_requests import ChunkRequest
-from cellier.v2.data.label._label_memory_store import LabelMemoryStore
+from cellier.data.image._image_requests import ChunkRequest
+from cellier.data.label._label_memory_store import LabelMemoryStore
 
 
 def _req(*axis_selections) -> ChunkRequest:

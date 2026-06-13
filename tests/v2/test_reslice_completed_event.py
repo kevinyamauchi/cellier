@@ -16,10 +16,10 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.visuals._image_memory import InMemoryImageAppearance
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 async def test_on_reslice_completed_fires_for_geometry_and_image(qtbot):

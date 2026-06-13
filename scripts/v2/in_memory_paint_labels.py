@@ -26,13 +26,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.label._label_memory_store import LabelMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance, LabelMemoryVisual
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+from cellier.controller import CellierController
+from cellier.data.label._label_memory_store import LabelMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.transform import AffineTransform
+from cellier.visuals import InMemoryLabelsAppearance, LabelMemoryVisual
+from cellier.visuals._points_memory import PointsMarkerAppearance
 
 
 def main() -> None:

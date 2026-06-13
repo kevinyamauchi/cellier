@@ -6,12 +6,12 @@ from uuid import uuid4
 import numpy as np
 import pygfx as gfx
 
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
-from cellier.v2.events._events import AppearanceChangedEvent
-from cellier.v2.render.visuals._mesh_memory import GFXMeshMemoryVisual
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._mesh_memory import (
+from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.data.mesh._mesh_requests import MeshSliceRequest
+from cellier.events._events import AppearanceChangedEvent
+from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
+from cellier.transform import AffineTransform
+from cellier.visuals import (
     MeshFlatAppearance,
     MeshPhongAppearance,
     MeshVisual,

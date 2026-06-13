@@ -11,11 +11,11 @@ import zarr
 if TYPE_CHECKING:
     from pathlib import Path
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image import OMEZarrImageDataStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._image import (
+from cellier.controller import CellierController
+from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.transform import AffineTransform
+from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,

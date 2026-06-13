@@ -1,4 +1,4 @@
-"""Tests for :class:`cellier.v2.paint.SyncPaintController`."""
+"""Tests for :class:`cellier.paint.SyncPaintController`."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.paint._history import PaintStrokeCommand
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import InMemoryImageAppearance
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.paint._history import PaintStrokeCommand
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 if TYPE_CHECKING:
-    from cellier.v2.paint import SyncPaintController
+    from cellier.paint import SyncPaintController
 
 
 @pytest.fixture
@@ -179,8 +179,8 @@ async def test_camera_controller_restored_on_abort(paint_setup):
 
 async def test_add_paint_controller_unsupported_store_raises(qtbot):
     """Non-ImageMemoryStore visuals raise TypeError in Phase 2."""
-    from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-    from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+    from cellier.data.points._points_memory_store import PointsMemoryStore
+    from cellier.visuals._points_memory import PointsMarkerAppearance
 
     controller = CellierController()
     cs = CoordinateSystem(name="world", axis_labels=("y", "x"))

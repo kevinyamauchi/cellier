@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.render._config import (
+from cellier.render import RenderManager
+from cellier.render._config import (
     CameraConfig,
     RenderManagerConfig,
     SlicingConfig,
     TemporalAccumulationConfig,
 )
-from cellier.v2.render.render_manager import RenderManager
 
 
 def test_default_config_values():

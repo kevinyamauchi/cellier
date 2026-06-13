@@ -35,11 +35,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image import MultiscaleZarrDataStore
-from cellier.v2.render._config import RenderManagerConfig, SlicingConfig
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image import MultiscaleImageAppearance
+from cellier.controller import CellierController
+from cellier.data import MultiscaleZarrDataStore
+from cellier.render._config import RenderManagerConfig, SlicingConfig
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals import MultiscaleImageAppearance
 
 # ---------------------------------------------------------------------------
 # Debug-logging CLI helper (power-user per-category:level syntax)
@@ -60,7 +60,7 @@ def _setup_debug_logging(spec: str) -> None:
     """
     import logging as _logging
 
-    from cellier.v2.logging import _CATEGORY_MAP, enable_debug_logging
+    from cellier.logging import _CATEGORY_MAP, enable_debug_logging
 
     _LEVEL_NAMES = {
         "debug": _logging.DEBUG,
@@ -185,12 +185,12 @@ def _build_viewer_model(data_store: MultiscaleZarrDataStore, z_depth: int):
     visual_3d : MultiscaleImageVisual
         The 3D image visual, for post-construction access.
     """
-    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
-    from cellier.v2.scene.canvas import Canvas
-    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
-    from cellier.v2.scene.scene import Scene
-    from cellier.v2.viewer_model import DataManager, ViewerModel
-    from cellier.v2.visuals._image import (
+    from cellier.scene import Canvas
+    from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.scene.scene import Scene
+    from cellier.viewer_model import DataManager, ViewerModel
+    from cellier.visuals import (
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
     )

@@ -2,6 +2,10 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from cellier.controller import CellierController
+
+__all__ = ["CellierController"]
+
 try:
     __version__ = version("cellier")
 except PackageNotFoundError:

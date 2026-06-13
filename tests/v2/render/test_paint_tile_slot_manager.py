@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cellier.v2.render.visuals._paint_tile_slot_manager import (
+from cellier.render.visuals._paint_tile_slot_manager import (
     PaintTileSlotManager,
 )
 

@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.data.points._points_requests import PointsSliceRequest
-from cellier.v2.render.visuals._points_memory import GFXPointsMemoryVisual
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.data.points._points_requests import PointsSliceRequest
+from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+from cellier.transform import AffineTransform
+from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
 def _store():

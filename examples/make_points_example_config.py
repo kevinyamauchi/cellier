@@ -2,15 +2,21 @@
 
 import numpy as np
 
-from cellier.models.data_manager import DataManager
-from cellier.models.data_stores.points import PointsMemoryStore
-from cellier.models.data_streams.points import PointsSynchronousDataStream
-from cellier.models.nodes.points_node import PointsNode, PointsUniformMaterial
-from cellier.models.scene.cameras import PerspectiveCamera
-from cellier.models.scene.canvas import Canvas
-from cellier.models.scene.dims_manager import CoordinateSystem, DimsManager
-from cellier.models.scene.scene import Scene
-from cellier.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models import (
+    PointsNode,
+    PointsSynchronousDataStream,
+    PointsUniformMaterial,
+)
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores.points import PointsMemoryStore
+from cellier._legacy.models.scene import (
+    Canvas,
+    CoordinateSystem,
+    DimsManager,
+    PerspectiveCamera,
+)
+from cellier._legacy.models.scene.scene import Scene
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
 
 # make a 4D point cloud
 n_points = 500

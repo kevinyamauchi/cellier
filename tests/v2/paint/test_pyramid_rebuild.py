@@ -14,10 +14,9 @@ from uuid import uuid4
 import numpy as np
 import tensorstore as ts
 
-from cellier.v2.paint._multiscale import MultiscalePaintController
-from cellier.v2.paint._write_buffer import TensorStoreWriteBuffer
-from cellier.v2.paint._write_layer import WriteLayer
-from cellier.v2.transform._affine import AffineTransform
+from cellier.paint import MultiscalePaintController, TensorStoreWriteBuffer
+from cellier.paint._write_layer import WriteLayer
+from cellier.transform._affine import AffineTransform
 
 if TYPE_CHECKING:
     from pathlib import Path

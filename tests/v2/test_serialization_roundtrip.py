@@ -2,15 +2,15 @@
 
 import numpy as np
 
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
-from cellier.v2.scene.scene import Scene
-from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import (
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.scene import Scene
+from cellier.viewer_model import DataManager, ViewerModel
+from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
 )
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
 def _make_minimal_model() -> ViewerModel:
@@ -71,8 +71,8 @@ def test_multiscale_render_config_roundtrip():
     """
     from cmap import Colormap
 
-    from cellier.v2.transform import AffineTransform
-    from cellier.v2.visuals._image import MultiscaleImageVisual
+    from cellier.transform import AffineTransform
+    from cellier.visuals import MultiscaleImageVisual
 
     render_config = MultiscaleImageRenderConfig(
         block_size=64,

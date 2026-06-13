@@ -25,17 +25,17 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from skimage.data import camera as camera_image
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.events._events import (
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.events._events import (
     CanvasMouseMove2DEvent,
     CanvasMousePress2DEvent,
     CanvasMouseRelease2DEvent,
 )
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._image_memory import InMemoryImageAppearance
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._image_memory import InMemoryImageAppearance
+from cellier.visuals._points_memory import PointsMarkerAppearance
 
 RNG = np.random.default_rng(0)
 

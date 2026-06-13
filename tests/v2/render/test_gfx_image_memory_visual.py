@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2._state import AxisAlignedSelectionState, DimsState
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.image._image_requests import ChunkRequest
-from cellier.v2.visuals._image_memory import ImageVisual, InMemoryImageAppearance
+from cellier._state import AxisAlignedSelectionState, DimsState
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.image._image_requests import ChunkRequest
+from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,9 +60,9 @@ def _make_dims_state_3d() -> DimsState:
 # ---------------------------------------------------------------------------
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_build_slice_request_2d_returns_one_request(mock_gfx):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -92,9 +92,9 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
     assert req.slice_request_id is not None
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_build_slice_request_3d_returns_one_request(mock_gfx):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -114,10 +114,10 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
     assert req.axis_selections == ((0, 10), (0, 20), (0, 30))
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
     """With dims_state=None all axes are treated as displayed."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(5, 6, 7))
     model = _make_visual_model(store)
@@ -133,10 +133,10 @@ def test_build_slice_request_3d_handles_none_dims_state(mock_gfx):
     assert requests[0].axis_selections == ((0, 5), (0, 6), (0, 7))
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_5d_dims_state_2d_scene(mock_gfx):
     """5D store, 2D scene: display (Y, X), slice T=0, C=1, Z=5."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(2, 3, 10, 20, 30))
     model = _make_visual_model(store)
@@ -161,11 +161,11 @@ def test_5d_dims_state_2d_scene(mock_gfx):
     assert req.axis_selections == (0, 1, 5, (0, 20), (0, 30))
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_scaled_transform_halves_slice_index_2d(mock_gfx):
     """With scale=(2,2,2), world z=10 should map to data z=5."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -194,11 +194,11 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
     assert req.axis_selections[2] == (0, 30)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     """4D store, 3D scene: non-spatial axis (t) is NOT transformed."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
@@ -227,11 +227,11 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     assert req.axis_selections[3] == (0, 30)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
     """4D store, 2D scene: spatial z-axis IS transformed by scale."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
@@ -262,10 +262,10 @@ def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
     assert req.axis_selections[3] == (0, 30)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_identity_transform_preserves_slice_index(mock_gfx):
     """Identity transform should not alter slice indices."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -289,11 +289,11 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
     assert requests[0].axis_selections[0] == 7
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_slice_index_clamped_to_store_bounds(mock_gfx):
     """Transformed slice index should be clamped to valid range."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -324,10 +324,10 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
 # ---------------------------------------------------------------------------
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_on_data_ready_2d_transposes_correctly(mock_gfx):
     """Data (H=20, W=30) must be uploaded as (H=20, W=30, 1) — no transpose."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -353,7 +353,7 @@ def test_on_data_ready_2d_transposes_correctly(mock_gfx):
     np.testing.assert_array_equal(arr[:, :, 0], data)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_on_data_ready_3d_no_transpose(mock_gfx):
     """Data (D=10, H=20, W=30) is uploaded as-is -- no transpose.
 
@@ -361,7 +361,7 @@ def test_on_data_ready_3d_no_transpose(mock_gfx):
     (z, y, x) already lands as local (x=W, y=H, z=D). Transposing here would
     double-reverse the axes and swap data-x with data-z in the rendered volume.
     """
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
@@ -387,9 +387,9 @@ def test_on_data_ready_3d_no_transpose(mock_gfx):
     np.testing.assert_array_equal(arr, data)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_on_data_ready_noop_on_empty_batch(mock_gfx):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store()
     model = _make_visual_model(store)
@@ -405,11 +405,11 @@ def test_on_data_ready_noop_on_empty_batch(mock_gfx):
 # ---------------------------------------------------------------------------
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     """Node matrix is set on first build_slice_request, not construction."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store()
     model = _make_visual_model(store)
@@ -442,12 +442,12 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     np.testing.assert_array_equal(visual.node_3d.local.matrix, expected)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     """Transform change updates node matrix if displayed axes are known."""
-    from cellier.v2.events._events import TransformChangedEvent
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.v2.transform import AffineTransform
+    from cellier.events._events import TransformChangedEvent
+    from cellier.render.visuals import GFXImageMemoryVisual
+    from cellier.transform import AffineTransform
 
     store = _make_store()
     model = _make_visual_model(store)
@@ -487,10 +487,10 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)
 
 
-@patch("cellier.v2.render.visuals._image_memory.gfx")
+@patch("cellier.render.visuals._image_memory.gfx")
 def test_identity_transform_is_noop_3d(mock_gfx):
     """Identity transform should produce the same result as no transform."""
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)

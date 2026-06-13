@@ -1,0 +1,739 @@
+"""RenderManager — single top-level render-layer object."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
+
+import numpy as np
+
+from cellier.events import DimsChangedEvent, EventBus
+from cellier.events._events import ViewRay, _CanvasRawPointerEvent
+from cellier.render._config import RenderManagerConfig
+from cellier.render._scene_config import VisualRenderConfig
+from cellier.render.canvas_view import CanvasView
+from cellier.render.scene_manager import SceneManager
+from cellier.render.slice_coordinator import SliceCoordinator
+from cellier.slicer import AsyncSlicer
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    import pygfx as gfx
+    from PySide6.QtWidgets import QWidget
+
+    from cellier.data._base_data_store import BaseDataStore
+    from cellier.events._events import VisualPickDetails
+    from cellier.render._requests import DimsState
+    from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
+    from cellier.render.visuals._image import GFXMultiscaleImageVisual
+    from cellier.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
+    from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
+    from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+
+    _GFXVisual = (
+        GFXMultiscaleImageVisual
+        | GFXImageMemoryVisual
+        | GFXPointsMemoryVisual
+        | GFXLinesMemoryVisual
+        | GFXMeshMemoryVisual
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal render-layer intermediates (not exported)
+# ---------------------------------------------------------------------------
+
+
+class _ImageDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for image/volume pick — displayed axes only.
+
+    ``_extract_pick_details`` can only decode the rendered axes; the
+    controller promotes this to a full-N-dim ``ImagePickInfo`` in
+    ``_on_raw_pointer_event`` by filling non-displayed axes from dims state.
+
+    Parameters
+    ----------
+    displayed_data_coord : tuple[float, ...]
+        Level-0 data-array position on the displayed axes only (``floor`` gives
+        the index).  Length 2 for a 2-D canvas, 3 for a 3-D canvas.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+class _LabelsDisplayedDataCoord(NamedTuple):
+    """Render-layer intermediate for labels pick — displayed axes only.
+
+    Same semantics as ``_ImageDisplayedDataCoord``; separate type so the
+    controller can produce the correct public ``LabelsPickInfo``.
+    """
+
+    displayed_data_coord: tuple[float, ...]
+
+
+# Union used to annotate _CanvasRawPointerEvent.pick_details
+_RawPickDetails = (
+    "_ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None"
+)
+
+
+class RenderManager:
+    """Single top-level render-layer object.
+
+    Owns the scene registry, canvas registry, shared async slicer, and
+    slice coordinator.  Exposes three reslicing entry points that cover
+    the common triggers: all scenes, one scene, or one visual.
+
+    Construction is parameter-free; scenes, canvases, and visuals are
+    registered via the ``add_*`` methods.
+    """
+
+    def __init__(self, config: RenderManagerConfig | None = None) -> None:
+        if config is None:
+            config = RenderManagerConfig()
+        self._config = config
+        self._scenes: dict[UUID, SceneManager] = {}
+        self._canvases: dict[UUID, CanvasView] = {}
+        self._canvas_to_scene: dict[UUID, UUID] = {}
+        self._visual_to_scene: dict[UUID, UUID] = {}
+        self._data_stores: dict[UUID, BaseDataStore] = {}
+        self._event_bus: EventBus | None = None
+        self._active_gestures: dict[UUID, UUID] = {}
+        self._pick_details_enabled: dict[UUID, bool] = {}
+        self._slicer = AsyncSlicer(
+            batch_size=config.slicing.batch_size,
+            render_every=config.slicing.render_every,
+        )
+        self._slice_coordinator = SliceCoordinator(
+            scenes=self._scenes,
+            slicer=self._slicer,
+            data_stores=self._data_stores,
+        )
+
+    def connect_event_bus(self, event_bus: EventBus) -> None:
+        """Subscribe internal components to *event_bus*.
+
+        Must be called before the caller registers its own DimsChangedEvent
+        handler so the SliceCoordinator invalidates stale 2D caches first.
+        """
+        self._event_bus = event_bus
+        # Let the coordinator emit ResliceStartedEvent / ResliceCompletedEvent.
+        self._slice_coordinator._event_bus = event_bus
+        event_bus.subscribe(
+            DimsChangedEvent,
+            self._slice_coordinator._on_dims_changed,
+            owner_id=self._slice_coordinator.id,
+        )
+
+    @property
+    def config(self) -> RenderManagerConfig:
+        """Current rendering performance configuration.
+
+        Reflects live state: mutations via ``temporal_alpha`` and
+        ``temporal_enabled`` setters are visible here immediately.
+        """
+        return self._config
+
+    @property
+    def temporal_alpha(self) -> float:
+        """EMA floor weight for temporal accumulation."""
+        return self._config.temporal.alpha
+
+    @temporal_alpha.setter
+    def temporal_alpha(self, value: float) -> None:
+        self._config.temporal.alpha = value
+        for canvas in self._canvases.values():
+            canvas._accum_pass.alpha = value
+
+    @property
+    def temporal_enabled(self) -> bool:
+        """Whether the temporal accumulation pass is active."""
+        return self._config.temporal.enabled
+
+    @temporal_enabled.setter
+    def temporal_enabled(self, value: bool) -> None:
+        self._config.temporal.enabled = value
+        for canvas in self._canvases.values():
+            canvas._accum_pass.enabled = value
+
+    def add_scene(self, scene_id: UUID, lighting: str = "none") -> SceneManager:
+        """Create and register a new scene.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            Unique identifier for the scene.
+        lighting : str
+            ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to
+            add ambient and directional lights — required for
+            ``MeshPhongAppearance``.
+
+        Returns
+        -------
+        SceneManager
+            The newly created scene manager.
+        """
+        scene_manager = SceneManager(scene_id=scene_id, lighting=lighting)
+        self._scenes[scene_id] = scene_manager
+        return scene_manager
+
+    def scene_has_lighting(self, scene_id: UUID) -> bool:
+        """Return True if *scene_id* was created with lighting enabled."""
+        return self._scenes[scene_id].has_lighting
+
+    def add_canvas(
+        self,
+        canvas_id: UUID,
+        scene_id: UUID,
+        parent: QWidget | None = None,
+        **canvas_view_kwargs,
+    ) -> CanvasView:
+        """Create a ``CanvasView``, register it, and return it.
+
+        The caller embeds ``canvas_view.widget`` in their Qt layout.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            Unique identifier for this canvas.
+        scene_id : UUID
+            ID of the scene this canvas should render.
+        parent : QWidget or None
+            Parent widget for the underlying ``QRenderWidget``.
+        **canvas_view_kwargs
+            Additional keyword arguments forwarded to ``CanvasView.__init__``
+            (e.g. ``dim``, ``fov``, ``depth_range``).
+
+        Returns
+        -------
+        CanvasView
+            The newly created canvas view.
+        """
+        canvas_view = CanvasView(
+            canvas_id=canvas_id,
+            scene_id=scene_id,
+            get_scene_fn=self.get_scene,
+            parent=parent,
+            **canvas_view_kwargs,
+        )
+        # Apply temporal config to the canvas's accumulation pass.
+        canvas_view._accum_pass.alpha = self._config.temporal.alpha
+        if not self._config.temporal.enabled:
+            canvas_view._accum_pass.enabled = False
+        # Wire up per-frame tick for visuals (e.g. jitter seed advance).
+        canvas_view._tick_visuals_fn = self._make_tick_fn(scene_id)
+        self._canvases[canvas_id] = canvas_view
+        self._canvas_to_scene[canvas_id] = scene_id
+        canvas_view._renderer.add_event_handler(
+            lambda ev, cid=canvas_id: self._on_canvas_pointer_event(ev, cid),
+            "pointer_down",
+            "pointer_up",
+            "pointer_move",
+        )
+        return canvas_view
+
+    def add_visual(
+        self,
+        scene_id: UUID,
+        visual: _GFXVisual,
+        data_store: BaseDataStore,
+        displayed_axes: tuple[int, ...],
+    ) -> None:
+        """Register a visual with a scene and its associated data store.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to add the visual to.
+        visual : _GFXVisual
+            The render-layer visual object.
+        data_store : BaseDataStore
+            The data store that will serve chunk data for this visual.
+        displayed_axes : tuple[int, ...]
+            Current displayed axes from the scene's dims selection.  Passed to
+            ``SceneManager.add_visual`` to select the initial node.
+        """
+        self._scenes[scene_id].add_visual(visual, displayed_axes)
+        self._visual_to_scene[visual.visual_model_id] = scene_id
+        self._data_stores[visual.visual_model_id] = data_store
+
+    def add_canvas_overlay(
+        self,
+        canvas_id: UUID,
+        gfx_overlay: GFXCanvasOverlay,
+    ) -> None:
+        """Attach a pre-built GFX overlay to *canvas_id*.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas that should receive the overlay.
+        gfx_overlay : GFXCanvasOverlay
+            The fully-constructed render-layer overlay.
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        """
+        self._canvases[canvas_id].add_overlay(gfx_overlay)
+
+    def _on_canvas_pointer_event(
+        self, event: gfx.PointerEvent, canvas_id: UUID
+    ) -> None:
+        """Translate a pygfx pointer event to a model-layer internal event.
+
+        Performs three render-layer operations:
+          1. NDC computation from screen pixel coordinates.
+          2. Camera unprojection of NDC to 2D world position.
+          3. gfx.WorldObject -> visual_id lookup via SceneManager.
+
+        The resulting _CanvasRawPointerEvent contains no gfx.* types.
+        """
+        if self._event_bus is None:
+            return
+
+        scene_id = self._canvas_to_scene[canvas_id]
+        canvas_view = self._canvases[canvas_id]
+
+        w, h = canvas_view._canvas.get_logical_size()
+        ndc_x = event.x / w * 2.0 - 1.0
+        ndc_y = -(event.y / h * 2.0 - 1.0)
+
+        cam = canvas_view._camera
+        hit_object = event.pick_info.get("world_object")
+        hit_visual_id: UUID | None = None
+        pick_details: VisualPickDetails | None = None
+        if hit_object is not None:
+            hit_visual_id = self._scenes[scene_id].get_visual_id_for_node(hit_object)
+            # Gate the cheap per-type extraction on whether any picking
+            # subscriber exists for this canvas (Decision 4).  hit_visual_id
+            # is always computed; it is already paid for upstream and is
+            # needed for visual-level hits and misses.
+            if self._pick_details_enabled.get(canvas_id, False):
+                pick_details = self._extract_pick_details(
+                    scene_id, hit_object, event.pick_info
+                )
+
+        _ACTION = {
+            "pointer_down": "press",
+            "pointer_up": "release",
+            "pointer_move": "move",
+        }
+        action = _ACTION[event.type]
+        if action == "press":
+            gesture_id: UUID | None = uuid4()
+            self._active_gestures[canvas_id] = gesture_id
+        elif action == "release":
+            gesture_id = self._active_gestures.pop(canvas_id, None)
+        else:  # move
+            gesture_id = self._active_gestures.get(canvas_id)
+        buttons = tuple(event.buttons)
+
+        if canvas_view._dim == "2d":
+            # OrthographicCamera with maintain_aspect=True stretches one axis
+            # to match the canvas aspect; cam.width / cam.height alone are the
+            # *minimum* visible extent.  Mirror the logic in
+            # CanvasView._capture_orthographic to recover the true visible
+            # extent before unprojecting NDC coordinates.
+            vw = float(w) if w > 0 else 800.0
+            vh = float(h) if h > 0 else 600.0
+            canvas_aspect = vw / vh
+            cam_w = float(cam.width) if cam.width > 0 else 1.0
+            cam_h = float(cam.height) if cam.height > 0 else 1.0
+            cam_aspect = cam_w / cam_h
+            if canvas_aspect >= cam_aspect:
+                world_height = cam_h
+                world_width = cam_h * canvas_aspect
+            else:
+                world_width = cam_w
+                world_height = cam_w / canvas_aspect
+
+            position_2d = np.array(
+                [
+                    cam.local.position[0] + ndc_x * (world_width / 2.0),
+                    cam.local.position[1] + ndc_y * (world_height / 2.0),
+                ],
+                dtype=np.float64,
+            )
+
+            self._event_bus.emit(
+                _CanvasRawPointerEvent(
+                    canvas_id=canvas_id,
+                    scene_id=scene_id,
+                    action=action,
+                    camera_type="2d",
+                    position_2d=position_2d,
+                    ray=None,
+                    hit_visual_id=hit_visual_id,
+                    button=event.button,
+                    modifiers=tuple(event.modifiers),
+                    buttons=buttons,
+                    gesture_id=gesture_id,
+                    pick_details=pick_details,
+                )
+            )
+        else:
+            # Perspective camera: bilinearly interpolate the near-plane frustum
+            # corners at (ndc_x, ndc_y) to get the ray origin, then compute the
+            # unit direction from the camera world position through that point.
+            # pygfx frustum[0] = near plane corners: [left-bottom, right-bottom,
+            # right-top, left-top] in world space.
+            near_corners = np.asarray(cam.frustum[0], dtype=np.float64)
+            tx = (ndc_x + 1.0) / 2.0  # 0 = left, 1 = right
+            ty = (ndc_y + 1.0) / 2.0  # 0 = bottom, 1 = top
+            bottom = near_corners[0] + tx * (near_corners[1] - near_corners[0])
+            top = near_corners[3] + tx * (near_corners[2] - near_corners[3])
+            origin = bottom + ty * (top - bottom)
+            cam_pos = np.array(cam.world.position, dtype=np.float64)
+            d = origin - cam_pos
+            direction = d / np.linalg.norm(d)
+            ray = ViewRay(origin=origin, direction=direction)
+
+            self._event_bus.emit(
+                _CanvasRawPointerEvent(
+                    canvas_id=canvas_id,
+                    scene_id=scene_id,
+                    action=action,
+                    camera_type="3d",
+                    position_2d=None,
+                    ray=ray,
+                    hit_visual_id=hit_visual_id,
+                    button=event.button,
+                    modifiers=tuple(event.modifiers),
+                    buttons=buttons,
+                    gesture_id=gesture_id,
+                    pick_details=pick_details,
+                )
+            )
+
+    def set_pick_details_enabled(self, canvas_id: UUID, enabled: bool) -> None:
+        """Enable or disable element-level pick extraction for one canvas.
+
+        When disabled (the default), pointer events still carry
+        ``hit_visual_id`` but ``pick_details`` is left ``None`` so non-picking
+        consumers do not pay for the per-type dispatch.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose extraction state should change.
+        enabled : bool
+            True to extract typed ``VisualPickDetails`` on each pointer event.
+        """
+        self._pick_details_enabled[canvas_id] = enabled
+
+    def _extract_pick_details(
+        self,
+        scene_id: UUID,
+        hit_object: gfx.WorldObject,
+        pick_info: dict,
+    ) -> (
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
+    ):
+        """Translate a pygfx pick payload into a typed, gfx-free pick detail.
+
+        All ``gfx.*`` and pick-dict access stays inside this helper so nothing
+        leaks past the render layer.  Returns None when the hit object has no
+        element-level identity yet (stubbed visual kinds) or when there is no
+        usable index in the payload.
+
+        For image and labels visuals this returns the intermediate
+        ``_ImageDisplayedDataCoord`` / ``_LabelsDisplayedDataCoord`` types
+        carrying level-0 data coordinates on the displayed axes; the per-visual
+        ``pick_data_coordinate`` does the node-specific decode so this helper
+        never touches the world matrix.  The controller promotes them to
+        full-N-dim public types in ``_on_raw_pointer_event`` once it has access
+        to the dims state.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            Scene owning the hit object.
+        hit_object : gfx.WorldObject
+            The picked world object from the pick buffer.
+        pick_info : dict
+            The pygfx pick payload (``event.pick_info``).
+
+        Returns
+        -------
+        _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
+        """
+        from cellier.events._events import (
+            LinesPickInfo,
+            MeshPickInfo,
+            PointsPickInfo,
+        )
+        from cellier.render.visuals._image import GFXMultiscaleImageVisual
+        from cellier.render.visuals._image_memory import GFXImageMemoryVisual
+        from cellier.render.visuals._image_memory_multichannel import (
+            GFXMultichannelImageMemoryVisual,
+        )
+        from cellier.render.visuals._image_multiscale_multichannel import (
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
+        from cellier.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+        from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
+        from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
+        from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+
+        scene_manager = self._scenes[scene_id]
+        visual_id = scene_manager.get_visual_id_for_node(hit_object)
+        if visual_id is None:
+            return None
+        gfx_visual = scene_manager.get_visual(visual_id)
+
+        # ── Points / Lines / Mesh ──────────────────────────────────────────
+        if isinstance(gfx_visual, GFXPointsMemoryVisual):
+            index = pick_info.get("vertex_index")
+            if index is None:
+                return None
+            return PointsPickInfo(
+                point_index=gfx_visual.point_index_for_vertex(int(index))
+            )
+        if isinstance(gfx_visual, GFXLinesMemoryVisual):
+            index = pick_info.get("vertex_index")
+            if index is None:
+                return None
+            return LinesPickInfo(
+                edge_index=gfx_visual.edge_index_for_vertex(int(index))
+            )
+        if isinstance(gfx_visual, GFXMeshMemoryVisual):
+            index = pick_info.get("face_index")
+            if index is None:
+                return None
+            return MeshPickInfo(face_index=gfx_visual.face_index_for_pick(int(index)))
+
+        # ── Image / Labels ─────────────────────────────────────────────────
+        # Each visual decodes its own node payload into level-0 data coordinates
+        # on the displayed axes; no world-matrix or proxy/norm details here.
+        _IMAGE_TYPES = (
+            GFXImageMemoryVisual,
+            GFXMultiscaleImageVisual,
+            GFXMultichannelImageMemoryVisual,
+            GFXMultichannelMultiscaleImageVisual,
+        )
+        _LABELS_TYPES = (
+            GFXLabelMemoryVisual,
+            GFXMultiscaleLabelVisual,
+        )
+        if not isinstance(gfx_visual, _IMAGE_TYPES + _LABELS_TYPES):
+            return None
+
+        coord = gfx_visual.pick_data_coordinate(hit_object, pick_info)
+        if coord is None:
+            return None
+        if isinstance(gfx_visual, _LABELS_TYPES):
+            return _LabelsDisplayedDataCoord(displayed_data_coord=coord)
+        return _ImageDisplayedDataCoord(displayed_data_coord=coord)
+
+    def remove_visual(self, visual_id: UUID) -> None:
+        """Remove a visual from its scene and deregister it.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to remove.
+        """
+        scene_id = self._visual_to_scene.pop(visual_id)
+        self._data_stores.pop(visual_id)
+        self._scenes[scene_id].remove_visual(visual_id)
+
+    def remove_scene(self, scene_id: UUID) -> None:
+        """Remove a scene and all its visuals and canvases.
+
+        Drops all Python references so GC can reclaim GPU resources.
+        pygfx has no explicit destroy API; reference dropping is sufficient.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to remove.
+        """
+        scene_manager = self._scenes.pop(scene_id)
+        for vid in scene_manager.visual_ids:
+            self._visual_to_scene.pop(vid, None)
+            self._data_stores.pop(vid, None)
+        # scene_manager goes out of scope here; GC drops gfx.Scene + all nodes.
+
+        canvas_ids = [
+            cid for cid, sid in self._canvas_to_scene.items() if sid == scene_id
+        ]
+        for cid in canvas_ids:
+            self._canvas_to_scene.pop(cid)
+            self._canvases.pop(cid)
+            self._active_gestures.pop(cid, None)
+            self._pick_details_enabled.pop(cid, None)
+        # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
+
+    def remove_canvas(self, canvas_id: UUID) -> None:
+        """Remove a single canvas and drop its render references.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas to remove.
+
+        Raises
+        ------
+        KeyError
+            If ``canvas_id`` is not registered.
+        """
+        self._canvas_to_scene.pop(canvas_id)
+        self._canvases.pop(canvas_id)
+        self._active_gestures.pop(canvas_id, None)
+        self._pick_details_enabled.pop(canvas_id, None)
+        # CanvasView reference dropped; GC handles Qt widget + wgpu renderer.
+
+    def _make_tick_fn(self, scene_id: UUID):
+        """Return a callable that ticks all visuals in *scene_id*."""
+
+        def _tick():
+            sm = self._scenes.get(scene_id)
+            if sm is None:
+                return
+            for vid in sm.visual_ids:
+                vis = sm.get_visual(vid)
+                vis.tick()
+
+        return _tick
+
+    def get_scene(self, scene_id: UUID) -> gfx.Scene:
+        """Return the pygfx Scene for ``scene_id``.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to retrieve.
+
+        Returns
+        -------
+        gfx.Scene
+        """
+        return self._scenes[scene_id].scene
+
+    def reslice_scene(
+        self,
+        scene_id: UUID,
+        dims_state: DimsState,
+        visual_configs: dict[UUID, VisualRenderConfig] | None = None,
+        target_visual_ids: frozenset[UUID] | None = None,
+    ) -> None:
+        """Reslice all visuals in one scene.
+
+        One reslicing request is submitted per registered canvas so that each
+        canvas uses its own camera state for LOD and frustum-culling decisions.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to reslice.
+        dims_state : DimsState
+            Current dimension display state.
+        visual_configs : dict[UUID, VisualRenderConfig] or None
+            Per-visual render configuration.  ``None`` falls back to defaults.
+        target_visual_ids : frozenset[UUID] or None
+            ``None`` reslices all visuals in the scene.
+        """
+        if visual_configs is None:
+            visual_configs = {}
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=target_visual_ids
+            )
+            self._slice_coordinator.submit(request, visual_configs)
+
+    def reslice_visual(
+        self,
+        visual_id: UUID,
+        dims_state: DimsState,
+        visual_config: VisualRenderConfig | None = None,
+    ) -> None:
+        """Reslice one visual.
+
+        Looks up which scene owns ``visual_id``, then submits one
+        ``ReslicingRequest`` per registered canvas so that each canvas uses
+        its own camera state.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the visual to reslice.
+        dims_state : DimsState
+            Current dimension display state.
+        visual_config : VisualRenderConfig or None
+            Render configuration for this visual.  ``None`` uses defaults.
+        """
+        cfg = visual_config if visual_config is not None else VisualRenderConfig()
+        scene_id = self._visual_to_scene[visual_id]
+        canvases = self._find_canvases_for_scene(scene_id)
+        for canvas in canvases:
+            request = canvas.capture_reslicing_request(
+                dims_state, target_visual_ids=frozenset({visual_id})
+            )
+            self._slice_coordinator.submit(request, {visual_id: cfg})
+
+    def look_at_visual(
+        self,
+        visual_id: UUID,
+        canvas_id: UUID,
+        view_direction: tuple[float, float, float] = (-1, -1, -1),
+        up: tuple[float, float, float] = (0, 0, 1),
+    ) -> None:
+        """Fit a canvas camera to a visual's bounding box.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of the target visual.
+        canvas_id : UUID
+            ID of the canvas whose camera should be fitted.
+        view_direction : tuple[float, float, float]
+            Camera look direction vector (need not be normalized).
+        up : tuple[float, float, float]
+            Camera up vector.
+        """
+        scene_id = self._visual_to_scene[visual_id]
+        gfx_scene = self.get_scene(scene_id)
+        self._canvases[canvas_id]._camera.show_object(
+            gfx_scene, view_dir=view_direction, up=up
+        )
+
+    def set_camera_depth_range(
+        self,
+        canvas_id: UUID,
+        depth_range: tuple[float, float],
+    ) -> None:
+        """Set the near/far clip distances for a canvas camera.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the target canvas.
+        depth_range : tuple[float, float]
+            ``(near, far)`` clip distances in world units.
+        """
+        self._canvases[canvas_id].set_depth_range(depth_range)
+
+    def _find_canvases_for_scene(self, scene_id: UUID) -> list[CanvasView]:
+        """Return all canvases registered for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to look up.
+
+        Returns
+        -------
+        list[CanvasView]
+            All canvas views rendering the scene.  Empty if none registered.
+        """
+        return [
+            self._canvases[cid]
+            for cid, sid in self._canvas_to_scene.items()
+            if sid == scene_id
+        ]

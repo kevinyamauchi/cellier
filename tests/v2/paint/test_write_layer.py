@@ -7,7 +7,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2.paint import BrickKey, WriteLayer
+from cellier.paint import BrickKey, WriteLayer
 
 
 def test_voxel_to_brick_key_2d() -> None:

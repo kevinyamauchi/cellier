@@ -2,12 +2,12 @@
 
 import uuid
 
-from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
-from cellier.v2.scene.scene import Scene
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.scene import Canvas
+from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
+from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.scene import Scene
+from cellier.transform import AffineTransform
+from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
 
 
 def test_scene_roundtrip(tmp_path):

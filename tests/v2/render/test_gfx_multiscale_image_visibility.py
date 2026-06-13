@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import uuid
 
-from cellier.v2.events._events import VisualVisibilityChangedEvent
-from cellier.v2.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.events._events import VisualVisibilityChangedEvent
+from cellier.render.visuals._image import GFXMultiscaleImageVisual
+from cellier.transform import AffineTransform
+from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
 
 # ---------------------------------------------------------------------------
 # Helpers

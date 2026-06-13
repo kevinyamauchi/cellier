@@ -1,1 +1,1 @@
-"""GUI related functions."""
+"""cellier v2 GUI widgets."""

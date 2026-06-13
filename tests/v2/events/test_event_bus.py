@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from cellier.v2._state import AxisAlignedSelectionState, DimsState
-from cellier.v2.events import (
+from cellier._state import AxisAlignedSelectionState, DimsState
+from cellier.events import (
     DimsChangedEvent,
     EventBus,
 )
@@ -152,6 +152,6 @@ def test_subscriber_exception_propagates_after_others_run():
 
 
 def test_transform_changed_event_in_catalogue():
-    from cellier.v2.events._events import CellierEventTypes, TransformChangedEvent
+    from cellier.events._events import CellierEventTypes, TransformChangedEvent
 
     assert TransformChangedEvent in CellierEventTypes.__args__

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import tensorstore as ts
 
-from cellier.v2.paint import TensorStoreWriteBuffer
+from cellier.paint import TensorStoreWriteBuffer
 
 if TYPE_CHECKING:
     import pathlib

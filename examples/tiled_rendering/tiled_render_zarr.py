@@ -12,13 +12,13 @@ from qtpy import QtWidgets
 from superqt import ensure_main_thread
 from wgpu.gui.qt import WgpuCanvas
 
-from cellier.models.data_stores.image import MultiScaleImageZarrStore
-from cellier.utils.chunk import (
+from cellier._legacy.models.data_stores.image import MultiScaleImageZarrStore
+from cellier._legacy.utils.chunk import (
     ChunkedArray3D,
     ImageDataStoreChunk,
     MultiScaleChunkedArray3D,
 )
-from cellier.utils.geometry import (
+from cellier._legacy.utils.geometry import (
     frustum_planes_from_corners,
 )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
 def test_appearance_defaults():

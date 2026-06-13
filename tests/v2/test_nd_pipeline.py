@@ -22,14 +22,14 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.image._image_requests import ChunkRequest
-from cellier.v2.render.visuals._image import (
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.image._image_requests import ChunkRequest
+from cellier.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
 )
-from cellier.v2.transform import AffineTransform
-from cellier.v2.transform._axis_order import select_axes
+from cellier.transform import AffineTransform
+from cellier.transform._axis_order import select_axes
 
 # Encode (t, c, z, y, x) into a single float so any extracted slice can
 # be decoded back to its original indices.  Bases must exceed dimension
@@ -214,28 +214,28 @@ def test_image_geometry_2d_non_contiguous_displayed_axes():
 
 
 def test_axis_aligned_selection_rejects_4_displayed_axes():
-    from cellier.v2.scene.dims import AxisAlignedSelection
+    from cellier.scene.dims import AxisAlignedSelection
 
     with pytest.raises(ValueError, match="length 2 or 3"):
         AxisAlignedSelection(displayed_axes=(0, 1, 2, 3))
 
 
 def test_axis_aligned_selection_rejects_1_displayed_axis():
-    from cellier.v2.scene.dims import AxisAlignedSelection
+    from cellier.scene.dims import AxisAlignedSelection
 
     with pytest.raises(ValueError, match="length 2 or 3"):
         AxisAlignedSelection(displayed_axes=(0,))
 
 
 def test_axis_aligned_selection_rejects_duplicates():
-    from cellier.v2.scene.dims import AxisAlignedSelection
+    from cellier.scene.dims import AxisAlignedSelection
 
     with pytest.raises(ValueError, match="distinct"):
         AxisAlignedSelection(displayed_axes=(0, 0))
 
 
 def test_axis_aligned_selection_accepts_non_contiguous():
-    from cellier.v2.scene.dims import AxisAlignedSelection
+    from cellier.scene.dims import AxisAlignedSelection
 
     # (0, 4) is fine — non-contiguous but valid.
     sel = AxisAlignedSelection(displayed_axes=(0, 4))

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+from cellier.visuals import LinesMemoryAppearance, LinesVisual
 
 
 def test_appearance_defaults():

@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.transform import AffineTransform
+from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.visuals._base_visual import BaseAppearance, BaseVisual
 
 
 def _make_level_transforms_3d(factors):

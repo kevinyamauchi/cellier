@@ -1,11 +1,11 @@
 import numpy as np
 
-from cellier.v2.render.block_cache import (
+from cellier.render.block_cache import (
     BlockKey3D,
     TileManager3D,
     compute_block_cache_parameters_3d,
 )
-from cellier.v2.render.lut_indirection import BlockLayout3D, LutIndirectionManager3D
+from cellier.render.lut_indirection import BlockLayout3D, LutIndirectionManager3D
 
 CACHE_INFO = compute_block_cache_parameters_3d(
     block_size=4, gpu_budget_bytes=8 * 6**3 * 4

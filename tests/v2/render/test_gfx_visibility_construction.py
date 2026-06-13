@@ -12,20 +12,20 @@ import uuid
 import numpy as np
 import pytest
 
-from cellier.v2.transform import AffineTransform
+from cellier.transform import AffineTransform
 
 # ── GFXImageMemoryVisual ──────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def image_store():
-    from cellier.v2.data.image._image_memory_store import ImageMemoryStore
+    from cellier.data.image._image_memory_store import ImageMemoryStore
 
     return ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32))
 
 
 def _image_model(store, visible: bool):
-    from cellier.v2.visuals._image_memory import ImageVisual, InMemoryImageAppearance
+    from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
     return ImageVisual(
         name="img",
@@ -35,7 +35,7 @@ def _image_model(store, visible: bool):
 
 
 def test_image_memory_visible_false_2d(image_store):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     model = _image_model(image_store, visible=False)
     visual = GFXImageMemoryVisual(model, image_store, render_modes={"2d"})
@@ -45,7 +45,7 @@ def test_image_memory_visible_false_2d(image_store):
 
 
 def test_image_memory_visible_false_3d(image_store):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     model = _image_model(image_store, visible=False)
     visual = GFXImageMemoryVisual(model, image_store, render_modes={"3d"})
@@ -55,7 +55,7 @@ def test_image_memory_visible_false_3d(image_store):
 
 
 def test_image_memory_visible_false_both(image_store):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     model = _image_model(image_store, visible=False)
     visual = GFXImageMemoryVisual(model, image_store, render_modes={"2d", "3d"})
@@ -65,7 +65,7 @@ def test_image_memory_visible_false_both(image_store):
 
 
 def test_image_memory_visible_true_is_default(image_store):
-    from cellier.v2.render.visuals._image_memory import GFXImageMemoryVisual
+    from cellier.render.visuals import GFXImageMemoryVisual
 
     model = _image_model(image_store, visible=True)
     visual = GFXImageMemoryVisual(model, image_store, render_modes={"2d", "3d"})
@@ -79,13 +79,13 @@ def test_image_memory_visible_true_is_default(image_store):
 
 @pytest.fixture
 def label_store():
-    from cellier.v2.data.label._label_memory_store import LabelMemoryStore
+    from cellier.data.label._label_memory_store import LabelMemoryStore
 
     return LabelMemoryStore(data=np.zeros((4, 4, 4), dtype=np.int32))
 
 
 def _label_memory_model(store, visible: bool):
-    from cellier.v2.visuals._label_memory import (
+    from cellier.visuals import (
         InMemoryLabelsAppearance,
         LabelMemoryVisual,
     )
@@ -98,7 +98,7 @@ def _label_memory_model(store, visible: bool):
 
 
 def test_label_memory_visible_false_2d(label_store):
-    from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+    from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
 
     model = _label_memory_model(label_store, visible=False)
     visual = GFXLabelMemoryVisual(model, label_store, render_modes={"2d"})
@@ -108,7 +108,7 @@ def test_label_memory_visible_false_2d(label_store):
 
 
 def test_label_memory_visible_false_3d(label_store):
-    from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+    from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
 
     model = _label_memory_model(label_store, visible=False)
     visual = GFXLabelMemoryVisual(model, label_store, render_modes={"3d"})
@@ -118,7 +118,7 @@ def test_label_memory_visible_false_3d(label_store):
 
 
 def test_label_memory_visible_false_both(label_store):
-    from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+    from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
 
     model = _label_memory_model(label_store, visible=False)
     visual = GFXLabelMemoryVisual(model, label_store, render_modes={"2d", "3d"})
@@ -128,7 +128,7 @@ def test_label_memory_visible_false_both(label_store):
 
 
 def test_label_memory_visible_true_is_default(label_store):
-    from cellier.v2.render.visuals._label_memory import GFXLabelMemoryVisual
+    from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
 
     model = _label_memory_model(label_store, visible=True)
     visual = GFXLabelMemoryVisual(model, label_store, render_modes={"2d", "3d"})
@@ -141,7 +141,7 @@ def test_label_memory_visible_true_is_default(label_store):
 
 
 def _multiscale_label_model(visible: bool):
-    from cellier.v2.visuals._labels import (
+    from cellier.visuals import (
         MultiscaleLabelsAppearance,
         MultiscaleLabelVisual,
     )
@@ -160,7 +160,7 @@ def _multiscale_label_model(visible: bool):
 
 
 def test_multiscale_label_visible_false_2d_start():
-    from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+    from cellier.render.visuals import GFXMultiscaleLabelVisual
 
     model = _multiscale_label_model(visible=False)
     level_shapes = [(8, 8, 8), (4, 4, 4)]
@@ -177,7 +177,7 @@ def test_multiscale_label_visible_false_2d_start():
 
 
 def test_multiscale_label_visible_false_3d_start():
-    from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+    from cellier.render.visuals import GFXMultiscaleLabelVisual
 
     model = _multiscale_label_model(visible=False)
     level_shapes = [(8, 8, 8), (4, 4, 4)]
@@ -195,7 +195,7 @@ def test_multiscale_label_visible_false_3d_start():
 
 
 def test_multiscale_label_visible_true_is_default():
-    from cellier.v2.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
+    from cellier.render.visuals import GFXMultiscaleLabelVisual
 
     model = _multiscale_label_model(visible=True)
     level_shapes = [(8, 8, 8), (4, 4, 4)]

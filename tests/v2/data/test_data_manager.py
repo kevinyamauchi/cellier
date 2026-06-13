@@ -1,8 +1,8 @@
 """Tests for DataManager model."""
 
-from cellier.v2.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-from cellier.v2.transform import AffineTransform
-from cellier.v2.viewer_model import DataManager
+from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.transform import AffineTransform
+from cellier.viewer_model import DataManager
 
 
 def test_data_manager_roundtrip(tmp_path, small_zarr_store):

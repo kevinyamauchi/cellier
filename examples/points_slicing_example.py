@@ -7,8 +7,8 @@ a 3D view and a 2D view. The slider controls the position of the 2D slice.
 from qtpy import QtWidgets
 from superqt import QLabeledSlider
 
-from cellier.models.viewer import ViewerModel
-from cellier.viewer_controller import CellierController
+from cellier._legacy.models.viewer import ViewerModel
+from cellier._legacy.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):

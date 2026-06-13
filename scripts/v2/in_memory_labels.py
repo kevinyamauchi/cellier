@@ -32,11 +32,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.label._label_memory_store import LabelMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance
+from cellier.controller import CellierController
+from cellier.data.label._label_memory_store import LabelMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.transform import AffineTransform
+from cellier.visuals import InMemoryLabelsAppearance
 
 # ── Data parameters ─────────────────────────────────────────────────────────
 N_T = 4
@@ -67,7 +67,6 @@ def _make_4d_labels() -> np.ndarray:
     # Resize each Z-frame to (N_Z, N_Y, N_X) — skimage generates cubes.
     # Re-label after zoom to preserve integer integrity.
     import scipy.ndimage as ndi
-    from skimage.measure import label as skimage_label
 
     resized = []
     for frame in frames:

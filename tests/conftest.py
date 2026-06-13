@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from cellier.models.data_manager import DataManager
-from cellier.models.data_stores import PointsMemoryStore
-from cellier.models.scene import (
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores import PointsMemoryStore
+from cellier._legacy.models.scene import (
     AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
@@ -15,9 +15,9 @@ from cellier.models.scene import (
     RangeTuple,
     Scene,
 )
-from cellier.models.viewer import SceneManager, ViewerModel
-from cellier.models.visuals import PointsUniformAppearance, PointsVisual
-from cellier.types import CoordinateSpace
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models.visuals import PointsUniformAppearance, PointsVisual
+from cellier._legacy.types import CoordinateSpace
 
 
 @pytest.fixture
