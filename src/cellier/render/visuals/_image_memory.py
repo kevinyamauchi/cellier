@@ -35,6 +35,26 @@ def _make_colormap(color_map) -> gfx.TextureMap:
     return color_map.to_pygfx(N=256)
 
 
+def _pin_bounding_box(node, box_min: list[float], box_max: list[float]) -> None:
+    """Override *node*'s ``get_bounding_box`` to report a fixed local box.
+
+    The in-memory image/volume nodes start with a tiny placeholder texture
+    (replaced on first ``on_data_ready[_2d]``), so the standard pygfx bounding
+    box -- derived from the texture size -- would be 1- or 2-voxel and break
+    camera fitting before any data is loaded.  Pinning the box to the full data
+    footprint in local voxel space (``[-0.5, N-0.5]`` per axis) lets
+    ``fit_camera`` frame the data correctly from the start, with no large
+    upfront GPU allocation.
+
+    The override is applied to the instance (rather than via a subclass) so the
+    node is still built from the current ``gfx.Image`` / ``gfx.Volume`` symbol,
+    which tests replace with a mock; a subclass would bind to the real pygfx
+    class at import time and bypass that mock.
+    """
+    box = np.array([box_min, box_max], dtype=np.float32)
+    node.get_bounding_box = lambda: box
+
+
 def _box_wireframe_positions(box_min: np.ndarray, box_max: np.ndarray) -> np.ndarray:
     """Return (24, 3) float32 positions for a 3D box wireframe (12 edges x 2 pts)."""
     x0, y0, z0 = float(box_min[0]), float(box_min[1]), float(box_min[2])
@@ -216,8 +236,10 @@ class GFXImageMemoryVisual:
     """Render-layer visual for one ``ImageVisual`` backed by ``ImageMemoryStore``.
 
     Owns a single pygfx node -- either ``gfx.Image`` (render_mode=="2d") or
-    ``gfx.Volume`` (render_mode=="3d") -- and a placeholder 1x1 or 2x2x2
-    texture that is replaced on the first ``on_data_ready[_2d]`` call.
+    ``gfx.Volume`` (render_mode=="3d") -- with a small placeholder texture that
+    is replaced on the first ``on_data_ready[_2d]`` call.  The node's bounding
+    box is pinned to the full data extent (see :func:`_pin_bounding_box`) so
+    camera fitting works before any data is loaded.
 
     There is no brick cache, no LUT indirection, and no LOD selection. Every
     reslice produces exactly one ``ChunkRequest`` for the full slice / volume.
@@ -288,6 +310,9 @@ class GFXImageMemoryVisual:
 
         if "2d" in render_modes:
             # Placeholder 1x1 texture -- replaced on first on_data_ready_2d.
+            # The node's bounding box is pinned to the full data extent (see
+            # _pin_bounding_box) so fit_camera works before any data is loaded.
+            h, w = data_store.shape[-2], data_store.shape[-1]
             placeholder = np.zeros((1, 1, 1), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=2, format="1xf4")
             self._inner_node_2d = gfx.Image(
@@ -299,8 +324,10 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
-            # Placeholder AABB rect -- geometry replaced on first on_data_ready_2d.
-            # Stays invisible until real data arrives regardless of aabb.enabled.
+            _pin_bounding_box(
+                self._inner_node_2d, [-0.5, -0.5, 0.0], [w - 0.5, h - 0.5, 0.0]
+            )
+            # AABB placeholder; geometry replaced on first on_data_ready_2d.
             placeholder_positions = _rect_wireframe_positions(np.zeros(2), np.ones(2))
             self._aabb_line_2d = _make_aabb_line(
                 placeholder_positions, self._aabb_color, self._aabb_line_width
@@ -311,6 +338,9 @@ class GFXImageMemoryVisual:
 
         if "3d" in render_modes:
             # Placeholder 2x2x2 texture -- replaced on first on_data_ready.
+            # The node's bounding box is pinned to the full data extent (see
+            # _pin_bounding_box) so fit_camera works before any data is loaded.
+            d, h, w = data_store.shape[-3], data_store.shape[-2], data_store.shape[-1]
             placeholder = np.zeros((2, 2, 2), dtype=np.float32)
             tex = gfx.Texture(placeholder, dim=3, format="1xf4")
             self._inner_node_3d = gfx.Volume(
@@ -322,8 +352,12 @@ class GFXImageMemoryVisual:
                     pick_write=visual_model.pick_write,
                 ),
             )
-            # Placeholder AABB box -- geometry replaced on first on_data_ready.
-            # Stays invisible until real data arrives regardless of aabb.enabled.
+            _pin_bounding_box(
+                self._inner_node_3d,
+                [-0.5, -0.5, -0.5],
+                [w - 0.5, h - 0.5, d - 0.5],
+            )
+            # AABB placeholder; geometry replaced on first on_data_ready.
             placeholder_positions = _box_wireframe_positions(np.zeros(3), np.ones(3))
             self._aabb_line_3d = _make_aabb_line(
                 placeholder_positions, self._aabb_color, self._aabb_line_width

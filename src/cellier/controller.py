@@ -1512,6 +1512,25 @@ class CellierController:
 
         canvas_view.set_event_bus(self._outgoing_events)
 
+        # Fix the reserve (non-active) camera's depth range.  CanvasView builds
+        # both the 2D and 3D cameras up front but applies only the active
+        # camera's range to both; the reserve camera (e.g. the 3D perspective
+        # camera when starting in 2D) is then left with the active camera's
+        # range, which may have an invalid near plane and render nothing on the
+        # first toggle.  Only the reserve camera is touched here: re-setting the
+        # active camera's range would change its captured state and spuriously
+        # emit a CameraChangedEvent (scheduling an unwanted settle reslice).
+        for dim_key, camera_model in canvas_model.cameras.items():
+            if dim_key == initial_dim:
+                continue
+            canvas_view.set_depth_range_for_dim(
+                dim_key,
+                (
+                    camera_model.near_clipping_plane,
+                    camera_model.far_clipping_plane,
+                ),
+            )
+
         # Wire any overlays already stored on this canvas model to the render
         # layer.  For canvases created via add_canvas() this loop is a no-op
         # (overlays=[]).  For canvases restored from a serialized ViewerModel

@@ -97,6 +97,10 @@ class Viewer:
             coordinate_system=CoordinateSystem(name="world", axis_labels=axis_labels),
             render_modes=resolved_render_modes,
         )
+        # Saved world-space slice positions, keyed by axis index. Populated
+        # by set_displayed_dimensions so axes restore their last position when
+        # they cycle back from displayed to sliced.
+        self._saved_slice_positions: dict[int, float] = {}
 
     # ------------------------------------------------------------------
     # Public properties
@@ -170,6 +174,7 @@ class Viewer:
         obj = object.__new__(cls)
         obj._controller = controller
         obj._scene = scene
+        obj._saved_slice_positions: dict[int, float] = {}
         return obj
 
     # ------------------------------------------------------------------
@@ -227,6 +232,80 @@ class Viewer:
         if isinstance(data, UUID):
             return self._controller.get_data_store(data)  # type: ignore[return-value]
         return data
+
+    # ------------------------------------------------------------------
+    # Dims control
+    # ------------------------------------------------------------------
+
+    def set_displayed_dimensions(self, axis_names: tuple[str, ...]) -> None:
+        """Set which axes are displayed by name.
+
+        Switches the scene between 2D and 3D rendering by resolving
+        *axis_names* to axis indices and calling the controller's dims API.
+        Slice positions for axes that transition from displayed to sliced are
+        restored from the last known position (or default to 0 on first call).
+
+        Parameters
+        ----------
+        axis_names : tuple[str, ...]
+            Axis labels to display, e.g. ``("y", "x")`` for 2D or
+            ``("z", "y", "x")`` for 3D.  Must contain 2 or 3 names that
+            are present in the scene's coordinate system.
+
+        Raises
+        ------
+        ValueError
+            If *axis_names* does not have 2 or 3 entries, or if any name is
+            not in the scene's coordinate system.
+        """
+        if len(axis_names) not in (2, 3):
+            raise ValueError(
+                f"axis_names must have 2 or 3 entries, got {len(axis_names)}: "
+                f"{axis_names!r}"
+            )
+
+        coord_labels = self._scene.dims.coordinate_system.axis_labels
+        label_to_index = {label: i for i, label in enumerate(coord_labels)}
+
+        invalid = [n for n in axis_names if n not in label_to_index]
+        if invalid:
+            raise ValueError(
+                f"Unknown axis names: {invalid}. " f"Available: {list(coord_labels)}"
+            )
+
+        new_displayed = tuple(label_to_index[n] for n in axis_names)
+        new_displayed_set = set(new_displayed)
+
+        selection = self._scene.dims.selection
+        current_slices = dict(selection.slice_indices)
+        stacked = set(selection.stacked_axes)
+        ndim = len(coord_labels)
+
+        # Save current slice positions before they potentially become displayed.
+        for axis, value in current_slices.items():
+            self._saved_slice_positions[axis] = float(value)
+
+        # Build the new slice_indices: every axis that is neither displayed
+        # nor stacked must appear in slice_indices.
+        new_slices: dict[int, float] = {}
+        for i in range(ndim):
+            if i not in new_displayed_set and i not in stacked:
+                new_slices[i] = self._saved_slice_positions.get(i, 0.0)
+
+        self._controller.cancel_pending_slices(self._scene.id)
+        current_displayed = set(selection.displayed_axes)
+        adding_axes = new_displayed_set - current_displayed
+        if adding_axes:
+            # Expanding displayed axes: extend displayed first so the axis is
+            # covered before it disappears from slice_indices.
+            self._controller.set_displayed_axes(self._scene.id, new_displayed)
+            self._controller.update_slice_indices(self._scene.id, new_slices)
+        else:
+            # Contracting displayed axes: add the new slice_indices entries
+            # first so coverage is maintained before displayed shrinks.
+            self._controller.update_slice_indices(self._scene.id, new_slices)
+            self._controller.set_displayed_axes(self._scene.id, new_displayed)
+        self._controller.fit_camera(self._scene.id)
 
     # ------------------------------------------------------------------
     # Visual add methods

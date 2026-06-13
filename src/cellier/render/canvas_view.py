@@ -261,7 +261,7 @@ class CanvasView:
         )
 
     def set_depth_range(self, depth_range: tuple[float, float]) -> None:
-        """Set the camera near/far clip distances.
+        """Set the active camera near/far clip distances.
 
         Parameters
         ----------
@@ -269,6 +269,29 @@ class CanvasView:
             ``(near, far)`` clip distances in world units.
         """
         self._camera.depth_range = depth_range
+
+    def set_depth_range_for_dim(
+        self, dim: str, depth_range: tuple[float, float]
+    ) -> None:
+        """Set the near/far clip distances on the 2D or 3D camera.
+
+        Unlike :meth:`set_depth_range`, this targets a specific camera
+        regardless of which is currently active.  Both the 2D orthographic
+        and 3D perspective cameras are created up front (see ``__init__``),
+        so the reserve camera must have its depth range set independently —
+        otherwise it keeps the active camera's range, which for a 2D->3D
+        toggle leaves the perspective camera with an invalid (e.g. negative)
+        near plane and renders nothing.
+
+        Parameters
+        ----------
+        dim : str
+            ``"2d"`` or ``"3d"``.
+        depth_range : tuple[float, float]
+            ``(near, far)`` clip distances in world units.
+        """
+        camera = self._camera_2d if dim == "2d" else self._camera_3d
+        camera.depth_range = depth_range
 
     def show_object(self, scene: gfx.Scene) -> None:
         """Fit the camera to the scene bounding box and mark this dim as fitted.
