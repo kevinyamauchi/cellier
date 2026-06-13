@@ -60,6 +60,7 @@ nav = [
         { "CellierController" = "api/controller.md" },
         { "Data" = "api/data.md" },
         { "Visuals" = "api/visuals.md" },
+        { "GUI" = "api/gui.md" },
         { "Transform" = "api/transform.md" },
         { "Scene" = "api/scene.md" },
         { "Render" = "api/render.md" },

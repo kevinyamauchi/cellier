@@ -10,6 +10,7 @@ from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image import (
     MultichannelMultiscaleImageVisual,
     MultiscaleImageAppearance,
+    MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
 from cellier.visuals._image_memory import (
@@ -59,6 +60,7 @@ __all__ = [
     "MeshPhongAppearance",
     "MeshVisual",
     "MultiscaleImageAppearance",
+    "MultiscaleImageRenderConfig",
     "MultiscaleLabelRenderConfig",
     "MultiscaleLabelVisual",
     "MultiscaleLabelsAppearance",
