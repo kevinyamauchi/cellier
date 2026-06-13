@@ -72,6 +72,8 @@ dev = [
     "rich",  # https://github.com/Textualize/rich
     "ruff",
     "zensical>=0.0.40",
+    "mkdocstrings-python",
+    "griffe-pydantic>=1.3.1",
 ]
 
 # optional rich-powered debug logging

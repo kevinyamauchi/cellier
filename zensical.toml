@@ -44,10 +44,28 @@ Copyright &copy; 2026 The authors
 # can be defined using TOML syntax.
 #
 # Read more: https://zensical.org/docs/setup/navigation/
-# nav = [
-#   { "Get started" = "index.md" },
-#   { "Markdown in 5min" = "markdown.md" },
-# ]
+nav = [
+    { "Home" = "index.md" },
+    { "Explanations" = [
+        { "Architecture" = "Explanations/architecture.md" },
+        { "Coordinate systems" = "Explanations/coordinate_systems.md" },
+        { "Events" = "Explanations/events.md" },
+        { "Logging" = "Explanations/logging.md" },
+        { "Slicing" = "Explanations/slicing.md" },
+    ] },
+    { "How-to" = [
+        { "Debug events" = "How_To/debug_events.md" },
+    ] },
+    { "API Reference" = [
+        { "CellierController" = "api/controller.md" },
+        { "Data" = "api/data.md" },
+        { "Visuals" = "api/visuals.md" },
+        { "Transform" = "api/transform.md" },
+        { "Scene" = "api/scene.md" },
+        { "Render" = "api/render.md" },
+        { "Paint" = "api/paint.md" },
+    ] },
+]
 
 # With the "extra_css" option you can add your own CSS styling to customize
 # your Zensical project according to your needs. You can add any number of
@@ -56,7 +74,7 @@ Copyright &copy; 2026 The authors
 # The path provided should be relative to the "docs_dir".
 #
 # Read more: https://zensical.org/docs/customization/#additional-css
-# extra_css = ["stylesheets/extra.css"]
+extra_css = ["stylesheets/extra.css"]
 
 # With the `extra_javascript` option you can add your own JavaScript to your
 # project to customize the behavior according to your needs.
@@ -319,6 +337,10 @@ toggle.name = "Switch to light mode"
 [project.markdown_extensions.md_in_html]
 [project.markdown_extensions.toc]
 permalink = true
+# Cap the "on this page" sidebar at two visible levels (h2 group -> h3 symbol);
+# on the API Reference pages this hides the per-member (h4) method/attribute
+# entries. Prose pages do not nest deeper than h3.
+toc_depth = 3
 [project.markdown_extensions.pymdownx.arithmatex]
 generic = true
 [project.markdown_extensions.pymdownx.betterem]
@@ -346,3 +368,29 @@ combine_header_slug = true
 [project.markdown_extensions.pymdownx.tasklist]
 custom_checkbox = true
 [project.markdown_extensions.pymdownx.tilde]
+
+# ----------------------------------------------------------------------------
+# Plugins
+#
+# The mkdocstrings plugin generates the API Reference pages from the source
+# docstrings. The Python handler reads the package from "src".
+#
+# Read more:
+# - https://zensical.org/docs/setup/extensions/mkdocstrings/
+# ----------------------------------------------------------------------------
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+extensions = [{ griffe_pydantic = { schema = false } }]
+heading_level = 3
+show_root_heading = true
+show_root_toc_entry = true
+show_source = false
+inherited_members = true
+members_order = "source"
+separate_signature = true
+show_signature_annotations = true
+signature_crossrefs = true
