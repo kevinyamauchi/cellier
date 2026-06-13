@@ -150,6 +150,9 @@ class CellierController:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
         self._render_manager = RenderManager(config=render_config)
+        # Keep model.render_config pointing at the same object so runtime
+        # mutations (e.g. camera_settle_threshold_s) are captured on serialize.
+        self._model.render_config = self._render_manager._config
         # Reverse map: visual_model_id → scene_id (model layer mirror of render layer)
         self._visual_to_scene: dict[UUID, UUID] = {}
         # Reverse map: canvas_id → scene_id
@@ -277,7 +280,9 @@ class CellierController:
         """
         controller = cls(
             widget_parent=widget_parent,
-            render_config=render_config,
+            render_config=render_config
+            if render_config is not None
+            else model.render_config,
         )
 
         # 1. Register all data stores.
@@ -1530,6 +1535,25 @@ class CellierController:
     def get_scene(self, scene_id: UUID) -> Scene:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
+
+    def get_data_store(self, store_id: UUID) -> BaseDataStore:
+        """Return the registered data store for store_id.
+
+        Parameters
+        ----------
+        store_id : UUID
+            ID of a previously registered data store.
+
+        Returns
+        -------
+        BaseDataStore
+
+        Raises
+        ------
+        KeyError
+            If no store with store_id has been registered.
+        """
+        return self._model.data.stores[store_id]
 
     def fit_camera(self, scene_id: UUID, canvas_id: UUID | None = None) -> None:
         """Fit the camera to the current scene bounding box.

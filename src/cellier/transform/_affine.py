@@ -402,6 +402,11 @@ class AffineTransform(BaseTransform):
             )
         return AffineTransform(matrix=other.matrix @ self.matrix)
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AffineTransform):
+            return NotImplemented
+        return bool(np.array_equal(self.matrix, other.matrix))
+
     def __matmul__(self, other: AffineTransform) -> AffineTransform:
         """Compose transforms: ``(A @ B)`` applies A first, then B.
 

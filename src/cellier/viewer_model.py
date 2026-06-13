@@ -10,6 +10,7 @@ from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, Field
 
 from cellier.data._types import DataStoreType
+from cellier.render._config import RenderManagerConfig
 from cellier.scene.scene import Scene
 
 
@@ -44,6 +45,7 @@ class ViewerModel(EventedModel):
         UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))],
         Scene,
     ] = Field(default_factory=dict)
+    render_config: RenderManagerConfig = Field(default_factory=RenderManagerConfig)
 
     def to_file(self, path: str | Path) -> None:
         """Serialize the viewer model to a JSON file.
