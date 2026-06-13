@@ -2,8 +2,8 @@
 
 from qtpy import QtWidgets
 
-from cellier.models.viewer import ViewerModel
-from cellier.viewer_controller import CellierController
+from cellier.legacy.models.viewer import ViewerModel
+from cellier.legacy.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):
