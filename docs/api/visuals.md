@@ -15,6 +15,7 @@ models that configure their look.
 ::: cellier.visuals.MultiscaleImageVisual
 ::: cellier.visuals.MultichannelMultiscaleImageVisual
 ::: cellier.visuals.MultiscaleImageAppearance
+::: cellier.visuals.MultiscaleImageRenderConfig
 
 ## In-memory labels
 
