@@ -4,12 +4,13 @@ on:
     branches:
       - master
       - main
+  pull_request:
 permissions:
   contents: read
   pages: write
   id-token: write
 jobs:
-  deploy:
+  build:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -26,5 +27,14 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+  
+  deploy:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/deploy-pages@v5
         id: deployment
