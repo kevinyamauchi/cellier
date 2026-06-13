@@ -244,7 +244,7 @@ class MultichannelCells3dViewer:
         return group
 
     def _on_toggle_clicked(self) -> None:
-        from cellier.v2.events import DimsUpdateEvent
+        from cellier.events import DimsUpdateEvent
 
         self._controller.cancel_pending_slices(self._scene.id)
 
@@ -275,7 +275,7 @@ class MultichannelCells3dViewer:
         self._is_3d = not self._is_3d
 
     def _on_z_changed(self, z: int) -> None:
-        from cellier.v2.events import DimsUpdateEvent
+        from cellier.events import DimsUpdateEvent
 
         self._controller.incoming_events.emit(
             DimsUpdateEvent(
@@ -300,15 +300,15 @@ class MultichannelCells3dViewer:
 async def async_main(zarr_path: str) -> None:
     from PySide6 import QtWidgets
 
-    from cellier.v2.controller import CellierController
-    from cellier.v2.data.image import OMEZarrImageDataStore
-    from cellier.v2.scene.dims import (
+    from cellier.controller import CellierController
+    from cellier.data import OMEZarrImageDataStore
+    from cellier.scene.dims import (
         AxisAlignedSelection,
         CoordinateSystem,
         DimsManager,
     )
-    from cellier.v2.scene.scene import Scene
-    from cellier.v2.visuals._channel_appearance import ChannelAppearance
+    from cellier.scene.scene import Scene
+    from cellier.visuals._channel_appearance import ChannelAppearance
 
     # resolve local paths to file:// URI
     if "://" not in zarr_path:

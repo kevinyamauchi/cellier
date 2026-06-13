@@ -1732,9 +1732,9 @@ planning parameters.
 ```python
 # src/cellier/v2/events/__init__.py
 
-from cellier.v2._state import CameraState, DimsState
-from cellier.v2.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
-from cellier.v2.events._events import (
+from cellier._state import CameraState, DimsState
+from cellier.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
+from cellier.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
     CameraChangedEvent,
@@ -1769,7 +1769,7 @@ from cellier.v2.events._events import (
     VisualRemovedEvent,
     VisualVisibilityChangedEvent,
 )
-from cellier.v2.events._update_events import (
+from cellier.events._update_events import (
     AABBUpdateEvent,
     AppearanceUpdateEvent,
     CellierUpdateEventTypes,

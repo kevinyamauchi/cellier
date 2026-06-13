@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.visuals._image import MultiscaleImageRenderConfig
-from cellier.v2.visuals._labels import MultiscaleLabelRenderConfig
+from cellier.visuals import MultiscaleLabelRenderConfig
+from cellier.visuals._image import MultiscaleImageRenderConfig
 
 
 def test_multiscale_image_render_config_frozen():

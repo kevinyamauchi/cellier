@@ -1,6 +1,6 @@
 import numpy as np
 
-from cellier.legacy.utils.geometry import (
+from cellier._legacy.utils.geometry import (
     frustum_planes_from_corners,
     generate_2d_grid,
     generate_3d_grid,

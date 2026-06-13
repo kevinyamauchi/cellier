@@ -2,21 +2,21 @@
 
 import numpy as np
 
-from cellier.legacy.models import (
+from cellier._legacy.models import (
     ImageMIPMaterial,
     ImageNode,
     ImageSynchronousDataStream,
 )
-from cellier.legacy.models.data_manager import DataManager
-from cellier.legacy.models.data_stores.image import MockLatentImageStore
-from cellier.legacy.models.scene import (
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores.image import MockLatentImageStore
+from cellier._legacy.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
     PerspectiveCamera,
 )
-from cellier.legacy.models.scene.scene import Scene
-from cellier.legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models.scene.scene import Scene
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
 
 # make a 4D point cloud
 

@@ -58,12 +58,12 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.v2.gui._dataset_info import QtOmeZarrMetadataWidget
-        from cellier.v2.gui.visuals._aabb import QtAABBWidget
-        from cellier.v2.gui.visuals._colormap import QtColormapComboBox
-        from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
-        from cellier.v2.gui.visuals._image import QtVolumeRenderControls
-        from cellier.v2.gui.visuals._lod_bias import QtLodBiasSlider
+        from cellier.gui._dataset_info import QtOmeZarrMetadataWidget
+        from cellier.gui.visuals import QtClimRangeSlider
+        from cellier.gui.visuals._aabb import QtAABBWidget
+        from cellier.gui.visuals._colormap import QtColormapComboBox
+        from cellier.gui.visuals._image import QtVolumeRenderControls
+        from cellier.gui.visuals._lod_bias import QtLodBiasSlider
 
         self._controller = controller
         self._scene = scene
@@ -214,7 +214,7 @@ class OmeBrickViewer:
     # ── Toggle ────────────────────────────────────────────────────────
 
     def _on_toggle_clicked(self) -> None:
-        from cellier.v2.events import DimsUpdateEvent
+        from cellier.events import DimsUpdateEvent
 
         if self._active_mode == "3d":
             self._controller.cancel_pending_slices(self._scene.id)
@@ -332,12 +332,12 @@ def _build_viewer_model(
     visual_model : MultiscaleImageVisual
         The single image visual, for post-construction access.
     """
-    from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
-    from cellier.v2.scene.canvas import Canvas
-    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
-    from cellier.v2.scene.scene import Scene
-    from cellier.v2.viewer_model import DataManager, ViewerModel
-    from cellier.v2.visuals._image import (
+    from cellier.scene import Canvas
+    from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
+    from cellier.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.scene.scene import Scene
+    from cellier.viewer_model import DataManager, ViewerModel
+    from cellier.visuals import (
         MultiscaleImageAppearance,
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
@@ -411,16 +411,16 @@ def _build_viewer_model(
 async def async_main(zarr_uri: str):
     from PySide6 import QtWidgets
 
-    from cellier.v2.controller import CellierController
-    from cellier.v2.data.image import OMEZarrImageDataStore
-    from cellier.v2.gui._scene import QtCanvasWidget
-    from cellier.v2.render._config import (
+    from cellier.controller import CellierController
+    from cellier.data import OMEZarrImageDataStore
+    from cellier.gui._scene import QtCanvasWidget
+    from cellier.render._config import (
         CameraConfig,
         RenderManagerConfig,
         SlicingConfig,
     )
-    from cellier.v2.scene.dims import CoordinateSystem
-    from cellier.v2.transform import AffineTransform
+    from cellier.scene.dims import CoordinateSystem
+    from cellier.transform import AffineTransform
 
     # ── Open the OME-Zarr store ───────────────────────────────────────
     print(f"Opening OME-Zarr store: {zarr_uri}")

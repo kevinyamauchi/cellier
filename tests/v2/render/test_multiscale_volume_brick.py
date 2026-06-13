@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from cellier.v2.render.shaders._multiscale_volume_brick import (
+from cellier.render.shaders._multiscale_volume_brick import (
     compose_world_transform,
     compute_normalized_size,
     data_full_extent_box,

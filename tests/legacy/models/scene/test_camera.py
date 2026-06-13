@@ -4,7 +4,7 @@ import json
 
 from pydantic_core import from_json
 
-from cellier.legacy.models.scene import PanZoomCameraController, PerspectiveCamera
+from cellier._legacy.models.scene import PanZoomCameraController, PerspectiveCamera
 
 
 def test_perspective_camera(tmp_path):

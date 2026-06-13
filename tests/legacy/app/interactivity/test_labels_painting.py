@@ -1,10 +1,10 @@
 import numpy as np
 
-from cellier.legacy.app.interactivity import LabelsPaintingManager, LabelsPaintingMode
-from cellier.legacy.models.data_stores import ImageMemoryStore
-from cellier.legacy.models.scene import PanZoomCameraController, PerspectiveCamera
-from cellier.legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
-from cellier.legacy.types import MouseButton, MouseCallbackData, MouseEventType
+from cellier._legacy.app.interactivity import LabelsPaintingManager, LabelsPaintingMode
+from cellier._legacy.models.data_stores import ImageMemoryStore
+from cellier._legacy.models.scene import PanZoomCameraController, PerspectiveCamera
+from cellier._legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
+from cellier._legacy.types import MouseButton, MouseCallbackData, MouseEventType
 
 
 def test_labels_painting():

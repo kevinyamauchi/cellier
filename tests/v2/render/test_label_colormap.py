@@ -8,7 +8,7 @@ import numpy as np
 
 
 def test_build_direct_lut_two_entries():
-    from cellier.v2.render.shaders._label_colormap import build_direct_lut_textures
+    from cellier.render.shaders._label_colormap import build_direct_lut_textures
 
     cd = {1: (1.0, 0.0, 0.0, 1.0), -3: (0.0, 0.0, 1.0, 1.0)}
     keys_tex, colors_tex, n = build_direct_lut_textures(cd)
@@ -26,7 +26,7 @@ def test_build_direct_lut_two_entries():
 
 
 def test_build_direct_lut_empty():
-    from cellier.v2.render.shaders._label_colormap import build_direct_lut_textures
+    from cellier.render.shaders._label_colormap import build_direct_lut_textures
 
     keys_tex, colors_tex, n = build_direct_lut_textures({})
     assert n == 0
@@ -36,12 +36,12 @@ def test_build_direct_lut_empty():
 
 
 def test_build_direct_lut_warns_over_limit():
-    from cellier.v2.render.shaders._label_colormap import (
+    from cellier.render.shaders._label_colormap import (
         _MAX_DIRECT_ENTRIES,
         build_direct_lut_textures,
     )
 
-    oversized = {i: (0.0, 0.0, 0.0, 1.0) for i in range(_MAX_DIRECT_ENTRIES + 1)}
+    oversized = dict.fromkeys(range(_MAX_DIRECT_ENTRIES + 1), (0.0, 0.0, 0.0, 1.0))
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         keys_tex, colors_tex, n = build_direct_lut_textures(oversized)
@@ -50,7 +50,7 @@ def test_build_direct_lut_warns_over_limit():
 
 
 def test_build_label_params_buffer_field_values():
-    from cellier.v2.render.shaders._label_colormap import (
+    from cellier.render.shaders._label_colormap import (
         LABEL_PARAMS_DTYPE,
         build_label_params_buffer,
     )
@@ -63,7 +63,7 @@ def test_build_label_params_buffer_field_values():
 
 
 def test_build_label_params_buffer_dtype():
-    from cellier.v2.render.shaders._label_colormap import (
+    from cellier.render.shaders._label_colormap import (
         LABEL_PARAMS_DTYPE,
         build_label_params_buffer,
     )

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.events._events import (
+from cellier.events._events import (
     CanvasMouseMove2DEvent,
     CanvasMouseMove3DEvent,
     CanvasMousePress2DEvent,

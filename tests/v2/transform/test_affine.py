@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.v2.transform import AffineTransform
+from cellier.transform import AffineTransform
 
 # ---------------------------------------------------------------------------
 # 3D tests (backwards compatibility)
@@ -148,7 +148,7 @@ def test_compose_noncommutative():
 
 def test_to_homogeneous_private():
     # _to_homogeneous is a private module function, not exported.
-    from cellier.v2.transform import __all__
+    from cellier.transform import __all__
 
     assert "_to_homogeneous" not in __all__
 

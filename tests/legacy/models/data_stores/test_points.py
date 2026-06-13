@@ -3,8 +3,8 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.legacy.models.data_stores import PointsMemoryStore
-from cellier.legacy.types import (
+from cellier._legacy.models.data_stores import PointsMemoryStore
+from cellier._legacy.types import (
     AxisAlignedSelectedRegion,
     CoordinateSpace,
     PlaneSelectedRegion,

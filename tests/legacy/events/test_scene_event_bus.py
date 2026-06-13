@@ -1,14 +1,14 @@
 from psygnal import Signal
 
-from cellier.legacy.events import EventBus
-from cellier.legacy.models.scene import (
+from cellier._legacy.events import EventBus
+from cellier._legacy.models.scene import (
     AxisAlignedRegionSelector,
     CoordinateSystem,
     DimsManager,
     DimsState,
     RangeTuple,
 )
-from cellier.legacy.types import CoordinateSpace, DimsControlsUpdateEvent
+from cellier._legacy.types import CoordinateSpace, DimsControlsUpdateEvent
 
 
 class MockDimsGui:

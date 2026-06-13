@@ -6,8 +6,8 @@ There is a 4D volume in a single array source.
 from qtpy import QtWidgets
 from superqt import QLabeledSlider
 
-from cellier.legacy.models.viewer import ViewerModel
-from cellier.legacy.viewer_controller import CellierController
+from cellier._legacy.models.viewer import ViewerModel
+from cellier._legacy.viewer_controller import CellierController
 
 
 class Main(QtWidgets.QWidget):

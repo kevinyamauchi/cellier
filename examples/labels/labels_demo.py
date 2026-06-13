@@ -4,20 +4,20 @@ from qtpy.QtWidgets import QApplication, QHBoxLayout, QPushButton, QWidget
 from skimage.data import binary_blobs
 from skimage.measure import label
 
-from cellier.legacy.app import (
+from cellier._legacy.app import (
     LabelsPaintingManager,
     LabelsPaintingMode,
     QtCanvasWidget,
     QtQuadview,
 )
-from cellier.legacy.convenience import (
+from cellier._legacy.convenience import (
     get_canvas_with_visual_id,
     get_dims_with_canvas_id,
     get_scene_with_dims_id,
 )
-from cellier.legacy.models import ImageMemoryStore
-from cellier.legacy.models.data_manager import DataManager
-from cellier.legacy.models.scene import (
+from cellier._legacy.models import ImageMemoryStore
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.scene import (
     AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
@@ -28,10 +28,10 @@ from cellier.legacy.models.scene import (
     RangeTuple,
     Scene,
 )
-from cellier.legacy.models.viewer import SceneManager, ViewerModel
-from cellier.legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
-from cellier.legacy.types import CoordinateSpace, DataStoreId
-from cellier.legacy.viewer_controller import CellierController
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
+from cellier._legacy.types import CoordinateSpace, DataStoreId
+from cellier._legacy.viewer_controller import CellierController
 
 
 class Main(QWidget):

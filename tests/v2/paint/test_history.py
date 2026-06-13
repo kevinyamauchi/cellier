@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.paint._history import (
+from cellier.paint._history import (
     ActiveStroke,
     CommandHistory,
     PaintStrokeCommand,

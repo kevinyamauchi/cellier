@@ -3,23 +3,23 @@
 import numpy as np
 from qtpy import QtWidgets
 
-from cellier.legacy.models import (
+from cellier._legacy.models import (
     ImageIsoMaterial,
     MultiscaleImageDataStream,
     MultiscaleImageNode,
 )
-from cellier.legacy.models.data_manager import DataManager
-from cellier.legacy.models.data_stores.image import MultiScaleImageZarrStore
-from cellier.legacy.models.scene import (
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores.image import MultiScaleImageZarrStore
+from cellier._legacy.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
     PerspectiveCamera,
     Scene,
 )
-from cellier.legacy.models.viewer import SceneManager, ViewerModel
-from cellier.legacy.slicer import SlicerType
-from cellier.legacy.viewer_controller import CellierController
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.slicer import SlicerType
+from cellier._legacy.viewer_controller import CellierController
 
 n_scales = 5
 

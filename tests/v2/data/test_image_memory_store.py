@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.image._image_requests import ChunkRequest
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.image._image_requests import ChunkRequest
 
 
 def _req(*axis_selections) -> ChunkRequest:

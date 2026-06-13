@@ -128,11 +128,11 @@ ignore = [
 "tests/*.py" = ["D", "S"]
 "scripts/**/*.py" = ["D", "E402", "E501", "E702", "F841", "F821", "TCH", "RUF001", "RUF002", "RUF003", "RUF006", "B007", "C416"]
 # Pydantic v2 models require these imports at runtime for field type resolution
-"src/cellier/v2/scene/*.py" = ["TCH001", "TCH003"]
-"src/cellier/v2/viewer_model.py" = ["TCH001", "TCH003"]
-"src/cellier/v2/visuals/_base_visual.py" = ["TCH001", "TCH003"]
+"src/cellier/scene/*.py" = ["TCH001", "TCH003"]
+"src/cellier/viewer_model.py" = ["TCH001", "TCH003"]
+"src/cellier/visuals/_base_visual.py" = ["TCH001", "TCH003"]
 # docstring-code-format collapses wrapped examples; E501 fires on indent+content
-"src/cellier/v2/gui/**/*.py" = ["E501"]
+"src/cellier/gui/**/*.py" = ["E501"]
 
 # https://docs.astral.sh/ruff/formatter/
 [tool.ruff.format]

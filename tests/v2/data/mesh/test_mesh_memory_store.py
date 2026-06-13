@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.mesh._mesh_requests import MeshSliceRequest
+from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.data.mesh._mesh_requests import MeshSliceRequest
 
 
 def _simple_store() -> MeshMemoryStore:

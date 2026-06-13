@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.data.points._points_requests import PointsSliceRequest
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.data.points._points_requests import PointsSliceRequest
 
 
 def _simple_store() -> PointsMemoryStore:

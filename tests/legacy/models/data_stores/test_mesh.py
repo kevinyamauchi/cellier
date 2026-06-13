@@ -7,7 +7,7 @@ from pydantic_core import from_json
 
 @pytest.mark.xfail(reason="meshes not implemented", raises=ImportError)
 def test_mesh_data_store():
-    from cellier.legacy.models import MeshMemoryStore
+    from cellier._legacy.models import MeshMemoryStore
 
     vertices = np.array(
         [[10, 10, 10], [10, 10, 20], [10, 20, 20], [10, 20, 10]], dtype=np.float32
@@ -22,7 +22,7 @@ def test_mesh_data_store():
 @pytest.mark.xfail(reason="meshes not implemented", raises=ImportError)
 def test_mesh_memory_store_serialization(tmp_path):
     """test serialization and deserialization of MeshMemoryStore."""
-    from cellier.legacy.models import MeshMemoryStore
+    from cellier._legacy.models import MeshMemoryStore
 
     vertices = np.array(
         [[10, 10, 10], [10, 10, 20], [10, 20, 20], [10, 20, 10]], dtype=np.float32

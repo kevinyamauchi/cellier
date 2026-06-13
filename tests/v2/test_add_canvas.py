@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from cellier.v2.controller import CellierController
-from cellier.v2.scene.cameras import OrthographicCamera, PerspectiveCamera
-from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
-from cellier.v2.scene.scene import Scene
+from cellier.controller import CellierController
+from cellier.scene.cameras import OrthographicCamera, PerspectiveCamera
+from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.scene import Scene
 
 
 def _make_scene(

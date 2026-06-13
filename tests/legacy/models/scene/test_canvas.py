@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic_core import from_json
 
-from cellier.legacy.models.scene import (
+from cellier._legacy.models.scene import (
     Canvas,
     OrbitCameraController,
     OrthographicCamera,

@@ -1,8 +1,8 @@
 import numpy as np
 
-from cellier.legacy.models.data_manager import DataManager
-from cellier.legacy.models.data_stores import ImageMemoryStore
-from cellier.legacy.models.scene import (
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores import ImageMemoryStore
+from cellier._legacy.models.scene import (
     AxisAlignedRegionSelector,
     Canvas,
     CoordinateSystem,
@@ -12,11 +12,11 @@ from cellier.legacy.models.scene import (
     RangeTuple,
     Scene,
 )
-from cellier.legacy.models.viewer import SceneManager, ViewerModel
-from cellier.legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
-from cellier.legacy.testing import SlicingValidator
-from cellier.legacy.types import CoordinateSpace
-from cellier.legacy.viewer_controller import CellierController
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models.visuals import LabelsAppearance, MultiscaleLabelsVisual
+from cellier._legacy.testing import SlicingValidator
+from cellier._legacy.types import CoordinateSpace
+from cellier._legacy.viewer_controller import CellierController
 
 
 def test_labels_slicing(qtbot):

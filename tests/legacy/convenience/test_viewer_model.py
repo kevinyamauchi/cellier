@@ -2,7 +2,7 @@
 
 import pytest
 
-from cellier.legacy.convenience import get_dims_with_canvas_id, get_dims_with_visual_id
+from cellier._legacy.convenience import get_dims_with_canvas_id, get_dims_with_visual_id
 
 
 def test_get_get_dims_with_visual_id(viewer_model_2d_points):

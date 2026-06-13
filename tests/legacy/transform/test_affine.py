@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cellier.legacy.transform import AffineTransform
+from cellier._legacy.transform import AffineTransform
 
 
 def test_coordinate_transform_combined_scale_translation():

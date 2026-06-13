@@ -2,13 +2,13 @@
 
 from pydantic_core import from_json
 
-from cellier.legacy.models.scene import (
+from cellier._legacy.models.scene import (
     AxisAlignedRegionSelector,
     CoordinateSystem,
     DimsManager,
     RangeTuple,
 )
-from cellier.legacy.types import CoordinateSpace
+from cellier._legacy.types import CoordinateSpace
 
 
 def test_axis_aligned_region_selector_serialization(tmp_path):

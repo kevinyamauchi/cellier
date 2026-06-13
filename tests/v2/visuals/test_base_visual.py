@@ -6,7 +6,7 @@ import uuid
 
 from pydantic import Field
 
-from cellier.v2.visuals._base_visual import BaseAppearance, BaseVisual
+from cellier.visuals._base_visual import BaseAppearance, BaseVisual
 
 
 class _MinimalVisual(BaseVisual):
@@ -30,7 +30,7 @@ def test_data_store_id_on_base_visual():
 
 
 def test_mesh_visual_inherits_aabb():
-    from cellier.v2.visuals._mesh_memory import MeshFlatAppearance, MeshVisual
+    from cellier.visuals import MeshFlatAppearance, MeshVisual
 
     v = MeshVisual(
         name="mesh",
@@ -42,7 +42,7 @@ def test_mesh_visual_inherits_aabb():
 
 
 def test_points_visual_inherits_aabb():
-    from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+    from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
     v = PointsVisual(
         name="pts",
@@ -54,7 +54,7 @@ def test_points_visual_inherits_aabb():
 
 
 def test_lines_visual_inherits_aabb():
-    from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+    from cellier.visuals import LinesMemoryAppearance, LinesVisual
 
     v = LinesVisual(
         name="lines",

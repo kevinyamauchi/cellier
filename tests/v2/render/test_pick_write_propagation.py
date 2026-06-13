@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.data.label._label_memory_store import LabelMemoryStore
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._channel_appearance import ChannelAppearance
-from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.data.label._label_memory_store import LabelMemoryStore
+from cellier.data.lines._lines_memory_store import LinesMemoryStore
+from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals import MeshFlatAppearance
+from cellier.visuals._channel_appearance import ChannelAppearance
 
 
 def _scene(controller, axis_labels=("z", "y", "x")):

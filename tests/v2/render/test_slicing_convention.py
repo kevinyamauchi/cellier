@@ -10,14 +10,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cellier.v2._state import AxisAlignedSelectionState
-from cellier.v2.render.visuals._image import _build_axis_selections_multiscale
-from cellier.v2.render.visuals._image_memory import _transform_slice_indices
-from cellier.v2.render.visuals._slicing import (
+from cellier._state import AxisAlignedSelectionState
+from cellier.render.visuals._image import _build_axis_selections_multiscale
+from cellier.render.visuals._image_memory import _transform_slice_indices
+from cellier.render.visuals._slicing import (
     map_world_slice_to_voxel,
     round_world_to_voxel,
 )
-from cellier.v2.transform import AffineTransform
+from cellier.transform import AffineTransform
 
 # ── round_world_to_voxel ──────────────────────────────────────────────────
 

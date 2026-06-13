@@ -26,26 +26,26 @@ import tensorstore as ts
 from cmap import Colormap
 from PySide6 import QtCore, QtWidgets
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image import OMEZarrImageDataStore
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.gui._scene import QtCanvasWidget, QtDimsSliders
-from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
-from cellier.v2.scene.scene import Scene
-from cellier.v2.transform import AffineTransform
-from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import (
+from cellier.controller import CellierController
+from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.gui._scene import QtCanvasWidget, QtDimsSliders
+from cellier.scene import Canvas
+from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
+from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.scene import Scene
+from cellier.transform import AffineTransform
+from cellier.viewer_model import DataManager, ViewerModel
+from cellier.visuals import (
+    LinesMemoryAppearance,
+    LinesVisual,
+    MeshFlatAppearance,
+    MeshVisual,
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
-from cellier.v2.visuals._mesh_memory import MeshFlatAppearance, MeshVisual
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 # ---------------------------------------------------------------------------
 # Module-level geometry constants

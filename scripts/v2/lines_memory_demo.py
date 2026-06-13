@@ -21,10 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._lines_memory import LinesMemoryAppearance
+from cellier.controller import CellierController
+from cellier.data import LinesMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals import LinesMemoryAppearance
 
 VOLUME_SIZE = 64
 N_SEGMENTS = 500

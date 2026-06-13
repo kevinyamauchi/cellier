@@ -1,0 +1,150 @@
+"""Generic GPU brick-cache for 3-D volume rendering.
+
+Manages a fixed-size 3-D texture that acts as a flat pool of brick
+slots, and the TileManager that tracks which logical brick occupies
+which physical slot.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from cellier.logging import _GPU_LOGGER
+from cellier.render.block_cache._cache_parameters_3d import (
+    BlockCacheParameters3D,
+    build_cache_texture_3d,
+    commit_block_3d,
+)
+from cellier.render.block_cache._tile_manager_3d import (
+    BlockKey3D,
+    TileManager3D,
+    TileSlot,
+)
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+class BlockCache3D:
+    """Fixed-size GPU slot pool with LRU eviction.
+
+    Parameters
+    ----------
+    cache_parameters : CacheInfo
+        Cache sizing metadata produced by ``compute_cache_info()``.
+    dtype : np.dtype or None
+        Data type for the cache texture. Defaults to float32.
+        Pass ``np.int32`` for label caches.
+
+    Attributes
+    ----------
+    info : CacheInfo
+        Cache sizing metadata (grid dims, slot count, padded brick size).
+    tile_manager : TileManager3D
+        Brick-to-slot mapping with LRU eviction.
+    cache_data : np.ndarray
+        CPU-side backing array, shape ``(cD, cH, cW)``.
+    cache_tex : gfx.Texture
+        GPU 3-D texture wrapping ``cache_data``.
+    """
+
+    def __init__(self, cache_parameters: BlockCacheParameters3D, dtype=None) -> None:
+        self.info = cache_parameters
+        self.tile_manager = TileManager3D(cache_parameters)
+        self.cache_data, self.cache_tex = build_cache_texture_3d(
+            cache_parameters, dtype=dtype
+        )
+
+    def stage(
+        self,
+        required_bricks: dict[BlockKey3D, int],
+        frame_number: int,
+    ) -> list[tuple[BlockKey3D, TileSlot]]:
+        """Classify required bricks as hits or misses; return fill_plan.
+
+        Cache hits have their LRU timestamp refreshed.  Cache misses are
+        allocated a slot — evicting the least-recently-used occupant if
+        the cache is full — and returned as a fill_plan for the caller
+        to load asynchronously.
+
+        Parameters
+        ----------
+        required_bricks : dict[BrickKey, int]
+            Mapping from brick key to desired LOAD level.  Only the keys
+            are used here; the level is already encoded in ``BrickKey``.
+        frame_number : int
+            Monotonically increasing counter used for LRU timestamps.
+
+        Returns
+        -------
+        fill_plan : list[tuple[BrickKey, TileSlot]]
+            Bricks that need data uploaded, paired with their target slot.
+            Empty when every required brick was already resident.
+        """
+        return self.tile_manager.stage(required_bricks, frame_number)
+
+    def write_brick(
+        self,
+        slot: TileSlot,
+        data: np.ndarray,
+        key: BlockKey3D | None = None,
+        background_label: int = 0,
+    ) -> bool:
+        """Write a padded brick into the CPU array and mark dirty for GPU upload.
+
+        The actual GPU transfer is deferred until the next
+        ``renderer.render()`` call (uses pygfx ``update_range``).
+
+        Parameters
+        ----------
+        slot : TileSlot
+            Target slot — ``grid_pos`` determines the write offset.
+        data : np.ndarray
+            Array of shape ``(pbs, pbs, pbs)`` where
+            ``pbs = block_size + 2 * overlap``.
+        key : BlockKey3D or None
+            Brick identity for logging.
+        background_label : int
+            For integer (label) caches: value treated as background.
+            Returns True if the brick contains any non-background value.
+            Ignored for float caches (always returns False).
+
+        Returns
+        -------
+        bool
+            True if brick contains any non-background value (useful for
+            label caches to set ``slot.brick_max``).  For float caches
+            this is always False.
+        """
+        import numpy as np
+
+        commit_block_3d(
+            cache_data=self.cache_data,
+            cache_tex=self.cache_tex,
+            grid_pos=slot.grid_pos,
+            padded_block_size=self.info.padded_block_size,
+            data=data,
+        )
+        _GPU_LOGGER.debug(
+            "brick_written  key=%s  slot=%d  grid_pos=%s",
+            key,
+            slot.index,
+            slot.grid_pos,
+        )
+        if np.issubdtype(self.cache_data.dtype, np.integer):
+            return bool(np.any(data != background_label))
+        return False
+
+    @property
+    def n_resident(self) -> int:
+        """Number of hot (rendered) bricks in the cache."""
+        return len(self.tile_manager.tilemap)
+
+    @property
+    def n_reserve(self) -> int:
+        """Number of warm (GPU-present, not rendered) bricks in reserve."""
+        return len(self.tile_manager._reserve)
+
+    def clear(self) -> None:
+        """Evict all resident bricks and reset the cache to empty."""
+        self.tile_manager.clear()

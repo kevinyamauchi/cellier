@@ -21,10 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.points._points_memory_store import PointsMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._points_memory import PointsMarkerAppearance
+from cellier.controller import CellierController
+from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._points_memory import PointsMarkerAppearance
 
 VOLUME_SIZE = 64
 N_POINTS = 2000

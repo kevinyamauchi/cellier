@@ -5,15 +5,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cellier.v2._state import AxisAlignedSelectionState, DimsState
-from cellier.v2.controller import CellierController
-from cellier.v2.data.image._image_memory_store import ImageMemoryStore
-from cellier.v2.render.visuals._image_memory_multichannel import (
+from cellier._state import AxisAlignedSelectionState, DimsState
+from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.render.visuals._image_memory_multichannel import (
     GFXMultichannelImageMemoryVisual,
 )
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._channel_appearance import ChannelAppearance
-from cellier.v2.visuals._image_memory import MultichannelImageVisual
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals._channel_appearance import ChannelAppearance
+from cellier.visuals._image_memory import MultichannelImageVisual
 
 # ---------------------------------------------------------------------------
 # Helpers

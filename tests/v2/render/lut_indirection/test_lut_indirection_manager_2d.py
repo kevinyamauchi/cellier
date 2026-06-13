@@ -3,12 +3,12 @@ and viewport clipping of stale (old-slice) background tiles."""
 
 import numpy as np
 
-from cellier.v2.render.block_cache._cache_parameters_2d import (
+from cellier.render.block_cache._cache_parameters_2d import (
     compute_block_cache_parameters_2d,
 )
-from cellier.v2.render.block_cache._tile_manager_2d import BlockKey2D, TileManager2D
-from cellier.v2.render.lut_indirection._layout_2d import BlockLayout2D
-from cellier.v2.render.lut_indirection._lut_indirection_manager_2d import (
+from cellier.render.block_cache._tile_manager_2d import BlockKey2D, TileManager2D
+from cellier.render.lut_indirection._layout_2d import BlockLayout2D
+from cellier.render.lut_indirection._lut_indirection_manager_2d import (
     LutIndirectionManager2D,
 )
 

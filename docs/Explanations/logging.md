@@ -68,7 +68,7 @@ hits=…  misses=…  evictions=…` line and a plain `evict` (no `evict_hot`).
 ### Enable all categories at DEBUG (full output)
 
 ```python
-from cellier.v2.logging import enable_debug_logging
+from cellier.logging import enable_debug_logging
 
 enable_debug_logging()
 ```
@@ -87,7 +87,7 @@ per-batch summaries:
 
 ```python
 import logging
-from cellier.v2.logging import enable_debug_logging
+from cellier.logging import enable_debug_logging
 
 enable_debug_logging(level=logging.INFO)
 ```
@@ -102,7 +102,7 @@ the handler will filter the finer records out.
 
 ```python
 import logging
-from cellier.v2.logging import enable_debug_logging
+from cellier.logging import enable_debug_logging
 
 # Full detail for cache (installs the handler at DEBUG), summaries for perf.
 enable_debug_logging(categories=("cache",), level=logging.DEBUG)
@@ -112,7 +112,7 @@ enable_debug_logging(categories=("perf",), level=logging.INFO)
 ### Disable logging
 
 ```python
-from cellier.v2.logging import disable_debug_logging
+from cellier.logging import disable_debug_logging
 
 disable_debug_logging()
 ```
@@ -154,7 +154,7 @@ See [debugging_events](../How_To/debug_events.md) for a full walkthrough.
 Enable it with:
 
 ```python
-from cellier.v2.logging import enable_debug_logging
+from cellier.logging import enable_debug_logging
 
 enable_debug_logging(categories=("source_id",))
 ```

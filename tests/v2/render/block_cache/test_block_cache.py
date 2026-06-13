@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cellier.v2.render.block_cache import (
+from cellier.render.block_cache import (
     BlockCache3D,
     BlockKey3D,
     compute_block_cache_parameters_3d,

@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._labels import (
+from cellier.transform import AffineTransform
+from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,

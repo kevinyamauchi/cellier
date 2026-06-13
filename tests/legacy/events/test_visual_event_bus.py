@@ -2,8 +2,8 @@
 
 from psygnal import Signal
 
-from cellier.legacy.events import EventBus
-from cellier.legacy.models.visuals import PointsUniformAppearance, PointsVisual
+from cellier._legacy.events import EventBus
+from cellier._legacy.models.visuals import PointsUniformAppearance, PointsVisual
 
 
 class MockVisualGui:

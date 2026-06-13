@@ -2,17 +2,21 @@
 
 import numpy as np
 
-from cellier.legacy.models import MeshNode, MeshPhongMaterial, MeshSynchronousDataStream
-from cellier.legacy.models.data_manager import DataManager
-from cellier.legacy.models.data_stores import MeshMemoryStore
-from cellier.legacy.models.scene import (
+from cellier._legacy.models import (
+    MeshNode,
+    MeshPhongMaterial,
+    MeshSynchronousDataStream,
+)
+from cellier._legacy.models.data_manager import DataManager
+from cellier._legacy.models.data_stores import MeshMemoryStore
+from cellier._legacy.models.scene import (
     Canvas,
     CoordinateSystem,
     DimsManager,
     PerspectiveCamera,
 )
-from cellier.legacy.models.scene.scene import Scene
-from cellier.legacy.models.viewer import SceneManager, ViewerModel
+from cellier._legacy.models.scene.scene import Scene
+from cellier._legacy.models.viewer import SceneManager, ViewerModel
 
 # the mesh data_stores
 vertices = np.array([[10, 10, 10], [10, 10, 20], [10, 20, 20]], dtype=np.float32)

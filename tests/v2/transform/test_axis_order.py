@@ -1,12 +1,12 @@
-"""Tests for the axis-order primitives in cellier.v2.transform._axis_order."""
+"""Tests for the axis-order primitives in cellier.transform._axis_order."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from cellier.v2.transform import AffineTransform
-from cellier.v2.transform._axis_order import select_axes, swap_axes
+from cellier.transform import AffineTransform
+from cellier.transform._axis_order import select_axes, swap_axes
 
 # ---------------------------------------------------------------------------
 # select_axes (sequence)

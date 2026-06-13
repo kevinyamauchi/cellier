@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cellier.v2.visuals._label_memory import InMemoryLabelsAppearance, LabelMemoryVisual
+from cellier.visuals import InMemoryLabelsAppearance, LabelMemoryVisual
 
 # ── InMemoryLabelsAppearance ────────────────────────────────────────────────────
 

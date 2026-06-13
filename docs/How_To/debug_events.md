@@ -55,7 +55,7 @@ The primary inspection tool. Returns a list of `SubscriberInfo` objects
 describing every callback registered for a given event type.
 
 ```python
-from cellier.v2.events import DimsChangedEvent, AppearanceChangedEvent
+from cellier.events import DimsChangedEvent, AppearanceChangedEvent
 
 subscribers = controller._outgoing_events.get_subscribers(DimsChangedEvent)
 for info in subscribers:
@@ -138,7 +138,7 @@ Enable it to see who triggered each model mutation, which bridge handler
 resolved the `ContextVar`, and whether it fell back to the controller's own ID.
 
 ```python
-from cellier.v2.logging import enable_debug_logging
+from cellier.logging import enable_debug_logging
 
 enable_debug_logging(categories=("source_id",))
 ```

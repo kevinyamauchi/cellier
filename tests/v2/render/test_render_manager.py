@@ -12,12 +12,11 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 
-from cellier.v2._state import AxisAlignedSelectionState
-from cellier.v2.data.image import ChunkRequest
-from cellier.v2.render._requests import DimsState, ReslicingRequest
-from cellier.v2.render._scene_config import VisualRenderConfig
-from cellier.v2.render.scene_manager import SceneManager
-from cellier.v2.render.slice_coordinator import SliceCoordinator
+from cellier._state import AxisAlignedSelectionState
+from cellier.data.image import ChunkRequest
+from cellier.render import SliceCoordinator, VisualRenderConfig
+from cellier.render._requests import DimsState, ReslicingRequest
+from cellier.render.scene_manager import SceneManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -370,7 +369,7 @@ def test_slice_coordinator_cancel_scene_cancels_all() -> None:
 
 def test_reslice_visual_uses_reverse_map() -> None:
     """reslice_visual must look up the scene via _visual_to_scene."""
-    from cellier.v2.render.render_manager import RenderManager
+    from cellier.render import RenderManager
 
     rm = RenderManager()
     scene_id = uuid4()
@@ -404,7 +403,7 @@ def test_reslice_visual_uses_reverse_map() -> None:
 
 def test_reslice_visual_only_targets_one_visual() -> None:
     """target_visual_ids in the generated request must contain only visual_id."""
-    from cellier.v2.render.render_manager import RenderManager
+    from cellier.render import RenderManager
 
     rm = RenderManager()
     scene_id = uuid4()

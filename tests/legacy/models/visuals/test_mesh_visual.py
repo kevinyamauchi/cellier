@@ -10,8 +10,8 @@ from pydantic_core import from_json
 @pytest.mark.xfail(reason="MeshVisual is not implemented yet", raises=ImportError)
 def test_mesh_visual(tmp_path):
     """Test serialization/deserialization of the Mesh Visual model."""
-    from cellier.legacy.models import MeshMemoryStore
-    from cellier.legacy.models.visuals import MeshPhongMaterial, MeshVisual
+    from cellier._legacy.models import MeshMemoryStore
+    from cellier._legacy.models.visuals import MeshPhongMaterial, MeshVisual
 
     vertices = np.array(
         [[10, 10, 10], [10, 10, 20], [10, 20, 20], [10, 20, 10]], dtype=np.float32

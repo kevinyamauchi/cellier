@@ -260,7 +260,7 @@ class _MultiVisualClimSlider:
         from qtpy.QtCore import Qt
         from superqt import QLabeledDoubleRangeSlider
 
-        from cellier.v2.events import AppearanceUpdateEvent
+        from cellier.events import AppearanceUpdateEvent
 
         self._id = uuid4()
         self._visual_ids = visual_ids
@@ -308,7 +308,7 @@ class _MultiVisualColormapCombo:
     ) -> None:
         from superqt import QColormapComboBox
 
-        from cellier.v2.events import AppearanceUpdateEvent
+        from cellier.events import AppearanceUpdateEvent
 
         self._id = uuid4()
         self._visual_ids = visual_ids
@@ -364,9 +364,9 @@ class OmeZarrOrthoViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.v2.gui.visuals._colormap import QtColormapComboBox
-        from cellier.v2.gui.visuals._contrast_limits import QtClimRangeSlider
-        from cellier.v2.gui.visuals._image import QtVolumeRenderControls
+        from cellier.gui.visuals import QtClimRangeSlider
+        from cellier.gui.visuals._colormap import QtColormapComboBox
+        from cellier.gui.visuals._image import QtVolumeRenderControls
 
         self._controller = controller
         self._scenes = scenes
@@ -509,7 +509,7 @@ class OmeZarrOrthoViewer:
         if orient_3d_visual_ids:
             from PySide6.QtWidgets import QCheckBox
 
-            from cellier.v2.events import (
+            from cellier.events import (
                 AppearanceUpdateEvent as _AppearanceUpdateEvent,
             )
 
@@ -858,9 +858,9 @@ def _make_axis_meshes(
         ``(xy_axis_visual, xz_axis_visual, yz_axis_visual)`` — the three
         mesh visuals, one per 2D view.
     """
-    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-    from cellier.v2.transform import AffineTransform
-    from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+    from cellier.data import MeshMemoryStore
+    from cellier.transform import AffineTransform
+    from cellier.visuals import MeshFlatAppearance
 
     # Axis RGB colors match the plane-mesh and slider color convention.
     color_z = _PLANE_COLOR_XY  # blue  — data axis 0
@@ -1041,8 +1041,8 @@ def _make_plane_mesh(
     tuple[MeshMemoryStore, MeshVisual]
         The live store and model objects.
     """
-    from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-    from cellier.v2.visuals._mesh_memory import MeshFlatAppearance
+    from cellier.data import MeshMemoryStore
+    from cellier.visuals import MeshFlatAppearance
 
     positions = _make_plane_positions(z_world, y_world, x_world, world_max_zyx)
     colors = _make_plane_colors(initial_opacity)
@@ -1214,7 +1214,7 @@ class _OrientationUpdater:
         self._x_world = float(mid[2])
 
     def _update_3d(self) -> None:
-        from cellier.v2.transform import AffineTransform
+        from cellier.transform import AffineTransform
 
         labels = ("xy", "xz", "yz")
         for label, visual_id, centre_zyx in zip(
@@ -1344,17 +1344,17 @@ def _build_viewer_model(
     visuals : dict
         Mapping ``{"xy", "xz", "yz", "vol"}`` → MultiscaleImageVisual.
     """
-    from cellier.v2.scene.cameras import (
+    from cellier.scene import Canvas
+    from cellier.scene.cameras import (
         OrbitCameraController,
         OrthographicCamera,
         PanZoomCameraController,
         PerspectiveCamera,
     )
-    from cellier.v2.scene.canvas import Canvas
-    from cellier.v2.scene.dims import AxisAlignedSelection, DimsManager
-    from cellier.v2.scene.scene import Scene
-    from cellier.v2.viewer_model import DataManager, ViewerModel
-    from cellier.v2.visuals._image import (
+    from cellier.scene.dims import AxisAlignedSelection, DimsManager
+    from cellier.scene.scene import Scene
+    from cellier.viewer_model import DataManager, ViewerModel
+    from cellier.visuals import (
         MultiscaleImageAppearance,
         MultiscaleImageRenderConfig,
         MultiscaleImageVisual,
@@ -1537,17 +1537,17 @@ def _build_viewer_model(
 async def async_main(zarr_uri: str) -> None:
     from PySide6 import QtWidgets
 
-    from cellier.v2.controller import CellierController
-    from cellier.v2.data.image import OMEZarrImageDataStore
-    from cellier.v2.gui._scene import QtCanvasWidget, QtDimsSliders
-    from cellier.v2.render._config import (
+    from cellier.controller import CellierController
+    from cellier.data import OMEZarrImageDataStore
+    from cellier.gui._scene import QtCanvasWidget, QtDimsSliders
+    from cellier.render._config import (
         RenderManagerConfig,
         SlicingConfig,
         TemporalAccumulationConfig,
     )
-    from cellier.v2.scene.dims import CoordinateSystem
-    from cellier.v2.transform import AffineTransform
-    from cellier.v2.visuals._canvas_overlay import (
+    from cellier.scene.dims import CoordinateSystem
+    from cellier.transform import AffineTransform
+    from cellier.visuals import (
         CenteredAxes2D,
         CenteredAxes2DAppearance,
     )
@@ -1831,7 +1831,7 @@ async def async_main(zarr_uri: str) -> None:
 
     # Seed 3D orientation with post-fit camera state.
     def _seed_camera_event(scene_id):
-        from cellier.v2.events._events import CameraChangedEvent
+        from cellier.events._events import CameraChangedEvent
 
         canvas_id = controller.get_canvas_ids(scene_id)[0]
         return CameraChangedEvent(
@@ -1903,7 +1903,7 @@ if __name__ == "__main__":
     import PySide6.QtAsyncio as QtAsyncio
     from PySide6.QtWidgets import QApplication
 
-    from cellier.v2.logging import enable_debug_logging
+    from cellier.logging import enable_debug_logging
 
     enable_debug_logging(categories=("perf",), level=logging.WARN)
 

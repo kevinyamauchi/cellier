@@ -31,10 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cellier.v2.controller import CellierController
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.transform import AffineTransform
-from cellier.v2.visuals._labels import (
+from cellier.controller import CellierController
+from cellier.scene.dims import CoordinateSystem
+from cellier.transform import AffineTransform
+from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
 )
@@ -154,7 +154,7 @@ def make_example_dataset(output_path: str) -> str:
 def _extract_level0_scale_from_label_group(label_uri: str) -> tuple[float, ...]:
     """Return absolute level-0 voxel scale from a label-group OME metadata block.
 
-    Supports both ``ome.multiscales`` and legacy top-level ``multiscales``.
+    Supports both ``ome.multiscales`` and _legacy top-level ``multiscales``.
     Applies global + dataset-level scale terms, matching datastore parsing.
     """
     import yaozarrs
@@ -203,7 +203,7 @@ def main(label_uri: str):
     app = QApplication.instance() or QApplication(sys.argv)
 
     # ── Data store ────────────────────────────────────────────────────────
-    from cellier.v2.data.label._ome_zarr_label_store import OMEZarrLabelDataStore
+    from cellier.data import OMEZarrLabelDataStore
 
     data_store = OMEZarrLabelDataStore.from_path(label_uri)
     ndim = len(data_store.level_shapes[0])

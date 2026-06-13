@@ -26,10 +26,10 @@ from PySide6.QtWidgets import (
 )
 from skimage.measure import marching_cubes
 
-from cellier.v2.controller import CellierController
-from cellier.v2.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.v2.scene.dims import CoordinateSystem
-from cellier.v2.visuals._mesh_memory import MeshPhongAppearance
+from cellier.controller import CellierController
+from cellier.data import MeshMemoryStore
+from cellier.scene.dims import CoordinateSystem
+from cellier.visuals import MeshPhongAppearance
 
 RNG = np.random.default_rng(0)
 

@@ -1,13 +1,13 @@
 """Tests for ViewerModel."""
 
-from cellier.v2.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-from cellier.v2.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.v2.scene.canvas import Canvas
-from cellier.v2.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
-from cellier.v2.scene.scene import Scene
-from cellier.v2.transform import AffineTransform
-from cellier.v2.viewer_model import DataManager, ViewerModel
-from cellier.v2.visuals._image import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.scene import Canvas
+from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
+from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.scene import Scene
+from cellier.transform import AffineTransform
+from cellier.viewer_model import DataManager, ViewerModel
+from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
 
 
 def _build_viewer(small_zarr_store):
