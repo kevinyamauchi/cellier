@@ -51,6 +51,12 @@ class InMemoryImageAppearanceKwargs(BaseImageAppearanceKwargs, total=False):
         Contrast limits ``(min, max)``. Default ``(0.0, 1.0)``.
     interpolation : "linear" or "nearest"
         Texture sampler filter. Default ``"nearest"``.
+    render_mode : "mip", "iso", or "minip"
+        Volume rendering mode for the 3D view. Default ``"mip"``.
+        Ignored by the 2D view.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode == "iso"``.
+        Default ``0.5``.
     visible : bool
         Default ``True``.
     opacity : float
@@ -66,6 +72,9 @@ class InMemoryImageAppearanceKwargs(BaseImageAppearanceKwargs, total=False):
     transparency_mode : str
         Default ``"blend"``.
     """
+
+    render_mode: Literal["mip", "iso", "minip"]
+    iso_threshold: float
 
 
 class MultiscaleImageAppearanceKwargs(BaseImageAppearanceKwargs, total=False):
@@ -397,6 +406,9 @@ class ChannelAppearanceKwargs(BaseAppearanceKwargs, total=False):
         Contrast limits ``(min, max)``. Default ``(0.0, 1.0)``.
     render_mode_3d : "mip" or "iso"
         Volume render mode for 3D. Default ``"mip"``.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode_3d == "iso"``.
+        Default ``0.5``.
     transparency_mode : str
         Default ``"add"`` (overrides ``BaseAppearance`` default of
         ``"blend"``).
@@ -417,6 +429,7 @@ class ChannelAppearanceKwargs(BaseAppearanceKwargs, total=False):
     color_map: Colormap | str
     clim: tuple[float, float]
     render_mode_3d: Literal["mip", "iso"]
+    iso_threshold: float
     transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"]
 
 

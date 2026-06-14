@@ -10,11 +10,14 @@ import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from cellier.convenience._ortho_viewer import OrthoViewer
     from cellier.convenience._viewer import Viewer
+
+    ViewerLike = Viewer | OrthoViewer
 
 
 def launch(
-    viewer: Viewer,
+    viewer: ViewerLike,
     window: object,
     *,
     handle_sigint: bool = True,
@@ -57,7 +60,7 @@ def launch(
     QtAsyncio.run(handle_sigint=handle_sigint)
 
 
-def show(viewer: Viewer, window: object) -> None:
+def show(viewer: ViewerLike, window: object) -> None:
     """Show *window* without blocking.
 
     Requires a Qt event loop that is already running (e.g. inside IPython /
@@ -89,7 +92,15 @@ def show(viewer: Viewer, window: object) -> None:
     _init_view(viewer)
 
 
-def _init_view(viewer: Viewer) -> None:
-    """Fit the camera to the scene and trigger the initial reslice."""
-    viewer.controller.fit_camera(viewer.scene.id)
-    viewer.controller.reslice_scene(viewer.scene.id)
+def _init_view(viewer: ViewerLike) -> None:
+    """Fit the camera and trigger the initial reslice for every scene.
+
+    Supports both the single-scene :class:`Viewer` (which exposes ``scene``)
+    and the multi-panel :class:`OrthoViewer` (which exposes ``scenes``).
+    """
+    controller = viewer.controller
+    scenes = getattr(viewer, "scenes", None)
+    scene_objects = scenes.values() if scenes is not None else [viewer.scene]
+    for scene in scene_objects:
+        controller.fit_camera(scene.id)
+        controller.reslice_scene(scene.id)

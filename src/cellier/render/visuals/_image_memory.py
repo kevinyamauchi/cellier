@@ -35,6 +35,48 @@ def _make_colormap(color_map) -> gfx.TextureMap:
     return color_map.to_pygfx(N=256)
 
 
+# Map InMemoryImageAppearance.render_mode -> pygfx volume material class.
+_VOLUME_MATERIALS: dict[str, type] = {
+    "mip": gfx.VolumeMipMaterial,
+    "iso": gfx.VolumeIsoMaterial,
+    "minip": gfx.VolumeMinipMaterial,
+}
+
+
+def _make_volume_material(appearance, colormap, pick_write: bool):
+    """Build the pygfx volume material for an ``InMemoryImageAppearance``.
+
+    Selects the material class from ``appearance.render_mode`` and applies the
+    shared appearance settings.  The ISO material additionally receives
+    ``iso_threshold``.
+
+    Parameters
+    ----------
+    appearance : InMemoryImageAppearance
+        The appearance providing ``render_mode``, ``clim``, ``interpolation``,
+        and ``iso_threshold``.
+    colormap : gfx.TextureMap
+        Pre-built colormap texture.
+    pick_write : bool
+        Whether the material writes to the pick buffer.
+
+    Returns
+    -------
+    gfx.VolumeRayMaterial
+        A configured pygfx volume material.
+    """
+    material_cls = _VOLUME_MATERIALS[appearance.render_mode]
+    material = material_cls(
+        clim=appearance.clim,
+        map=colormap,
+        interpolation=appearance.interpolation,
+        pick_write=pick_write,
+    )
+    if appearance.render_mode == "iso":
+        material.threshold = appearance.iso_threshold
+    return material
+
+
 def _pin_bounding_box(node, box_min: list[float], box_max: list[float]) -> None:
     """Override *node*'s ``get_bounding_box`` to report a fixed local box.
 
@@ -300,6 +342,13 @@ class GFXImageMemoryVisual:
         appearance = visual_model.appearance
         colormap = _make_colormap(appearance.color_map)
 
+        # Cached state needed to rebuild the 3D volume material when the
+        # render_mode changes (pygfx materials are not switchable in place).
+        self._colormap = colormap
+        self._pick_write: bool = visual_model.pick_write
+        self._render_mode: str = appearance.render_mode
+        self._iso_threshold: float = appearance.iso_threshold
+
         self.node_2d: gfx.Group | None = None
         self._inner_node_2d: gfx.Image | None = None
         self._aabb_line_2d: gfx.Line | None = None
@@ -345,12 +394,7 @@ class GFXImageMemoryVisual:
             tex = gfx.Texture(placeholder, dim=3, format="1xf4")
             self._inner_node_3d = gfx.Volume(
                 gfx.Geometry(grid=tex),
-                gfx.VolumeMipMaterial(
-                    clim=appearance.clim,
-                    map=colormap,
-                    interpolation=appearance.interpolation,
-                    pick_write=visual_model.pick_write,
-                ),
+                _make_volume_material(appearance, colormap, visual_model.pick_write),
             )
             _pin_bounding_box(
                 self._inner_node_3d,
@@ -736,17 +780,57 @@ class GFXImageMemoryVisual:
     # Appearance and visibility event handlers
     # ------------------------------------------------------------------
 
+    def _rebuild_volume_material(self) -> None:
+        """Swap the 3D volume material to match the current ``render_mode``.
+
+        pygfx volume materials cannot change their ray-cast mode in place, so a
+        ``render_mode`` change requires constructing a fresh material. The
+        current material's dynamic settings (clim, interpolation, opacity,
+        depth, alpha) are carried over so only the rendering mode changes.
+        """
+        if self._inner_node_3d is None:
+            return
+        old = self._inner_node_3d.material
+        material_cls = _VOLUME_MATERIALS[self._render_mode]
+        material = material_cls(
+            clim=old.clim,
+            map=self._colormap,
+            interpolation=old.interpolation,
+            pick_write=self._pick_write,
+        )
+        material.opacity = old.opacity
+        material.depth_test = old.depth_test
+        material.depth_write = old.depth_write
+        material.depth_compare = old.depth_compare
+        material.alpha_mode = old.alpha_mode
+        if self._render_mode == "iso":
+            material.threshold = self._iso_threshold
+        self._inner_node_3d.material = material
+
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         """Apply a pure GPU-side appearance update (no reslice needed).
 
-        Handles ``clim``, ``color_map``, and ``interpolation``.
-        Unrecognised field names are silently ignored.
+        Handles ``clim``, ``color_map``, ``interpolation``, and -- for the 3D
+        view -- ``render_mode`` and ``iso_threshold``. Unrecognised field
+        names are silently ignored.
 
         Parameters
         ----------
         event : AppearanceChangedEvent
             Carries ``field_name`` and ``new_value``.
         """
+        # render_mode swaps the whole 3D material (pygfx materials cannot be
+        # switched in place); handle it separately, before the per-node loop.
+        if event.field_name == "render_mode":
+            self._render_mode = event.new_value
+            self._rebuild_volume_material()
+            return
+        if event.field_name == "iso_threshold":
+            self._iso_threshold = event.new_value
+            if self._inner_node_3d is not None and self._render_mode == "iso":
+                self._inner_node_3d.material.threshold = event.new_value
+            return
+
         for inner in (self._inner_node_2d, self._inner_node_3d):
             if inner is None:
                 continue
@@ -754,7 +838,8 @@ class GFXImageMemoryVisual:
             if event.field_name == "clim":
                 material.clim = event.new_value
             elif event.field_name == "color_map":
-                material.map = _make_colormap(event.new_value)
+                self._colormap = _make_colormap(event.new_value)
+                material.map = self._colormap
             elif event.field_name == "interpolation":
                 material.interpolation = event.new_value
             elif event.field_name == "opacity":
@@ -796,6 +881,7 @@ class GFXImageMemoryVisual:
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all inner node materials."""
+        self._pick_write = event.pick_write
         for inner in (self._inner_node_2d, self._inner_node_3d):
             if inner is not None:
                 inner.material.pick_write = event.pick_write

@@ -487,6 +487,121 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)
 
 
+# ---------------------------------------------------------------------------
+# Tests: 3D render_mode / iso_threshold (real pygfx, no mock)
+# ---------------------------------------------------------------------------
+
+
+def _make_iso_model(store, render_mode="iso", iso_threshold=0.5):
+    return ImageVisual(
+        name="test",
+        data_store_id=str(store.id),
+        appearance=InMemoryImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            render_mode=render_mode,
+            iso_threshold=iso_threshold,
+        ),
+    )
+
+
+def test_appearance_render_mode_defaults():
+    """Default render_mode is mip; iso_threshold defaults to 0.5."""
+    appearance = InMemoryImageAppearance(color_map="viridis")
+    assert appearance.render_mode == "mip"
+    assert appearance.iso_threshold == 0.5
+
+
+def test_3d_material_default_is_mip():
+    import pygfx as gfx
+
+    from cellier.render.visuals import GFXImageMemoryVisual
+
+    store = _make_store(shape=(4, 5, 6))
+    model = _make_visual_model(store)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+
+    assert isinstance(visual._inner_node_3d.material, gfx.VolumeMipMaterial)
+
+
+def test_3d_material_iso_applies_threshold():
+    import pygfx as gfx
+
+    from cellier.render.visuals import GFXImageMemoryVisual
+
+    store = _make_store(shape=(4, 5, 6))
+    model = _make_iso_model(store, render_mode="iso", iso_threshold=0.3)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+
+    material = visual._inner_node_3d.material
+    assert isinstance(material, gfx.VolumeIsoMaterial)
+    assert material.threshold == 0.3
+
+
+def test_3d_material_minip():
+    import pygfx as gfx
+
+    from cellier.render.visuals import GFXImageMemoryVisual
+
+    store = _make_store(shape=(4, 5, 6))
+    model = _make_iso_model(store, render_mode="minip")
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+
+    assert isinstance(visual._inner_node_3d.material, gfx.VolumeMinipMaterial)
+
+
+def test_on_appearance_changed_render_mode_swaps_material():
+    """Changing render_mode swaps the 3D material and preserves settings."""
+    import pygfx as gfx
+
+    from cellier.events._events import AppearanceChangedEvent
+    from cellier.render.visuals import GFXImageMemoryVisual
+
+    store = _make_store(shape=(4, 5, 6))
+    model = _make_visual_model(store)  # defaults to mip
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+    visual._inner_node_3d.material.opacity = 0.5
+
+    assert isinstance(visual._inner_node_3d.material, gfx.VolumeMipMaterial)
+
+    visual.on_appearance_changed(
+        AppearanceChangedEvent(
+            source_id=uuid4(),
+            visual_id=model.id,
+            field_name="render_mode",
+            new_value="iso",
+            requires_reslice=False,
+        )
+    )
+
+    new_material = visual._inner_node_3d.material
+    assert isinstance(new_material, gfx.VolumeIsoMaterial)
+    # Dynamic settings carried over from the previous material.
+    assert new_material.opacity == 0.5
+    assert tuple(new_material.clim) == (0.0, 1.0)
+
+
+def test_on_appearance_changed_iso_threshold_updates_material():
+    from cellier.events._events import AppearanceChangedEvent
+    from cellier.render.visuals import GFXImageMemoryVisual
+
+    store = _make_store(shape=(4, 5, 6))
+    model = _make_iso_model(store, render_mode="iso", iso_threshold=0.5)
+    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+
+    visual.on_appearance_changed(
+        AppearanceChangedEvent(
+            source_id=uuid4(),
+            visual_id=model.id,
+            field_name="iso_threshold",
+            new_value=0.8,
+            requires_reslice=False,
+        )
+    )
+
+    assert visual._inner_node_3d.material.threshold == 0.8
+
+
 @patch("cellier.render.visuals._image_memory.gfx")
 def test_identity_transform_is_noop_3d(mock_gfx):
     """Identity transform should produce the same result as no transform."""
