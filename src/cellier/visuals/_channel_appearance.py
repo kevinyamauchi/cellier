@@ -19,6 +19,9 @@ class ChannelAppearance(BaseAppearance):
         Per-channel opacity in [0, 1].
     render_mode_3d : str
         Volume render mode for 3D: ``"mip"`` (default) or ``"iso"``.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode_3d == "iso"``.
+        Default ``0.5``.
     visible : bool
         Inherited from ``BaseAppearance``. Default ``True``.
     """
@@ -26,6 +29,7 @@ class ChannelAppearance(BaseAppearance):
     color_map: Colormap
     clim: tuple[float, float] = (0.0, 1.0)
     render_mode_3d: Literal["mip", "iso"] = "mip"
+    iso_threshold: float = 0.5
     transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"] = (
         "add"
     )

@@ -150,6 +150,9 @@ class CellierController:
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
         self._render_manager = RenderManager(config=render_config)
+        # Keep model.render_config pointing at the same object so runtime
+        # mutations (e.g. camera_settle_threshold_s) are captured on serialize.
+        self._model.render_config = self._render_manager._config
         # Reverse map: visual_model_id → scene_id (model layer mirror of render layer)
         self._visual_to_scene: dict[UUID, UUID] = {}
         # Reverse map: canvas_id → scene_id
@@ -277,7 +280,9 @@ class CellierController:
         """
         controller = cls(
             widget_parent=widget_parent,
-            render_config=render_config,
+            render_config=render_config
+            if render_config is not None
+            else model.render_config,
         )
 
         # 1. Register all data stores.
@@ -1507,6 +1512,25 @@ class CellierController:
 
         canvas_view.set_event_bus(self._outgoing_events)
 
+        # Fix the reserve (non-active) camera's depth range.  CanvasView builds
+        # both the 2D and 3D cameras up front but applies only the active
+        # camera's range to both; the reserve camera (e.g. the 3D perspective
+        # camera when starting in 2D) is then left with the active camera's
+        # range, which may have an invalid near plane and render nothing on the
+        # first toggle.  Only the reserve camera is touched here: re-setting the
+        # active camera's range would change its captured state and spuriously
+        # emit a CameraChangedEvent (scheduling an unwanted settle reslice).
+        for dim_key, camera_model in canvas_model.cameras.items():
+            if dim_key == initial_dim:
+                continue
+            canvas_view.set_depth_range_for_dim(
+                dim_key,
+                (
+                    camera_model.near_clipping_plane,
+                    camera_model.far_clipping_plane,
+                ),
+            )
+
         # Wire any overlays already stored on this canvas model to the render
         # layer.  For canvases created via add_canvas() this loop is a no-op
         # (overlays=[]).  For canvases restored from a serialized ViewerModel
@@ -1530,6 +1554,25 @@ class CellierController:
     def get_scene(self, scene_id: UUID) -> Scene:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
+
+    def get_data_store(self, store_id: UUID) -> BaseDataStore:
+        """Return the registered data store for store_id.
+
+        Parameters
+        ----------
+        store_id : UUID
+            ID of a previously registered data store.
+
+        Returns
+        -------
+        BaseDataStore
+
+        Raises
+        ------
+        KeyError
+            If no store with store_id has been registered.
+        """
+        return self._model.data.stores[store_id]
 
     def fit_camera(self, scene_id: UUID, canvas_id: UUID | None = None) -> None:
         """Fit the camera to the current scene bounding box.

@@ -399,3 +399,82 @@ def test_controller_remove_channel_raises_if_not_present():
 
     with pytest.raises(KeyError):
         controller.remove_channel(visual.id, 99)
+
+
+# ---------------------------------------------------------------------------
+# 3D render_mode_3d / iso_threshold (real pygfx)
+# ---------------------------------------------------------------------------
+
+
+def test_channel_appearance_render_mode_defaults():
+    """render_mode_3d defaults to mip; iso_threshold defaults to 0.5."""
+    appearance = _make_channel_appearance()
+    assert appearance.render_mode_3d == "mip"
+    assert appearance.iso_threshold == 0.5
+
+
+def test_multichannel_3d_material_per_channel_render_mode():
+    """Each channel slot gets the volume material for its render_mode_3d."""
+    import pygfx as gfx
+
+    channels = {
+        0: _make_channel_appearance(render_mode_3d="iso", iso_threshold=0.3),
+        1: _make_channel_appearance(render_mode_3d="mip"),
+    }
+    visual, _model, _store = _make_gfx_visual(channels=channels, render_modes={"3d"})
+
+    mat0 = visual._pool_3d[visual._channel_to_slot_3d[0]].material
+    mat1 = visual._pool_3d[visual._channel_to_slot_3d[1]].material
+    assert isinstance(mat0, gfx.VolumeIsoMaterial)
+    assert mat0.threshold == 0.3
+    assert isinstance(mat1, gfx.VolumeMipMaterial)
+
+
+def test_multichannel_3d_render_mode_change_swaps_material():
+    """Changing render_mode_3d at runtime swaps the channel's 3D material."""
+    import pygfx as gfx
+
+    from cellier.events._events import ChannelAppearanceChangedEvent
+
+    channels = {0: _make_channel_appearance(render_mode_3d="mip")}
+    visual, model, _store = _make_gfx_visual(channels=channels, render_modes={"3d"})
+    assert isinstance(
+        visual._pool_3d[visual._channel_to_slot_3d[0]].material,
+        gfx.VolumeMipMaterial,
+    )
+
+    # Model is updated before the event fires (psygnal emits post-mutation).
+    model.channels[0].render_mode_3d = "iso"
+    model.channels[0].iso_threshold = 0.7
+    visual.on_channel_appearance_changed(
+        ChannelAppearanceChangedEvent(
+            source_id=model.id,
+            visual_id=model.id,
+            channel_index=0,
+            field_name="render_mode_3d",
+            new_value="iso",
+        )
+    )
+
+    mat = visual._pool_3d[visual._channel_to_slot_3d[0]].material
+    assert isinstance(mat, gfx.VolumeIsoMaterial)
+    assert mat.threshold == 0.7
+
+
+def test_multichannel_3d_iso_threshold_change_updates_material():
+    from cellier.events._events import ChannelAppearanceChangedEvent
+
+    channels = {0: _make_channel_appearance(render_mode_3d="iso", iso_threshold=0.5)}
+    visual, model, _store = _make_gfx_visual(channels=channels, render_modes={"3d"})
+
+    visual.on_channel_appearance_changed(
+        ChannelAppearanceChangedEvent(
+            source_id=model.id,
+            visual_id=model.id,
+            channel_index=0,
+            field_name="iso_threshold",
+            new_value=0.9,
+        )
+    )
+
+    assert visual._pool_3d[visual._channel_to_slot_3d[0]].material.threshold == 0.9

@@ -39,7 +39,22 @@ class BaseImageAppearance(BaseAppearance):
 
 
 class InMemoryImageAppearance(BaseImageAppearance):
-    """Appearance parameters for an in-memory image visual."""
+    """Appearance parameters for an in-memory image visual.
+
+    Parameters
+    ----------
+    render_mode : str
+        Volume rendering mode used for the 3D view. One of ``"mip"``
+        (maximum intensity projection, the default), ``"iso"``
+        (isosurface raycast), or ``"minip"`` (minimum intensity
+        projection). Ignored by the 2D view.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode == "iso"``. Default
+        ``0.5``.
+    """
+
+    render_mode: Literal["mip", "iso", "minip"] = "mip"
+    iso_threshold: float = 0.5
 
 
 class ImageVisual(BaseVisual):

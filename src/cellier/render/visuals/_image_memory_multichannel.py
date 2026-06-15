@@ -207,6 +207,16 @@ class GFXMultichannelImageMemoryVisual:
                 node_3d.material.alpha_mode = new_value
             elif field_name == "visible":
                 node_3d.visible = new_value
+            elif field_name == "render_mode_3d":
+                # Swapping the volume material (and any dependent settings such
+                # as iso_threshold) is handled by re-applying the full, already
+                # up-to-date channel appearance.
+                apply_channel_appearance_3d(
+                    node_3d, self._visual_model.channels[ch_idx]
+                )
+            elif field_name == "iso_threshold":
+                if isinstance(node_3d.material, gfx.VolumeIsoMaterial):
+                    node_3d.material.threshold = new_value
 
     # ------------------------------------------------------------------
     # Cancellation stubs

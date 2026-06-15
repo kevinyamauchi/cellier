@@ -1,0 +1,502 @@
+"""TypedDict companions for appearance and render-config model classes.
+
+Each TypedDict mirrors the fields of its corresponding Pydantic model so that
+callers can pass plain dicts to ``Viewer.add_*`` methods without importing any
+model class.  IDEs can autocomplete the keys and mypy can type-check them.
+
+These types are a convenience-layer concern only -- they are not used by
+``CellierController`` or any other non-convenience code.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from cmap import Colormap
+
+
+class BaseAppearanceKwargs(TypedDict, total=False):
+    """Keys shared by all appearance models (mirrors ``BaseAppearance``)."""
+
+    visible: bool
+    opacity: float
+    render_order: int
+    depth_test: bool
+    depth_write: bool
+    depth_compare: Literal["<", "<=", "==", "!=", ">=", ">"]
+    transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"]
+
+
+class BaseImageAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Keys shared by all image appearance models (mirrors ``BaseImageAppearance``)."""
+
+    color_map: Colormap | str
+    clim: tuple[float, float]
+    interpolation: Literal["linear", "nearest"]
+
+
+class InMemoryImageAppearanceKwargs(BaseImageAppearanceKwargs, total=False):
+    """Dict form of ``InMemoryImageAppearance``.
+
+    Accepted by ``Viewer.add_image`` in place of an
+    ``InMemoryImageAppearance`` instance.
+
+    Keys
+    ----
+    color_map : Colormap or str
+        Colormap applied after contrast normalisation. Accepts any
+        cmap-registered name string (e.g. ``"viridis"``).
+    clim : tuple[float, float]
+        Contrast limits ``(min, max)``. Default ``(0.0, 1.0)``.
+    interpolation : "linear" or "nearest"
+        Texture sampler filter. Default ``"nearest"``.
+    render_mode : "mip", "iso", or "minip"
+        Volume rendering mode for the 3D view. Default ``"mip"``.
+        Ignored by the 2D view.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode == "iso"``.
+        Default ``0.5``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Pygfx render order. Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Depth comparison operator. Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    render_mode: Literal["mip", "iso", "minip"]
+    iso_threshold: float
+
+
+class MultiscaleImageAppearanceKwargs(BaseImageAppearanceKwargs, total=False):
+    """Dict form of ``MultiscaleImageAppearance``.
+
+    Accepted by ``Viewer.add_image_multiscale`` and
+    ``Viewer.add_multichannel_image_multiscale`` in place of a
+    ``MultiscaleImageAppearance`` instance.
+
+    Keys
+    ----
+    color_map : Colormap or str
+        Colormap applied after contrast normalisation.
+    clim : tuple[float, float]
+        Contrast limits ``(min, max)``. Default ``(0.0, 1.0)``.
+    interpolation : "linear" or "nearest"
+        Texture sampler filter. Default ``"nearest"``.
+    lod_bias : float
+        Multiplier on the screen-space LOD threshold. Default ``1.0``.
+    force_level : int or None
+        Overrides automatic LOD selection when set. Default ``None``.
+    frustum_cull : bool
+        Skip bricks outside the camera frustum. Default ``True``.
+    iso_threshold : float
+        Isosurface threshold for 3D raycast rendering. Default ``0.2``.
+    render_mode : str
+        Volume rendering mode. Default ``"iso"``.
+    attenuation : float
+        Depth attenuation coefficient for ``"attenuated_mip"`` mode.
+        Default ``1.0``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    lod_bias: float
+    force_level: int | None
+    frustum_cull: bool
+    iso_threshold: float
+    render_mode: Literal["iso", "mip", "smooth_iso", "attenuated_mip"]
+    attenuation: float
+
+
+class BaseLabelsAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Keys shared by all label appearance models (mirrors ``BaseLabelsAppearance``)."""
+
+    colormap_mode: Literal["random", "direct"]
+    background_label: int
+    salt: int
+    color_dict: dict[int, tuple[float, float, float, float]]
+    render_mode: str
+
+
+class InMemoryLabelsAppearanceKwargs(BaseLabelsAppearanceKwargs, total=False):
+    """Dict form of ``InMemoryLabelsAppearance``.
+
+    Accepted by ``Viewer.add_labels`` in place of an
+    ``InMemoryLabelsAppearance`` instance.
+
+    Keys
+    ----
+    colormap_mode : "random" or "direct"
+        Frozen after construction. Default ``"random"``.
+    background_label : int
+        Label ID treated as transparent. Default ``0``.
+    salt : int
+        Hash seed for random colormap mode. Default ``0``.
+    color_dict : dict[int, tuple[float, float, float, float]]
+        Explicit label-ID to RGBA mapping for direct mode.
+    render_mode : "iso_categorical" or "flat_categorical"
+        3D rendering mode. Default ``"iso_categorical"``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    render_mode: Literal["iso_categorical", "flat_categorical"]
+
+
+class MultiscaleLabelsAppearanceKwargs(BaseLabelsAppearanceKwargs, total=False):
+    """Dict form of ``MultiscaleLabelsAppearance``.
+
+    Accepted by ``Viewer.add_labels_multiscale`` in place of a
+    ``MultiscaleLabelsAppearance`` instance.
+
+    Keys
+    ----
+    colormap_mode : "random" or "direct"
+        Frozen after construction. Default ``"random"``.
+    background_label : int
+        Default ``0``.
+    salt : int
+        Default ``0``.
+    color_dict : dict[int, tuple[float, float, float, float]]
+        Explicit label-ID to RGBA mapping.
+    render_mode : str
+        Wider than in-memory variant; also accepts ``"gradient_debug"``
+        and ``"smooth_iso"``. Default ``"iso_categorical"``.
+    lod_bias : float
+        Multiplier on the screen-space LOD threshold. Default ``1.0``.
+    force_level : int or None
+        Overrides automatic LOD selection when set. Default ``None``.
+    frustum_cull : bool
+        Skip bricks outside the camera frustum. Default ``True``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    render_mode: Literal[
+        "iso_categorical", "flat_categorical", "gradient_debug", "smooth_iso"
+    ]
+    lod_bias: float
+    force_level: int | None
+    frustum_cull: bool
+
+
+class MeshFlatAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Dict form of ``MeshFlatAppearance``.
+
+    Accepted by ``Viewer.add_mesh`` to select flat (unlit) shading.
+    Must include ``appearance_type: "flat"`` so Pydantic can pick the
+    correct variant.
+
+    Keys
+    ----
+    appearance_type : "flat"
+        Required discriminator key; must be ``"flat"``.
+    color : tuple[float, float, float, float]
+        Uniform RGBA color. Default ``(0.7, 0.7, 0.7, 1.0)``.
+    color_mode : "uniform", "vertex", or "face"
+        Default ``"uniform"``.
+    wireframe : bool
+        Render only edges. Default ``False``.
+    wireframe_thickness : float
+        Edge thickness in screen pixels. Default ``1.0``.
+    side : "both", "front", or "back"
+        Default ``"both"``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    appearance_type: Literal["flat"]
+    color: tuple[float, float, float, float]
+    color_mode: Literal["uniform", "vertex", "face"]
+    wireframe: bool
+    wireframe_thickness: float
+    side: Literal["both", "front", "back"]
+
+
+class MeshPhongAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Dict form of ``MeshPhongAppearance``.
+
+    Accepted by ``Viewer.add_mesh`` to select Phong shading.
+    Must include ``appearance_type: "phong"`` so Pydantic can pick the
+    correct variant.
+
+    Keys
+    ----
+    appearance_type : "phong"
+        Required discriminator key; must be ``"phong"``.
+    color : tuple[float, float, float, float]
+        Uniform RGBA diffuse color. Default ``(0.4, 0.6, 0.9, 1.0)``.
+    color_mode : "uniform", "vertex", or "face"
+        Default ``"uniform"``.
+    shininess : float
+        Specular exponent. Default ``30.0``.
+    side : "both", "front", or "back"
+        Default ``"front"``.
+    flat_shading : bool
+        Use face normals instead of smooth vertex normals. Default ``False``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    appearance_type: Literal["phong"]
+    color: tuple[float, float, float, float]
+    color_mode: Literal["uniform", "vertex", "face"]
+    shininess: float
+    side: Literal["both", "front", "back"]
+    flat_shading: bool
+
+
+class PointsMarkerAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Dict form of ``PointsMarkerAppearance``.
+
+    Accepted by ``Viewer.add_points`` in place of a
+    ``PointsMarkerAppearance`` instance.
+
+    Keys
+    ----
+    color : tuple[float, float, float, float]
+        Uniform RGBA fallback color. Default ``(1.0, 1.0, 1.0, 1.0)``.
+    size : float
+        Uniform point size in ``size_space`` units. Default ``5.0``.
+    size_space : "screen" or "world"
+        Coordinate space for point size. Default ``"screen"``.
+    color_mode : "uniform" or "vertex"
+        Default ``"uniform"``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    color: tuple[float, float, float, float]
+    size: float
+    size_space: Literal["screen", "world"]
+    color_mode: Literal["uniform", "vertex"]
+
+
+class LinesMemoryAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Dict form of ``LinesMemoryAppearance``.
+
+    Accepted by ``Viewer.add_lines`` in place of a
+    ``LinesMemoryAppearance`` instance.
+
+    Keys
+    ----
+    color : tuple[float, float, float, float]
+        Uniform RGBA fallback color. Default ``(1.0, 1.0, 1.0, 1.0)``.
+    thickness : float
+        Line thickness in ``thickness_space`` units. Default ``2.0``.
+    thickness_space : "screen" or "world"
+        Coordinate space for line thickness. Default ``"screen"``.
+    color_mode : "uniform" or "vertex"
+        Default ``"uniform"``.
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Master opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    transparency_mode : str
+        Default ``"blend"``.
+    """
+
+    color: tuple[float, float, float, float]
+    thickness: float
+    thickness_space: Literal["screen", "world"]
+    color_mode: Literal["uniform", "vertex"]
+
+
+class ChannelAppearanceKwargs(BaseAppearanceKwargs, total=False):
+    """Dict form of ``ChannelAppearance``.
+
+    Accepted in the ``channels`` dict of ``Viewer.add_multichannel_image``
+    and ``Viewer.add_multichannel_image_multiscale`` in place of a
+    ``ChannelAppearance`` instance.
+
+    Keys
+    ----
+    color_map : Colormap or str
+        Colormap for this channel.
+    clim : tuple[float, float]
+        Contrast limits ``(min, max)``. Default ``(0.0, 1.0)``.
+    render_mode_3d : "mip" or "iso"
+        Volume render mode for 3D. Default ``"mip"``.
+    iso_threshold : float
+        Isosurface threshold used when ``render_mode_3d == "iso"``.
+        Default ``0.5``.
+    transparency_mode : str
+        Default ``"add"`` (overrides ``BaseAppearance`` default of
+        ``"blend"``).
+    visible : bool
+        Default ``True``.
+    opacity : float
+        Per-channel opacity in [0, 1]. Default ``1.0``.
+    render_order : int
+        Default ``0``.
+    depth_test : bool
+        Default ``True``.
+    depth_write : bool
+        Default ``True``.
+    depth_compare : str
+        Default ``"<"``.
+    """
+
+    color_map: Colormap | str
+    clim: tuple[float, float]
+    render_mode_3d: Literal["mip", "iso"]
+    iso_threshold: float
+    transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"]
+
+
+class MultiscaleImageRenderConfigKwargs(TypedDict, total=False):
+    """Dict form of ``MultiscaleImageRenderConfig``.
+
+    Accepted by ``Viewer.add_image_multiscale`` and
+    ``Viewer.add_multichannel_image_multiscale`` in place of a
+    ``MultiscaleImageRenderConfig`` instance.
+
+    Keys
+    ----
+    block_size : int
+        Brick / tile side length in voxels. Default ``32``.
+    gpu_budget_bytes : int
+        Maximum GPU memory for the 3D brick cache. Default 1 GiB.
+    gpu_budget_bytes_2d : int
+        Maximum GPU memory for the 2D tile cache. Default 64 MiB.
+    paint_max_tiles : int
+        Maximum number of finest-level tiles paintable in one session.
+        Default ``512``.
+    """
+
+    block_size: int
+    gpu_budget_bytes: int
+    gpu_budget_bytes_2d: int
+    paint_max_tiles: int
+
+
+class MultiscaleLabelRenderConfigKwargs(TypedDict, total=False):
+    """Dict form of ``MultiscaleLabelRenderConfig``.
+
+    Accepted by ``Viewer.add_labels_multiscale`` in place of a
+    ``MultiscaleLabelRenderConfig`` instance.
+
+    Keys
+    ----
+    block_size : int
+        Brick / tile side length in voxels. Default ``32``.
+    gpu_budget_bytes : int
+        Maximum GPU memory for the 3D brick cache. Default 1 GiB.
+    gpu_budget_bytes_2d : int
+        Maximum GPU memory for the 2D tile cache. Default 64 MiB.
+    paint_max_tiles : int
+        Maximum number of finest-level tiles paintable in one session.
+        Default ``512``.
+    """
+
+    block_size: int
+    gpu_budget_bytes: int
+    gpu_budget_bytes_2d: int
+    paint_max_tiles: int
+
+
+__all__ = [
+    "BaseAppearanceKwargs",
+    "BaseImageAppearanceKwargs",
+    "BaseLabelsAppearanceKwargs",
+    "ChannelAppearanceKwargs",
+    "InMemoryImageAppearanceKwargs",
+    "InMemoryLabelsAppearanceKwargs",
+    "LinesMemoryAppearanceKwargs",
+    "MeshFlatAppearanceKwargs",
+    "MeshPhongAppearanceKwargs",
+    "MultiscaleImageAppearanceKwargs",
+    "MultiscaleImageRenderConfigKwargs",
+    "MultiscaleLabelRenderConfigKwargs",
+    "MultiscaleLabelsAppearanceKwargs",
+    "PointsMarkerAppearanceKwargs",
+]

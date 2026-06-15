@@ -9,6 +9,7 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.render.visuals._image_memory import (
+    _VOLUME_MATERIALS,
     # (re-export)
     _make_colormap,  # (re-export)
 )
@@ -192,6 +193,11 @@ def apply_channel_appearance_3d(
 ) -> None:
     """Apply a ChannelAppearance to a 3D Volume node's material.
 
+    If ``appearance.render_mode_3d`` requires a different volume material class
+    than the node currently holds (pool nodes default to MIP and are reused
+    across channels), the material is swapped in place, preserving the node's
+    sampler ``interpolation`` and ``pick_write`` settings.
+
     Parameters
     ----------
     node : gfx.Volume
@@ -199,11 +205,24 @@ def apply_channel_appearance_3d(
     appearance : ChannelAppearance
         Appearance settings to apply.
     """
+    desired_cls = _VOLUME_MATERIALS[appearance.render_mode_3d]
     material = node.material
+    if not isinstance(material, desired_cls):
+        old = material
+        material = desired_cls(
+            clim=appearance.clim,
+            map=_make_colormap(appearance.color_map),
+            alpha_mode=appearance.transparency_mode,
+            interpolation=old.interpolation,
+            pick_write=old.pick_write,
+        )
+        node.material = material
     material.clim = appearance.clim
     material.map = _make_colormap(appearance.color_map)
     material.opacity = appearance.opacity
     material.alpha_mode = appearance.transparency_mode
+    if appearance.render_mode_3d == "iso":
+        material.threshold = appearance.iso_threshold
     node.visible = appearance.visible
 
 
