@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
@@ -101,6 +101,9 @@ class Viewer:
         # by set_displayed_dimensions so axes restore their last position when
         # they cycle back from displayed to sliced.
         self._saved_slice_positions: dict[int, float] = {}
+        # Callbacks fired once the scene's startup data is on the GPU; consumed
+        # by the launcher (see convenience._launch._init_view).
+        self._ready_callbacks: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------------
     # Public properties
@@ -115,6 +118,30 @@ class Viewer:
     def scene(self) -> Scene:
         """The single scene managed by this viewer."""
         return self._scene
+
+    # ------------------------------------------------------------------
+    # Readiness
+    # ------------------------------------------------------------------
+
+    def on_ready(self, callback: Callable[[], None]) -> None:
+        """Register a callback fired once the scene's startup data is on the GPU.
+
+        The callback runs after the initial reslice triggered by
+        :func:`~cellier.convenience.launch` / :func:`~cellier.convenience.show`
+        has committed all visuals (in-memory, multiscale, multichannel, and
+        geometry) to the GPU.  Use it to hide a loading indicator, capture a
+        screenshot, or enable controls once the first view is fully loaded.
+
+        Must be called before ``launch``/``show``.  For ad-hoc readiness
+        signals outside the convenience launchers, use
+        :meth:`~cellier.controller.CellierController.on_scene_ready` directly.
+
+        Parameters
+        ----------
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        self._ready_callbacks.append(callback)
 
     # ------------------------------------------------------------------
     # Serialization
@@ -175,6 +202,7 @@ class Viewer:
         obj._controller = controller
         obj._scene = scene
         obj._saved_slice_positions: dict[int, float] = {}
+        obj._ready_callbacks: list[Callable[[], None]] = []
         return obj
 
     # ------------------------------------------------------------------

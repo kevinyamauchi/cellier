@@ -9,7 +9,7 @@ register one data store and fan a visual out to every panel.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
@@ -214,6 +214,9 @@ class OrthoViewer:
         coordinate_system = CoordinateSystem(name="world", axis_labels=axis_labels)
         self._scenes = self._build_scenes(coordinate_system)
         self._syncer: _ExtraAxisSyncer | None = None
+        # Callbacks fired once all panel scenes' startup data is on the GPU;
+        # consumed by the launcher (see convenience._launch._init_view).
+        self._ready_callbacks: list[Callable[[], None]] = []
         if link_extra_axes and self._extra_axes:
             self._wire_extra_axis_sync()
 
@@ -273,6 +276,30 @@ class OrthoViewer:
     def scenes(self) -> dict[str, Scene]:
         """The four panel scenes keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``."""
         return self._scenes
+
+    # ------------------------------------------------------------------
+    # Readiness
+    # ------------------------------------------------------------------
+
+    def on_ready(self, callback: Callable[[], None]) -> None:
+        """Register a callback fired once *all* panels' startup data is on the GPU.
+
+        The callback runs after the initial reslice triggered by
+        :func:`~cellier.convenience.launch` / :func:`~cellier.convenience.show`
+        has committed every visual across all four panel scenes.  Use it to
+        hide a loading indicator, capture a screenshot, or enable controls once
+        the first view is fully loaded.
+
+        Must be called before ``launch``/``show``.  For per-scene readiness,
+        use :meth:`~cellier.controller.CellierController.on_scene_ready`
+        directly.
+
+        Parameters
+        ----------
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        self._ready_callbacks.append(callback)
 
     @property
     def spatial_axes(self) -> tuple[int, int, int]:

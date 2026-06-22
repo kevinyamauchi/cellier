@@ -89,6 +89,21 @@ app_window.setCentralWidget(central)
 root_layout.addWidget(canvas_widgets.widget, stretch=1)
 
 # ---------------------------------------------------------------------------
+# Readiness
+# ---------------------------------------------------------------------------
+# For the orthoviewer, on_ready fires once after *all four* panel scenes have
+# loaded their data onto the GPU. launch() fits each panel on its first frame
+# and re-fits on ready (fit="ready", the default), so no manual fit_camera or
+# timer is needed. Here we just flag it in the title bar.
+
+
+def _on_ready() -> None:
+    app_window.setWindowTitle("Blob Orthoviewer (loaded)")
+
+
+viewer.on_ready(_on_ready)
+
+# ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
 

@@ -106,12 +106,14 @@ class DataStoreContentsChangedEvent(NamedTuple):
 class ResliceStartedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+    canvas_id: UUID
     visual_ids: frozenset[UUID]
 
 
 class ResliceCompletedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+    canvas_id: UUID
     visual_id: UUID
     brick_count: int
 

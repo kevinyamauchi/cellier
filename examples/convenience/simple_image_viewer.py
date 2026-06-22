@@ -114,11 +114,12 @@ _mode = ["2d"]
 
 
 def _on_toggle() -> None:
+    # set_displayed_dimensions fits the camera to the new view itself, so no
+    # explicit fit_camera call is needed here.
     if _mode[0] == "2d":
         viewer.set_displayed_dimensions(("z", "y", "x"))
         toggle_btn.setText("Switch to 2D")
         _mode[0] = "3d"
-        viewer.controller.fit_camera(viewer.scene.id)
     else:
         viewer.set_displayed_dimensions(("y", "x"))
         toggle_btn.setText("Switch to 3D")
@@ -126,6 +127,21 @@ def _on_toggle() -> None:
 
 
 toggle_btn.clicked.connect(_on_toggle)
+
+# ---------------------------------------------------------------------------
+# Readiness
+# ---------------------------------------------------------------------------
+# launch() fits the camera and loads the data on the canvas's first frame, then
+# re-fits once everything is on the GPU (fit="ready", the default). on_ready
+# fires once at that point -- a robust, timer-free hook that works for both
+# in-memory and multiscale visuals. Here we just flag it in the title bar.
+
+
+def _on_ready() -> None:
+    app_window.setWindowTitle("Blob Viewer (loaded)")
+
+
+viewer.on_ready(_on_ready)
 
 # ---------------------------------------------------------------------------
 # Launch
