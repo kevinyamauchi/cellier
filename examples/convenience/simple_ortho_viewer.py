@@ -107,4 +107,4 @@ viewer.on_ready(_on_ready)
 # Launch
 # ---------------------------------------------------------------------------
 
-launch(viewer, app_window)
+launch(viewer, app_window, fit="ready")
