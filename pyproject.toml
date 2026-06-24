@@ -58,6 +58,11 @@ remote = [
 ]
 pyside = ["PySide6"]
 pyqt = ["PyQt6"]
+# anywidget front-end (notebook hosts: Jupyter, marimo).  ipywidgets and
+# rendercanvas arrive transitively (via anywidget and pygfx respectively); the
+# notebook host applications (jupyter, marimo) are not declared here -- the user
+# installs whichever host they run in.
+anywidget = ["anywidget"]
 test = [
     "pytest",
     "pytest-asyncio",

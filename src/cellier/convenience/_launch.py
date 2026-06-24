@@ -10,6 +10,8 @@ import sys
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from cellier.convenience._ortho_viewer import OrthoViewer
     from cellier.convenience._viewer import Viewer
 
@@ -108,6 +110,139 @@ def show(
         )
     window.show()  # type: ignore[attr-defined]
     _init_view(viewer, fit=fit, on_ready=on_ready)
+
+
+class DisplayHandle:
+    """Inert teardown handle returned by :func:`display`.
+
+    Rendering is performed imperatively by the host inside ``present()``; this
+    handle is the cell's return value but has no representation of its own (its
+    ``_repr_mimebundle_`` is empty), so the viewer is rendered exactly once.
+
+    Call :meth:`close` to unsubscribe the control panel(s) from the bus and
+    cancel any pending slices -- e.g. before re-running a cell so the prior
+    panel and in-flight reads do not leak.
+    """
+
+    def __init__(self, viewer: ViewerLike, view: object) -> None:
+        self._viewer = viewer
+        self._view = view
+        self._closed = False
+
+    def close(self) -> None:
+        """Tear down the controls and cancel pending slices (idempotent)."""
+        if self._closed:
+            return
+        self._closed = True
+        self._view.close()
+        scenes = getattr(self._viewer, "scenes", None)
+        scene_list = scenes.values() if scenes is not None else [self._viewer.scene]
+        for scene in scene_list:
+            self._viewer.controller.cancel_pending_slices(scene.id)
+
+    def _repr_mimebundle_(self, **kwargs):
+        # Inert: the host already rendered the viewer imperatively in present(),
+        # so the handle itself must not produce a second copy in the cell.
+        return {}
+
+    def __repr__(self) -> str:
+        # IPython's plain-text formatter falls back to repr() even when the mime
+        # bundle is empty; blank it so no stray ``Out[]`` text appears under the
+        # viewer.
+        return ""
+
+
+def display(
+    viewer: ViewerLike,
+    view: object,
+    *,
+    controls: Iterable[object] = (),
+    controls_position: Literal["top", "bottom"] = "top",
+    fit: FitMode = "ready",
+    on_ready: Callable[[], None] | None = None,
+    host: str | None = None,
+) -> object:
+    """Compose and present an anywidget viewer non-blockingly.
+
+    The notebook counterpart of :func:`launch`.  Resolves the anywidget host
+    (Jupyter or marimo), composes the *controls* above or below the *view*
+    through the host's :class:`~cellier.convenience._hosts.LayoutHost`, renders
+    the composed root, and arms first-frame startup.  No ``QApplication`` /
+    ``QtAsyncio`` is involved -- slicing runs on the host's own asyncio loop.
+
+    Rendering is done imperatively inside ``host.present()`` (exactly once,
+    before ``_init_view`` arms the first-frame fit so the canvas is mounted and
+    paints), and this function returns an inert :class:`DisplayHandle` rather
+    than the widget, so the cell shows a single copy regardless of where
+    ``display()`` sits in it.
+
+    Parameters
+    ----------
+    viewer : Viewer or OrthoViewer
+        The viewer whose controller drives fit / reslice.
+    view : AnywidgetCanvasView or OrthoAnywidgetCanvases
+        The object returned by ``build_canvas_widget`` /
+        ``build_ortho_grid_widget`` for ``gui="anywidget"``.  Must expose
+        ``compose(host)`` and ``close()``.
+    controls : iterable of anywidget
+        Extra app-level controls (e.g. ``make_dim_toggle(viewer)``) placed
+        above or below the view (see *controls_position*).
+    controls_position : "top" or "bottom"
+        Whether the *controls* are stacked above (``"top"``, default) or below
+        (``"bottom"``) the view.
+    fit : "ready", "immediate", or "none"
+        Camera-fit policy applied at startup.  See :func:`_init_view`.
+    on_ready : Callable[[], None] or None
+        Optional zero-argument callback fired once every scene's startup data
+        has committed to the GPU.
+    host : "jupyter", "marimo", or None
+        Explicit host override; auto-detected when ``None``.
+
+    Returns
+    -------
+    object
+        For imperative hosts (Jupyter) an inert :class:`DisplayHandle` whose
+        :meth:`DisplayHandle.close` tears down the controls and cancels pending
+        slices.  For return-value hosts (marimo) the host-native renderable
+        (so the cell renders it), with a best-effort ``close`` attached.
+    """
+    from cellier.convenience._hosts import resolve_host
+
+    if controls_position not in ("top", "bottom"):
+        raise ValueError(
+            f"controls_position must be 'top' or 'bottom', got {controls_position!r}."
+        )
+
+    resolved_host = resolve_host(host)
+    control_leaves = [resolved_host.leaf(control) for control in controls]
+    view_leaf = view.compose(resolved_host)
+    leaves = (
+        [view_leaf, *control_leaves]
+        if controls_position == "bottom"
+        else [*control_leaves, view_leaf]
+    )
+
+    # Imperative hosts (Jupyter) render in present() and return None; return-value
+    # hosts (marimo) return the renderable for display() to yield as the cell
+    # output (see LayoutHost.present).  Centre the column so controls line up
+    # under the (fixed-width) viewer.
+    cell_value = resolved_host.present(resolved_host.stack(leaves, align="center"))
+
+    # _init_view only subscribes to the first-frame event and requests a draw;
+    # the actual fit + reslice run inside that callback once the host loop ticks
+    # and the canvas paints its first frame (after the cell value is rendered).
+    _init_view(viewer, fit=fit, on_ready=on_ready)
+
+    handle = DisplayHandle(viewer, view)
+    if cell_value is None:
+        # Imperative host already rendered; the inert handle is the cell value.
+        return handle
+    # Return-value host: yield the renderable, attaching teardown best-effort.
+    try:
+        cell_value.close = handle.close  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return cell_value
 
 
 def _init_view(

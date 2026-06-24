@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
+    from cellier.gui._protocol import WidgetView
     from cellier.render._config import RenderManagerConfig
     from cellier.render.canvas_view import CanvasView
     from cellier.visuals._canvas_overlay import CanvasOverlay
@@ -145,9 +146,14 @@ class CellierController:
 
     def __init__(
         self,
-        widget_parent: QWidget | None = None,
+        widget_parent: object | None = None,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
+        # gui selects the render canvas toolkit ("qt" or "anywidget"); threaded
+        # to CanvasView via add_canvas.  widget_parent is Qt-only and ignored
+        # for the anywidget gui (notebook canvases have no Qt parent).
+        self._gui = gui
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
         self._render_manager = RenderManager(config=render_config)
@@ -238,10 +244,11 @@ class CellierController:
         """
         return self._incoming_events
 
-    def set_widget_parent(self, parent: QWidget) -> None:
+    def set_widget_parent(self, parent: object) -> None:
         """Set the Qt parent for subsequently created canvas widgets.
 
-        TODO: in the future, we should have an abstraction for different GUI backends.
+        Only meaningful when ``self._gui == "qt"``; the anywidget gui ignores
+        the parent (notebook canvases are not laid out by a Qt parent).
         """
         self._widget_parent = parent
 
@@ -1362,6 +1369,7 @@ class CellierController:
         fov: float = 70.0,
         depth_range_3d: tuple[float, float] = (1.0, 8000.0),
         depth_range_2d: tuple[float, float] = (-500.0, 500.0),
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Create a canvas attached to a scene and return its embeddable widget.
 
@@ -1388,6 +1396,10 @@ class CellierController:
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D orthographic camera.
             Default ``(-500.0, 500.0)``.
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas.  Ignored for the
+            Qt gui (which is sized by its parent layout).  Defaults to
+            ``(600, 600)`` when ``None`` for the anywidget gui.
 
         Returns
         -------
@@ -1431,13 +1443,16 @@ class CellierController:
             )
 
         canvas_model = Canvas(cameras=cameras)
-        return self.add_canvas_model(scene_id, canvas_model, initial_dim=initial_dim)
+        return self.add_canvas_model(
+            scene_id, canvas_model, initial_dim=initial_dim, canvas_size=canvas_size
+        )
 
     def add_canvas_model(
         self,
         scene_id: UUID,
         canvas_model: Canvas,
         initial_dim: str | None = None,
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Register a pre-built Canvas model with a scene.
 
@@ -1457,6 +1472,9 @@ class CellierController:
             Which dim to activate first.  When ``None``, the first key in
             ``canvas_model.cameras`` is used (insertion order is preserved by
             Python dicts, so this is deterministic for serialized models).
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas.  Ignored for the
+            Qt gui.  Defaults to ``(600, 600)`` for the anywidget gui.
 
         Returns
         -------
@@ -1499,6 +1517,8 @@ class CellierController:
                 dim=initial_dim,
                 fov=active_camera.fov,
                 depth_range=depth_range,
+                gui=self._gui,
+                size=canvas_size,
             )
         else:
             # OrthographicCamera: fov is not meaningful; omit it so CanvasView
@@ -1509,6 +1529,8 @@ class CellierController:
                 parent=self._widget_parent,
                 dim=initial_dim,
                 depth_range=depth_range,
+                gui=self._gui,
+                size=canvas_size,
             )
 
         canvas_view.set_event_bus(self._outgoing_events)
@@ -3932,7 +3954,7 @@ class CellierController:
 
     def connect_widget(
         self,
-        widget: Any,
+        widget: WidgetView,
         *,
         subscription_specs: list[SubscriptionSpec] | None = None,
     ) -> None:

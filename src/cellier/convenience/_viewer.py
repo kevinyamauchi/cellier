@@ -77,6 +77,10 @@ class Viewer:
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
         Uses controller defaults when ``None``.
+    gui : "qt" or "anywidget"
+        Which GUI toolkit the canvas should target. ``"qt"`` (default) renders
+        into a Qt widget; ``"anywidget"`` renders into a notebook canvas for
+        Jupyter / marimo. Fixed at construction.
     """
 
     def __init__(
@@ -86,11 +90,12 @@ class Viewer:
         dim: Literal["2d", "3d"] = "2d",
         render_modes: set[str] | None = None,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
         resolved_render_modes = (
             render_modes if render_modes is not None else {"2d", "3d"}
         )
-        self._controller = CellierController(render_config=render_config)
+        self._controller = CellierController(render_config=render_config, gui=gui)
         self._scene = self._controller.add_scene(
             name="main",
             dim=dim,
@@ -113,6 +118,11 @@ class Viewer:
     def controller(self) -> CellierController:
         """The underlying CellierController."""
         return self._controller
+
+    @property
+    def gui(self) -> str:
+        """The GUI toolkit this viewer renders into (``"qt"`` or ``"anywidget"``)."""
+        return self._controller._gui
 
     @property
     def scene(self) -> Scene:
@@ -217,6 +227,7 @@ class Viewer:
         fov: float = 70.0,
         depth_range_3d: tuple[float, float] = (1.0, 8000.0),
         depth_range_2d: tuple[float, float] = (-500.0, 500.0),
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Create a canvas attached to this viewer's scene.
 
@@ -234,6 +245,9 @@ class Viewer:
             ``(near, far)`` clip distances for the 3D camera.
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D camera.
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas. Ignored for the
+            Qt gui. Defaults to ``(600, 600)`` for the anywidget gui.
 
         Returns
         -------
@@ -250,6 +264,7 @@ class Viewer:
             fov=fov,
             depth_range_3d=depth_range_3d,
             depth_range_2d=depth_range_2d,
+            canvas_size=canvas_size,
         )
 
     # ------------------------------------------------------------------
@@ -298,7 +313,7 @@ class Viewer:
         invalid = [n for n in axis_names if n not in label_to_index]
         if invalid:
             raise ValueError(
-                f"Unknown axis names: {invalid}. " f"Available: {list(coord_labels)}"
+                f"Unknown axis names: {invalid}. Available: {list(coord_labels)}"
             )
 
         new_displayed = tuple(label_to_index[n] for n in axis_names)

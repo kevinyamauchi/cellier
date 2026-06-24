@@ -9,7 +9,7 @@ register one data store and fan a visual out to every panel.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
@@ -197,6 +197,10 @@ class OrthoViewer:
         kept synchronized across all four panels.
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
+    gui : "qt" or "anywidget"
+        Which GUI toolkit the canvases should target. ``"qt"`` (default)
+        renders into Qt widgets; ``"anywidget"`` renders into notebook canvases
+        for Jupyter / marimo. Fixed at construction.
     """
 
     def __init__(
@@ -206,8 +210,9 @@ class OrthoViewer:
         spatial_axes: tuple[str, ...] | tuple[int, ...] | None = None,
         link_extra_axes: bool = True,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
-        self._controller = CellierController(render_config=render_config)
+        self._controller = CellierController(render_config=render_config, gui=gui)
         self._spatial_axes = _resolve_spatial_axes(axis_labels, spatial_axes)
         self._ndim = len(axis_labels)
         self._extra_axes = {i for i in range(self._ndim) if i not in self._spatial_axes}
@@ -271,6 +276,11 @@ class OrthoViewer:
     def controller(self) -> CellierController:
         """The underlying CellierController."""
         return self._controller
+
+    @property
+    def gui(self) -> str:
+        """The GUI toolkit this viewer renders into (``"qt"`` or ``"anywidget"``)."""
+        return self._controller._gui
 
     @property
     def scenes(self) -> dict[str, Scene]:

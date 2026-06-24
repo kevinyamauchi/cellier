@@ -1,0 +1,32 @@
+.cellier-control-panel {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+}
+
+.cellier-dims {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cellier-dim-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-dim-label {
+  min-width: 1.5em;
+  text-align: right;
+  font-weight: 600;
+}
+
+.cellier-dim-row input[type="range"] {
+  flex: 1 1 auto;
+}
+
+.cellier-dim-readout {
+  min-width: 3em;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}

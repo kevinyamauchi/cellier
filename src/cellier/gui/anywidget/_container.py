@@ -1,0 +1,45 @@
+"""Jupyter manager-rendered anywidget container.
+
+Jupyter has no native multi-pane layout without a container that renders child
+widget views.  To keep stock ipywidgets controls out, the container is itself a
+tiny anywidget that asks the widget manager to mount its children (design doc
+section 10).
+
+This is the one place the anywidget path touches the ipywidgets layer
+(``widget_manager.create_view``, ``ipywidgets.widget_serialization``,
+``DOMWidget`` as the child type); marimo avoids it entirely via
+``mo.vstack`` / ``mo.hstack``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import anywidget
+import ipywidgets
+import traitlets
+
+_STATIC = Path(__file__).parent / "static"
+
+
+class AwBox(anywidget.AnyWidget):
+    """A flexbox container that mounts child widget views via the manager.
+
+    Parameters
+    ----------
+    children : list of ipywidgets.DOMWidget
+        The child widgets to mount, in order.
+    direction : "v" or "h"
+        Stacking direction: ``"v"`` (column, default) or ``"h"`` (row).
+    align : str
+        Cross-axis alignment applied as CSS ``align-items`` (e.g. ``"center"``);
+        empty string leaves the flexbox default (``stretch``).
+    """
+
+    _esm = _STATIC / "aw_box.js"
+
+    children = traitlets.List(traitlets.Instance(ipywidgets.DOMWidget)).tag(
+        sync=True, **ipywidgets.widget_serialization
+    )
+    direction = traitlets.Unicode("v").tag(sync=True)
+    align = traitlets.Unicode("").tag(sync=True)
