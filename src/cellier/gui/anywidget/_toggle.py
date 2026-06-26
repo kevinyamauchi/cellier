@@ -25,6 +25,7 @@ class _DimToggle(anywidget.AnyWidget):
     """Button anywidget that toggles a viewer between 2D and 3D."""
 
     _esm = _STATIC / "toggle.js"
+    _css = _STATIC / "toggle.css"
 
     label = traitlets.Unicode("Switch to 3D").tag(sync=True)
     # Incremented by the JS click handler; observed on the Python side.

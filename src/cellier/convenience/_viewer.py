@@ -16,15 +16,22 @@ if TYPE_CHECKING:
     from cellier.convenience._kwarg_dicts import (
         ChannelAppearanceKwargs,
         InMemoryImageAppearanceKwargs,
+        InMemoryImageControlsKwargs,
         InMemoryLabelsAppearanceKwargs,
         LinesMemoryAppearanceKwargs,
         MeshFlatAppearanceKwargs,
         MeshPhongAppearanceKwargs,
         MultiscaleImageAppearanceKwargs,
+        MultiscaleImageControlsKwargs,
         MultiscaleImageRenderConfigKwargs,
         MultiscaleLabelRenderConfigKwargs,
         MultiscaleLabelsAppearanceKwargs,
         PointsMarkerAppearanceKwargs,
+    )
+    from cellier.convenience.gui._controls_config import (
+        BaseControlsConfig,
+        InMemoryImageControlsConfig,
+        MultiscaleImageControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -109,6 +116,8 @@ class Viewer:
         # Callbacks fired once the scene's startup data is on the GPU; consumed
         # by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
+        # Controls configs keyed by visual id; set by add_image / add_image_multiscale.
+        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
 
     # ------------------------------------------------------------------
     # Public properties
@@ -213,6 +222,7 @@ class Viewer:
         obj._scene = scene
         obj._saved_slice_positions: dict[int, float] = {}
         obj._ready_callbacks: list[Callable[[], None]] = []
+        obj._controls_configs: dict[UUID, BaseControlsConfig] = {}
         return obj
 
     # ------------------------------------------------------------------
@@ -359,6 +369,9 @@ class Viewer:
         data: ImageMemoryStore | UUID,
         appearance: BaseImageAppearance | InMemoryImageAppearanceKwargs,
         name: str = "image",
+        controls: InMemoryImageControlsConfig
+        | InMemoryImageControlsKwargs
+        | None = None,
     ) -> ImageVisual:
         """Add an in-memory image visual.
 
@@ -373,11 +386,19 @@ class Viewer:
             keys and their types).
         name : str
             Human-readable label. Default ``"image"``.
+        controls : InMemoryImageControlsConfig, dict, or None
+            Appearance panel configuration. Accepts an
+            ``InMemoryImageControlsConfig`` instance or a plain dict with the
+            same keys (see ``InMemoryImageControlsKwargs``). When ``None``
+            (default), no appearance panel is created for this visual.
 
         Returns
         -------
         ImageVisual
         """
+        from cellier.convenience.gui._controls_config import (
+            resolve_inmemory_image_controls,
+        )
         from cellier.visuals._image_memory import InMemoryImageAppearance
 
         resolved_appearance = (
@@ -385,12 +406,16 @@ class Viewer:
             if isinstance(appearance, dict)
             else appearance
         )
-        return self._controller.add_image(
+        visual = self._controller.add_image(
             self._resolve_data_store(data),
             self._scene.id,
             resolved_appearance,
             name,
         )
+        resolved_controls = resolve_inmemory_image_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual
 
     def add_labels(
         self,
@@ -582,6 +607,9 @@ class Viewer:
         | MultiscaleImageRenderConfigKwargs
         | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleImageControlsConfig
+        | MultiscaleImageControlsKwargs
+        | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual.
 
@@ -603,11 +631,20 @@ class Viewer:
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MultiscaleImageControlsConfig, dict, or None
+            Appearance panel configuration. Accepts a
+            ``MultiscaleImageControlsConfig`` instance or a plain dict with
+            the same keys (see ``MultiscaleImageControlsKwargs``). When
+            ``None`` (default), no appearance panel is created for this
+            visual.
 
         Returns
         -------
         MultiscaleImageVisual
         """
+        from cellier.convenience.gui._controls_config import (
+            resolve_multiscale_image_controls,
+        )
         from cellier.visuals._image import (
             MultiscaleImageAppearance as _MultiscaleImageAppearance,
         )
@@ -625,7 +662,7 @@ class Viewer:
             if isinstance(render_config, dict)
             else render_config
         )
-        return self._controller.add_image_multiscale(
+        visual = self._controller.add_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
             resolved_appearance,
@@ -633,6 +670,10 @@ class Viewer:
             resolved_render_config,
             transform,
         )
+        resolved_controls = resolve_multiscale_image_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual
 
     def add_labels_multiscale(
         self,

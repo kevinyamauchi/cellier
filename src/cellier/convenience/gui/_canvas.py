@@ -9,7 +9,9 @@ if TYPE_CHECKING:
     from cellier.controller import CellierController
     from cellier.convenience._hosts import LayoutHost
     from cellier.convenience._viewer import Viewer
+    from cellier.convenience.gui._controls_config import BaseControlsConfig
     from cellier.gui.anywidget import ControlPanel
+    from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
     from cellier.gui.qt import QtCanvasWidget
     from cellier.scene.scene import Scene
 
@@ -28,36 +30,61 @@ def _resolve_gui(viewer: Viewer, gui: str | None) -> str:
 
 @dataclass
 class AnywidgetCanvasView:
-    """An anywidget canvas leaf plus its control panel leaf.
+    """An anywidget canvas leaf plus its control and dims panel leaves.
 
-    Returned by :func:`build_canvas_widget` for ``gui="anywidget"``.  Holds the
-    two host-uniform leaves and knows how to arrange them through an injected
-    :class:`~cellier.convenience._hosts.LayoutHost` (canvas above controls).
+    Returned by :func:`build_canvas_widget` for ``gui="anywidget"``.
+
+    When *controls* is not ``None``, the layout is two columns::
+
+        [controls | canvas]
+        [toggle | dims]
+
+    When *controls* is ``None`` and extra *controls* are provided to
+    :meth:`compose_with_controls` (e.g. a toggle button), those widgets form
+    the left column.  When neither is present, only the right column is
+    returned.
 
     Attributes
     ----------
     canvas : object
         The ``rendercanvas`` anywidget canvas.
-    controls : ControlPanel
-        The composite control panel (dims sliders in Phase 1).
+    controls : ControlPanel or None
+        Appearance / AABB / dataset-info panel (left column), or ``None``
+        when no appearance panel was configured for this visual.
+    dims : AnywidgetDimsPanel
+        Axis slice sliders (right column, below canvas).
     """
 
     canvas: object
-    controls: ControlPanel
+    controls: ControlPanel | None
+    dims: AnywidgetDimsPanel
 
     def compose(self, host: LayoutHost) -> object:
-        """Arrange the canvas above the controls via *host*.
+        """Compose without extra controls (backward-compatible entry point)."""
+        return self.compose_with_controls(host, ())
 
-        The column is centred on the cross-axis so the fixed-width canvas sits
-        centred over the (wider) control panel.
+    def compose_with_controls(self, host: LayoutHost, controls: object = ()) -> object:
+        """Arrange into a two-column layout when a left column exists.
+
+        Left column: appearance panel (if present) then *controls* (e.g.
+        toggle button).  Right column: canvas above dims sliders.  When the
+        left column would be empty, only the right column is returned.
         """
-        return host.stack(
-            [host.leaf(self.canvas), host.leaf(self.controls)], align="center"
-        )
+        left_items = []
+        if self.controls is not None:
+            left_items.append(host.leaf(self.controls))
+        left_items.extend(host.leaf(c) for c in controls)
+        right = host.stack([host.leaf(self.canvas), host.leaf(self.dims)])
+        if not left_items:
+            return right
+        left = host.stack(left_items)
+        return host.stack([left, right], direction="h")
 
     def close(self) -> None:
-        """Unsubscribe the control panel from the bus."""
-        self.controls.close()
+        """Unsubscribe both panels from the bus."""
+        if self.controls is not None:
+            self.controls.close()
+        self.dims.close()
 
 
 def canvas_widget_for_scene(
@@ -196,6 +223,11 @@ def build_canvas_widget(
     """
     gui = _resolve_gui(viewer, gui)
     if gui == "qt":
+        import sys
+
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([sys.argv[0]])
         return _build_qt_canvas_widget(
             viewer,
             axis_ranges,
@@ -255,13 +287,16 @@ def anywidget_canvas_view_for_scene(
     depth_range_2d: tuple[float, float] = (-500.0, 500.0),
     canvas_size: tuple[int, int] | None = None,
     non_displayed: tuple[int, ...] = (),
+    controls: BaseControlsConfig | None = None,
+    visual=None,
 ) -> AnywidgetCanvasView:
     """Build a wired :class:`AnywidgetCanvasView` for *scene*, reusing any canvas.
 
     Mirrors :func:`canvas_widget_for_scene` for the anywidget gui: ensures a
     canvas exists (the controller's ``gui == "anywidget"`` makes it a
-    rendercanvas anywidget), builds a ``ControlPanel`` from the scene, wires it
-    to the bus, and returns the two leaves.
+    rendercanvas anywidget), builds a dims panel, optionally builds a
+    ``ControlPanel`` when *controls* is provided, wires both to the bus, and
+    returns the two leaves.
 
     Parameters
     ----------
@@ -276,12 +311,27 @@ def anywidget_canvas_view_for_scene(
         created.  Ignored when reusing an existing canvas.
     non_displayed : tuple[int, ...]
         Axes to exclude from the sliders regardless of dims state.
+    controls : BaseControlsConfig or None
+        Controls configuration for the appearance panel.  When ``None`` or
+        when ``controls.appearance`` is ``False`` or an empty list, no
+        appearance panel is created.  Typically an
+        ``InMemoryImageControlsConfig`` or ``MultiscaleImageControlsConfig``
+        obtained from ``viewer._controls_configs``.
+    visual : BaseVisual or None
+        The visual whose appearance the panel will control.  Required when
+        *controls* specifies a non-empty appearance field list; ignored
+        otherwise.
 
     Returns
     -------
     AnywidgetCanvasView
     """
+    from cellier.convenience.gui._controls_config import (
+        InMemoryImageControlsConfig,
+        MultiscaleImageControlsConfig,
+    )
     from cellier.gui.anywidget import ControlPanel
+    from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
 
     canvas_ids = controller.get_canvas_ids(scene.id)
     if not canvas_ids:
@@ -299,6 +349,40 @@ def anywidget_canvas_view_for_scene(
         canvas_ids = controller.get_canvas_ids(scene.id)
 
     canvas_view = controller.get_canvas_view(canvas_ids[-1])
-    panel = ControlPanel.from_scene(scene, axis_ranges, non_displayed=non_displayed)
-    controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
-    return AnywidgetCanvasView(canvas=canvas_view.widget, controls=panel)
+
+    dims_panel = AnywidgetDimsPanel.from_scene(
+        scene, axis_ranges, non_displayed=non_displayed
+    )
+    controller.connect_widget(
+        dims_panel, subscription_specs=dims_panel.subscription_specs()
+    )
+
+    # Build the appearance panel only when controls specifies a non-empty field list.
+    panel: ControlPanel | None = None
+    appearance_fields = (
+        controls.appearance
+        if controls is not None and isinstance(controls.appearance, list)
+        else []
+    )
+    if appearance_fields and visual is not None:
+        panel_kwargs: dict = {"appearance_fields": appearance_fields}
+        if isinstance(controls, InMemoryImageControlsConfig):
+            if controls.colormap_names is not None:
+                panel_kwargs["colormap_names"] = controls.colormap_names
+            if controls.clim_range is not None:
+                panel_kwargs["clim_range"] = controls.clim_range
+        if isinstance(controls, MultiscaleImageControlsConfig):
+            panel_kwargs["dataset_info"] = controls.dataset_info
+
+        panel = ControlPanel.from_scene(
+            scene,
+            axis_ranges,
+            non_displayed=non_displayed,
+            visual=visual,
+            **panel_kwargs,
+        )
+        controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
+
+    return AnywidgetCanvasView(
+        canvas=canvas_view.widget, controls=panel, dims=dims_panel
+    )

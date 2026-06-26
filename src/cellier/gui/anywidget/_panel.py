@@ -1,9 +1,10 @@
 """Composite anywidget control panel (Design A).
 
 A single ``ControlPanel`` renders every control as raw DOM inside one ESM,
-synced through traitlets.  Phase 1 implements the dims sliders only; later
-phases add the appearance controls as additional traits + DOM rows (see the
-design doc sections 6.3 / 6.4 and the Phase 2 list in the plan).
+synced through traitlets.  Phase 1 implements the dims sliders; Phase 2 adds
+appearance controls (render mode, ISO threshold, attenuation, LOD bias,
+contrast limits, colormap, AABB, and dataset info) as additional traits + DOM
+rows (see the design doc sections 6.3 / 6.4 and the Phase 2 list in the plan).
 
 The panel satisfies the :class:`cellier.gui._protocol.WidgetView` contract: it
 carries one ``_id``, a ``changed`` / ``closed`` psygnal pair, a ``widget``
@@ -28,7 +29,13 @@ import anywidget
 import traitlets
 from psygnal import Signal
 
-from cellier.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
+from cellier.events import (
+    AABBChangedEvent,
+    AABBUpdateEvent,
+    AppearanceChangedEvent,
+    AppearanceUpdateEvent,
+    SubscriptionSpec,
+)
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -37,14 +44,58 @@ if TYPE_CHECKING:
 
 _STATIC = Path(__file__).parent / "static"
 
+_DEFAULT_COLORMAP_NAMES = [
+    "grays",
+    "viridis",
+    "plasma",
+    "inferno",
+    "magma",
+    "cividis",
+    "turbo",
+    "hot",
+    "cool",
+    "bwr",
+]
+
+# Appearance fields that ControlPanel handles (order determines JS display order).
+_APPEARANCE_FIELDS = [
+    "color_map",
+    "clim",
+    "render_mode",
+    "iso_threshold",
+    "attenuation",
+    "lod_bias",
+]
+
+# AABB trait name -> model field name
+_AABB_TRAIT_TO_FIELD: dict[str, str] = {
+    "aabb_enabled": "enabled",
+    "aabb_line_width": "line_width",
+    "aabb_color": "color",
+}
+
+
+def _colormap_to_str(cm) -> str:
+    """Convert a cmap.Colormap or string to its canonical name string."""
+    if isinstance(cm, str):
+        return cm
+    name = getattr(cm, "name", None)
+    if name is not None and isinstance(name, str):
+        return name
+    return str(cm)
+
 
 class ControlPanel(anywidget.AnyWidget):
     """Composite raw-DOM control panel for the anywidget front-end.
 
-    Phase 1 exposes the per-axis dims sliders.  Construct via
-    :meth:`from_scene`, then wire with::
+    Phase 1 exposes the per-axis dims sliders.  Phase 2 adds appearance
+    controls (render mode, ISO threshold, attenuation, LOD bias, contrast
+    limits, colormap, AABB, and an optional dataset-info detail block).
 
-        panel = ControlPanel.from_scene(scene, axis_ranges)
+    Construct via :meth:`from_scene` (dims only) or by passing ``visual_id``
+    and related keyword arguments for full appearance support.  Wire with::
+
+        panel = ControlPanel.from_scene(scene, axis_ranges, visual=visual)
         controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
 
     Parameters
@@ -63,6 +114,38 @@ class ControlPanel(anywidget.AnyWidget):
         Axis indices composited by the render layer (their rows are hidden).
     non_displayed : list
         Axis indices never shown as sliders regardless of dims state.
+    visual_id : UUID or None
+        UUID of the visual whose appearance this panel controls.  When
+        ``None``, the appearance section is hidden.
+    appearance_fields : list[str] or None
+        Which appearance field names this visual actually supports.  Controls
+        which rows are rendered in JS.  Defaults to none (no appearance rows).
+    render_mode : str
+        Initial render mode.  Default ``"mip"``.
+    iso_threshold : float
+        Initial ISO threshold.  Default ``0.2``.
+    attenuation : float
+        Initial attenuation coefficient.  Default ``1.0``.
+    lod_bias : float
+        Initial LOD bias.  Default ``1.0``.
+    clim : tuple or list
+        Initial contrast limits ``[lo, hi]``.  Default ``[0.0, 1.0]``.
+    clim_range : tuple or list
+        Slider bounds for the contrast limits ``[min, max]``.
+        Default ``[0.0, 1.0]``.
+    color_map : str
+        Initial colormap name.  Default ``"grays"``.
+    colormap_names : list[str] or None
+        Available colormap names for the dropdown.  Defaults to a curated list.
+    aabb_enabled : bool
+        Initial bounding-box visibility.  Default ``False``.
+    aabb_line_width : float
+        Initial AABB line width in pixels.  Default ``2.0``.
+    aabb_color : str
+        Initial AABB color as a CSS hex string.  Default ``"#ffffff"``.
+    dataset_info : str
+        Pre-formatted HTML for the dataset-info detail block.  Empty string
+        hides the block.
     """
 
     _esm = _STATIC / "panel.js"
@@ -72,43 +155,84 @@ class ControlPanel(anywidget.AnyWidget):
     changed: Signal = Signal(object)
     closed: Signal = Signal()
 
-    # Synced traits (one per field).  Dict keys are ``str(axis)``.
-    slice_indices = traitlets.Dict().tag(sync=True)
-    axis_labels = traitlets.Dict().tag(sync=True)
-    axis_ranges = traitlets.Dict().tag(sync=True)
-    displayed_axes = traitlets.List().tag(sync=True)
-    stacked_axes = traitlets.List().tag(sync=True)
-    non_displayed = traitlets.List().tag(sync=True)
+    # ── Appearance traits (Phase 2) ──────────────────────────────────────────
+    has_appearance = traitlets.Bool(False).tag(sync=True)
+    appearance_fields = traitlets.List([]).tag(sync=True)
+    render_mode = traitlets.Unicode("mip").tag(sync=True)
+    iso_threshold = traitlets.Float(0.2).tag(sync=True)
+    attenuation = traitlets.Float(1.0).tag(sync=True)
+    lod_bias = traitlets.Float(1.0).tag(sync=True)
+    clim = traitlets.List([0.0, 1.0]).tag(sync=True)
+    clim_range = traitlets.List([0.0, 1.0]).tag(sync=True)
+    color_map = traitlets.Unicode("grays").tag(sync=True)
+    colormap_names = traitlets.List([]).tag(sync=True)
+
+    # ── AABB traits (Phase 2) ────────────────────────────────────────────────
+    aabb_enabled = traitlets.Bool(False).tag(sync=True)
+    aabb_line_width = traitlets.Float(2.0).tag(sync=True)
+    aabb_color = traitlets.Unicode("#ffffff").tag(sync=True)
+
+    # ── Dataset info (Phase 2, static) ──────────────────────────────────────
+    dataset_info = traitlets.Unicode("").tag(sync=True)
 
     def __init__(
         self,
         *,
-        scene_id: UUID,
-        axis_ranges: dict,
-        axis_labels: dict,
-        slice_indices: dict,
-        displayed_axes: list | tuple = (),
-        stacked_axes: list | tuple = (),
-        non_displayed: list | tuple = (),
+        visual_id: UUID | None = None,
+        appearance_fields: list[str] | None = None,
+        render_mode: str = "mip",
+        iso_threshold: float = 0.2,
+        attenuation: float = 1.0,
+        lod_bias: float = 1.0,
+        clim: tuple[float, float] | list = (0.0, 1.0),
+        clim_range: tuple[float, float] | list = (0.0, 1.0),
+        color_map: str = "grays",
+        colormap_names: list[str] | None = None,
+        aabb_enabled: bool = False,
+        aabb_line_width: float = 2.0,
+        aabb_color: str = "#ffffff",
+        dataset_info: str = "",
         **kwargs,
     ) -> None:
+        has_visual = visual_id is not None
+        resolved_fields = list(appearance_fields or [])
         super().__init__(
-            slice_indices={str(k): int(v) for k, v in slice_indices.items()},
-            axis_labels={str(k): str(v) for k, v in axis_labels.items()},
-            axis_ranges={
-                str(k): [float(lo), float(hi)] for k, (lo, hi) in axis_ranges.items()
-            },
-            displayed_axes=[int(a) for a in displayed_axes],
-            stacked_axes=[int(a) for a in stacked_axes],
-            non_displayed=[int(a) for a in non_displayed],
+            has_appearance=has_visual,
+            appearance_fields=resolved_fields,
+            render_mode=str(render_mode),
+            iso_threshold=float(iso_threshold),
+            attenuation=float(attenuation),
+            lod_bias=float(lod_bias),
+            clim=[float(clim[0]), float(clim[1])],
+            clim_range=[float(clim_range[0]), float(clim_range[1])],
+            color_map=str(color_map),
+            colormap_names=colormap_names
+            if colormap_names is not None
+            else _DEFAULT_COLORMAP_NAMES,
+            aabb_enabled=bool(aabb_enabled),
+            aabb_line_width=float(aabb_line_width),
+            aabb_color=str(aabb_color),
+            dataset_info=str(dataset_info),
             **kwargs,
         )
         self._id = uuid4()
-        self._scene_id = scene_id
-        # Guard around programmatic (model -> widget) trait writes so the
-        # observe handler does not echo them back onto the bus.
+        self._visual_id: UUID | None = visual_id
+        self._appearance_fields: frozenset[str] = frozenset(resolved_fields)
         self._applying = False
-        self.observe(self._on_slice_indices, names="slice_indices")
+
+        # Appearance observers — fire on JS save_changes writes
+        self.observe(
+            self._on_appearance_trait,
+            names=["render_mode", "iso_threshold", "attenuation", "color_map"],
+        )
+        self.observe(self._on_lod_bias_trait, names=["lod_bias"])
+        self.observe(self._on_clim_trait, names=["clim"])
+
+        # AABB observers
+        self.observe(
+            self._on_aabb_trait,
+            names=["aabb_enabled", "aabb_line_width", "aabb_color"],
+        )
 
     # ------------------------------------------------------------------
     # Construction
@@ -121,12 +245,20 @@ class ControlPanel(anywidget.AnyWidget):
         axis_ranges: dict[int, tuple[float, float]],
         *,
         non_displayed: tuple[int, ...] = (),
+        visual=None,
+        appearance_fields: list[str] | None = None,
+        colormap_names: list[str] | None = None,
+        clim_range: tuple[float, float] | None = None,
+        dataset_info: str = "",
     ) -> ControlPanel:
-        """Build a panel from a live scene, paralleling the Qt canvas widget.
+        """Build a panel from a live scene.
 
         Derives axis labels and the initial dims state from *scene*; the caller
         supplies *axis_ranges* (which needs data-store knowledge not on the
         dims model itself).
+
+        When *visual* is provided, the appearance section is enabled and
+        populated from the visual's current ``appearance`` and ``aabb`` fields.
 
         Parameters
         ----------
@@ -136,22 +268,62 @@ class ControlPanel(anywidget.AnyWidget):
             Mapping of axis index to ``(world_min, world_max)``.
         non_displayed : tuple[int, ...]
             Axes excluded from the sliders regardless of dims state.
+        visual : BaseVisual or None
+            Visual model to extract appearance data from.  When ``None``,
+            only the dims section is shown.
+        appearance_fields : list[str] or None
+            Ordered list of appearance field names to display.  When
+            provided, this order is used directly (filtered by the fields
+            the visual's appearance actually has).  When ``None``, the
+            fixed ``_APPEARANCE_FIELDS`` order is used as a fallback.
+        colormap_names : list[str] or None
+            Available colormap names for the dropdown.  Defaults to a curated
+            list when ``None``.
+        clim_range : tuple[float, float] or None
+            ``(min, max)`` bounds for the contrast-limits slider.  Inferred
+            from the visual's current clim when ``None``.
+        dataset_info : str
+            Pre-formatted HTML for the dataset info block.  Empty hides it.
 
         Returns
         -------
         ControlPanel
         """
-        axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
-        selection = scene.dims.selection
-        return cls(
-            scene_id=scene.id,
-            axis_ranges=axis_ranges,
-            axis_labels=axis_labels,
-            slice_indices=dict(getattr(selection, "slice_indices", {})),
-            displayed_axes=getattr(selection, "displayed_axes", ()),
-            stacked_axes=getattr(selection, "stacked_axes", ()),
-            non_displayed=non_displayed,
-        )
+        kwargs: dict = {
+            "colormap_names": colormap_names,
+            "dataset_info": dataset_info,
+        }
+
+        if visual is not None and hasattr(visual, "appearance"):
+            app = visual.appearance
+            field_order = (
+                appearance_fields
+                if appearance_fields is not None
+                else _APPEARANCE_FIELDS
+            )
+            avail = [f for f in field_order if hasattr(app, f)]
+            raw_clim = list(getattr(app, "clim", (0.0, 1.0)))
+            resolved_clim_range = (
+                [float(clim_range[0]), float(clim_range[1])]
+                if clim_range is not None
+                else [min(0.0, raw_clim[0]), max(1.0, raw_clim[1])]
+            )
+            kwargs.update(
+                visual_id=visual.id,
+                appearance_fields=avail,
+                render_mode=getattr(app, "render_mode", "mip"),
+                iso_threshold=getattr(app, "iso_threshold", 0.2),
+                attenuation=getattr(app, "attenuation", 1.0),
+                lod_bias=getattr(app, "lod_bias", 1.0),
+                clim=raw_clim,
+                clim_range=resolved_clim_range,
+                color_map=_colormap_to_str(getattr(app, "color_map", "grays")),
+                aabb_enabled=visual.aabb.enabled,
+                aabb_line_width=visual.aabb.line_width,
+                aabb_color=visual.aabb.color,
+            )
+
+        return cls(**kwargs)
 
     # ------------------------------------------------------------------
     # WidgetView contract
@@ -163,38 +335,54 @@ class ControlPanel(anywidget.AnyWidget):
         return self
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
-        """Return the inbound subscription this panel requires."""
-        return [
-            SubscriptionSpec(
-                event_type=DimsChangedEvent,
-                handler=self._on_dims_changed,
-                entity_id=self._scene_id,
+        """Return the inbound subscriptions this panel requires."""
+        specs: list[SubscriptionSpec] = []
+        if self._visual_id is not None:
+            specs.append(
+                SubscriptionSpec(
+                    event_type=AppearanceChangedEvent,
+                    handler=self._on_appearance_changed,
+                    entity_id=self._visual_id,
+                )
             )
-        ]
+            specs.append(
+                SubscriptionSpec(
+                    event_type=AABBChangedEvent,
+                    handler=self._on_aabb_changed,
+                    entity_id=self._visual_id,
+                )
+            )
+        return specs
 
     def close(self) -> None:
         """Emit ``closed`` to trigger bus unsubscription via the controller."""
         self.closed.emit()
 
     # ------------------------------------------------------------------
-    # model -> widget
+    # model -> widget: appearance (Phase 2)
     # ------------------------------------------------------------------
 
-    def _on_dims_changed(self, event: DimsChangedEvent) -> None:
+    def _on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         if event.source_id == self._id:
-            return  # echo from our own slider move; ignore
+            return  # echo from our own change; ignore
+        field = event.field_name
+        if field not in self._appearance_fields:
+            return
+        value = event.new_value
+        if field == "color_map":
+            value = _colormap_to_str(value)
+        elif field == "clim":
+            value = [float(value[0]), float(value[1])]
+        self._set_field(field, value)
 
-        selection = event.dims_state.selection
-        # Update slider values for the sliced axes.
-        new_slices = dict(self.slice_indices)
-        for axis, value in selection.slice_indices.items():
-            new_slices[str(axis)] = int(value)
-        self._set_field("slice_indices", new_slices)
-
-        # Refresh which rows are hidden.
-        self._set_field("displayed_axes", [int(a) for a in selection.displayed_axes])
-        stacked = getattr(selection, "stacked_axes", ())
-        self._set_field("stacked_axes", [int(a) for a in stacked])
+    def _on_aabb_changed(self, event: AABBChangedEvent) -> None:
+        if event.source_id == self._id:
+            return
+        trait_map = {v: k for k, v in _AABB_TRAIT_TO_FIELD.items()}
+        trait = trait_map.get(event.field_name)
+        if trait is None:
+            return
+        self._set_field(trait, event.new_value)
 
     def _set_field(self, name: str, value) -> None:
         """Set a synced trait without echoing it back onto the bus."""
@@ -205,29 +393,64 @@ class ControlPanel(anywidget.AnyWidget):
             self._applying = False
 
     # ------------------------------------------------------------------
-    # widget -> model
+    # widget -> model: appearance (Phase 2)
     # ------------------------------------------------------------------
 
-    def _on_slice_indices(self, change) -> None:
-        if self._applying:
+    def _on_appearance_trait(self, change) -> None:
+        if self._applying or self._visual_id is None:
             return
-        self._emit_dims()
-
-    def _emit_dims(self) -> None:
-        """Emit a DimsUpdateEvent for the sliced (visible) axes only."""
-        hidden = (
-            set(self.displayed_axes) | set(self.stacked_axes) | set(self.non_displayed)
-        )
-        updates = {
-            int(axis): int(value)
-            for axis, value in self.slice_indices.items()
-            if int(axis) not in hidden
-        }
+        field = change["name"]
+        if field not in self._appearance_fields:
+            return
         self.changed.emit(
-            DimsUpdateEvent(
+            AppearanceUpdateEvent(
                 source_id=self._id,
-                scene_id=self._scene_id,
-                slice_indices=updates,
-                displayed_axes=None,
+                visual_id=self._visual_id,
+                field=field,
+                value=change["new"],
+            )
+        )
+
+    def _on_lod_bias_trait(self, change) -> None:
+        # lod_bias triggers a reslice; JS emits only on settled change, not input.
+        if self._applying or self._visual_id is None:
+            return
+        if "lod_bias" not in self._appearance_fields:
+            return
+        self.changed.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="lod_bias",
+                value=change["new"],
+            )
+        )
+
+    def _on_clim_trait(self, change) -> None:
+        if self._applying or self._visual_id is None:
+            return
+        if "clim" not in self._appearance_fields:
+            return
+        self.changed.emit(
+            AppearanceUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field="clim",
+                value=tuple(change["new"]),
+            )
+        )
+
+    def _on_aabb_trait(self, change) -> None:
+        if self._applying or self._visual_id is None:
+            return
+        aabb_field = _AABB_TRAIT_TO_FIELD.get(change["name"])
+        if aabb_field is None:
+            return
+        self.changed.emit(
+            AABBUpdateEvent(
+                source_id=self._id,
+                visual_id=self._visual_id,
+                field=aabb_field,
+                value=change["new"],
             )
         )

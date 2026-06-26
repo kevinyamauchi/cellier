@@ -144,7 +144,13 @@ def _dims_changed_event(source_id, scene_id, *, displayed, slices, stacked=()):
 def _make_panel():
     from cellier.gui.anywidget import ControlPanel
 
-    return ControlPanel(
+    return ControlPanel()
+
+
+def _make_dims_panel():
+    from cellier.gui.anywidget import AnywidgetDimsPanel
+
+    return AnywidgetDimsPanel(
         scene_id=uuid4(),
         axis_ranges={0: (0.0, 99.0), 1: (0.0, 511.0), 2: (0.0, 511.0)},
         axis_labels={0: "z", 1: "y", 2: "x"},
@@ -156,7 +162,7 @@ def _make_panel():
 
 def test_panel_on_dims_changed_updates_without_emitting():
     """A model-driven dims change updates the trait but does not echo."""
-    panel = _make_panel()
+    panel = _make_dims_panel()
     emitted = []
     panel.changed.connect(emitted.append)
 
@@ -174,7 +180,7 @@ def test_panel_on_dims_changed_updates_without_emitting():
 
 def test_panel_echo_filtered_by_source_id():
     """A DimsChangedEvent originating from the panel itself is ignored."""
-    panel = _make_panel()
+    panel = _make_dims_panel()
     event = _dims_changed_event(
         source_id=panel._id,
         scene_id=panel._scene_id,
@@ -189,7 +195,7 @@ def test_panel_user_change_emits_dims_update_event():
     """A user-driven trait change emits a DimsUpdateEvent for sliced axes only."""
     from cellier.events import DimsUpdateEvent
 
-    panel = _make_panel()
+    panel = _make_dims_panel()
     emitted = []
     panel.changed.connect(emitted.append)
 
@@ -301,26 +307,65 @@ def _image_viewer():
     return viewer, axis_ranges_from_viewer(viewer)
 
 
+def _image_viewer_with_controls():
+    """A small anywidget Viewer with one in-memory image and an appearance panel."""
+    import numpy as np
+
+    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.data.image._image_memory_store import ImageMemoryStore
+
+    blobs = np.zeros((8, 8, 8), dtype=np.float32)
+    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
+    store = ImageMemoryStore(data=blobs, name="blobs")
+    viewer.controller.add_data_store(store)
+    viewer.add_image(
+        store,
+        appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
+        controls={"appearance": ["color_map", "clim"]},
+    )
+    return viewer, axis_ranges_from_viewer(viewer)
+
+
 def test_build_canvas_widget_anywidget_returns_view():
-    """build_canvas_widget(gui='anywidget') returns a composable view."""
+    """build_canvas_widget returns an AnywidgetCanvasView; no controls by default."""
     from cellier.convenience._hosts import JupyterHost
     from cellier.convenience.gui import AnywidgetCanvasView, build_canvas_widget
-    from cellier.gui.anywidget import ControlPanel
 
     viewer, ranges = _image_viewer()
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
 
     assert isinstance(view, AnywidgetCanvasView)
     assert isinstance(view.canvas, rendercanvas_anywidget.RenderCanvas)
-    assert isinstance(view.controls, ControlPanel)
+    # No controls config was registered, so the panel is absent.
+    assert view.controls is None
     assert callable(view.compose)
+
+    # Without controls, compose() returns only the right column (no h-stack).
+    composed = view.compose(JupyterHost())
+    from cellier.gui.anywidget._container import AwBox
+
+    assert isinstance(composed, AwBox)
+    assert composed.direction == "v"
+
+
+def test_build_canvas_widget_anywidget_with_controls():
+    """build_canvas_widget always returns view.controls=None; the renderer builds it."""
+    from cellier.convenience._hosts import JupyterHost
+    from cellier.convenience.gui import AnywidgetCanvasView, build_canvas_widget
+
+    viewer, ranges = _image_viewer_with_controls()
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+
+    assert isinstance(view, AnywidgetCanvasView)
+    # Panel building is deferred to the renderer; the canvas view never holds it.
+    assert view.controls is None
 
     composed = view.compose(JupyterHost())
     from cellier.gui.anywidget._container import AwBox
 
     assert isinstance(composed, AwBox)
-    # canvas-over-controls column is centred on the cross-axis.
-    assert composed.align == "center"
+    # No controls in the canvas view, so compose returns only the right column.
+    assert composed.direction == "v"
 
 
 def test_build_canvas_widget_gui_conflict_raises():
@@ -407,104 +452,493 @@ class _FakeReturnValueHost(_FakeHost):
 
 
 def test_display_imports_from_convenience():
-    """display and make_dim_toggle are importable from cellier.convenience."""
-    from cellier.convenience import display, make_dim_toggle
+    """display, Layout, AppearanceControls, SceneControls are importable."""
+    from cellier.convenience import AppearanceControls, Layout, SceneControls, display
 
     assert callable(display)
-    assert callable(make_dim_toggle)
+    assert Layout is not None
+    assert AppearanceControls is not None
+    assert SceneControls is not None
 
 
-def test_display_composes_presents_and_returns_inert_handle(monkeypatch):
-    """display composes controls above the view, presents once, returns a handle."""
+def test_display_center_only_presents_and_returns_inert_handle(monkeypatch):
+    """Layout with no docks: presents just the center, returns an inert handle."""
     from cellier.convenience import _hosts, _launch
     from cellier.convenience._launch import DisplayHandle
     from cellier.convenience.gui import build_canvas_widget
-    from cellier.gui.anywidget import make_dim_toggle
+    from cellier.convenience.layout import Layout
 
     viewer, ranges = _image_viewer()
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    toggle = make_dim_toggle(viewer)
 
     fake = _FakeHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
 
-    handle = _launch.display(viewer, view, controls=[toggle], fit="none")
+    handle = _launch.display(viewer, Layout(center=view), fit="none")
 
-    # present() rendered the composed stack exactly once.
+    # present() was called exactly once.
     assert fake.presented is not None
+    # No docks: root is just the canvas+dims v-stack from compose().
     assert fake.presented.kind == "stack"
-    _direction, leaves, align = fake.presented.payload
-    # the outer column is centred so controls line up under the viewer.
-    assert align == "center"
-    # control leaf comes first; the view's composed node is last.
-    assert leaves[0].kind == "leaf" and leaves[0].payload is toggle
-    assert leaves[-1].kind == "stack"
+    _direction, leaves, _align = fake.presented.payload
+    assert _direction == "v"
+    assert len(leaves) == 2  # canvas leaf + dims leaf
 
-    # display() returns an inert handle (not the renderable) so the cell shows
-    # a single copy; the handle has no representation of its own.
+    # display() returns an inert handle (not the renderable) for Jupyter.
     assert isinstance(handle, DisplayHandle)
     assert handle._repr_mimebundle_() == {}
 
-    # close() tears down idempotently.
+    # close() is idempotent.
     handle.close()
     handle.close()
+
+
+def test_display_bottom_dock_stacks_toggle_below_center(monkeypatch):
+    """SceneControls in bottom_dock produces a v-stack: [center, toggle]."""
+    from cellier.convenience import _hosts, _launch
+    from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.layout import Layout, SceneControls
+
+    viewer, ranges = _image_viewer()
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+
+    fake = _FakeHost()
+    monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
+
+    _launch.display(
+        viewer, Layout(center=view, bottom_dock=SceneControls()), fit="none"
+    )
+
+    # Outer v-stack: [center_composed, toggle_leaf]
+    presented = fake.presented
+    assert presented.kind == "stack"
+    direction, leaves, align = presented.payload
+    assert direction == "v"
+    assert align == "center"
+    assert len(leaves) == 2
+    center_node, toggle_node = leaves
+    assert center_node.kind == "stack"  # canvas+dims v-stack
+    assert toggle_node.kind == "leaf"  # SceneControls -> host.leaf(toggle)
+
+
+def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
+    """AppearanceControls in left_dock produces a h-stack: [panel, center]."""
+    from cellier.convenience import _hosts, _launch
+    from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.layout import AppearanceControls, Layout
+
+    viewer, ranges = _image_viewer_with_controls()
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+
+    fake = _FakeHost()
+    monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
+
+    _launch.display(
+        viewer, Layout(center=view, left_dock=AppearanceControls()), fit="none"
+    )
+
+    # Middle h-stack: [panel_leaf, center_composed]
+    presented = fake.presented
+    assert presented.kind == "stack"
+    direction, leaves, _align = presented.payload
+    assert direction == "h"
+    assert len(leaves) == 2
+    panel_node, center_node = leaves
+    assert panel_node.kind == "leaf"  # AppearanceControls -> host.leaf(panel)
+    assert center_node.kind == "stack"  # canvas+dims v-stack
 
 
 def test_display_return_value_host_yields_renderable(monkeypatch):
     """A return-value host (marimo-like) gets the renderable back from display."""
     from cellier.convenience import _hosts, _launch
     from cellier.convenience.gui import build_canvas_widget
-    from cellier.gui.anywidget import make_dim_toggle
+    from cellier.convenience.layout import Layout, SceneControls
 
     viewer, ranges = _image_viewer()
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    toggle = make_dim_toggle(viewer)
 
     fake = _FakeReturnValueHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
 
-    result = _launch.display(viewer, view, controls=[toggle], fit="none")
+    result = _launch.display(
+        viewer, Layout(center=view, bottom_dock=SceneControls()), fit="none"
+    )
 
-    # display() returns the host renderable (so marimo's last expression renders
-    # it), not the inert handle.
+    # Return-value host: display() yields the renderable so marimo renders it.
     assert result is fake.presented
-    assert result.kind == "stack"
     # teardown is attached best-effort to the renderable.
     assert callable(result.close)
     result.close()
 
 
-def test_display_controls_position_bottom(monkeypatch):
-    """controls_position='bottom' stacks the controls below the view."""
+def test_run_dispatches_to_display_for_anywidget(monkeypatch):
+    """run() with gui='anywidget' calls display() and returns a DisplayHandle."""
     from cellier.convenience import _hosts, _launch
+    from cellier.convenience._launch import DisplayHandle
     from cellier.convenience.gui import build_canvas_widget
-    from cellier.gui.anywidget import make_dim_toggle
+    from cellier.convenience.layout import Layout
 
     viewer, ranges = _image_viewer()
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    toggle = make_dim_toggle(viewer)
+
+    fake = _FakeHost()
+    monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
+
+    result = _launch.run(viewer, Layout(center=view), fit="none")
+
+    assert fake.presented is not None
+    assert isinstance(result, DisplayHandle)
+
+
+def test_run_importable_from_convenience():
+    """run is importable from cellier.convenience."""
+    from cellier.convenience import run
+
+    assert callable(run)
+
+
+def test_layout_single_preset_no_docks():
+    """Layout.single with no dock args produces a center-only layout."""
+    from cellier.convenience.layout import Layout
+
+    viewer, ranges = _image_viewer()
+    from cellier.convenience.gui import build_canvas_widget
+
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+    layout = Layout.single(view)
+    assert layout.center is view
+    assert layout.left_dock is None
+    assert layout.right_dock is None
+    assert layout.top_dock is None
+    assert layout.bottom_dock is None
+
+
+def test_layout_single_preset_with_docks():
+    """Layout.single wires appearance and scene_controls to the requested docks."""
+    from cellier.convenience.layout import AppearanceControls, Layout, SceneControls
+
+    viewer, ranges = _image_viewer()
+    from cellier.convenience.gui import build_canvas_widget
+
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+    layout = Layout.single(view, appearance="left", scene_controls="bottom")
+    assert isinstance(layout.left_dock, AppearanceControls)
+    assert isinstance(layout.bottom_dock, SceneControls)
+    assert layout.right_dock is None
+    assert layout.top_dock is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 - appearance controls
+# ---------------------------------------------------------------------------
+
+
+def _make_panel_with_visual():
+    """Return a ControlPanel wired to a fake visual via appearance_fields."""
+    from cellier.gui.anywidget import ControlPanel
+
+    return ControlPanel(
+        visual_id=uuid4(),
+        appearance_fields=[
+            "color_map",
+            "clim",
+            "render_mode",
+            "iso_threshold",
+            "attenuation",
+            "lod_bias",
+        ],
+        render_mode="mip",
+        iso_threshold=0.2,
+        attenuation=1.0,
+        lod_bias=1.0,
+        clim=[0.0, 1.0],
+        clim_range=[0.0, 1.0],
+        color_map="grays",
+    )
+
+
+def test_panel_has_appearance_trait_when_visual_id_given():
+    """has_appearance=True and appearance_fields non-empty when visual_id is set."""
+    panel = _make_panel_with_visual()
+    assert panel.has_appearance is True
+    assert "render_mode" in panel.appearance_fields
+    assert "clim" in panel.appearance_fields
+    assert "color_map" in panel.appearance_fields
+
+
+def test_panel_has_no_appearance_when_no_visual():
+    """has_appearance=False when no visual_id is supplied."""
+    panel = _make_panel()
+    assert panel.has_appearance is False
+    assert panel.appearance_fields == []
+
+
+def _appearance_changed_event(source_id, visual_id, field, value):
+    from cellier.events import AppearanceChangedEvent
+
+    return AppearanceChangedEvent(
+        source_id=source_id,
+        visual_id=visual_id,
+        field_name=field,
+        new_value=value,
+        requires_reslice=False,
+    )
+
+
+def test_panel_on_appearance_changed_updates_trait_without_emitting():
+    """A model-driven AppearanceChangedEvent updates the trait but does not echo."""
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    event = _appearance_changed_event(
+        source_id=uuid4(),
+        visual_id=panel._visual_id,
+        field="render_mode",
+        value="iso",
+    )
+    panel._on_appearance_changed(event)
+
+    assert panel.render_mode == "iso"
+    assert emitted == []
+
+
+def test_panel_appearance_echo_filtered_by_source_id():
+    """An AppearanceChangedEvent from the panel itself is ignored."""
+    panel = _make_panel_with_visual()
+    original = panel.render_mode
+
+    event = _appearance_changed_event(
+        source_id=panel._id,  # echo: same source
+        visual_id=panel._visual_id,
+        field="render_mode",
+        value="iso",
+    )
+    panel._on_appearance_changed(event)
+    assert panel.render_mode == original
+
+
+def test_panel_appearance_changed_colormap_converts_to_str():
+    """color_map in AppearanceChangedEvent is converted to string name."""
+    from cmap import Colormap
+
+    panel = _make_panel_with_visual()
+    event = _appearance_changed_event(
+        source_id=uuid4(),
+        visual_id=panel._visual_id,
+        field="color_map",
+        value=Colormap("viridis"),
+    )
+    panel._on_appearance_changed(event)
+    # Should be stored as a string, not a Colormap object
+    assert isinstance(panel.color_map, str)
+    assert "viridis" in panel.color_map
+
+
+def test_panel_user_render_mode_change_emits_appearance_update():
+    """A user-driven render_mode change emits AppearanceUpdateEvent."""
+    from cellier.events import AppearanceUpdateEvent
+
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    panel.render_mode = "iso"
+
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, AppearanceUpdateEvent)
+    assert event.source_id == panel._id
+    assert event.visual_id == panel._visual_id
+    assert event.field == "render_mode"
+    assert event.value == "iso"
+
+
+def test_panel_user_clim_change_emits_appearance_update():
+    """A user-driven clim change emits AppearanceUpdateEvent with a tuple value."""
+    from cellier.events import AppearanceUpdateEvent
+
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    panel.clim = [0.1, 0.9]
+
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, AppearanceUpdateEvent)
+    assert event.field == "clim"
+    assert event.value == (0.1, 0.9)  # converted list -> tuple
+
+
+def test_panel_user_lod_bias_change_emits_appearance_update():
+    """A user-driven lod_bias change emits AppearanceUpdateEvent."""
+    from cellier.events import AppearanceUpdateEvent
+
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    panel.lod_bias = 2.0
+
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, AppearanceUpdateEvent)
+    assert event.field == "lod_bias"
+    assert event.value == 2.0
+
+
+def _aabb_changed_event(source_id, visual_id, field, value):
+    from cellier.events import AABBChangedEvent
+
+    return AABBChangedEvent(
+        source_id=source_id,
+        visual_id=visual_id,
+        field_name=field,
+        new_value=value,
+    )
+
+
+def test_panel_on_aabb_changed_updates_trait_without_emitting():
+    """A model-driven AABBChangedEvent updates the trait but does not echo."""
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    event = _aabb_changed_event(
+        source_id=uuid4(),
+        visual_id=panel._visual_id,
+        field="enabled",
+        value=True,
+    )
+    panel._on_aabb_changed(event)
+
+    assert panel.aabb_enabled is True
+    assert emitted == []
+
+
+def test_panel_user_aabb_enabled_change_emits_aabb_update():
+    """A user-driven aabb_enabled change emits AABBUpdateEvent."""
+    from cellier.events import AABBUpdateEvent
+
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    panel.aabb_enabled = True
+
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, AABBUpdateEvent)
+    assert event.source_id == panel._id
+    assert event.visual_id == panel._visual_id
+    assert event.field == "enabled"
+    assert event.value is True
+
+
+def test_panel_user_aabb_color_change_emits_aabb_update():
+    """A user-driven aabb_color change emits AABBUpdateEvent with field 'color'."""
+    from cellier.events import AABBUpdateEvent
+
+    panel = _make_panel_with_visual()
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    panel.aabb_color = "#ff0000"
+
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, AABBUpdateEvent)
+    assert event.field == "color"
+    assert event.value == "#ff0000"
+
+
+def test_panel_appearance_only_emits_for_declared_fields():
+    """Changes to undeclared fields are not emitted."""
+    from cellier.gui.anywidget import ControlPanel
+
+    panel = ControlPanel(
+        visual_id=uuid4(),
+        appearance_fields=["render_mode"],  # only render_mode declared
+        render_mode="mip",
+        lod_bias=1.0,
+    )
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    # lod_bias is not in appearance_fields so no event should be emitted
+    panel.lod_bias = 2.5
+    assert emitted == []
+
+
+def test_from_scene_with_visual_populates_appearance():
+    """from_scene(visual=...) enables appearance controls with the visual's fields."""
+    import numpy as np
+
+    from cellier.convenience import Viewer
+    from cellier.data.image._image_memory_store import ImageMemoryStore
+    from cellier.gui.anywidget import ControlPanel
+
+    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
+    viewer.controller.add_data_store(store)
+    viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
+
+    scene = viewer.scene
+    visual = scene.visuals[0]
+    axis_ranges = {0: (0.0, 3.0), 1: (0.0, 3.0), 2: (0.0, 3.0)}
+
+    panel = ControlPanel.from_scene(scene, axis_ranges, visual=visual)
+
+    assert isinstance(panel, ControlPanel)
+    assert panel.has_appearance is True
+    assert panel._visual_id == visual.id
+    assert "color_map" in panel.appearance_fields
+    assert "clim" in panel.appearance_fields
+    assert "viridis" in panel.color_map
+
+
+def test_renderer_builds_appearance_panel_for_configured_visual(monkeypatch):
+    """The anywidget renderer creates an AppearanceControls panel in the left dock."""
+    import numpy as np
+
+    from cellier.convenience import Viewer, _hosts, _launch, axis_ranges_from_viewer
+    from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.layout import AppearanceControls, Layout
+    from cellier.data.image._image_memory_store import ImageMemoryStore
+    from cellier.events import AABBChangedEvent, AppearanceChangedEvent
+    from cellier.gui.anywidget import ControlPanel
+
+    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
+    viewer.controller.add_data_store(store)
+    viewer.add_image(
+        store,
+        appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
+        controls={"appearance": ["color_map", "clim"]},
+    )
+
+    ranges = axis_ranges_from_viewer(viewer)
+    view = build_canvas_widget(viewer, ranges, gui="anywidget")
+    # build_canvas_widget no longer builds the panel.
+    assert view.controls is None
 
     fake = _FakeHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
 
     _launch.display(
-        viewer, view, controls=[toggle], controls_position="bottom", fit="none"
+        viewer, Layout(center=view, left_dock=AppearanceControls()), fit="none"
     )
 
-    _direction, leaves, _align = fake.presented.payload
-    # view first, control leaf last.
-    assert leaves[0].kind == "stack"
-    assert leaves[-1].kind == "leaf" and leaves[-1].payload is toggle
-
-
-def test_display_controls_position_invalid(monkeypatch):
-    """An unknown controls_position is rejected."""
-    from cellier.convenience import _hosts, _launch
-    from cellier.convenience.gui import build_canvas_widget
-
-    viewer, ranges = _image_viewer()
-    view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: _FakeHost())
-
-    with pytest.raises(ValueError, match="controls_position"):
-        _launch.display(viewer, view, controls_position="left")
+    # The renderer placed the panel as the left leaf.
+    presented = fake.presented
+    _direction, leaves, _align = presented.payload
+    panel_leaf = leaves[0]
+    assert panel_leaf.kind == "leaf"
+    panel = panel_leaf.payload
+    assert isinstance(panel, ControlPanel)
+    assert panel.has_appearance is True
+    assert panel._visual_id is not None
+    event_types = {s.event_type for s in panel.subscription_specs()}
+    assert AppearanceChangedEvent in event_types
+    assert AABBChangedEvent in event_types

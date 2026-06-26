@@ -10,10 +10,9 @@ import sys
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from cellier.convenience._ortho_viewer import OrthoViewer
     from cellier.convenience._viewer import Viewer
+    from cellier.convenience.layout._spec import Layout
 
     ViewerLike = Viewer | OrthoViewer
 
@@ -22,7 +21,7 @@ FitMode = Literal["ready", "immediate", "none"]
 
 def launch(
     viewer: ViewerLike,
-    window: object,
+    layout_or_window: object,
     *,
     fit: FitMode = "ready",
     on_ready: Callable[[], None] | None = None,
@@ -44,8 +43,10 @@ def launch(
     viewer : Viewer
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
-    window : QMainWindow or QWidget
-        The top-level Qt window to show.
+    layout_or_window : Layout or QMainWindow or QWidget
+        Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
+        a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
+        window.
     fit : "ready", "immediate", or "none"
         Camera-fit policy applied at startup.  See :func:`_init_view`.
     on_ready : Callable[[], None] or None
@@ -61,7 +62,8 @@ def launch(
 
     _app = QApplication.instance() or QApplication([sys.argv[0]])
 
-    window.show()  # type: ignore[attr-defined]
+    window = _resolve_qt_window(layout_or_window, viewer)
+    window.show()
     # _init_view only subscribes to the first-frame event and requests a draw;
     # the actual fit + reslice run inside that callback, which fires once
     # QtAsyncio.run() below starts the loop and the canvas paints.  No timer is
@@ -72,12 +74,12 @@ def launch(
 
 def show(
     viewer: ViewerLike,
-    window: object,
+    layout_or_window: object,
     *,
     fit: FitMode = "ready",
     on_ready: Callable[[], None] | None = None,
 ) -> None:
-    """Show *window* without blocking.
+    """Show a viewer window without blocking.
 
     Requires a Qt event loop that is already running (e.g. inside IPython /
     Jupyter after ``%gui qt``).  The initial camera fit and data load are
@@ -88,8 +90,10 @@ def show(
     viewer : Viewer
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
-    window : QMainWindow or QWidget
-        The top-level Qt window to show.
+    layout_or_window : Layout or QMainWindow or QWidget
+        Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
+        a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
+        window.
     fit : "ready", "immediate", or "none"
         Camera-fit policy applied at startup.  See :func:`_init_view`.
     on_ready : Callable[[], None] or None
@@ -108,7 +112,8 @@ def show(
             "No Qt event loop is running. "
             "Use launch() for scripts, or run inside IPython/Jupyter with %gui qt."
         )
-    window.show()  # type: ignore[attr-defined]
+    window = _resolve_qt_window(layout_or_window, viewer)
+    window.show()
     _init_view(viewer, fit=fit, on_ready=on_ready)
 
 
@@ -154,10 +159,8 @@ class DisplayHandle:
 
 def display(
     viewer: ViewerLike,
-    view: object,
+    layout: Layout,
     *,
-    controls: Iterable[object] = (),
-    controls_position: Literal["top", "bottom"] = "top",
     fit: FitMode = "ready",
     on_ready: Callable[[], None] | None = None,
     host: str | None = None,
@@ -165,31 +168,18 @@ def display(
     """Compose and present an anywidget viewer non-blockingly.
 
     The notebook counterpart of :func:`launch`.  Resolves the anywidget host
-    (Jupyter or marimo), composes the *controls* above or below the *view*
-    through the host's :class:`~cellier.convenience._hosts.LayoutHost`, renders
-    the composed root, and arms first-frame startup.  No ``QApplication`` /
-    ``QtAsyncio`` is involved -- slicing runs on the host's own asyncio loop.
-
-    Rendering is done imperatively inside ``host.present()`` (exactly once,
-    before ``_init_view`` arms the first-frame fit so the canvas is mounted and
-    paints), and this function returns an inert :class:`DisplayHandle` rather
-    than the widget, so the cell shows a single copy regardless of where
-    ``display()`` sits in it.
+    (Jupyter or marimo), renders the *layout* spec through the host's
+    :class:`~cellier.convenience._hosts.LayoutHost`, presents the result, and
+    arms first-frame startup.
 
     Parameters
     ----------
     viewer : Viewer or OrthoViewer
         The viewer whose controller drives fit / reslice.
-    view : AnywidgetCanvasView or OrthoAnywidgetCanvases
-        The object returned by ``build_canvas_widget`` /
-        ``build_ortho_grid_widget`` for ``gui="anywidget"``.  Must expose
-        ``compose(host)`` and ``close()``.
-    controls : iterable of anywidget
-        Extra app-level controls (e.g. ``make_dim_toggle(viewer)``) placed
-        above or below the view (see *controls_position*).
-    controls_position : "top" or "bottom"
-        Whether the *controls* are stacked above (``"top"``, default) or below
-        (``"bottom"``) the view.
+    layout : Layout
+        Declarative layout spec -- center canvas(es) plus optional dock
+        controls.  Build with :class:`~cellier.convenience.layout.Layout` or
+        its presets (``Layout.single``, ``Layout.ortho``).
     fit : "ready", "immediate", or "none"
         Camera-fit policy applied at startup.  See :func:`_init_view`.
     on_ready : Callable[[], None] or None
@@ -207,42 +197,79 @@ def display(
         (so the cell renders it), with a best-effort ``close`` attached.
     """
     from cellier.convenience._hosts import resolve_host
-
-    if controls_position not in ("top", "bottom"):
-        raise ValueError(
-            f"controls_position must be 'top' or 'bottom', got {controls_position!r}."
-        )
+    from cellier.convenience.layout._anywidget_renderer import render_anywidget
 
     resolved_host = resolve_host(host)
-    control_leaves = [resolved_host.leaf(control) for control in controls]
-    view_leaf = view.compose(resolved_host)
-    leaves = (
-        [view_leaf, *control_leaves]
-        if controls_position == "bottom"
-        else [*control_leaves, view_leaf]
-    )
+    render_view = render_anywidget(layout, viewer, resolved_host)
+    cell_value = resolved_host.present(render_view.root)
 
-    # Imperative hosts (Jupyter) render in present() and return None; return-value
-    # hosts (marimo) return the renderable for display() to yield as the cell
-    # output (see LayoutHost.present).  Centre the column so controls line up
-    # under the (fixed-width) viewer.
-    cell_value = resolved_host.present(resolved_host.stack(leaves, align="center"))
-
-    # _init_view only subscribes to the first-frame event and requests a draw;
-    # the actual fit + reslice run inside that callback once the host loop ticks
-    # and the canvas paints its first frame (after the cell value is rendered).
     _init_view(viewer, fit=fit, on_ready=on_ready)
 
-    handle = DisplayHandle(viewer, view)
+    handle = DisplayHandle(viewer, render_view)
     if cell_value is None:
-        # Imperative host already rendered; the inert handle is the cell value.
         return handle
-    # Return-value host: yield the renderable, attaching teardown best-effort.
     try:
         cell_value.close = handle.close  # type: ignore[attr-defined]
     except Exception:
         pass
     return cell_value
+
+
+def run(
+    viewer: ViewerLike,
+    layout: Layout,
+    *,
+    fit: FitMode = "ready",
+    on_ready: Callable[[], None] | None = None,
+) -> object:
+    """Show a viewer, dispatching to the right host based on ``viewer.gui``.
+
+    The portable entry point: replaces separate :func:`display` / :func:`launch`
+    calls so notebook and script code can be identical up to the ``gui=``
+    argument on :class:`~cellier.convenience.Viewer`.
+
+    * ``gui="anywidget"`` -- calls :func:`display` (non-blocking; returns a
+      :class:`DisplayHandle` for Jupyter or the renderable for marimo).
+    * ``gui="qt"`` -- calls :func:`launch` (blocking; returns ``None`` after
+      the window is closed).
+
+    Parameters
+    ----------
+    viewer : Viewer or OrthoViewer
+        The viewer whose ``gui`` attribute selects the dispatch target.
+    layout : Layout
+        Declarative layout spec.
+    fit : "ready", "immediate", or "none"
+        Camera-fit policy applied at startup.
+    on_ready : Callable[[], None] or None
+        Optional zero-argument callback fired once every scene's startup data
+        has committed to the GPU.
+
+    Returns
+    -------
+    object
+        :class:`DisplayHandle` (or marimo renderable) for anywidget; ``None``
+        for Qt (after the window closes).
+    """
+    if viewer.gui == "anywidget":
+        return display(viewer, layout, fit=fit, on_ready=on_ready)
+    if viewer.gui == "qt":
+        launch(viewer, layout, fit=fit, on_ready=on_ready)
+        return None
+    raise ValueError(
+        f"Unknown viewer.gui {viewer.gui!r}. Expected 'qt' or 'anywidget'."
+    )
+
+
+def _resolve_qt_window(layout_or_window: object, viewer: object) -> object:
+    """Return a QMainWindow: render *layout_or_window* if it is a Layout."""
+    from cellier.convenience.layout._spec import Layout
+
+    if isinstance(layout_or_window, Layout):
+        from cellier.convenience.layout._qt_renderer import render_qt
+
+        return render_qt(layout_or_window, viewer)
+    return layout_or_window
 
 
 def _init_view(

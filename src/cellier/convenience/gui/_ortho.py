@@ -128,6 +128,11 @@ def build_ortho_grid_widget(
 
     gui = _resolve_gui(ortho, gui)
     if gui == "qt":
+        import sys
+
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([sys.argv[0]])
         return _build_qt_ortho_grid(
             ortho,
             axis_ranges,

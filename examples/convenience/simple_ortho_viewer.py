@@ -17,27 +17,17 @@ Controls
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
-from PySide6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QMainWindow,
-    QWidget,
-)
 from skimage.data import binary_blobs
 
 from cellier.convenience import (
+    Layout,
     OrthoViewer,
     axis_ranges_from_ortho,
-    launch,
+    run,
 )
 from cellier.convenience.gui import build_ortho_grid_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
-
-# QApplication must exist before any QWidget is constructed.
-app = QApplication.instance() or QApplication(sys.argv)
 
 # ---------------------------------------------------------------------------
 # Data
@@ -46,7 +36,7 @@ app = QApplication.instance() or QApplication(sys.argv)
 blobs_3d = binary_blobs(length=200, n_dim=3, rng=0).astype(np.float32)
 
 # ---------------------------------------------------------------------------
-# Orthoviewer model: launches empty, then we add data.
+# Orthoviewer model
 # ---------------------------------------------------------------------------
 
 viewer = OrthoViewer(axis_labels=("z", "y", "x"))
@@ -69,42 +59,14 @@ viewer.add_image(
 viewer.center_slices()
 
 # ---------------------------------------------------------------------------
-# Axis ranges and the 2x2 canvas grid
+# Canvas + layout
 # ---------------------------------------------------------------------------
 
 axis_ranges = axis_ranges_from_ortho(viewer)
 canvas_widgets = build_ortho_grid_widget(viewer, axis_ranges)
 
 # ---------------------------------------------------------------------------
-# Qt window
-# ---------------------------------------------------------------------------
-
-app_window = QMainWindow()
-app_window.setWindowTitle("Blob Orthoviewer")
-app_window.resize(1200, 900)
-
-central = QWidget()
-root_layout = QHBoxLayout(central)
-app_window.setCentralWidget(central)
-root_layout.addWidget(canvas_widgets.widget, stretch=1)
-
-# ---------------------------------------------------------------------------
-# Readiness
-# ---------------------------------------------------------------------------
-# For the orthoviewer, on_ready fires once after *all four* panel scenes have
-# loaded their data onto the GPU. launch() fits each panel on its first frame
-# and re-fits on ready (fit="ready", the default), so no manual fit_camera or
-# timer is needed. Here we just flag it in the title bar.
-
-
-def _on_ready() -> None:
-    app_window.setWindowTitle("Blob Orthoviewer (loaded)")
-
-
-viewer.on_ready(_on_ready)
-
-# ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
 
-launch(viewer, app_window, fit="ready")
+run(viewer, Layout(center=canvas_widgets), fit="ready")

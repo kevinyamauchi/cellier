@@ -6,6 +6,11 @@ from cellier.convenience.gui._canvas import (
     build_canvas_widget,
     canvas_widget_for_scene,
 )
+from cellier.convenience.gui._controls_config import (
+    BaseControlsConfig,
+    InMemoryImageControlsConfig,
+    MultiscaleImageControlsConfig,
+)
 from cellier.convenience.gui._ortho import (
     OrthoAnywidgetCanvases,
     OrthoCanvasWidgets,
@@ -14,6 +19,9 @@ from cellier.convenience.gui._ortho import (
 
 __all__ = [
     "AnywidgetCanvasView",
+    "BaseControlsConfig",
+    "InMemoryImageControlsConfig",
+    "MultiscaleImageControlsConfig",
     "OrthoAnywidgetCanvases",
     "OrthoCanvasWidgets",
     "anywidget_canvas_view_for_scene",

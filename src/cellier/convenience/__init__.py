@@ -10,42 +10,61 @@ from cellier.convenience._kwarg_dicts import (
     BaseLabelsAppearanceKwargs,
     ChannelAppearanceKwargs,
     InMemoryImageAppearanceKwargs,
+    InMemoryImageControlsKwargs,
     InMemoryLabelsAppearanceKwargs,
     LinesMemoryAppearanceKwargs,
     MeshFlatAppearanceKwargs,
     MeshPhongAppearanceKwargs,
     MultiscaleImageAppearanceKwargs,
+    MultiscaleImageControlsKwargs,
     MultiscaleImageRenderConfigKwargs,
     MultiscaleLabelRenderConfigKwargs,
     MultiscaleLabelsAppearanceKwargs,
     PointsMarkerAppearanceKwargs,
 )
-from cellier.convenience._launch import display, launch, show
+from cellier.convenience._launch import display, launch, run, show
 from cellier.convenience._ortho_viewer import OrthoViewer
 from cellier.convenience._viewer import Viewer
+from cellier.convenience.layout import (
+    AppearanceControls,
+    Grid,
+    HStack,
+    Layout,
+    SceneControls,
+    VStack,
+)
 
 __all__ = [
+    "AppearanceControls",
     "BaseAppearanceKwargs",
     "BaseImageAppearanceKwargs",
     "BaseLabelsAppearanceKwargs",
     "ChannelAppearanceKwargs",
+    "Grid",
+    "HStack",
     "InMemoryImageAppearanceKwargs",
+    "InMemoryImageControlsKwargs",
     "InMemoryLabelsAppearanceKwargs",
+    "Layout",
     "LinesMemoryAppearanceKwargs",
     "MeshFlatAppearanceKwargs",
     "MeshPhongAppearanceKwargs",
     "MultiscaleImageAppearanceKwargs",
+    "MultiscaleImageControlsKwargs",
     "MultiscaleImageRenderConfigKwargs",
     "MultiscaleLabelRenderConfigKwargs",
     "MultiscaleLabelsAppearanceKwargs",
     "OrthoViewer",
     "PointsMarkerAppearanceKwargs",
+    "SceneControls",
+    "VStack",
     "Viewer",
     "axis_ranges_from_ortho",
     "axis_ranges_from_viewer",
     "display",
     "launch",
     "make_dim_toggle",
+    "run",
     "show",
 ]
 
