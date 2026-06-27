@@ -98,35 +98,3 @@ class Layout:
         if scene_controls:
             docks[f"{scene_controls}_dock"] = SceneControls()
         return cls(center=canvas, **docks)
-
-    @classmethod
-    def ortho(
-        cls,
-        *,
-        xy,
-        xz,
-        yz,
-        vol=None,
-        appearance: Literal["left", "right", "top", "bottom"] | bool = False,
-        scene_controls: Literal["left", "right", "top", "bottom"] | bool = False,
-    ) -> Layout:
-        """Ortho-view preset: four panels in a 2x2 grid.
-
-        Parameters
-        ----------
-        xy, xz, yz :
-            Canvas views for the three orthographic panels.
-        vol :
-            Canvas view for the 3D volume panel.  ``None`` leaves the cell empty.
-        appearance : dock name or False
-            Where to place appearance controls.
-        scene_controls : dock name or False
-            Where to place scene controls.
-        """
-        center = Grid([[xy, xz], [yz, vol]])
-        docks: dict[str, object] = {}
-        if appearance:
-            docks[f"{appearance}_dock"] = AppearanceControls()
-        if scene_controls:
-            docks[f"{scene_controls}_dock"] = SceneControls()
-        return cls(center=center, **docks)

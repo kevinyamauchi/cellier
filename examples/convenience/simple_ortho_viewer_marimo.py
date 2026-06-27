@@ -41,6 +41,7 @@ def _():
     from skimage.data import binary_blobs
 
     from cellier.convenience import (
+        Layout,
         OrthoViewer,
         axis_ranges_from_ortho,
         display,
@@ -50,6 +51,7 @@ def _():
 
     return (
         ImageMemoryStore,
+        Layout,
         OrthoViewer,
         axis_ranges_from_ortho,
         binary_blobs,
@@ -92,7 +94,7 @@ def _(ImageMemoryStore, OrthoViewer, blobs_3d):
 def _(axis_ranges_from_ortho, build_ortho_grid_widget, viewer):
     axis_ranges = axis_ranges_from_ortho(viewer)
     canvas_widgets = build_ortho_grid_widget(
-        viewer, axis_ranges, gui="anywidget", canvas_size=(200, 200)
+        viewer, axis_ranges, canvas_size=(200, 200)
     )
     return (canvas_widgets,)
 
@@ -100,14 +102,16 @@ def _(axis_ranges_from_ortho, build_ortho_grid_widget, viewer):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    `display()` lays the four panels out as a 2x2 grid and arms first-frame startup.
+    `display()` resolves the host (Jupyter vs marimo), renders the layout spec,
+    presents the result, and arms the first-frame fit + initial reslice.
+    It is non-blocking.
     """)
     return
 
 
 @app.cell
-def _(canvas_widgets, display, viewer):
-    display(viewer, canvas_widgets, fit="ready")
+def _(Layout, canvas_widgets, display, viewer):
+    display(viewer, Layout(center=canvas_widgets), fit="ready")
     return
 
 

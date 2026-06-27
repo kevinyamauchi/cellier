@@ -93,7 +93,6 @@ def _(axis_ranges_from_viewer, build_canvas_widget, viewer):
     canvas_widget = build_canvas_widget(
         viewer,
         axis_ranges,
-        gui="anywidget",
         canvas_size=(520, 420),
     )
     return (canvas_widget,)

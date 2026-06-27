@@ -179,7 +179,7 @@ def display(
     layout : Layout
         Declarative layout spec -- center canvas(es) plus optional dock
         controls.  Build with :class:`~cellier.convenience.layout.Layout` or
-        its presets (``Layout.single``, ``Layout.ortho``).
+        its preset (``Layout.single``).
     fit : "ready", "immediate", or "none"
         Camera-fit policy applied at startup.  See :func:`_init_view`.
     on_ready : Callable[[], None] or None
