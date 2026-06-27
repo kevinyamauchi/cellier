@@ -484,17 +484,67 @@ class MultiscaleLabelRenderConfigKwargs(TypedDict, total=False):
     paint_max_tiles: int
 
 
+class InMemoryImageControlsKwargs(TypedDict, total=False):
+    """Dict form of ``InMemoryImageControlsConfig``.
+
+    Accepted by ``Viewer.add_image`` in place of an
+    ``InMemoryImageControlsConfig`` instance.
+
+    Keys
+    ----
+    appearance : list[str] or False
+        Appearance fields to show, in display order.  ``False`` hides the
+        panel.  Example: ``["color_map", "clim", "render_mode"]``.
+    colormap_names : list[str]
+        Names available in the colormap dropdown.
+    clim_range : tuple[float, float]
+        ``(min, max)`` bounds for the contrast-limits slider.
+    """
+
+    appearance: list[str] | bool
+    colormap_names: list[str]
+    clim_range: tuple[float, float]
+
+
+class MultiscaleImageControlsKwargs(TypedDict, total=False):
+    """Dict form of ``MultiscaleImageControlsConfig``.
+
+    Accepted by ``Viewer.add_image_multiscale`` in place of a
+    ``MultiscaleImageControlsConfig`` instance.
+
+    Keys
+    ----
+    appearance : list[str] or False
+        Appearance fields to show, in display order.  ``False`` hides the
+        panel.  Example: ``["color_map", "clim", "render_mode",
+        "iso_threshold", "attenuation", "lod_bias"]``.
+    colormap_names : list[str]
+        Names available in the colormap dropdown.
+    clim_range : tuple[float, float]
+        ``(min, max)`` bounds for the contrast-limits slider.
+    dataset_info : str
+        Pre-formatted HTML for the dataset-info detail block.
+    """
+
+    appearance: list[str] | bool
+    colormap_names: list[str]
+    clim_range: tuple[float, float]
+    dataset_info: str
+
+
 __all__ = [
     "BaseAppearanceKwargs",
     "BaseImageAppearanceKwargs",
     "BaseLabelsAppearanceKwargs",
     "ChannelAppearanceKwargs",
     "InMemoryImageAppearanceKwargs",
+    "InMemoryImageControlsKwargs",
     "InMemoryLabelsAppearanceKwargs",
     "LinesMemoryAppearanceKwargs",
     "MeshFlatAppearanceKwargs",
     "MeshPhongAppearanceKwargs",
     "MultiscaleImageAppearanceKwargs",
+    "MultiscaleImageControlsKwargs",
     "MultiscaleImageRenderConfigKwargs",
     "MultiscaleLabelRenderConfigKwargs",
     "MultiscaleLabelsAppearanceKwargs",

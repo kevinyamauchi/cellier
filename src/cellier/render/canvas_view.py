@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from PySide6.QtWidgets import QWidget
-    from rendercanvas.qt import QRenderWidget
 
     from cellier.events._bus import EventBus
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
@@ -68,6 +67,8 @@ class CanvasView:
         fov: float = 70.0,
         depth_range: tuple[float, float] = (1.0, 8000.0),
         event_bus: EventBus | None = None,
+        gui: str = "qt",
+        size: tuple[int, int] | None = None,
     ) -> None:
         self._canvas_id = canvas_id
         self._scene_id = scene_id
@@ -81,8 +82,10 @@ class CanvasView:
 
         self._fov = fov
         self._depth_range = depth_range
+        self._gui = gui
+        self._size = size
 
-        self._canvas = self._create_canvas(parent)
+        self._canvas = self._create_canvas(parent, gui=gui, size=size)
         self._renderer = gfx.WgpuRenderer(self._canvas)
 
         # Both camera/controller pairs are created upfront so toggling only
@@ -121,28 +124,57 @@ class CanvasView:
         self._overlays: list[GFXCanvasOverlay] = []
         self._canvas.request_draw(self._draw_frame)
 
-    def _create_canvas(self, parent: QWidget | None) -> QRenderWidget:
+    def _create_canvas(
+        self,
+        parent: QWidget | None,
+        *,
+        gui: str = "qt",
+        size: tuple[int, int] | None = None,
+    ) -> object:
         """Create the render canvas widget.
 
         This is the single seam where the GUI backend is selected.  The
-        ``rendercanvas.qt`` import is deferred to here so that importing
-        ``CanvasView`` (and therefore the ``cellier`` package) does not pull
-        in a Qt toolkit; a Qt binding is only required once a canvas is
-        actually constructed.  A future non-Qt backend would branch here.
+        ``rendercanvas`` backend imports are deferred to here so that importing
+        ``CanvasView`` (and therefore the ``cellier`` package) does not pull in
+        a Qt toolkit or anywidget; the chosen backend is only required once a
+        canvas is actually constructed.
 
         Parameters
         ----------
         parent : QWidget or None
-            Parent widget for the underlying ``QRenderWidget``.
+            Parent widget for the underlying ``QRenderWidget``.  Ignored for
+            the anywidget backend (notebook canvases are not laid out by a
+            Qt parent).
+        gui : str
+            Which GUI toolkit to target: ``"qt"`` or ``"anywidget"``.
+        size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas.  Defaults to
+            ``(600, 600)`` when ``None``.  Ignored for the Qt backend, which
+            is sized by its parent layout.
 
         Returns
         -------
-        QRenderWidget
-            The render canvas widget.
-        """
-        from rendercanvas.qt import QRenderWidget
+        object
+            The render canvas widget (a ``QRenderWidget`` for ``"qt"`` or an
+            ``AnywidgetRenderCanvas`` for ``"anywidget"``).
 
-        return QRenderWidget(parent=parent, update_mode="continuous")
+        Raises
+        ------
+        ValueError
+            If *gui* is not ``"qt"`` or ``"anywidget"``.
+        """
+        if gui == "qt":
+            from rendercanvas.qt import QRenderWidget
+
+            return QRenderWidget(parent=parent, update_mode="continuous")
+        elif gui == "anywidget":
+            # rendercanvas's anywidget backend (the older `jupyter` backend is
+            # deprecated).  Anywidget canvases are not laid out by a parent;
+            # they need an explicit CSS pixel size.  `parent` is ignored.
+            from rendercanvas.anywidget import RenderCanvas
+
+            return RenderCanvas(size=size or (600, 600), update_mode="continuous")
+        raise ValueError(f"Unknown gui {gui!r}. Expected 'qt' or 'anywidget'.")
 
     @property
     def canvas_id(self) -> UUID:
@@ -155,8 +187,12 @@ class CanvasView:
         return self._scene_id
 
     @property
-    def widget(self) -> QRenderWidget:
-        """The Qt widget to embed in the application layout."""
+    def widget(self) -> object:
+        """The render canvas element to embed in the application layout.
+
+        A ``QRenderWidget`` for the Qt backend or an ``AnywidgetRenderCanvas``
+        for the anywidget backend.
+        """
         return self._canvas
 
     def capture_reslicing_request(

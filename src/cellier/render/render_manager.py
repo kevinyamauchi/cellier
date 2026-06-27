@@ -204,7 +204,7 @@ class RenderManager:
             Parent widget for the underlying ``QRenderWidget``.
         **canvas_view_kwargs
             Additional keyword arguments forwarded to ``CanvasView.__init__``
-            (e.g. ``dim``, ``fov``, ``depth_range``).
+            (e.g. ``dim``, ``fov``, ``depth_range``, ``gui``, ``size``).
 
         Returns
         -------

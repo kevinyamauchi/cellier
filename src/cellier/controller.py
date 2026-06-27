@@ -20,6 +20,7 @@ from cellier.events import (
     DimsChangedEvent,
     DimsUpdateEvent,
     EventBus,
+    FrameRenderedEvent,
     PickWriteChangedEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -112,6 +113,7 @@ if TYPE_CHECKING:
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
+    from cellier.gui._protocol import WidgetView
     from cellier.render._config import RenderManagerConfig
     from cellier.render.canvas_view import CanvasView
     from cellier.visuals._canvas_overlay import CanvasOverlay
@@ -144,9 +146,14 @@ class CellierController:
 
     def __init__(
         self,
-        widget_parent: QWidget | None = None,
+        widget_parent: object | None = None,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
+        # gui selects the render canvas toolkit ("qt" or "anywidget"); threaded
+        # to CanvasView via add_canvas.  widget_parent is Qt-only and ignored
+        # for the anywidget gui (notebook canvases have no Qt parent).
+        self._gui = gui
         self._widget_parent = widget_parent
         self._model = ViewerModel(data=DataManager())
         self._render_manager = RenderManager(config=render_config)
@@ -237,10 +244,11 @@ class CellierController:
         """
         return self._incoming_events
 
-    def set_widget_parent(self, parent: QWidget) -> None:
+    def set_widget_parent(self, parent: object) -> None:
         """Set the Qt parent for subsequently created canvas widgets.
 
-        TODO: in the future, we should have an abstraction for different GUI backends.
+        Only meaningful when ``self._gui == "qt"``; the anywidget gui ignores
+        the parent (notebook canvases are not laid out by a Qt parent).
         """
         self._widget_parent = parent
 
@@ -1361,6 +1369,7 @@ class CellierController:
         fov: float = 70.0,
         depth_range_3d: tuple[float, float] = (1.0, 8000.0),
         depth_range_2d: tuple[float, float] = (-500.0, 500.0),
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Create a canvas attached to a scene and return its embeddable widget.
 
@@ -1387,6 +1396,10 @@ class CellierController:
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D orthographic camera.
             Default ``(-500.0, 500.0)``.
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas.  Ignored for the
+            Qt gui (which is sized by its parent layout).  Defaults to
+            ``(600, 600)`` when ``None`` for the anywidget gui.
 
         Returns
         -------
@@ -1430,13 +1443,16 @@ class CellierController:
             )
 
         canvas_model = Canvas(cameras=cameras)
-        return self.add_canvas_model(scene_id, canvas_model, initial_dim=initial_dim)
+        return self.add_canvas_model(
+            scene_id, canvas_model, initial_dim=initial_dim, canvas_size=canvas_size
+        )
 
     def add_canvas_model(
         self,
         scene_id: UUID,
         canvas_model: Canvas,
         initial_dim: str | None = None,
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Register a pre-built Canvas model with a scene.
 
@@ -1456,6 +1472,9 @@ class CellierController:
             Which dim to activate first.  When ``None``, the first key in
             ``canvas_model.cameras`` is used (insertion order is preserved by
             Python dicts, so this is deterministic for serialized models).
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas.  Ignored for the
+            Qt gui.  Defaults to ``(600, 600)`` for the anywidget gui.
 
         Returns
         -------
@@ -1498,6 +1517,8 @@ class CellierController:
                 dim=initial_dim,
                 fov=active_camera.fov,
                 depth_range=depth_range,
+                gui=self._gui,
+                size=canvas_size,
             )
         else:
             # OrthographicCamera: fov is not meaningful; omit it so CanvasView
@@ -1508,6 +1529,8 @@ class CellierController:
                 parent=self._widget_parent,
                 dim=initial_dim,
                 depth_range=depth_range,
+                gui=self._gui,
+                size=canvas_size,
             )
 
         canvas_view.set_event_bus(self._outgoing_events)
@@ -2080,11 +2103,119 @@ class CellierController:
         for scene_id in self._model.scenes:
             self.reslice_scene(scene_id)
 
-    def reslice_scene(self, scene_id: UUID) -> None:
-        """Trigger a data load for all visuals in one scene."""
+    def reslice_scene(
+        self,
+        scene_id: UUID,
+        *,
+        on_ready: Callable[[], None] | None = None,
+        owner_id: UUID | None = None,
+    ) -> None:
+        """Trigger a data load for all visuals in one scene.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to reslice.
+        on_ready : Callable[[], None] or None
+            If provided, a zero-argument callback fired exactly once after
+            *all* visuals loaded by this reslice have committed to the GPU
+            (across every canvas attached to the scene).  Visuals with no data
+            in the current view (culled, empty, or hidden) do not delay it.
+            Works uniformly for in-memory, multiscale, multichannel, and
+            geometry visuals.  See :meth:`on_scene_ready`.
+
+            The callback tracks *this* reslice generation.  If a superseding
+            reslice (e.g. a camera-settle reload) cancels these in-flight reads
+            before they commit, the cancelled visual never reports completion
+            and the callback may not fire.  Callers that need a guaranteed
+            startup signal should suppress camera-driven reslicing during the
+            load (the convenience launchers do this automatically).
+        owner_id : UUID or None
+            Owner under which the temporary ``on_ready`` subscriptions are
+            registered (for teardown).  Defaults to the controller's own id.
+        """
         dims_state = self._dims_state_for_scene(scene_id)
         visual_configs = self._build_visual_configs_for_scene(scene_id)
-        self._render_manager.reslice_scene(scene_id, dims_state, visual_configs)
+
+        if on_ready is None:
+            self._render_manager.reslice_scene(scene_id, dims_state, visual_configs)
+            return
+
+        self._notify_when_resliced(
+            scene_id,
+            on_ready,
+            owner_id or self._id,
+            lambda: self._render_manager.reslice_scene(
+                scene_id, dims_state, visual_configs
+            ),
+        )
+
+    def _notify_when_resliced(
+        self,
+        scene_id: UUID,
+        callback: Callable[[], None],
+        owner_id: UUID,
+        trigger: Callable[[], None],
+    ) -> None:
+        """Arm a one-shot quiescence tracker, then run *trigger* to reslice.
+
+        The tracker counts visuals announced by ``ResliceStartedEvent`` and
+        decrements on each ``ResliceCompletedEvent`` for *scene_id*; *callback*
+        fires once the count drains to zero.  Because planning and the
+        synchronous ``ResliceStartedEvent`` emissions all run inside *trigger*
+        on a synchronous bus, the pending count is fully known the instant
+        *trigger* returns — so the "armed" flag suppresses any premature fire
+        from synchronous empty-batch completions until the full count is in.
+        """
+        state = {"pending": 0, "armed": True, "fired": False}
+        handles: list[SubscriptionHandle] = []
+
+        def _finish() -> None:
+            if state["fired"]:
+                return
+            state["fired"] = True
+            for handle in handles:
+                self._outgoing_events.unsubscribe(handle)
+            callback()
+
+        def _maybe_fire() -> None:
+            if not state["armed"] and not state["fired"] and state["pending"] <= 0:
+                _finish()
+
+        def _on_started(event: ResliceStartedEvent) -> None:
+            state["pending"] += len(event.visual_ids)
+
+        def _on_completed(event: ResliceCompletedEvent) -> None:
+            if event.scene_id != scene_id:
+                return
+            state["pending"] -= 1
+            _maybe_fire()
+
+        handles.append(
+            self._outgoing_events.subscribe(
+                ResliceStartedEvent,
+                _on_started,
+                entity_id=scene_id,
+                owner_id=owner_id,
+            )
+        )
+        # ResliceCompletedEvent routes by visual_id, so subscribe as a
+        # catch-all and filter on scene_id inside the handler.
+        handles.append(
+            self._outgoing_events.subscribe(
+                ResliceCompletedEvent,
+                _on_completed,
+                owner_id=owner_id,
+            )
+        )
+
+        trigger()
+
+        # All ResliceStartedEvents for this generation have now been emitted
+        # synchronously, so the pending count is complete.  Close the arming
+        # window and fire immediately if there was nothing to load.
+        state["armed"] = False
+        _maybe_fire()
 
     def reslice_visual(self, visual_id: UUID) -> None:
         """Trigger a data load for one visual."""
@@ -3722,6 +3853,90 @@ class CellierController:
             weak=weak,
         )
 
+    def on_scene_ready(
+        self,
+        scene_id: UUID,
+        callback: Callable[[], None],
+        *,
+        owner_id: UUID | None = None,
+    ) -> None:
+        """Reslice *scene_id* and fire *callback* once all its data is on the GPU.
+
+        This triggers a reslice of every visual in the scene and invokes
+        *callback* exactly once, after all visuals loaded by that reslice have
+        committed to the GPU across every attached canvas.  Visuals with no
+        data in the current view (frustum-culled, empty slab, or hidden) do not
+        delay the callback.
+
+        Unlike :meth:`on_reslice_completed` (which fires per-visual on every
+        cycle), this is a scene-level, one-shot readiness signal — the right
+        hook for fitting the camera or hiding a startup spinner once a mixed
+        scene of multiscale images, in-memory images, and geometry has fully
+        loaded.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to reslice and watch.
+        callback : Callable[[], None]
+            Zero-argument callback fired once the scene's data is resident.
+        owner_id : UUID or None
+            Owner under which the temporary subscriptions are registered.
+            Defaults to the controller's own id.
+        """
+        self.reslice_scene(scene_id, on_ready=callback, owner_id=owner_id)
+
+    def on_canvas_first_frame(
+        self,
+        canvas_id: UUID,
+        callback: Callable[[], None],
+        *,
+        owner_id: UUID | None = None,
+    ) -> None:
+        """Fire *callback* once *canvas_id* has rendered its first frame.
+
+        The first rendered frame guarantees the canvas has reached its final
+        logical size and its camera matrix has been applied — the precondition
+        for fitting the camera and computing view-dependent (multiscale) slice
+        requests at the correct level of detail.  This is a timer-free
+        replacement for deferring startup work with ``QTimer.singleShot(0)``.
+
+        A draw is requested immediately so the frame is guaranteed to arrive
+        whether or not the event loop is already running.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas to watch.
+        callback : Callable[[], None]
+            Zero-argument callback fired once, on the first frame.
+        owner_id : UUID or None
+            Owner under which the temporary subscription is registered.
+            Defaults to the controller's own id.
+        """
+        owner = owner_id or self._id
+        state: dict[str, Any] = {"fired": False, "handle": None}
+
+        def _on_frame(event: FrameRenderedEvent) -> None:
+            if state["fired"]:
+                return
+            state["fired"] = True
+            if state["handle"] is not None:
+                self._outgoing_events.unsubscribe(state["handle"])
+            callback()
+
+        state["handle"] = self._outgoing_events.subscribe(
+            FrameRenderedEvent,
+            _on_frame,
+            entity_id=canvas_id,
+            owner_id=owner,
+        )
+
+        # Request a draw so a FrameRenderedEvent is guaranteed to be emitted.
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        if canvas_view is not None:
+            canvas_view.request_draw()
+
     def unsubscribe_owner(self, owner_id: UUID) -> None:
         """Remove all event subscriptions registered under *owner_id*.
 
@@ -3739,7 +3954,7 @@ class CellierController:
 
     def connect_widget(
         self,
-        widget: Any,
+        widget: WidgetView,
         *,
         subscription_specs: list[SubscriptionSpec] | None = None,
     ) -> None:

@@ -29,7 +29,7 @@ from PySide6 import QtCore, QtWidgets
 from cellier.controller import CellierController
 from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.gui._scene import QtCanvasWidget, QtDimsSliders
+from cellier.gui.qt._scene import QtCanvasWidget, QtDimsSliders
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
@@ -16,15 +16,22 @@ if TYPE_CHECKING:
     from cellier.convenience._kwarg_dicts import (
         ChannelAppearanceKwargs,
         InMemoryImageAppearanceKwargs,
+        InMemoryImageControlsKwargs,
         InMemoryLabelsAppearanceKwargs,
         LinesMemoryAppearanceKwargs,
         MeshFlatAppearanceKwargs,
         MeshPhongAppearanceKwargs,
         MultiscaleImageAppearanceKwargs,
+        MultiscaleImageControlsKwargs,
         MultiscaleImageRenderConfigKwargs,
         MultiscaleLabelRenderConfigKwargs,
         MultiscaleLabelsAppearanceKwargs,
         PointsMarkerAppearanceKwargs,
+    )
+    from cellier.convenience.gui._controls_config import (
+        BaseControlsConfig,
+        InMemoryImageControlsConfig,
+        MultiscaleImageControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -77,6 +84,10 @@ class Viewer:
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
         Uses controller defaults when ``None``.
+    gui : "qt" or "anywidget"
+        Which GUI toolkit the canvas should target. ``"qt"`` (default) renders
+        into a Qt widget; ``"anywidget"`` renders into a notebook canvas for
+        Jupyter / marimo. Fixed at construction.
     """
 
     def __init__(
@@ -86,11 +97,12 @@ class Viewer:
         dim: Literal["2d", "3d"] = "2d",
         render_modes: set[str] | None = None,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
         resolved_render_modes = (
             render_modes if render_modes is not None else {"2d", "3d"}
         )
-        self._controller = CellierController(render_config=render_config)
+        self._controller = CellierController(render_config=render_config, gui=gui)
         self._scene = self._controller.add_scene(
             name="main",
             dim=dim,
@@ -101,6 +113,11 @@ class Viewer:
         # by set_displayed_dimensions so axes restore their last position when
         # they cycle back from displayed to sliced.
         self._saved_slice_positions: dict[int, float] = {}
+        # Callbacks fired once the scene's startup data is on the GPU; consumed
+        # by the launcher (see convenience._launch._init_view).
+        self._ready_callbacks: list[Callable[[], None]] = []
+        # Controls configs keyed by visual id; set by add_image / add_image_multiscale.
+        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
 
     # ------------------------------------------------------------------
     # Public properties
@@ -112,9 +129,38 @@ class Viewer:
         return self._controller
 
     @property
+    def gui(self) -> str:
+        """The GUI toolkit this viewer renders into (``"qt"`` or ``"anywidget"``)."""
+        return self._controller._gui
+
+    @property
     def scene(self) -> Scene:
         """The single scene managed by this viewer."""
         return self._scene
+
+    # ------------------------------------------------------------------
+    # Readiness
+    # ------------------------------------------------------------------
+
+    def on_ready(self, callback: Callable[[], None]) -> None:
+        """Register a callback fired once the scene's startup data is on the GPU.
+
+        The callback runs after the initial reslice triggered by
+        :func:`~cellier.convenience.launch` / :func:`~cellier.convenience.show`
+        has committed all visuals (in-memory, multiscale, multichannel, and
+        geometry) to the GPU.  Use it to hide a loading indicator, capture a
+        screenshot, or enable controls once the first view is fully loaded.
+
+        Must be called before ``launch``/``show``.  For ad-hoc readiness
+        signals outside the convenience launchers, use
+        :meth:`~cellier.controller.CellierController.on_scene_ready` directly.
+
+        Parameters
+        ----------
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        self._ready_callbacks.append(callback)
 
     # ------------------------------------------------------------------
     # Serialization
@@ -175,6 +221,8 @@ class Viewer:
         obj._controller = controller
         obj._scene = scene
         obj._saved_slice_positions: dict[int, float] = {}
+        obj._ready_callbacks: list[Callable[[], None]] = []
+        obj._controls_configs: dict[UUID, BaseControlsConfig] = {}
         return obj
 
     # ------------------------------------------------------------------
@@ -189,6 +237,7 @@ class Viewer:
         fov: float = 70.0,
         depth_range_3d: tuple[float, float] = (1.0, 8000.0),
         depth_range_2d: tuple[float, float] = (-500.0, 500.0),
+        canvas_size: tuple[int, int] | None = None,
     ) -> QWidget:
         """Create a canvas attached to this viewer's scene.
 
@@ -206,6 +255,9 @@ class Viewer:
             ``(near, far)`` clip distances for the 3D camera.
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D camera.
+        canvas_size : tuple[int, int] or None
+            Initial CSS pixel size for the anywidget canvas. Ignored for the
+            Qt gui. Defaults to ``(600, 600)`` for the anywidget gui.
 
         Returns
         -------
@@ -222,6 +274,7 @@ class Viewer:
             fov=fov,
             depth_range_3d=depth_range_3d,
             depth_range_2d=depth_range_2d,
+            canvas_size=canvas_size,
         )
 
     # ------------------------------------------------------------------
@@ -270,7 +323,7 @@ class Viewer:
         invalid = [n for n in axis_names if n not in label_to_index]
         if invalid:
             raise ValueError(
-                f"Unknown axis names: {invalid}. " f"Available: {list(coord_labels)}"
+                f"Unknown axis names: {invalid}. Available: {list(coord_labels)}"
             )
 
         new_displayed = tuple(label_to_index[n] for n in axis_names)
@@ -316,6 +369,9 @@ class Viewer:
         data: ImageMemoryStore | UUID,
         appearance: BaseImageAppearance | InMemoryImageAppearanceKwargs,
         name: str = "image",
+        controls: InMemoryImageControlsConfig
+        | InMemoryImageControlsKwargs
+        | None = None,
     ) -> ImageVisual:
         """Add an in-memory image visual.
 
@@ -330,11 +386,19 @@ class Viewer:
             keys and their types).
         name : str
             Human-readable label. Default ``"image"``.
+        controls : InMemoryImageControlsConfig, dict, or None
+            Appearance panel configuration. Accepts an
+            ``InMemoryImageControlsConfig`` instance or a plain dict with the
+            same keys (see ``InMemoryImageControlsKwargs``). When ``None``
+            (default), no appearance panel is created for this visual.
 
         Returns
         -------
         ImageVisual
         """
+        from cellier.convenience.gui._controls_config import (
+            resolve_inmemory_image_controls,
+        )
         from cellier.visuals._image_memory import InMemoryImageAppearance
 
         resolved_appearance = (
@@ -342,12 +406,16 @@ class Viewer:
             if isinstance(appearance, dict)
             else appearance
         )
-        return self._controller.add_image(
+        visual = self._controller.add_image(
             self._resolve_data_store(data),
             self._scene.id,
             resolved_appearance,
             name,
         )
+        resolved_controls = resolve_inmemory_image_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual
 
     def add_labels(
         self,
@@ -539,6 +607,9 @@ class Viewer:
         | MultiscaleImageRenderConfigKwargs
         | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleImageControlsConfig
+        | MultiscaleImageControlsKwargs
+        | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual.
 
@@ -560,11 +631,20 @@ class Viewer:
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MultiscaleImageControlsConfig, dict, or None
+            Appearance panel configuration. Accepts a
+            ``MultiscaleImageControlsConfig`` instance or a plain dict with
+            the same keys (see ``MultiscaleImageControlsKwargs``). When
+            ``None`` (default), no appearance panel is created for this
+            visual.
 
         Returns
         -------
         MultiscaleImageVisual
         """
+        from cellier.convenience.gui._controls_config import (
+            resolve_multiscale_image_controls,
+        )
         from cellier.visuals._image import (
             MultiscaleImageAppearance as _MultiscaleImageAppearance,
         )
@@ -582,7 +662,7 @@ class Viewer:
             if isinstance(render_config, dict)
             else render_config
         )
-        return self._controller.add_image_multiscale(
+        visual = self._controller.add_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
             resolved_appearance,
@@ -590,6 +670,10 @@ class Viewer:
             resolved_render_config,
             transform,
         )
+        resolved_controls = resolve_multiscale_image_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual
 
     def add_labels_multiscale(
         self,
