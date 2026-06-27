@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from cellier.convenience.layout._spec import Layout
 
+# render_mode, iso_threshold, and attenuation are handled by one shared widget.
+_RENDER_FIELDS = frozenset({"render_mode", "iso_threshold", "attenuation"})
+
 
 def render_qt(layout: Layout, viewer: object) -> object:
     """Render a Layout spec to a ``QMainWindow``.
@@ -133,6 +136,140 @@ def _render_scene_controls_qt(viewer: object) -> object | None:
     return make_dim_toggle_qt(viewer)
 
 
+def _colormap_to_str(cm) -> str:
+    if isinstance(cm, str):
+        return cm
+    name = getattr(cm, "name", None)
+    if name is not None and isinstance(name, str):
+        return name
+    return str(cm)
+
+
+def _render_appearance_controls_qt(viewer: object) -> object | None:
+    """Build and wire Qt appearance sub-widgets for the first configured visual.
+
+    Mirrors _render_appearance_controls in _anywidget_renderer.py: reads
+    viewer._controls_configs, finds the visual, instantiates each requested
+    sub-widget from cellier.gui.qt.visuals, wires each to the controller,
+    and returns a QWidget container.
+    """
+    from PySide6 import QtWidgets
+    from PySide6.QtWidgets import QSizePolicy
+
+    from cellier.convenience.gui._controls_config import InMemoryImageControlsConfig
+    from cellier.gui.qt.visuals import (
+        QtClimRangeSlider,
+        QtColormapComboBox,
+        QtLodBiasSlider,
+        QtVolumeRenderControls,
+    )
+
+    controls_configs: dict = getattr(viewer, "_controls_configs", {})
+    scene = getattr(viewer, "scene", None)
+    if scene is None or not controls_configs:
+        return None
+
+    controls_config = None
+    visual = None
+    for v in scene.visuals:
+        if v.id in controls_configs:
+            visual = v
+            controls_config = controls_configs[v.id]
+            break
+
+    if controls_config is None:
+        return None
+
+    field_list = (
+        controls_config.appearance
+        if isinstance(controls_config.appearance, list) and controls_config.appearance
+        else None
+    )
+    if not field_list or not hasattr(visual, "appearance"):
+        return None
+
+    fields = set(field_list)
+    app = visual.appearance
+
+    raw_clim = tuple(getattr(app, "clim", (0.0, 1.0)))
+    if (
+        isinstance(controls_config, InMemoryImageControlsConfig)
+        and controls_config.clim_range is not None
+    ):
+        clim_range: tuple[float, float] = controls_config.clim_range
+    else:
+        clim_range = (min(0.0, float(raw_clim[0])), max(1.0, float(raw_clim[1])))
+
+    colormap_names = (
+        controls_config.colormap_names
+        if isinstance(controls_config, InMemoryImageControlsConfig)
+        else None
+    )
+
+    container = QtWidgets.QWidget()
+    container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+    container.setMinimumWidth(240)
+    layout = QtWidgets.QVBoxLayout(container)
+    layout.setContentsMargins(4, 4, 4, 4)
+    layout.setSpacing(6)
+
+    def _group(title: str, widget: object) -> None:
+        grp = QtWidgets.QGroupBox(title)
+        box = QtWidgets.QVBoxLayout(grp)
+        box.setContentsMargins(12, 4, 12, 4)
+        box.addWidget(widget)
+        layout.addWidget(grp)
+
+    if "color_map" in fields and hasattr(app, "color_map"):
+        combo = QtColormapComboBox(
+            visual.id,
+            initial_colormap=_colormap_to_str(getattr(app, "color_map", "grays")),
+        )
+        if colormap_names is not None:
+            combo.add_colormaps(colormap_names)
+        viewer.controller.connect_widget(
+            combo, subscription_specs=combo.subscription_specs()
+        )
+        _group("Colormap", combo.widget)
+
+    if "clim" in fields and hasattr(app, "clim"):
+        clim_w = QtClimRangeSlider(
+            visual.id,
+            clim_range=clim_range,
+            initial_clim=raw_clim,
+        )
+        viewer.controller.connect_widget(
+            clim_w, subscription_specs=clim_w.subscription_specs()
+        )
+        _group("Contrast limits", clim_w.widget)
+
+    if fields & _RENDER_FIELDS and any(hasattr(app, f) for f in _RENDER_FIELDS):
+        render_w = QtVolumeRenderControls(
+            visual.id,
+            dtype_max=float(clim_range[1]),
+            initial_render_mode=getattr(app, "render_mode", "mip"),
+            initial_threshold=getattr(app, "iso_threshold", 0.2),
+            initial_attenuation=getattr(app, "attenuation", 1.0),
+        )
+        viewer.controller.connect_widget(
+            render_w, subscription_specs=render_w.subscription_specs()
+        )
+        _group("Render mode", render_w.widget)
+
+    if "lod_bias" in fields and hasattr(app, "lod_bias"):
+        lod_w = QtLodBiasSlider(
+            visual.id,
+            initial_lod_bias=float(getattr(app, "lod_bias", 1.0)),
+        )
+        viewer.controller.connect_widget(
+            lod_w, subscription_specs=lod_w.subscription_specs()
+        )
+        _group("LOD bias", lod_w.widget)
+
+    layout.addStretch()
+    return container
+
+
 def _render_dock_qt(spec: object, viewer: object) -> object | None:
     """Render one dock spec to a Qt widget, or return None."""
     if spec is None:
@@ -148,7 +285,7 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
     )
 
     if isinstance(spec, AppearanceControls):
-        return None  # Qt appearance controls not yet implemented
+        return _render_appearance_controls_qt(viewer)
     if isinstance(spec, SceneControls):
         return _render_scene_controls_qt(viewer)
     if isinstance(spec, (HStack, VStack)):

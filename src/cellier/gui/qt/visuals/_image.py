@@ -17,6 +17,27 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 
+def _fix_label_width(label, lo: float, hi: float, decimals: int) -> None:
+    """Force a superqt SliderLabel to be wide enough for the formatted value.
+
+    SliderLabel._get_size() sizes from str(float) repr ("0.0") but
+    setDecimals(2) displays "0.00" -- one char wider, clipping the text.
+    Patching _update_size to a no-op prevents showEvent from re-shrinking.
+    """
+    from qtpy.QtGui import QFontMetrics
+
+    fm = QFontMetrics(label.font())
+    w = (
+        max(
+            fm.horizontalAdvance(f"{lo:.{decimals}f}"),
+            fm.horizontalAdvance(f"{hi:.{decimals}f}"),
+        )
+        + 12
+    )
+    label._update_size = lambda *_: None
+    label.setFixedWidth(w)
+
+
 class QtRenderModeComboBox:
     """Bidirectional render-mode selector wired to the cellier v2 bus.
 
@@ -298,7 +319,7 @@ class QtVolumeRenderControls:
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._container = QWidget(parent)
         layout = QFormLayout(self._container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(12, 0, 12, 0)
 
         self._combo = QComboBox()
         self._combo.addItems(["iso", "smooth_iso", "mip", "attenuated_mip"])
@@ -310,6 +331,7 @@ class QtVolumeRenderControls:
         self._slider.setRange(0.0, dtype_max)
         self._slider.setValue(initial_threshold)
         self._slider.setDecimals(decimals)
+        _fix_label_width(self._slider._label, 0.0, dtype_max, decimals)
         self._slider.valueChanged.connect(self._on_slider_changed)
         layout.addRow("Threshold", self._slider)
 
@@ -317,6 +339,7 @@ class QtVolumeRenderControls:
         self._attenuation_slider.setRange(0.0, 10.0)
         self._attenuation_slider.setValue(initial_attenuation)
         self._attenuation_slider.setDecimals(2)
+        _fix_label_width(self._attenuation_slider._label, 0.0, 10.0, 2)
         self._attenuation_slider.valueChanged.connect(
             self._on_attenuation_slider_changed
         )

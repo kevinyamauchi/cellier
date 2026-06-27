@@ -65,10 +65,33 @@ class QtClimRangeSlider:
         self._visual_id = visual_id
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
+        from qtpy.QtGui import QFontMetrics
+
         self._slider = QLabeledDoubleRangeSlider(Qt.Orientation.Horizontal, parent)
         self._slider.setRange(*clim_range)
-        self._slider.setValue(initial_clim)
+        self._slider.setValue(initial_clim)  # creates _handle_labels lazily
         self._slider.setDecimals(decimals)
+
+        # QLabeledDoubleRangeSlider.SliderLabel._get_size() sizes from str(float)
+        # repr ("0.0") but setDecimals(2) displays "0.00" -- one char wider,
+        # causing clipping. LabelIsRange edge labels use 7-digit sizing (~70px
+        # each) which collapses the slider track. Fix both by patching _update_size
+        # to a no-op and forcing correct widths from font metrics.
+        _fm = QFontMetrics(self._slider._min_label.font())
+        _lw = (
+            max(
+                _fm.horizontalAdvance(f"{clim_range[0]:.{decimals}f}"),
+                _fm.horizontalAdvance(f"{clim_range[1]:.{decimals}f}"),
+            )
+            + 12
+        )
+        self._slider._min_label._update_size = lambda *_: None
+        self._slider._max_label._update_size = lambda *_: None
+        self._slider._min_label.setFixedWidth(_lw)
+        self._slider._max_label.setFixedWidth(_lw)
+        for _hl in self._slider._handle_labels:
+            _hl._update_size = lambda *_: None
+            _hl.setFixedWidth(_lw)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
     # ── Public interface ─────────────────────────────────────────────────────
