@@ -35,7 +35,7 @@ Discards the transaction without touching disk.
 
 Run with::
 
-    uv run python scripts/v2/multiscale_paint_labels.py
+    uv run scripts/v2/multiscale_paint_labels.py
 """
 
 from __future__ import annotations
