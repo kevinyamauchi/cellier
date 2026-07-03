@@ -1,7 +1,6 @@
 """Demo: MultiscalePaintController on a 2-D OME-Zarr label store.
 
-Mirror of ``scripts/v2/multiscale_paint.py`` but using an integer label
-store (:class:`OMEZarrLabelDataStore`) and :class:`MultiscaleLabelVisual`.
+This demo paints in 2D into a multiscale labels image.
 
 What happens when you paint
 ---------------------------
