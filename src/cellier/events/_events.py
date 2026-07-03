@@ -106,12 +106,14 @@ class DataStoreContentsChangedEvent(NamedTuple):
 class ResliceStartedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+    canvas_id: UUID
     visual_ids: frozenset[UUID]
 
 
 class ResliceCompletedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+    canvas_id: UUID
     visual_id: UUID
     brick_count: int
 
@@ -126,6 +128,32 @@ class FrameRenderedEvent(NamedTuple):
     source_id: UUID
     canvas_id: UUID
     frame_time_ms: float
+
+
+class CanvasSizeChangedEvent(NamedTuple):
+    """Emitted when the physical pixel size of a canvas changes.
+
+    Fired by ``CanvasView`` whenever the underlying render surface is
+    resized -- via the Qt ``resizeEvent`` on the Qt backend or via the
+    ``ResizeObserver`` message on the anywidget backend.  The controller
+    listens and updates ``Canvas.size`` in the model.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the ``CanvasView`` that detected the resize.
+    canvas_id : UUID
+        Model-layer canvas identifier.
+    width : int
+        New canvas width in logical pixels.
+    height : int
+        New canvas height in logical pixels.
+    """
+
+    source_id: UUID
+    canvas_id: UUID
+    width: int
+    height: int
 
 
 class VisualAddedEvent(NamedTuple):
@@ -413,6 +441,7 @@ class _CanvasRawPointerEvent(NamedTuple):
 CellierEventTypes = (
     DimsChangedEvent
     | CameraChangedEvent
+    | CanvasSizeChangedEvent
     | AppearanceChangedEvent
     | ChannelAppearanceChangedEvent
     | PickWriteChangedEvent

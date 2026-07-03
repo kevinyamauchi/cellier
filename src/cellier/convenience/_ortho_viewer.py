@@ -9,7 +9,7 @@ register one data store and fan a visual out to every panel.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
@@ -197,6 +197,10 @@ class OrthoViewer:
         kept synchronized across all four panels.
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
+    gui : "qt" or "anywidget"
+        Which GUI toolkit the canvases should target. ``"qt"`` (default)
+        renders into Qt widgets; ``"anywidget"`` renders into notebook canvases
+        for Jupyter / marimo. Fixed at construction.
     """
 
     def __init__(
@@ -206,14 +210,18 @@ class OrthoViewer:
         spatial_axes: tuple[str, ...] | tuple[int, ...] | None = None,
         link_extra_axes: bool = True,
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget"] = "qt",
     ) -> None:
-        self._controller = CellierController(render_config=render_config)
+        self._controller = CellierController(render_config=render_config, gui=gui)
         self._spatial_axes = _resolve_spatial_axes(axis_labels, spatial_axes)
         self._ndim = len(axis_labels)
         self._extra_axes = {i for i in range(self._ndim) if i not in self._spatial_axes}
         coordinate_system = CoordinateSystem(name="world", axis_labels=axis_labels)
         self._scenes = self._build_scenes(coordinate_system)
         self._syncer: _ExtraAxisSyncer | None = None
+        # Callbacks fired once all panel scenes' startup data is on the GPU;
+        # consumed by the launcher (see convenience._launch._init_view).
+        self._ready_callbacks: list[Callable[[], None]] = []
         if link_extra_axes and self._extra_axes:
             self._wire_extra_axis_sync()
 
@@ -270,9 +278,38 @@ class OrthoViewer:
         return self._controller
 
     @property
+    def gui(self) -> str:
+        """The GUI toolkit this viewer renders into (``"qt"`` or ``"anywidget"``)."""
+        return self._controller._gui
+
+    @property
     def scenes(self) -> dict[str, Scene]:
         """The four panel scenes keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``."""
         return self._scenes
+
+    # ------------------------------------------------------------------
+    # Readiness
+    # ------------------------------------------------------------------
+
+    def on_ready(self, callback: Callable[[], None]) -> None:
+        """Register a callback fired once *all* panels' startup data is on the GPU.
+
+        The callback runs after the initial reslice triggered by
+        :func:`~cellier.convenience.launch` / :func:`~cellier.convenience.show`
+        has committed every visual across all four panel scenes.  Use it to
+        hide a loading indicator, capture a screenshot, or enable controls once
+        the first view is fully loaded.
+
+        Must be called before ``launch``/``show``.  For per-scene readiness,
+        use :meth:`~cellier.controller.CellierController.on_scene_ready`
+        directly.
+
+        Parameters
+        ----------
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        self._ready_callbacks.append(callback)
 
     @property
     def spatial_axes(self) -> tuple[int, int, int]:

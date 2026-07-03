@@ -9,3 +9,8 @@
 🚧 Note: this repo is experimental and not meant to be used (i.e., nothing is working) - please come back later!
 
 A workshop for rendering cellular models.
+
+## Installation
+
+```bash
+pip install "cellier[remote,pyside]"

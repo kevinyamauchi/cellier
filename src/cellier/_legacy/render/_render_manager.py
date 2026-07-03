@@ -11,7 +11,7 @@ import pygfx as gfx
 from psygnal import Signal
 from pygfx.renderers import WgpuRenderer
 from pylinalg import vec_transform, vec_unproject
-from rendercanvas.pyqt6 import RenderCanvas
+from rendercanvas.qt import RenderCanvas
 from superqt import ensure_main_thread
 
 from cellier._legacy.models.scene import Scene as SceneModel

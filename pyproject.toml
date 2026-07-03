@@ -36,7 +36,7 @@ classifiers = [
 dependencies = [
     "cmap>=0.6.0",
     "einops>=0.8.1",
-    "numpy",
+    "numpy<2.5.0",
     "psygnal",
     "pydantic",
     "pygfx>=0.9.0",
@@ -52,12 +52,16 @@ dependencies = [
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 # "extras" (e.g. for `pip install .[test]`)
 [project.optional-dependencies]
-# add dependencies used for testing here
 remote = [
     "yaozarrs[io]>=0.2",   # includes fsspec for S3/GCS/HTTP metadata reading
 ]
 pyside = ["PySide6"]
 pyqt = ["PyQt6"]
+# anywidget front-end (notebook hosts: Jupyter, marimo).  ipywidgets and
+# rendercanvas arrive transitively (via anywidget and pygfx respectively); the
+# notebook host applications (jupyter, marimo) are not declared here -- the user
+# installs whichever host they run in.
+anywidget = ["anywidget"]
 test = [
     "pytest",
     "pytest-asyncio",

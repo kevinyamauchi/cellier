@@ -107,6 +107,7 @@ class SliceCoordinator:
                 ResliceStartedEvent(
                     source_id=self.id,
                     scene_id=request.scene_id,
+                    canvas_id=request.canvas_id,
                     visual_ids=frozenset(requests_by_visual.keys()),
                 )
             )
@@ -127,9 +128,10 @@ class SliceCoordinator:
             def _on_complete(
                 vid: UUID = visual_id,
                 sid: UUID = request.scene_id,
+                cid: UUID = request.canvas_id,
                 n: int = brick_count,
             ) -> None:
-                self._emit_reslice_completed(sid, vid, n)
+                self._emit_reslice_completed(sid, cid, vid, n)
 
             slice_id = self._slicer.submit(
                 chunk_requests,
@@ -146,10 +148,12 @@ class SliceCoordinator:
                 # No bricks to load (e.g. an empty slab); the reslice for this
                 # visual is already complete, so signal it immediately — the
                 # async on_complete path never runs for an empty submission.
-                self._emit_reslice_completed(request.scene_id, visual_id, brick_count)
+                self._emit_reslice_completed(
+                    request.scene_id, request.canvas_id, visual_id, brick_count
+                )
 
     def _emit_reslice_completed(
-        self, scene_id: UUID, visual_id: UUID, brick_count: int
+        self, scene_id: UUID, canvas_id: UUID, visual_id: UUID, brick_count: int
     ) -> None:
         """Emit a ``ResliceCompletedEvent`` for *visual_id* if a bus is wired.
 
@@ -157,6 +161,10 @@ class SliceCoordinator:
         ----------
         scene_id : UUID
             Scene that owns the visual.
+        canvas_id : UUID
+            Canvas whose reslicing request produced this completion.  A scene
+            with multiple canvases emits one completion per canvas, so
+            quiescence trackers can distinguish them.
         visual_id : UUID
             Visual whose reslice cycle just completed.  Used by the bus as the
             routing key for ``on_reslice_completed`` subscribers.
@@ -169,6 +177,7 @@ class SliceCoordinator:
             ResliceCompletedEvent(
                 source_id=self.id,
                 scene_id=scene_id,
+                canvas_id=canvas_id,
                 visual_id=visual_id,
                 brick_count=brick_count,
             )

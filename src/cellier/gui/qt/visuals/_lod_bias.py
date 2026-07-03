@@ -67,8 +67,8 @@ class QtLodBiasSlider:
 
         self._slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal, parent)
         self._slider.setRange(*lod_range)
-        self._slider.setDecimals(decimals)
         self._slider.setValue(initial_lod_bias)
+        self._slider.setDecimals(decimals)
 
         # Emit only when the user releases the handle to avoid a reslice on
         # every intermediate tick while dragging.
