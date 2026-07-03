@@ -16,6 +16,7 @@ from cellier.events import (
     AppearanceChangedEvent,
     AppearanceUpdateEvent,
     CameraChangedEvent,
+    CanvasSizeChangedEvent,
     ChannelAppearanceChangedEvent,
     DimsChangedEvent,
     DimsUpdateEvent,
@@ -198,6 +199,11 @@ class CellierController:
         self._outgoing_events.subscribe(
             CameraChangedEvent,
             self._on_camera_changed,
+            owner_id=self._id,
+        )
+        self._outgoing_events.subscribe(
+            CanvasSizeChangedEvent,
+            self._on_canvas_size_changed,
             owner_id=self._id,
         )
         # Must be called before subscribing _on_dims_changed_bus below so the
@@ -1777,6 +1783,59 @@ class CellierController:
         """
         return self.get_canvas_view(canvas_id).capture_camera_state()
 
+    def screenshot(
+        self,
+        canvas_id: UUID,
+        size: tuple[int, int] | None = None,
+        scale: float = 1.0,
+    ) -> np.ndarray:
+        """Capture a screenshot of the canvas as an RGBA uint8 array.
+
+        Temporarily resizes the canvas to *size* (scaled by *scale*), renders
+        one frame, grabs the framebuffer, then restores the original size and
+        camera state.  Follows the same pattern as napari's ``resize_canvas``
+        context manager.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of a registered canvas.
+        size : tuple[int, int] or None
+            Target ``(width, height)`` in logical pixels before applying
+            *scale*.  When ``None`` the current canvas size is used.
+        scale : float
+            Multiplier applied to *size* (or the current size when *size* is
+            ``None``).  ``scale=2`` doubles the resolution for high-DPI output.
+
+        Returns
+        -------
+        np.ndarray
+            RGBA uint8 array of shape ``(height, width, 4)``.
+        """
+        canvas_view = self._render_manager._canvases[canvas_id]
+        canvas = canvas_view.widget
+
+        prev_w, prev_h = canvas.get_logical_size()
+        target_w = int((size[0] if size is not None else prev_w) * scale)
+        target_h = int((size[1] if size is not None else prev_h) * scale)
+
+        try:
+            canvas.set_logical_size(target_w, target_h)
+            if self._gui == "qt":
+                from PySide6.QtWidgets import QApplication
+
+                QApplication.processEvents()
+            canvas_view._canvas.request_draw(canvas_view._draw_frame)
+            if self._gui == "qt":
+                from PySide6.QtWidgets import QApplication
+
+                QApplication.processEvents()
+            array = np.asarray(canvas_view._renderer.snapshot())
+        finally:
+            canvas.set_logical_size(prev_w, prev_h)
+
+        return array
+
     def get_visual_model(self, visual_id: UUID) -> MultiscaleImageVisual:
         """Return the live visual model for visual_id.
 
@@ -2578,6 +2637,16 @@ class CellierController:
     @camera_settle_threshold_s.setter
     def camera_settle_threshold_s(self, value: float) -> None:
         self._render_manager.config.camera.settle_threshold_s = value
+
+    def _on_canvas_size_changed(self, event: CanvasSizeChangedEvent) -> None:
+        """Update Canvas.size in the model when the backend reports a resize."""
+        scene_id = self._canvas_to_scene.get(event.canvas_id)
+        if scene_id is None:
+            return
+        canvas_model = self._model.scenes[scene_id].canvases.get(event.canvas_id)
+        if canvas_model is None:
+            return
+        canvas_model.size = (event.width, event.height)
 
     def _on_camera_changed(self, event: CameraChangedEvent) -> None:
         """Synchronous bus handler: updates camera model and schedules settle task."""

@@ -33,6 +33,7 @@ class Canvas(EventedModel):
     )
     cameras: dict[str, CameraType]
     overlays: list[CanvasOverlayType] = Field(default_factory=list)
+    size: tuple[int, int] | None = None
 
     def model_post_init(self, __context: Any) -> None:
         """Wire camera event relays after model initialization."""

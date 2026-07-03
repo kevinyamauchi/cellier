@@ -10,7 +10,11 @@ import numpy as np
 import pygfx as gfx
 
 from cellier._state import CameraState
-from cellier.events._events import CameraChangedEvent, FrameRenderedEvent
+from cellier.events._events import (
+    CameraChangedEvent,
+    CanvasSizeChangedEvent,
+    FrameRenderedEvent,
+)
 from cellier.logging import _CAMERA_LOGGER
 from cellier.render._requests import DimsState, ReslicingRequest
 from cellier.render._temporal_accumulation import TemporalAccumulationPass
@@ -87,6 +91,7 @@ class CanvasView:
 
         self._canvas = self._create_canvas(parent, gui=gui, size=size)
         self._renderer = gfx.WgpuRenderer(self._canvas)
+        self._wire_resize_event(gui)
 
         # Both camera/controller pairs are created upfront so toggling only
         # requires enabling/disabling — no construction or destruction.
@@ -175,6 +180,62 @@ class CanvasView:
 
             return RenderCanvas(size=size or (600, 600), update_mode="continuous")
         raise ValueError(f"Unknown gui {gui!r}. Expected 'qt' or 'anywidget'.")
+
+    def _wire_resize_event(self, gui: str) -> None:
+        """Hook the backend resize notification to emit CanvasSizeChangedEvent.
+
+        Qt: installs a resizeEvent override on the QRenderWidget via an
+        event filter on a QObject proxy so we don't need to subclass the
+        widget.  anywidget: observes the _css_width traitlet, which is
+        updated by rendercanvas on every ResizeObserver message from the
+        browser.
+        """
+        if gui == "qt":
+            from PySide6.QtCore import QEvent, QObject
+
+            canvas = self._canvas
+
+            class _ResizeFilter(QObject):
+                def __init__(self_f, parent_view: CanvasView) -> None:
+                    super().__init__()
+                    self_f._view = parent_view
+
+                def eventFilter(self_f, obj, event) -> bool:
+                    if event.type() == QEvent.Type.Resize:
+                        s = event.size()
+                        self_f._view._on_canvas_resize(s.width(), s.height())
+                    return False
+
+            self._resize_filter = _ResizeFilter(self)
+            canvas.installEventFilter(self._resize_filter)
+
+        elif gui == "anywidget":
+            # _css_width is updated synchronously by rendercanvas whenever the
+            # browser ResizeObserver fires.  Observing it gives us the actual
+            # DOM pixel size without subclassing AnywidgetRenderCanvas.
+            def _on_width_change(change) -> None:
+                w_str = change.get("new", "0px").rstrip("px")
+                h_str = self._canvas._css_height.rstrip("px")
+                try:
+                    w, h = int(float(w_str)), int(float(h_str))
+                except ValueError:
+                    return
+                if w > 0 and h > 0:
+                    self._on_canvas_resize(w, h)
+
+            self._canvas.observe(_on_width_change, names=["_css_width"])
+
+    def _on_canvas_resize(self, width: int, height: int) -> None:
+        """Emit CanvasSizeChangedEvent; called by both backend resize hooks."""
+        if self._event_bus is not None:
+            self._event_bus.emit(
+                CanvasSizeChangedEvent(
+                    source_id=self._id,
+                    canvas_id=self._canvas_id,
+                    width=width,
+                    height=height,
+                )
+            )
 
     @property
     def canvas_id(self) -> UUID:
