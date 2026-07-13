@@ -34,12 +34,18 @@ class AwBox(anywidget.AnyWidget):
     align : str
         Cross-axis alignment applied as CSS ``align-items`` (e.g. ``"center"``);
         empty string leaves the flexbox default (``stretch``).
+    min_width : int
+        When set (> 0), the box grows to fill available space but never
+        narrower than this many pixels (``flex: 1 1 <min_width>px``); ``0``
+        leaves the flexbox default (content-sized, no grow).
     """
 
     _esm = _STATIC / "aw_box.js"
+    _css = _STATIC / "aw_box.css"
 
     children = traitlets.List(traitlets.Instance(ipywidgets.DOMWidget)).tag(
         sync=True, **ipywidgets.widget_serialization
     )
     direction = traitlets.Unicode("v").tag(sync=True)
     align = traitlets.Unicode("").tag(sync=True)
+    min_width = traitlets.Int(0).tag(sync=True)

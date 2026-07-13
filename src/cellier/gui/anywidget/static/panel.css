@@ -1,6 +1,8 @@
 .cellier-control-panel {
   font-family: var(--jp-ui-font-family, sans-serif);
   font-size: 12px;
+  flex: 0 1 260px;
+  min-width: 260px;
 }
 
 /* ── Shared appearance + AABB rows (Phase 2) ─────────────────────────────── */

@@ -432,8 +432,8 @@ class _FakeHost:
     def leaf(self, widget):
         return _Node("leaf", widget)
 
-    def stack(self, items, *, direction="v", align=None):
-        return _Node("stack", (direction, list(items), align))
+    def stack(self, items, *, direction="v", align=None, min_width=None):
+        return _Node("stack", (direction, list(items), align, min_width))
 
     def grid(self, rows):
         return _Node("grid", [list(r) for r in rows])
@@ -480,7 +480,7 @@ def test_display_center_only_presents_and_returns_inert_handle(monkeypatch):
     assert fake.presented is not None
     # No docks: root is just the canvas+dims v-stack from compose().
     assert fake.presented.kind == "stack"
-    _direction, leaves, _align = fake.presented.payload
+    _direction, leaves, _align, _min_width = fake.presented.payload
     assert _direction == "v"
     assert len(leaves) == 2  # canvas leaf + dims leaf
 
@@ -512,9 +512,12 @@ def test_display_bottom_dock_stacks_toggle_below_center(monkeypatch):
     # Outer v-stack: [center_composed, toggle_leaf]
     presented = fake.presented
     assert presented.kind == "stack"
-    direction, leaves, align = presented.payload
+    direction, leaves, align, _min_width = presented.payload
     assert direction == "v"
-    assert align == "center"
+    # No align: default cross-axis "stretch" is required for the responsive-
+    # width layout to fill the notebook cell / sidecar tab (see
+    # _anywidget_renderer.py); "center" would shrink-to-content again.
+    assert align is None
     assert len(leaves) == 2
     center_node, toggle_node = leaves
     assert center_node.kind == "stack"  # canvas+dims v-stack
@@ -540,7 +543,7 @@ def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
     # Middle h-stack: [panel_leaf, center_composed]
     presented = fake.presented
     assert presented.kind == "stack"
-    direction, leaves, _align = presented.payload
+    direction, leaves, _align, _min_width = presented.payload
     assert direction == "h"
     assert len(leaves) == 2
     panel_node, center_node = leaves
@@ -932,7 +935,7 @@ def test_renderer_builds_appearance_panel_for_configured_visual(monkeypatch):
 
     # The renderer placed the panel as the left leaf.
     presented = fake.presented
-    _direction, leaves, _align = presented.payload
+    _direction, leaves, _align, _min_width = presented.payload
     panel_leaf = leaves[0]
     assert panel_leaf.kind == "leaf"
     panel = panel_leaf.payload

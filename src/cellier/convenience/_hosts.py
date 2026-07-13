@@ -32,12 +32,17 @@ class LayoutHost(Protocol):
         *,
         direction: str = "v",
         align: str | None = None,
+        min_width: int | None = None,
     ) -> object:
         """Stack *items* vertically (``"v"``) or horizontally (``"h"``).
 
         *align* sets the cross-axis alignment of the items (e.g. ``"center"``
         to centre a fixed-width canvas over a wider control panel); ``None``
         leaves the host default.
+
+        *min_width* makes the stack grow to fill available width but never
+        narrower than *min_width* pixels; ``None`` leaves the host default
+        (content-sized, no grow).
         """
         ...
 
@@ -79,8 +84,13 @@ class MarimoHost:
         *,
         direction: str = "v",
         align: str | None = None,
+        min_width: int | None = None,
     ) -> object:
-        """Stack with ``marimo.vstack`` / ``marimo.hstack``."""
+        """Stack with ``marimo.vstack`` / ``marimo.hstack``.
+
+        *min_width* is accepted for interface parity with :class:`JupyterHost`
+        but ignored -- marimo has its own layout/width primitives.
+        """
         stacker = self._mo.vstack if direction == "v" else self._mo.hstack
         return stacker(list(items), align=align)
 
@@ -111,11 +121,17 @@ class JupyterHost:
         *,
         direction: str = "v",
         align: str | None = None,
+        min_width: int | None = None,
     ) -> object:
         """Compose into an ``AwBox`` flexbox."""
         from cellier.gui.anywidget._container import AwBox
 
-        return AwBox(children=list(items), direction=direction, align=align or "")
+        return AwBox(
+            children=list(items),
+            direction=direction,
+            align=align or "",
+            min_width=min_width or 0,
+        )
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Compose rows of ``AwBox`` (horizontal) inside an outer ``AwBox``."""

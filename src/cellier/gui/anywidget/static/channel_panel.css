@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 0 1 260px;
+  min-width: 260px;
 }
 
 .cellier-channel-row {

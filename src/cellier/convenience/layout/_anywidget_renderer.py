@@ -61,7 +61,11 @@ def render_anywidget(layout: Layout, viewer: object, host: LayoutHost) -> _Rende
     if len(outer_items) == 1:
         root = outer_items[0]
     else:
-        root = host.stack(outer_items, direction="v", align="center")
+        # No explicit align: the default cross-axis "stretch" is required for
+        # the tree to fill the notebook cell / sidecar tab width; "center"
+        # (the previous value) shrinks the whole tree to its content's
+        # natural width and centers it, defeating the responsive-width CSS.
+        root = host.stack(outer_items, direction="v")
 
     return _RenderView(root, closeables)
 

@@ -93,6 +93,7 @@ class QtChannelList:
             QCheckBox,
             QGroupBox,
             QScrollArea,
+            QSizePolicy,
             QVBoxLayout,
             QWidget,
         )
@@ -181,6 +182,13 @@ class QtChannelList:
             self._widget = scroll
         else:
             self._widget = container
+
+        # Floor the dock's width regardless of channel count / scroll wrapping
+        # (matches the appearance-controls dock's min-width convention).
+        self._widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        self._widget.setMinimumWidth(260)
 
     # ------------------------------------------------------------------
     # Public interface

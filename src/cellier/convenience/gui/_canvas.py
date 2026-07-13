@@ -53,11 +53,16 @@ class AnywidgetCanvasView:
         when no appearance panel was configured for this visual.
     dims : AnywidgetDimsPanel
         Axis slice sliders (right column, below canvas).
+    canvas_size : tuple[int, int]
+        The CSS pixel size the canvas was constructed with.  Reused by
+        :meth:`compose_with_controls` as the canvas+dims column's responsive
+        min-width floor.
     """
 
     canvas: object
     controls: ControlPanel | None
     dims: AnywidgetDimsPanel
+    canvas_size: tuple[int, int] = (600, 600)
 
     def compose(self, host: LayoutHost) -> object:
         """Compose without extra controls (backward-compatible entry point)."""
@@ -67,14 +72,18 @@ class AnywidgetCanvasView:
         """Arrange into a two-column layout when a left column exists.
 
         Left column: appearance panel (if present) then *controls* (e.g.
-        toggle button).  Right column: canvas above dims sliders.  When the
-        left column would be empty, only the right column is returned.
+        toggle button).  Right column: canvas above dims sliders, floored at
+        ``canvas_size[0]`` and otherwise responsive.  When the left column
+        would be empty, only the right column is returned.
         """
         left_items = []
         if self.controls is not None:
             left_items.append(host.leaf(self.controls))
         left_items.extend(host.leaf(c) for c in controls)
-        right = host.stack([host.leaf(self.canvas), host.leaf(self.dims)])
+        right = host.stack(
+            [host.leaf(self.canvas), host.leaf(self.dims)],
+            min_width=self.canvas_size[0],
+        )
         if not left_items:
             return right
         left = host.stack(left_items)
@@ -384,5 +393,8 @@ def anywidget_canvas_view_for_scene(
         controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
 
     return AnywidgetCanvasView(
-        canvas=canvas_view.widget, controls=panel, dims=dims_panel
+        canvas=canvas_view.widget,
+        controls=panel,
+        dims=dims_panel,
+        canvas_size=canvas_size or (600, 600),
     )

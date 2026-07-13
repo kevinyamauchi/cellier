@@ -205,7 +205,7 @@ def _render_appearance_controls_qt(viewer: object) -> object | None:
 
     container = QtWidgets.QWidget()
     container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-    container.setMinimumWidth(240)
+    container.setMinimumWidth(260)
     layout = QtWidgets.QVBoxLayout(container)
     layout.setContentsMargins(4, 4, 4, 4)
     layout.setSpacing(6)

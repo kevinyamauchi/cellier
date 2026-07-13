@@ -175,10 +175,41 @@ class CanvasView:
         elif gui == "anywidget":
             # rendercanvas's anywidget backend (the older `jupyter` backend is
             # deprecated).  Anywidget canvases are not laid out by a parent;
-            # they need an explicit CSS pixel size.  `parent` is ignored.
+            # `parent` is ignored.  `size` still sets the initial height and
+            # the physical resolution rendercanvas starts with, but width is
+            # made responsive below so the canvas fills whatever flex column
+            # cellier's layout gives it (see AwBox's `min_width`, which is
+            # set from this same `size` at the convenience layer).
             from rendercanvas.anywidget import RenderCanvas
 
-            return RenderCanvas(size=size or (600, 600), update_mode="continuous")
+            class _CellierAnywidgetCanvas(RenderCanvas):
+                """Notifies ``_cellier_on_resize`` on every real browser resize.
+
+                rendercanvas's ``_css_width`` traitlet is write-only from
+                Python (nothing on the JS side writes a new value back into
+                it when the *browser* resizes the canvas), so observing it
+                (the previous approach) misses organic resizes entirely.  The
+                "resize" custom message, handled here, fires on every actual
+                ``ResizeObserver`` event and carries the real physical size,
+                from which rendercanvas itself derives ``_size_info``
+                (including ``logical_size``, already corrected for device
+                pixel ratio) -- reused here instead of re-parsing a CSS
+                string.
+                """
+
+                def _rfb_handle_msg(self, widget, content, buffers) -> None:
+                    super()._rfb_handle_msg(widget, content, buffers)
+                    if content.get("type") == "resize":
+                        cb = getattr(self, "_cellier_on_resize", None)
+                        if cb is not None:
+                            w, h = self._size_info["logical_size"]
+                            cb(round(w), round(h))
+
+            canvas = _CellierAnywidgetCanvas(
+                size=size or (600, 600), update_mode="continuous"
+            )
+            canvas.set_css_width("100%")
+            return canvas
         raise ValueError(f"Unknown gui {gui!r}. Expected 'qt' or 'anywidget'.")
 
     def _wire_resize_event(self, gui: str) -> None:
@@ -186,9 +217,9 @@ class CanvasView:
 
         Qt: installs a resizeEvent override on the QRenderWidget via an
         event filter on a QObject proxy so we don't need to subclass the
-        widget.  anywidget: observes the _css_width traitlet, which is
-        updated by rendercanvas on every ResizeObserver message from the
-        browser.
+        widget.  anywidget: the canvas is a ``_CellierAnywidgetCanvas``
+        (see ``_create_canvas``), which calls ``_cellier_on_resize`` on every
+        real browser resize.
         """
         if gui == "qt":
             from PySide6.QtCore import QEvent, QObject
@@ -210,20 +241,7 @@ class CanvasView:
             canvas.installEventFilter(self._resize_filter)
 
         elif gui == "anywidget":
-            # _css_width is updated synchronously by rendercanvas whenever the
-            # browser ResizeObserver fires.  Observing it gives us the actual
-            # DOM pixel size without subclassing AnywidgetRenderCanvas.
-            def _on_width_change(change) -> None:
-                w_str = change.get("new", "0px").rstrip("px")
-                h_str = self._canvas._css_height.rstrip("px")
-                try:
-                    w, h = int(float(w_str)), int(float(h_str))
-                except ValueError:
-                    return
-                if w > 0 and h > 0:
-                    self._on_canvas_resize(w, h)
-
-            self._canvas.observe(_on_width_change, names=["_css_width"])
+            self._canvas._cellier_on_resize = self._on_canvas_resize
 
     def _on_canvas_resize(self, width: int, height: int) -> None:
         """Emit CanvasSizeChangedEvent; called by both backend resize hooks."""

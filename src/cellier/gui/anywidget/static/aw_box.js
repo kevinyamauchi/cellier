@@ -29,6 +29,14 @@ async function render({ model, el }) {
   // wider control panel); empty leaves the flexbox default (stretch).
   const align = model.get("align");
   if (align) box.style.alignItems = align;
+  // Grow to fill available width but never below min_width (e.g. the
+  // canvas+dims column, floored at the user's requested canvas_size);
+  // 0 leaves the flexbox default (content-sized, no grow).
+  const minWidth = model.get("min_width");
+  if (minWidth) {
+    box.style.flex = `1 1 ${minWidth}px`;
+    box.style.minWidth = `${minWidth}px`;
+  }
   el.appendChild(box);
   try {
     for (const ref of model.get("children") || []) {
