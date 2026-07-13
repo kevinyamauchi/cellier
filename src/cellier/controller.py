@@ -18,6 +18,7 @@ from cellier.events import (
     CameraChangedEvent,
     CanvasSizeChangedEvent,
     ChannelAppearanceChangedEvent,
+    ChannelAppearanceUpdateEvent,
     DimsChangedEvent,
     DimsUpdateEvent,
     EventBus,
@@ -236,6 +237,11 @@ class CellierController:
         self._incoming_events.subscribe(
             AABBUpdateEvent,
             self._on_aabb_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            ChannelAppearanceUpdateEvent,
+            self._on_channel_appearance_update,
             owner_id=self._id,
         )
 
@@ -2429,6 +2435,100 @@ class CellierController:
             _source_id_override.reset(token)
             _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
 
+    def update_channel_appearance_field(
+        self,
+        visual_id: UUID,
+        channel_index: int,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field on one channel of a multichannel visual.
+
+        Tags the emitted bus event with *source_id*.  GUI widgets should pass
+        ``source_id=self._id`` so their own ``ChannelAppearanceChangedEvent``
+        subscription can ignore the echo.
+
+        This mutates a single visual only.  When a channel is shared in
+        lock-step across several panels (e.g. an ``OrthoViewer``), calling this
+        on one panel's visual leaves the sibling panels unequal until they are
+        written too; use ``update_channel_group_field`` to keep the group in
+        lock-step.
+
+        A ``pydantic.ValidationError`` from a malformed *value* is allowed to
+        propagate (matching ``update_appearance_field``).
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        channel_index :
+            Index into ``visual.channels`` selecting the ``ChannelAppearance``.
+        field :
+            Attribute name on the channel appearance model, e.g. ``"clim"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``ChannelAppearanceChangedEvent``.
+            Defaults to the controller's own ID.
+        """
+        visual = self.get_visual_model(visual_id)
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  channel=%d  field=%s  visual=%s  source=%s",
+            channel_index,
+            field,
+            visual_id,
+            resolved_source_id,
+        )
+        token = _source_id_override.set(source_id)
+        try:
+            setattr(visual.channels[channel_index], field, value)
+        finally:
+            _source_id_override.reset(token)
+            _SOURCE_ID_LOGGER.debug(
+                "reset  channel=%d  field=%s  visual=%s",
+                channel_index,
+                field,
+                visual_id,
+            )
+
+    def update_channel_group_field(
+        self,
+        visual_ids: list[UUID],
+        channel_index: int,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one channel field across a group of visuals in lock-step.
+
+        Fan-out over ``update_channel_appearance_field`` so every visual in the
+        group (e.g. the per-panel visuals of an ``OrthoViewer``) receives the
+        same channel change.  This is the programmatic write-side companion to
+        the widget subscribe-to-all read side.
+
+        Parameters
+        ----------
+        visual_ids :
+            Target visuals sharing the channel set.
+        channel_index :
+            Index into each visual's ``channels`` mapping.
+        field :
+            Attribute name on the channel appearance model.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on each emitted ``ChannelAppearanceChangedEvent``.
+            Defaults to the controller's own ID.
+        """
+        for visual_id in visual_ids:
+            self.update_channel_appearance_field(
+                visual_id, channel_index, field, value, source_id=source_id
+            )
+
     def update_aabb_field(
         self,
         visual_id: UUID,
@@ -2609,6 +2709,17 @@ class CellierController:
     def _on_aabb_update(self, event: AABBUpdateEvent) -> None:
         self.update_aabb_field(
             event.visual_id, event.field, event.value, source_id=event.source_id
+        )
+
+    def _on_channel_appearance_update(
+        self, event: ChannelAppearanceUpdateEvent
+    ) -> None:
+        self.update_channel_appearance_field(
+            event.visual_id,
+            event.channel_index,
+            event.field,
+            event.value,
+            source_id=event.source_id,
         )
 
     # ------------------------------------------------------------------

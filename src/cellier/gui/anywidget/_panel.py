@@ -36,6 +36,7 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._colormap_util import colormap_to_str as _colormap_to_str
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -73,16 +74,6 @@ _AABB_TRAIT_TO_FIELD: dict[str, str] = {
     "aabb_line_width": "line_width",
     "aabb_color": "color",
 }
-
-
-def _colormap_to_str(cm) -> str:
-    """Convert a cmap.Colormap or string to its canonical name string."""
-    if isinstance(cm, str):
-        return cm
-    name = getattr(cm, "name", None)
-    if name is not None and isinstance(name, str):
-        return name
-    return str(cm)
 
 
 class ControlPanel(anywidget.AnyWidget):

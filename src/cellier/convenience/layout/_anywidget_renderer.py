@@ -100,6 +100,7 @@ def _render_dock(
 
     from cellier.convenience.layout._spec import (
         AppearanceControls,
+        ChannelControls,
         HStack,
         SceneControls,
         VStack,
@@ -107,6 +108,8 @@ def _render_dock(
 
     if isinstance(spec, AppearanceControls):
         return _render_appearance_controls(viewer, host, closeables)
+    if isinstance(spec, ChannelControls):
+        return _render_channel_controls(viewer, host, closeables)
     if isinstance(spec, SceneControls):
         return _render_scene_controls(viewer, host)
     if isinstance(spec, (HStack, VStack)):
@@ -124,6 +127,7 @@ def _render_appearance_controls(
 ) -> object | None:
     """Build and wire a ControlPanel for the first configured visual."""
     from cellier.convenience.gui._controls_config import (
+        ChannelControlsConfig,
         InMemoryImageControlsConfig,
         MultiscaleImageControlsConfig,
     )
@@ -137,9 +141,10 @@ def _render_appearance_controls(
     controls_config = None
     visual = None
     for v in scene.visuals:
-        if v.id in controls_configs:
+        cfg = controls_configs.get(v.id)
+        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
             visual = v
-            controls_config = controls_configs[v.id]
+            controls_config = cfg
             break
 
     if controls_config is None:
@@ -167,6 +172,38 @@ def _render_appearance_controls(
         {},  # axis_ranges unused in the appearance-panel path
         visual=visual,
         **panel_kwargs,
+    )
+    viewer.controller.connect_widget(
+        panel, subscription_specs=panel.subscription_specs()
+    )
+    closeables.append(panel)
+    return host.leaf(panel)
+
+
+def _render_channel_controls(
+    viewer: object,
+    host: LayoutHost,
+    closeables: list,
+) -> object | None:
+    """Build and wire a ``ChannelPanel`` for the configured channel visual(s).
+
+    Multi-scene aware: for an ``OrthoViewer`` the single panel drives every
+    panel's sibling visual via the fan-out ``visual_ids``.  Returns ``None``
+    when no channel controls are configured.
+    """
+    from cellier.convenience.layout._shared import (
+        _resolve_channel_visual_ids,
+        channel_widget_kwargs,
+    )
+    from cellier.gui.anywidget import ChannelPanel
+
+    resolved = _resolve_channel_visual_ids(viewer)
+    if resolved is None:
+        return None
+    config, visual_ids, channels = resolved
+
+    panel = ChannelPanel(
+        visual_ids, channels, **channel_widget_kwargs(config, channels)
     )
     viewer.controller.connect_widget(
         panel, subscription_specs=panel.subscription_specs()

@@ -42,6 +42,7 @@ from cellier.events._update_events import (
     AABBUpdateEvent,
     AppearanceUpdateEvent,
     CellierUpdateEventTypes,
+    ChannelAppearanceUpdateEvent,
     DimsUpdateEvent,
     SubscriptionSpec,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "CellierEventTypes",
     "CellierUpdateEventTypes",
     "ChannelAppearanceChangedEvent",
+    "ChannelAppearanceUpdateEvent",
     "DataStoreContentsChangedEvent",
     "DataStoreMetadataChangedEvent",
     "DimsChangedEvent",

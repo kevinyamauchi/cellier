@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cellier.convenience._kwarg_dicts import (
+        ChannelControlsKwargs,
         InMemoryImageControlsKwargs,
         MultiscaleImageControlsKwargs,
     )
@@ -75,6 +76,32 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
     dataset_info: str = ""
 
 
+@dataclass
+class ChannelControlsConfig(BaseControlsConfig):
+    """Controls configuration for multichannel image visuals.
+
+    Parameters
+    ----------
+    fields : list[str] or None
+        Per-channel fields to expose, in display order.  Defaults to
+        ``["visible", "color_map", "clim", "opacity"]`` when ``None``.
+    colormap_names : list[str] or None
+        Names available in each channel's colormap control.  Defaults to a
+        curated list when ``None``.
+    clim_range : tuple[float, float] or None
+        ``(min, max)`` bounds for the contrast-limits sliders.  Inferred from
+        the channels' current clim when ``None``.
+    channel_labels : dict[int, str] or None
+        Optional per-channel display labels keyed by channel index.  Defaults
+        to ``"Channel {i}"`` when ``None``.
+    """
+
+    fields: list[str] | None = None
+    colormap_names: list[str] | None = None
+    clim_range: tuple[float, float] | None = None
+    channel_labels: dict[int, str] | None = None
+
+
 def resolve_inmemory_image_controls(
     controls: InMemoryImageControlsConfig | InMemoryImageControlsKwargs | None,
 ) -> InMemoryImageControlsConfig | None:
@@ -94,4 +121,15 @@ def resolve_multiscale_image_controls(
         return None
     if isinstance(controls, dict):
         return MultiscaleImageControlsConfig(**controls)
+    return controls
+
+
+def resolve_channel_controls(
+    controls: ChannelControlsConfig | ChannelControlsKwargs | None,
+) -> ChannelControlsConfig | None:
+    """Resolve a dict or config instance to ``ChannelControlsConfig``."""
+    if controls is None:
+        return None
+    if isinstance(controls, dict):
+        return ChannelControlsConfig(**controls)
     return controls

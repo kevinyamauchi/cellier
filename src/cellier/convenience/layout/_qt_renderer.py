@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cellier.gui._colormap_util import colormap_to_str as _colormap_to_str
+
 if TYPE_CHECKING:
     from cellier.convenience.layout._spec import Layout
 
@@ -136,15 +138,6 @@ def _render_scene_controls_qt(viewer: object) -> object | None:
     return make_dim_toggle_qt(viewer)
 
 
-def _colormap_to_str(cm) -> str:
-    if isinstance(cm, str):
-        return cm
-    name = getattr(cm, "name", None)
-    if name is not None and isinstance(name, str):
-        return name
-    return str(cm)
-
-
 def _render_appearance_controls_qt(viewer: object) -> object | None:
     """Build and wire Qt appearance sub-widgets for the first configured visual.
 
@@ -156,7 +149,10 @@ def _render_appearance_controls_qt(viewer: object) -> object | None:
     from PySide6 import QtWidgets
     from PySide6.QtWidgets import QSizePolicy
 
-    from cellier.convenience.gui._controls_config import InMemoryImageControlsConfig
+    from cellier.convenience.gui._controls_config import (
+        ChannelControlsConfig,
+        InMemoryImageControlsConfig,
+    )
     from cellier.gui.qt.visuals import (
         QtClimRangeSlider,
         QtColormapComboBox,
@@ -172,9 +168,10 @@ def _render_appearance_controls_qt(viewer: object) -> object | None:
     controls_config = None
     visual = None
     for v in scene.visuals:
-        if v.id in controls_configs:
+        cfg = controls_configs.get(v.id)
+        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
             visual = v
-            controls_config = controls_configs[v.id]
+            controls_config = cfg
             break
 
     if controls_config is None:
@@ -270,6 +267,33 @@ def _render_appearance_controls_qt(viewer: object) -> object | None:
     return container
 
 
+def _render_channel_controls_qt(viewer: object) -> object | None:
+    """Build and wire a ``QtChannelList`` for the configured channel visual(s).
+
+    Multi-scene aware: for an ``OrthoViewer`` the single widget drives every
+    panel's sibling visual via the fan-out ``visual_ids``.  Returns ``None``
+    when no channel controls are configured.
+    """
+    from cellier.convenience.layout._shared import (
+        _resolve_channel_visual_ids,
+        channel_widget_kwargs,
+    )
+    from cellier.gui.qt.visuals import QtChannelList
+
+    resolved = _resolve_channel_visual_ids(viewer)
+    if resolved is None:
+        return None
+    config, visual_ids, channels = resolved
+
+    widget = QtChannelList(
+        visual_ids, channels, **channel_widget_kwargs(config, channels)
+    )
+    viewer.controller.connect_widget(
+        widget, subscription_specs=widget.subscription_specs()
+    )
+    return widget.widget
+
+
 def _render_dock_qt(spec: object, viewer: object) -> object | None:
     """Render one dock spec to a Qt widget, or return None."""
     if spec is None:
@@ -279,6 +303,7 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
 
     from cellier.convenience.layout._spec import (
         AppearanceControls,
+        ChannelControls,
         HStack,
         SceneControls,
         VStack,
@@ -286,6 +311,8 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
 
     if isinstance(spec, AppearanceControls):
         return _render_appearance_controls_qt(viewer)
+    if isinstance(spec, ChannelControls):
+        return _render_channel_controls_qt(viewer)
     if isinstance(spec, SceneControls):
         return _render_scene_controls_qt(viewer)
     if isinstance(spec, (HStack, VStack)):

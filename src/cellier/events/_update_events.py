@@ -90,7 +90,37 @@ class AABBUpdateEvent(NamedTuple):
     value: Any
 
 
-CellierUpdateEventTypes = AppearanceUpdateEvent | DimsUpdateEvent | AABBUpdateEvent
+class ChannelAppearanceUpdateEvent(NamedTuple):
+    """Request to set one appearance field on one channel of a multichannel visual.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``ChannelAppearanceChangedEvent``
+        so the caller can echo-filter on its own subscription.
+    visual_id :
+        Target visual.
+    channel_index :
+        Index into ``visual.channels`` selecting the ``ChannelAppearance``.
+    field :
+        Attribute name on the channel appearance model, e.g. ``"clim"``.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    channel_index: int
+    field: str
+    value: Any
+
+
+CellierUpdateEventTypes = (
+    AppearanceUpdateEvent
+    | DimsUpdateEvent
+    | AABBUpdateEvent
+    | ChannelAppearanceUpdateEvent
+)
 
 
 class SubscriptionSpec(NamedTuple):

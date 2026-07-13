@@ -20,6 +20,7 @@ Quick start::
 
 from cellier.convenience.layout._spec import (
     AppearanceControls,
+    ChannelControls,
     Grid,
     HStack,
     Layout,
@@ -29,6 +30,7 @@ from cellier.convenience.layout._spec import (
 
 __all__ = [
     "AppearanceControls",
+    "ChannelControls",
     "Grid",
     "HStack",
     "Layout",

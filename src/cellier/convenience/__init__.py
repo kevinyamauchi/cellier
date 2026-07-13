@@ -9,6 +9,7 @@ from cellier.convenience._kwarg_dicts import (
     BaseImageAppearanceKwargs,
     BaseLabelsAppearanceKwargs,
     ChannelAppearanceKwargs,
+    ChannelControlsKwargs,
     InMemoryImageAppearanceKwargs,
     InMemoryImageControlsKwargs,
     InMemoryLabelsAppearanceKwargs,
@@ -27,6 +28,7 @@ from cellier.convenience._ortho_viewer import OrthoViewer
 from cellier.convenience._viewer import Viewer
 from cellier.convenience.layout import (
     AppearanceControls,
+    ChannelControls,
     Grid,
     HStack,
     Layout,
@@ -40,6 +42,8 @@ __all__ = [
     "BaseImageAppearanceKwargs",
     "BaseLabelsAppearanceKwargs",
     "ChannelAppearanceKwargs",
+    "ChannelControls",
+    "ChannelControlsKwargs",
     "Grid",
     "HStack",
     "InMemoryImageAppearanceKwargs",

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from cellier.convenience._kwarg_dicts import (
         ChannelAppearanceKwargs,
+        ChannelControlsKwargs,
         InMemoryImageAppearanceKwargs,
         InMemoryImageControlsKwargs,
         InMemoryLabelsAppearanceKwargs,
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     )
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
+        ChannelControlsConfig,
         InMemoryImageControlsConfig,
         MultiscaleImageControlsConfig,
     )
@@ -744,6 +746,7 @@ class Viewer:
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
     ) -> MultichannelImageVisual:
         """Add an in-memory multichannel image visual.
 
@@ -764,11 +767,17 @@ class Viewer:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
+        controls : ChannelControlsConfig, dict, or None
+            Per-channel controls configuration. Accepts a
+            ``ChannelControlsConfig`` instance or a plain dict with the same
+            keys (see ``ChannelControlsKwargs``). When ``None`` (default), no
+            channel controls are created for this visual.
 
         Returns
         -------
         MultichannelImageVisual
         """
+        from cellier.convenience.gui._controls_config import resolve_channel_controls
         from cellier.visuals._channel_appearance import (
             ChannelAppearance as _ChannelAppearance,
         )
@@ -777,7 +786,7 @@ class Viewer:
             k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
             for k, v in channels.items()
         }
-        return self._controller.add_multichannel_image(
+        visual = self._controller.add_multichannel_image(
             self._resolve_data_store(data),
             self._scene.id,
             channel_axis,
@@ -786,6 +795,10 @@ class Viewer:
             max_channels_2d,
             max_channels_3d,
         )
+        resolved_controls = resolve_channel_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual
 
     def add_multichannel_image_multiscale(
         self,
@@ -799,6 +812,7 @@ class Viewer:
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
     ) -> MultichannelMultiscaleImageVisual:
         """Add a multiscale multichannel image visual.
 
@@ -826,11 +840,17 @@ class Viewer:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
+        controls : ChannelControlsConfig, dict, or None
+            Per-channel controls configuration. Accepts a
+            ``ChannelControlsConfig`` instance or a plain dict with the same
+            keys (see ``ChannelControlsKwargs``). When ``None`` (default), no
+            channel controls are created for this visual.
 
         Returns
         -------
         MultichannelMultiscaleImageVisual
         """
+        from cellier.convenience.gui._controls_config import resolve_channel_controls
         from cellier.visuals._channel_appearance import (
             ChannelAppearance as _ChannelAppearance,
         )
@@ -847,7 +867,7 @@ class Viewer:
             if isinstance(render_config, dict)
             else render_config
         )
-        return self._controller.add_multichannel_image_multiscale(
+        visual = self._controller.add_multichannel_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
             channel_axis,
@@ -858,3 +878,7 @@ class Viewer:
             max_channels_2d,
             max_channels_3d,
         )
+        resolved_controls = resolve_channel_controls(controls)
+        if resolved_controls is not None:
+            self._controls_configs[visual.id] = resolved_controls
+        return visual

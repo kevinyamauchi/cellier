@@ -31,7 +31,17 @@ if TYPE_CHECKING:
 
 
 def _make_colormap(color_map) -> gfx.TextureMap:
-    """Convert a cmap Colormap to a pygfx TextureMap via cmap's pygfx bridge."""
+    """Convert a cmap Colormap (or name string) to a pygfx TextureMap.
+
+    Appearance mutations driven from the GUI can arrive as a colormap *name*
+    string (e.g. the anywidget panel's Unicode trait), and psygnal emits the
+    raw assigned value to bus subscribers, so the value reaching this consumer
+    may be a ``str`` rather than a ``cmap.Colormap``.  Coerce it here.
+    """
+    from cmap import Colormap
+
+    if not isinstance(color_map, Colormap):
+        color_map = Colormap(color_map)
     return color_map.to_pygfx(N=256)
 
 
