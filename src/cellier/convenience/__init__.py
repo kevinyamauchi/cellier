@@ -22,9 +22,11 @@ from cellier.convenience._kwarg_dicts import (
     MultiscaleLabelRenderConfigKwargs,
     MultiscaleLabelsAppearanceKwargs,
     PointsMarkerAppearanceKwargs,
+    SidecarKwargs,
 )
-from cellier.convenience._launch import display, launch, run, show
+from cellier.convenience._launch import DisplayHandle, display, launch, run, show
 from cellier.convenience._ortho_viewer import OrthoViewer
+from cellier.convenience._sidecar import SidecarOptions
 from cellier.convenience._viewer import Viewer
 from cellier.convenience.layout import (
     AppearanceControls,
@@ -44,6 +46,7 @@ __all__ = [
     "ChannelAppearanceKwargs",
     "ChannelControls",
     "ChannelControlsKwargs",
+    "DisplayHandle",
     "Grid",
     "HStack",
     "InMemoryImageAppearanceKwargs",
@@ -61,6 +64,8 @@ __all__ = [
     "OrthoViewer",
     "PointsMarkerAppearanceKwargs",
     "SceneControls",
+    "SidecarKwargs",
+    "SidecarOptions",
     "VStack",
     "Viewer",
     "axis_ranges_from_ortho",

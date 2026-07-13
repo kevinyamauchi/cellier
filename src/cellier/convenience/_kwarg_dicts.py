@@ -558,6 +558,36 @@ class ChannelControlsKwargs(TypedDict, total=False):
     channel_labels: dict[int, str]
 
 
+class SidecarKwargs(TypedDict, total=False):
+    """Dict form of ``SidecarOptions``.
+
+    Accepted by ``display()`` in place of a ``SidecarOptions`` instance.
+
+    Keys
+    ----
+    title : str
+        Tab title.
+    anchor : str
+        Placement of the sidecar panel. One of ``"right"``, ``"split-right"``,
+        ``"split-left"``, ``"split-top"``, ``"split-bottom"``,
+        ``"tab-before"``, ``"tab-after"``. Default ``"right"``.
+    ref : SidecarOptions.ref
+        Anchor relative to another sidecar's ``DisplayHandle``.
+    """
+
+    title: str
+    anchor: Literal[
+        "right",
+        "split-right",
+        "split-left",
+        "split-top",
+        "split-bottom",
+        "tab-before",
+        "tab-after",
+    ]
+    ref: object
+
+
 __all__ = [
     "BaseAppearanceKwargs",
     "BaseImageAppearanceKwargs",
@@ -576,4 +606,5 @@ __all__ = [
     "MultiscaleLabelRenderConfigKwargs",
     "MultiscaleLabelsAppearanceKwargs",
     "PointsMarkerAppearanceKwargs",
+    "SidecarKwargs",
 ]
