@@ -1,4 +1,4 @@
-"""cellier v2 anywidget (notebook) GUI widgets.
+"""cellier anywidget (notebook) GUI widgets.
 
 Importing this package requires the optional ``anywidget`` dependency
 (``pip install 'cellier[anywidget]'``).
