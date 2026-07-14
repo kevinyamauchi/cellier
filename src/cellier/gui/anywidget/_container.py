@@ -22,7 +22,7 @@ import traitlets
 _STATIC = Path(__file__).parent / "static"
 
 
-class AwBox(anywidget.AnyWidget):
+class AnywidgetBox(anywidget.AnyWidget):
     """A flexbox container that mounts child widget views via the manager.
 
     Parameters
@@ -38,10 +38,15 @@ class AwBox(anywidget.AnyWidget):
         When set (> 0), the box grows to fill available space but never
         narrower than this many pixels (``flex: 1 1 <min_width>px``); ``0``
         leaves the flexbox default (content-sized, no grow).
+    gap : int
+        Spacing between children in pixels.  Defaults to ``4``, tuned for
+        macro layout blocks (canvas/dims/docks).  Pass a smaller value to
+        tightly group sibling controls that used to live inside one widget
+        (see ``compose_appearance_leaf``).
     """
 
-    _esm = _STATIC / "aw_box.js"
-    _css = _STATIC / "aw_box.css"
+    _esm = _STATIC / "container.js"
+    _css = _STATIC / "container.css"
 
     children = traitlets.List(traitlets.Instance(ipywidgets.DOMWidget)).tag(
         sync=True, **ipywidgets.widget_serialization
@@ -49,3 +54,4 @@ class AwBox(anywidget.AnyWidget):
     direction = traitlets.Unicode("v").tag(sync=True)
     align = traitlets.Unicode("").tag(sync=True)
     min_width = traitlets.Int(0).tag(sync=True)
+    gap = traitlets.Int(4).tag(sync=True)

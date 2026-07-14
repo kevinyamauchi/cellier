@@ -82,7 +82,7 @@ def channel_widget_kwargs(
 ) -> dict:
     """Build the toolkit-neutral kwargs shared by both channel widgets.
 
-    ``QtChannelList`` and ``ChannelPanel`` accept the same construction
+    ``QtChannelList`` and ``AnywidgetChannelList`` accept the same construction
     keywords (``clim_range``, ``colormap_names``, ``fields``,
     ``channel_labels``); this derives them from *config*, inferring
     ``clim_range`` from the channels' current clim when it is not configured.

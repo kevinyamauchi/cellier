@@ -1,4 +1,4 @@
-"""Tests for the anywidget ``ChannelPanel`` composite channel-controls widget."""
+"""Tests for the anywidget ``AnywidgetChannelList`` channel-controls widget."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from cmap import Colormap
 pytest.importorskip("anywidget")
 
 from cellier.events import ChannelAppearanceChangedEvent  # noqa: E402
-from cellier.gui.anywidget import ChannelPanel  # noqa: E402
+from cellier.gui.anywidget.visuals import AnywidgetChannelList  # noqa: E402
 from cellier.visuals._channel_appearance import ChannelAppearance  # noqa: E402
 
 
@@ -25,7 +25,7 @@ def _make_panel(visual_ids=None, channels=None):
         channels = {0: _make_channel_appearance(), 1: _make_channel_appearance()}
     if visual_ids is None:
         visual_ids = [uuid4()]
-    return ChannelPanel(visual_ids, channels), visual_ids, channels
+    return AnywidgetChannelList(visual_ids, channels), visual_ids, channels
 
 
 def test_traits_created_per_channel_field():
@@ -143,7 +143,7 @@ def test_inbound_clim_object_normalized_to_float_list():
 
 def test_custom_fields_only_create_those_traits():
     channels = {0: _make_channel_appearance()}
-    panel = ChannelPanel([uuid4()], channels, fields=["visible", "opacity"])
+    panel = AnywidgetChannelList([uuid4()], channels, fields=["visible", "opacity"])
     assert panel.has_trait("ch0_visible")
     assert panel.has_trait("ch0_opacity")
     assert not panel.has_trait("ch0_color_map")

@@ -1,13 +1,10 @@
-"""anywidget per-channel appearance panel (``ChannelPanel``).
+"""Per-channel appearance controls (``AnywidgetChannelList``) wired to the event bus.
 
-Symmetric to the Qt ``QtChannelList``: a single composite ``WidgetView`` that
-drives every channel of one or more multichannel visuals over the
-``connect_widget`` bus.  The channel set is fixed at construction (design
-section 4), so the panel adds one flattened, synced scalar trait per
-``(channel, field)`` via ``add_traits`` (design section 6.3) -- ``ch{i}_{field}``
--- rather than a single list-of-dicts trait.  Each JS control then binds to its
-``ch{i}_{field}`` trait exactly like the single-visual panel binds its
-appearance traits.
+Mirrors ``QtChannelList``: a single composite ``WidgetView`` that drives every
+channel of one or more multichannel visuals.  The channel set is fixed at
+construction, so the panel adds one flattened, synced scalar trait per
+``(channel, field)`` via ``add_traits`` -- ``ch{i}_{field}`` -- rather than a
+single list-of-dicts trait.
 """
 
 from __future__ import annotations
@@ -72,7 +69,7 @@ def _parse_trait_name(name: str) -> tuple[int, str]:
     return int(idx_str), field
 
 
-class ChannelPanel(anywidget.AnyWidget):
+class AnywidgetChannelList(anywidget.AnyWidget):
     """Bidirectional per-channel appearance controls for the anywidget GUI.
 
     Parameters
@@ -81,7 +78,7 @@ class ChannelPanel(anywidget.AnyWidget):
         UUIDs of the multichannel visuals this panel drives.  A single-panel
         ``Viewer`` passes one id; an ``OrthoViewer`` passes one per panel.  A
         user edit is fanned out to every id; the panel subscribes to all of
-        them (design section 6.1).
+        them.
     channels :
         Mapping of channel index to the initial ``ChannelAppearance`` used to
         seed the per-channel traits.
@@ -97,8 +94,8 @@ class ChannelPanel(anywidget.AnyWidget):
         ``"Channel {i}"``.
     """
 
-    _esm = _STATIC / "channel_panel.js"
-    _css = _STATIC / "channel_panel.css"
+    _esm = _STATIC / "channel_list.js"
+    _css = _STATIC / "channel_list.css"
 
     # psygnal outward signals (the WidgetView contract); not traitlets.
     changed: Signal = Signal(object)
@@ -140,7 +137,7 @@ class ChannelPanel(anywidget.AnyWidget):
         self._fields = resolved_fields
         self._applying = False
 
-        # Flattened per-(channel, field) traits (design section 6.3).
+        # Flattened per-(channel, field) traits.
         per_channel = {
             f"ch{i}_{field}": _TRAIT_FACTORY[field](getattr(ch, field))
             for i, ch in channels.items()
@@ -155,7 +152,7 @@ class ChannelPanel(anywidget.AnyWidget):
     # ------------------------------------------------------------------
 
     @property
-    def widget(self) -> ChannelPanel:
+    def widget(self) -> AnywidgetChannelList:
         """An ``AnyWidget`` is itself the embeddable element."""
         return self
 

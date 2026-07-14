@@ -1,6 +1,6 @@
 """A 2D/3D toggle button as a Qt widget.
 
-Mirrors the anywidget ``_DimToggle`` for the Qt backend.  Drives
+Mirrors the anywidget ``AnywidgetDimToggle`` for the Qt backend.  Drives
 ``viewer.set_displayed_dimensions`` directly rather than the bus -- exactly as
 the anywidget version does (design doc section 7, control #10).
 """
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class QtDimToggle(QPushButton):
     """QPushButton that toggles a viewer between 2D and 3D.
 
-    Mirrors the behaviour of the anywidget ``_DimToggle``.  Derives the two
+    Mirrors the behaviour of the anywidget ``AnywidgetDimToggle``.  Derives the two
     axis sets from the scene coordinate system at construction time.
     """
 

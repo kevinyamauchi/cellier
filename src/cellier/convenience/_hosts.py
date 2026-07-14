@@ -1,6 +1,6 @@
 """Host-aware placement for the anywidget front-end (the ``LayoutHost`` seam).
 
-The leaves are host-uniform (the ``ControlPanel`` anywidget, the
+The leaves are host-uniform (the per-control appearance anywidgets, the
 ``rendercanvas.anywidget`` canvas, the toggle).  Only composition and
 presentation differ between Jupyter and marimo, isolated behind one injected
 object (design doc section 10).
@@ -33,6 +33,7 @@ class LayoutHost(Protocol):
         direction: str = "v",
         align: str | None = None,
         min_width: int | None = None,
+        gap: int | None = None,
     ) -> object:
         """Stack *items* vertically (``"v"``) or horizontally (``"h"``).
 
@@ -43,6 +44,12 @@ class LayoutHost(Protocol):
         *min_width* makes the stack grow to fill available width but never
         narrower than *min_width* pixels; ``None`` leaves the host default
         (content-sized, no grow).
+
+        *gap* sets the spacing between items in pixels; ``None`` leaves the
+        host default (tuned for macro layout blocks like canvas/dims/docks).
+        Pass a small explicit value to tightly group sibling controls that
+        used to live inside one widget (see
+        :func:`cellier.convenience.gui._appearance_widgets.compose_appearance_leaf`).
         """
         ...
 
@@ -78,6 +85,11 @@ class MarimoHost:
         """Wrap a leaf with ``marimo.ui.anywidget``."""
         return self._mo.ui.anywidget(widget)
 
+    # marimo's own vstack/hstack ``gap=`` is in rem, not pixels; this converts
+    # our pixel-based LayoutHost.stack(gap=...) contract to marimo's unit
+    # assuming the standard 16px-per-rem base.
+    _REM_PX = 16
+
     def stack(
         self,
         items: Sequence[object],
@@ -85,14 +97,23 @@ class MarimoHost:
         direction: str = "v",
         align: str | None = None,
         min_width: int | None = None,
+        gap: int | None = None,
     ) -> object:
         """Stack with ``marimo.vstack`` / ``marimo.hstack``.
 
         *min_width* is accepted for interface parity with :class:`JupyterHost`
         but ignored -- marimo has its own layout/width primitives.
+
+        *gap* (pixels, matching :class:`JupyterHost`) is converted to
+        marimo's own rem-based ``gap=`` only when given; omitted, marimo's
+        own default is used unchanged.  ``mo.vstack``/``mo.hstack`` default to
+        a non-trivial gap meant for spacing distinct layout blocks apart,
+        which is too loose for grouping sibling controls that used to live
+        inside one widget.
         """
         stacker = self._mo.vstack if direction == "v" else self._mo.hstack
-        return stacker(list(items), align=align)
+        kwargs = {} if gap is None else {"gap": gap / self._REM_PX}
+        return stacker(list(items), align=align, **kwargs)
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Arrange rows with nested ``vstack`` / ``hstack``."""
@@ -109,7 +130,7 @@ class MarimoHost:
 
 
 class JupyterHost:
-    """Jupyter host -- manager-rendered anywidget container (``AwBox``)."""
+    """Jupyter host -- manager-rendered anywidget container (``AnywidgetBox``)."""
 
     def leaf(self, widget: object) -> object:
         """A ``DOMWidget`` is directly displayable; pass it through."""
@@ -122,23 +143,26 @@ class JupyterHost:
         direction: str = "v",
         align: str | None = None,
         min_width: int | None = None,
+        gap: int | None = None,
     ) -> object:
-        """Compose into an ``AwBox`` flexbox."""
-        from cellier.gui.anywidget._container import AwBox
+        """Compose into an ``AnywidgetBox`` flexbox."""
+        from cellier.gui.anywidget import AnywidgetBox
 
-        return AwBox(
+        kwargs = {} if gap is None else {"gap": gap}
+        return AnywidgetBox(
             children=list(items),
             direction=direction,
             align=align or "",
             min_width=min_width or 0,
+            **kwargs,
         )
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
-        """Compose rows of ``AwBox`` (horizontal) inside an outer ``AwBox``."""
-        from cellier.gui.anywidget._container import AwBox
+        """Compose rows of ``AnywidgetBox`` (horizontal) inside an outer one."""
+        from cellier.gui.anywidget import AnywidgetBox
 
-        return AwBox(
-            children=[AwBox(children=list(r), direction="h") for r in rows],
+        return AnywidgetBox(
+            children=[AnywidgetBox(children=list(r), direction="h") for r in rows],
             direction="v",
         )
 

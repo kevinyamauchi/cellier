@@ -1,19 +1,22 @@
-.cellier-control-panel {
+.cellier-channel-list {
   font-family: var(--jp-ui-font-family, sans-serif);
   font-size: 12px;
-  flex: 0 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 260px;
 }
 
-/* ── Shared appearance + AABB rows (Phase 2) ─────────────────────────────── */
-
-.cellier-appearance,
-.cellier-aabb,
-.cellier-dataset-info {
+.cellier-channel-row {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 6px;
+  padding: 4px 0;
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.cellier-channel-row:first-child {
+  border-top: none;
 }
 
 .cellier-section-title {
@@ -38,6 +41,13 @@
   flex-shrink: 0;
 }
 
+.cellier-app-row-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+
 .cellier-app-readout {
   min-width: 3em;
   text-align: left;
@@ -55,7 +65,7 @@
   flex: 1 1 auto;
 }
 
-/* ── Contrast limits dual-range (Phase 2) ────────────────────────────────── */
+/* ── Contrast limits dual-range (mirrors panel.css) ──────────────────────── */
 
 .cellier-clim-track {
   position: relative;
@@ -102,18 +112,7 @@
   pointer-events: none;
 }
 
-.cellier-clim-lo::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  pointer-events: all;
-  cursor: pointer;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid #888;
-  background: #ccc;
-}
-
+.cellier-clim-lo::-webkit-slider-thumb,
 .cellier-clim-hi::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -123,7 +122,7 @@
   height: 14px;
   border-radius: 50%;
   border: 2px solid #888;
-  background: #eee;
+  background: #ccc;
 }
 
 .cellier-clim-lo::-moz-range-thumb,
@@ -135,51 +134,4 @@
   border-radius: 50%;
   border: 2px solid #888;
   background: #ccc;
-}
-
-.cellier-clim-readout {
-  min-width: 9em;
-}
-
-/* ── AABB controls (Phase 2) ─────────────────────────────────────────────── */
-
-.cellier-aabb-check-label {
-  min-width: 5.5em;
-}
-
-.cellier-aabb-number {
-  width: 5em;
-  font-size: inherit;
-  font-family: inherit;
-}
-
-.cellier-aabb-color {
-  width: 3em;
-  height: 1.6em;
-  padding: 0;
-  border: 1px solid #888;
-  cursor: pointer;
-}
-
-/* ── Dataset info (Phase 2) ──────────────────────────────────────────────── */
-
-.cellier-dataset-info details {
-  font-size: 11px;
-}
-
-.cellier-dataset-info summary {
-  cursor: pointer;
-  font-weight: 600;
-  opacity: 0.65;
-}
-
-.cellier-dataset-info table {
-  border-collapse: collapse;
-  margin-top: 4px;
-}
-
-.cellier-dataset-info td,
-.cellier-dataset-info th {
-  padding: 1px 6px;
-  border: 1px solid #ccc;
 }

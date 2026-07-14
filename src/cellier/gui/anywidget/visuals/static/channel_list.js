@@ -181,7 +181,7 @@ function makeClimSlider(range, initial, { onChange }) {
 }
 
 function render({ model, el }) {
-  el.classList.add("cellier-channel-panel");
+  el.classList.add("cellier-channel-list");
 
   let guard = false;
   const fields = model.get("fields") || [];

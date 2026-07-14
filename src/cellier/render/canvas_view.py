@@ -178,7 +178,7 @@ class CanvasView:
             # `parent` is ignored.  `size` still sets the initial height and
             # the physical resolution rendercanvas starts with, but width is
             # made responsive below so the canvas fills whatever flex column
-            # cellier's layout gives it (see AwBox's `min_width`, which is
+            # cellier's layout gives it (see AnywidgetBox's `min_width`, which is
             # set from this same `size` at the convenience layer).
             from rendercanvas.anywidget import RenderCanvas
 

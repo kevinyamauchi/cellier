@@ -21,9 +21,9 @@
 
 async function render({ model, el }) {
   const box = document.createElement("div");
-  box.className = "cellier-awbox";
+  box.className = "cellier-anywidget-box";
   box.style.display = "flex";
-  box.style.gap = "4px";
+  box.style.gap = `${model.get("gap")}px`;
   box.style.flexDirection = model.get("direction") === "h" ? "row" : "column";
   // Cross-axis alignment (e.g. "center" to centre a fixed-width canvas over a
   // wider control panel); empty leaves the flexbox default (stretch).
@@ -50,8 +50,8 @@ async function render({ model, el }) {
     }
   } catch (e) {
     // Surface failures in-cell instead of leaving a silently blank container.
-    console.error("[AwBox] render failed", e);
-    box.textContent = "AwBox error: " + (e && e.message);
+    console.error("[AnywidgetBox] render failed", e);
+    box.textContent = "AnywidgetBox error: " + (e && e.message);
   }
 }
 

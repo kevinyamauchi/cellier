@@ -21,8 +21,11 @@ if TYPE_CHECKING:
 _STATIC = Path(__file__).parent / "static"
 
 
-class _DimToggle(anywidget.AnyWidget):
-    """Button anywidget that toggles a viewer between 2D and 3D."""
+class AnywidgetDimToggle(anywidget.AnyWidget):
+    """Button anywidget that toggles a viewer between 2D and 3D.
+
+    Mirrors ``QtDimToggle``.
+    """
 
     _esm = _STATIC / "toggle.js"
     _css = _STATIC / "toggle.css"
@@ -58,12 +61,13 @@ class _DimToggle(anywidget.AnyWidget):
             self.label = "Switch to 2D"
 
 
-def make_dim_toggle(viewer: Viewer) -> _DimToggle:
+def make_dim_toggle_anywidget(viewer: Viewer) -> AnywidgetDimToggle:
     """Return a 2D/3D toggle button bound to *viewer*.
 
-    The two spatial views are derived from the scene's coordinate system: the
-    3D view displays the last three axis labels and the 2D view the last two,
-    matching the convention used by the example scripts.
+    Mirrors ``make_dim_toggle_qt``.  The two spatial views are derived from the
+    scene's coordinate system: the 3D view displays the last three axis labels
+    and the 2D view the last two, matching the convention used by the example
+    scripts.
 
     Parameters
     ----------
@@ -72,16 +76,16 @@ def make_dim_toggle(viewer: Viewer) -> _DimToggle:
 
     Returns
     -------
-    _DimToggle
+    AnywidgetDimToggle
         A small anywidget button; place it via ``display(..., controls=[...])``.
     """
     axis_labels = viewer.scene.dims.coordinate_system.axis_labels
     if len(axis_labels) < 3:
         raise ValueError(
-            "make_dim_toggle requires at least 3 axes to toggle 2D<->3D; "
-            f"got {axis_labels!r}."
+            "make_dim_toggle_anywidget requires at least 3 axes to toggle "
+            f"2D<->3D; got {axis_labels!r}."
         )
     axes_3d = tuple(axis_labels[-3:])
     axes_2d = tuple(axis_labels[-2:])
     start_3d = len(viewer.scene.dims.selection.displayed_axes) == 3
-    return _DimToggle(viewer, axes_2d, axes_3d, start_3d=start_3d)
+    return AnywidgetDimToggle(viewer, axes_2d, axes_3d, start_3d=start_3d)

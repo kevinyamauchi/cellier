@@ -53,7 +53,7 @@ class ChannelControls:
     """Dock spec: per-channel controls for the first configured channel visual.
 
     Renders a channel-controls widget (Qt ``QtChannelList`` / anywidget
-    ``ChannelPanel``) for the multichannel visual configured via
+    ``AnywidgetChannelList``) for the multichannel visual configured via
     ``controls=`` on ``add_multichannel_image[_multiscale]``.  For an
     ``OrthoViewer`` the one widget drives every panel's sibling visual.
     """

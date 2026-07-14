@@ -83,7 +83,7 @@ def __getattr__(name: str):
     # not require the optional anywidget dependency (it lives under
     # cellier.gui.anywidget, which imports anywidget at module load).
     if name == "make_dim_toggle":
-        from cellier.gui.anywidget import make_dim_toggle
+        from cellier.gui.anywidget import make_dim_toggle_anywidget
 
-        return make_dim_toggle
+        return make_dim_toggle_anywidget
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

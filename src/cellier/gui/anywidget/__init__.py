@@ -4,14 +4,21 @@ Importing this package requires the optional ``anywidget`` dependency
 (``pip install 'cellier[anywidget]'``).
 """
 
-from cellier.gui.anywidget._channel_panel import ChannelPanel
+from cellier.gui.anywidget._container import AnywidgetBox
+from cellier.gui.anywidget._dataset_info import (
+    AnywidgetDatasetInfo,
+    DatasetInfo,
+    dataset_info_from_path,
+)
 from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
-from cellier.gui.anywidget._panel import ControlPanel
-from cellier.gui.anywidget._toggle import make_dim_toggle
+from cellier.gui.anywidget._toggle import AnywidgetDimToggle, make_dim_toggle_anywidget
 
 __all__ = [
+    "AnywidgetBox",
+    "AnywidgetDatasetInfo",
+    "AnywidgetDimToggle",
     "AnywidgetDimsPanel",
-    "ChannelPanel",
-    "ControlPanel",
-    "make_dim_toggle",
+    "DatasetInfo",
+    "dataset_info_from_path",
+    "make_dim_toggle_anywidget",
 ]
