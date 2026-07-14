@@ -1,10 +1,4 @@
-"""cellier v2 GUI widgets.
+"""Widgets for interacting with the Cellier models.
 
-The Qt widgets live under :mod:`cellier.gui.qt`; the anywidget (notebook)
-widgets live under :mod:`cellier.gui.anywidget`.  ``QtCanvasWidget`` and
-``QtDimsSliders`` are re-exported here for back-compat.
+Currently there are two implementations: qt and anywidget.
 """
-
-from cellier.gui.qt import QtCanvasWidget, QtDimsSliders
-
-__all__ = ["QtCanvasWidget", "QtDimsSliders"]

@@ -10,7 +10,11 @@ import sys
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
+    from sidecar import Sidecar
+
+    from cellier.convenience._kwarg_dicts import SidecarKwargs
     from cellier.convenience._ortho_viewer import OrthoViewer
+    from cellier.convenience._sidecar import SidecarOptions
     from cellier.convenience._viewer import Viewer
     from cellier.convenience.layout._spec import Layout
 
@@ -124,18 +128,22 @@ class DisplayHandle:
     handle is the cell's return value but has no representation of its own (its
     ``_repr_mimebundle_`` is empty), so the viewer is rendered exactly once.
 
-    Call :meth:`close` to unsubscribe the control panel(s) from the bus and
-    cancel any pending slices -- e.g. before re-running a cell so the prior
-    panel and in-flight reads do not leak.
+    Call :meth:`close` to unsubscribe the control panel(s) from the bus,
+    cancel any pending slices, and close the sidecar panel (if any) -- e.g.
+    before re-running a cell so the prior panel and in-flight reads do not
+    leak.
     """
 
-    def __init__(self, viewer: ViewerLike, view: object) -> None:
+    def __init__(
+        self, viewer: ViewerLike, view: object, sidecar: Sidecar | None = None
+    ) -> None:
         self._viewer = viewer
         self._view = view
+        self._sidecar = sidecar
         self._closed = False
 
     def close(self) -> None:
-        """Tear down the controls and cancel pending slices (idempotent)."""
+        """Tear down the controls, cancel pending slices, close the sidecar."""
         if self._closed:
             return
         self._closed = True
@@ -144,6 +152,8 @@ class DisplayHandle:
         scene_list = scenes.values() if scenes is not None else [self._viewer.scene]
         for scene in scene_list:
             self._viewer.controller.cancel_pending_slices(scene.id)
+        if self._sidecar is not None:
+            self._sidecar.close()
 
     def _repr_mimebundle_(self, **kwargs):
         # Inert: the host already rendered the viewer imperatively in present(),
@@ -164,6 +174,7 @@ def display(
     fit: FitMode = "ready",
     on_ready: Callable[[], None] | None = None,
     host: str | None = None,
+    sidecar: bool | SidecarOptions | SidecarKwargs | None = None,
 ) -> object:
     """Compose and present an anywidget viewer non-blockingly.
 
@@ -187,25 +198,48 @@ def display(
         has committed to the GPU.
     host : "jupyter", "marimo", or None
         Explicit host override; auto-detected when ``None``.
+    sidecar : True, SidecarOptions, dict, or None
+        Present the viewer in a ``jupyterlab-sidecar`` tab instead of below
+        the cell.  ``True`` uses :class:`~cellier.convenience.SidecarOptions`
+        defaults; a dict is coerced via ``SidecarOptions(**sidecar)``.
+        Requires the optional ``sidecar`` package and the Jupyter host (not
+        marimo, which already places cell output in its own tab).
 
     Returns
     -------
     object
         For imperative hosts (Jupyter) an inert :class:`DisplayHandle` whose
-        :meth:`DisplayHandle.close` tears down the controls and cancels pending
-        slices.  For return-value hosts (marimo) the host-native renderable
-        (so the cell renders it), with a best-effort ``close`` attached.
+        :meth:`DisplayHandle.close` tears down the controls, cancels pending
+        slices, and closes the sidecar panel (if any).  For return-value hosts
+        (marimo) the host-native renderable (so the cell renders it), with a
+        best-effort ``close`` attached.
     """
-    from cellier.convenience._hosts import resolve_host
+    from cellier.convenience._hosts import JupyterHost, resolve_host
     from cellier.convenience.layout._anywidget_renderer import render_anywidget
 
     resolved_host = resolve_host(host)
+
+    sidecar_instance = None
+    if sidecar:
+        if not isinstance(resolved_host, JupyterHost):
+            raise RuntimeError(
+                "sidecar=... requires the Jupyter host; marimo already "
+                "places cell output in its own re-arrangeable tab."
+            )
+        from cellier.convenience._sidecar import resolve_sidecar
+
+        sidecar_instance = resolve_sidecar(sidecar)
+
     render_view = render_anywidget(layout, viewer, resolved_host)
-    cell_value = resolved_host.present(render_view.root)
+    if sidecar_instance is not None:
+        with sidecar_instance:
+            cell_value = resolved_host.present(render_view.root)
+    else:
+        cell_value = resolved_host.present(render_view.root)
 
     _init_view(viewer, fit=fit, on_ready=on_ready)
 
-    handle = DisplayHandle(viewer, render_view)
+    handle = DisplayHandle(viewer, render_view, sidecar=sidecar_instance)
     if cell_value is None:
         return handle
     try:

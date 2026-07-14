@@ -21,14 +21,24 @@
 
 async function render({ model, el }) {
   const box = document.createElement("div");
-  box.className = "cellier-awbox";
+  box.className = "cellier-anywidget-box";
   box.style.display = "flex";
-  box.style.gap = "4px";
+  box.style.gap = `${model.get("gap")}px`;
   box.style.flexDirection = model.get("direction") === "h" ? "row" : "column";
+  const padding = model.get("padding");
+  if (padding) box.style.padding = `${padding}px`;
   // Cross-axis alignment (e.g. "center" to centre a fixed-width canvas over a
   // wider control panel); empty leaves the flexbox default (stretch).
   const align = model.get("align");
   if (align) box.style.alignItems = align;
+  // Grow to fill available width but never below min_width (e.g. the
+  // canvas+dims column, floored at the user's requested canvas_size);
+  // 0 leaves the flexbox default (content-sized, no grow).
+  const minWidth = model.get("min_width");
+  if (minWidth) {
+    box.style.flex = `1 1 ${minWidth}px`;
+    box.style.minWidth = `${minWidth}px`;
+  }
   el.appendChild(box);
   try {
     for (const ref of model.get("children") || []) {
@@ -42,8 +52,8 @@ async function render({ model, el }) {
     }
   } catch (e) {
     // Surface failures in-cell instead of leaving a silently blank container.
-    console.error("[AwBox] render failed", e);
-    box.textContent = "AwBox error: " + (e && e.message);
+    console.error("[AnywidgetBox] render failed", e);
+    box.textContent = "AnywidgetBox error: " + (e && e.message);
   }
 }
 

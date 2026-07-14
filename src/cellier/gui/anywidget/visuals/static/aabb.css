@@ -1,0 +1,39 @@
+.cellier-aabb-widget {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 260px;
+}
+
+.cellier-app-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-app-label {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.cellier-aabb-check-label {
+  min-width: 5.5em;
+}
+
+.cellier-aabb-number {
+  width: 5em;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.cellier-aabb-color {
+  width: 3em;
+  height: 1.6em;
+  padding: 0;
+  border: 1px solid #888;
+  cursor: pointer;
+}

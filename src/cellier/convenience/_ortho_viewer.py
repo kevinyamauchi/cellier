@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from cellier.convenience._kwarg_dicts import (
         ChannelAppearanceKwargs,
+        ChannelControlsKwargs,
         InMemoryImageAppearanceKwargs,
         InMemoryLabelsAppearanceKwargs,
         LinesMemoryAppearanceKwargs,
@@ -35,6 +36,10 @@ if TYPE_CHECKING:
         MultiscaleLabelRenderConfigKwargs,
         MultiscaleLabelsAppearanceKwargs,
         PointsMarkerAppearanceKwargs,
+    )
+    from cellier.convenience.gui._controls_config import (
+        BaseControlsConfig,
+        ChannelControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -219,6 +224,11 @@ class OrthoViewer:
         coordinate_system = CoordinateSystem(name="world", axis_labels=axis_labels)
         self._scenes = self._build_scenes(coordinate_system)
         self._syncer: _ExtraAxisSyncer | None = None
+        # Per-visual controls configs, keyed by a representative (first-panel)
+        # visual id; _channel_visual_groups maps that id to every panel's
+        # sibling visual id so one channel widget can drive them all.
+        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
+        self._channel_visual_groups: dict[UUID, list[UUID]] = {}
         # Callbacks fired once all panel scenes' startup data is on the GPU;
         # consumed by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
@@ -411,6 +421,8 @@ class OrthoViewer:
         obj._ndim = ndim
         obj._extra_axes = {i for i in range(ndim) if i not in vol_displayed}
         obj._syncer = None
+        obj._controls_configs = {}
+        obj._channel_visual_groups = {}
         if link_extra_axes and obj._extra_axes:
             obj._wire_extra_axis_sync()
         return obj
@@ -792,6 +804,7 @@ class OrthoViewer:
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
     ) -> dict[str, MultichannelImageVisual]:
         """Add an in-memory multichannel image to every panel from one store.
 
@@ -810,6 +823,11 @@ class OrthoViewer:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
+        controls : ChannelControlsConfig, dict, or None
+            Per-channel controls configuration shared across all four panels.
+            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
+            ``ChannelControlsKwargs``). When ``None`` (default), no channel
+            controls are created.
 
         Returns
         -------
@@ -824,7 +842,7 @@ class OrthoViewer:
             k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
             for k, v in channels.items()
         }
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image(
                 store,
                 scene.id,
@@ -835,6 +853,8 @@ class OrthoViewer:
                 max_channels_3d,
             )
         )
+        self._record_channel_controls(visuals, controls)
+        return visuals
 
     def add_multichannel_image_multiscale(
         self,
@@ -848,6 +868,7 @@ class OrthoViewer:
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
     ) -> dict[str, MultichannelMultiscaleImageVisual]:
         """Add a multiscale multichannel image to every panel from one store.
 
@@ -871,6 +892,11 @@ class OrthoViewer:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
+        controls : ChannelControlsConfig, dict, or None
+            Per-channel controls configuration shared across all four panels.
+            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
+            ``ChannelControlsKwargs``). When ``None`` (default), no channel
+            controls are created.
 
         Returns
         -------
@@ -893,7 +919,7 @@ class OrthoViewer:
             if isinstance(render_config, dict)
             else render_config
         )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image_multiscale(
                 store,
                 scene.id,
@@ -906,3 +932,26 @@ class OrthoViewer:
                 max_channels_3d,
             )
         )
+        self._record_channel_controls(visuals, controls)
+        return visuals
+
+    def _record_channel_controls(
+        self,
+        visuals: dict[str, object],
+        controls: ChannelControlsConfig | ChannelControlsKwargs | None,
+    ) -> None:
+        """Record a channel controls config for a fanned-out multichannel add.
+
+        Stores the resolved config keyed by a representative (first-panel)
+        visual id, and maps that id to every panel's sibling visual id so one
+        channel widget can drive all four panels (design section 7.4).
+        """
+        from cellier.convenience.gui._controls_config import resolve_channel_controls
+
+        resolved = resolve_channel_controls(controls)
+        if resolved is None or not visuals:
+            return
+        panel_ids = [v.id for v in visuals.values()]
+        rep_id = panel_ids[0]
+        self._controls_configs[rep_id] = resolved
+        self._channel_visual_groups[rep_id] = panel_ids

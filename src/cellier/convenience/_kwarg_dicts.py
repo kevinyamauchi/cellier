@@ -532,11 +532,68 @@ class MultiscaleImageControlsKwargs(TypedDict, total=False):
     dataset_info: str
 
 
+class ChannelControlsKwargs(TypedDict, total=False):
+    """Dict form of ``ChannelControlsConfig``.
+
+    Accepted by ``Viewer.add_multichannel_image`` /
+    ``add_multichannel_image_multiscale`` (and the ``OrthoViewer`` equivalents)
+    in place of a ``ChannelControlsConfig`` instance.
+
+    Keys
+    ----
+    fields : list[str]
+        Per-channel fields to expose, in display order.  Defaults to
+        ``["visible", "color_map", "clim", "opacity"]``.
+    colormap_names : list[str]
+        Names available in each channel's colormap control.
+    clim_range : tuple[float, float]
+        ``(min, max)`` bounds for the contrast-limits sliders.
+    channel_labels : dict[int, str]
+        Optional per-channel display labels keyed by channel index.
+    """
+
+    fields: list[str]
+    colormap_names: list[str]
+    clim_range: tuple[float, float]
+    channel_labels: dict[int, str]
+
+
+class SidecarKwargs(TypedDict, total=False):
+    """Dict form of ``SidecarOptions``.
+
+    Accepted by ``display()`` in place of a ``SidecarOptions`` instance.
+
+    Keys
+    ----
+    title : str
+        Tab title. Defaults to ``"Cellier"``.
+    anchor : str
+        Placement of the sidecar panel. One of ``"right"``, ``"split-right"``,
+        ``"split-left"``, ``"split-top"``, ``"split-bottom"``,
+        ``"tab-before"``, ``"tab-after"``. Default ``"right"``.
+    ref : SidecarOptions.ref
+        Anchor relative to another sidecar's ``DisplayHandle``.
+    """
+
+    title: str
+    anchor: Literal[
+        "right",
+        "split-right",
+        "split-left",
+        "split-top",
+        "split-bottom",
+        "tab-before",
+        "tab-after",
+    ]
+    ref: object
+
+
 __all__ = [
     "BaseAppearanceKwargs",
     "BaseImageAppearanceKwargs",
     "BaseLabelsAppearanceKwargs",
     "ChannelAppearanceKwargs",
+    "ChannelControlsKwargs",
     "InMemoryImageAppearanceKwargs",
     "InMemoryImageControlsKwargs",
     "InMemoryLabelsAppearanceKwargs",
@@ -549,4 +606,5 @@ __all__ = [
     "MultiscaleLabelRenderConfigKwargs",
     "MultiscaleLabelsAppearanceKwargs",
     "PointsMarkerAppearanceKwargs",
+    "SidecarKwargs",
 ]

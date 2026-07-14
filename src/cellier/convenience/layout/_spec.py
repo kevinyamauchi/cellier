@@ -49,6 +49,17 @@ class SceneControls:
 
 
 @dataclass
+class ChannelControls:
+    """Dock spec: per-channel controls for the first configured channel visual.
+
+    Renders a channel-controls widget (Qt ``QtChannelList`` / anywidget
+    ``AnywidgetChannelList``) for the multichannel visual configured via
+    ``controls=`` on ``add_multichannel_image[_multiscale]``.  For an
+    ``OrthoViewer`` the one widget drives every panel's sibling visual.
+    """
+
+
+@dataclass
 class Layout:
     """Full layout specification (the model).
 
@@ -80,6 +91,7 @@ class Layout:
         *,
         appearance: Literal["left", "right", "top", "bottom"] | bool = False,
         scene_controls: Literal["left", "right", "top", "bottom"] | bool = False,
+        channels: Literal["left", "right", "top", "bottom"] | bool = False,
     ) -> Layout:
         """Single-canvas preset.
 
@@ -91,10 +103,15 @@ class Layout:
             Where to place appearance controls.  ``False`` (default) omits them.
         scene_controls : dock name or False
             Where to place scene controls (2D/3D toggle).  ``False`` omits them.
+        channels : dock name or False
+            Where to place per-channel controls.  ``False`` (default) omits
+            them.
         """
         docks: dict[str, object] = {}
         if appearance:
             docks[f"{appearance}_dock"] = AppearanceControls()
         if scene_controls:
             docks[f"{scene_controls}_dock"] = SceneControls()
+        if channels:
+            docks[f"{channels}_dock"] = ChannelControls()
         return cls(center=canvas, **docks)

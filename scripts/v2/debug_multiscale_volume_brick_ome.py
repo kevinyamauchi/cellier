@@ -58,12 +58,14 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.gui.qt._dataset_info import QtOmeZarrMetadataWidget
-        from cellier.gui.qt.visuals import QtClimRangeSlider
-        from cellier.gui.qt.visuals._aabb import QtAABBWidget
-        from cellier.gui.qt.visuals._colormap import QtColormapComboBox
-        from cellier.gui.qt.visuals._image import QtVolumeRenderControls
-        from cellier.gui.qt.visuals._lod_bias import QtLodBiasSlider
+        from cellier.gui.qt import QtOmeZarrMetadataWidget
+        from cellier.gui.qt.visuals import (
+            QtAABBWidget,
+            QtClimRangeSlider,
+            QtColormapComboBox,
+            QtLodBiasSlider,
+            QtVolumeRenderControls,
+        )
 
         self._controller = controller
         self._scene = scene
@@ -413,7 +415,7 @@ async def async_main(zarr_uri: str):
 
     from cellier.controller import CellierController
     from cellier.data import OMEZarrImageDataStore
-    from cellier.gui.qt._scene import QtCanvasWidget
+    from cellier.gui.qt import QtCanvasWidget
     from cellier.render._config import (
         CameraConfig,
         RenderManagerConfig,

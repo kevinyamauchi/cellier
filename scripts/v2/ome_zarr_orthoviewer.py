@@ -364,9 +364,11 @@ class OmeZarrOrthoViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.gui.qt.visuals import QtClimRangeSlider
-        from cellier.gui.qt.visuals._colormap import QtColormapComboBox
-        from cellier.gui.qt.visuals._image import QtVolumeRenderControls
+        from cellier.gui.qt.visuals import (
+            QtClimRangeSlider,
+            QtColormapComboBox,
+            QtVolumeRenderControls,
+        )
 
         self._controller = controller
         self._scenes = scenes
@@ -1539,7 +1541,7 @@ async def async_main(zarr_uri: str) -> None:
 
     from cellier.controller import CellierController
     from cellier.data import OMEZarrImageDataStore
-    from cellier.gui.qt._scene import QtCanvasWidget, QtDimsSliders
+    from cellier.gui.qt import QtCanvasWidget, QtDimsSliders
     from cellier.render._config import (
         RenderManagerConfig,
         SlicingConfig,

@@ -1,0 +1,12 @@
+.cellier-anywidget-box {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Neutralize any default margin a child widget's own view/framework chrome
+   brings with it (e.g. ipywidgets/JupyterLab default widget-view margin),
+   so this box's `gap` is the single source of truth for spacing between
+   children -- margin and flex `gap` are additive, not interchangeable. */
+.cellier-anywidget-box > * {
+  margin: 0 !important;
+}

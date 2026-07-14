@@ -2,6 +2,7 @@
 from typing import Literal
 
 from cmap import Colormap
+from pydantic import ConfigDict
 
 from cellier.visuals._base_visual import BaseAppearance
 
@@ -24,7 +25,18 @@ class ChannelAppearance(BaseAppearance):
         Default ``0.5``.
     visible : bool
         Inherited from ``BaseAppearance``. Default ``True``.
+
+    Notes
+    -----
+    ``validate_assignment`` is enabled so that a value assigned to a field is
+    coerced to the field's declared type (a ``color_map`` name string becomes a
+    ``cmap.Colormap``; a ``clim`` list becomes a ``tuple``) and a malformed
+    value raises ``pydantic.ValidationError``.  Widget-driven mutations arrive
+    as JSON-native types (list/str), so this coercion is what lets the render
+    layer consume them.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     color_map: Colormap
     clim: tuple[float, float] = (0.0, 1.0)

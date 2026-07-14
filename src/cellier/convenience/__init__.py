@@ -9,6 +9,7 @@ from cellier.convenience._kwarg_dicts import (
     BaseImageAppearanceKwargs,
     BaseLabelsAppearanceKwargs,
     ChannelAppearanceKwargs,
+    ChannelControlsKwargs,
     InMemoryImageAppearanceKwargs,
     InMemoryImageControlsKwargs,
     InMemoryLabelsAppearanceKwargs,
@@ -21,12 +22,15 @@ from cellier.convenience._kwarg_dicts import (
     MultiscaleLabelRenderConfigKwargs,
     MultiscaleLabelsAppearanceKwargs,
     PointsMarkerAppearanceKwargs,
+    SidecarKwargs,
 )
-from cellier.convenience._launch import display, launch, run, show
+from cellier.convenience._launch import DisplayHandle, display, launch, run, show
 from cellier.convenience._ortho_viewer import OrthoViewer
+from cellier.convenience._sidecar import SidecarOptions
 from cellier.convenience._viewer import Viewer
 from cellier.convenience.layout import (
     AppearanceControls,
+    ChannelControls,
     Grid,
     HStack,
     Layout,
@@ -40,6 +44,9 @@ __all__ = [
     "BaseImageAppearanceKwargs",
     "BaseLabelsAppearanceKwargs",
     "ChannelAppearanceKwargs",
+    "ChannelControls",
+    "ChannelControlsKwargs",
+    "DisplayHandle",
     "Grid",
     "HStack",
     "InMemoryImageAppearanceKwargs",
@@ -57,6 +64,8 @@ __all__ = [
     "OrthoViewer",
     "PointsMarkerAppearanceKwargs",
     "SceneControls",
+    "SidecarKwargs",
+    "SidecarOptions",
     "VStack",
     "Viewer",
     "axis_ranges_from_ortho",
@@ -74,7 +83,7 @@ def __getattr__(name: str):
     # not require the optional anywidget dependency (it lives under
     # cellier.gui.anywidget, which imports anywidget at module load).
     if name == "make_dim_toggle":
-        from cellier.gui.anywidget import make_dim_toggle
+        from cellier.gui.anywidget import make_dim_toggle_anywidget
 
-        return make_dim_toggle
+        return make_dim_toggle_anywidget
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

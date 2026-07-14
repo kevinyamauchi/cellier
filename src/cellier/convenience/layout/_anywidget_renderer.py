@@ -61,7 +61,11 @@ def render_anywidget(layout: Layout, viewer: object, host: LayoutHost) -> _Rende
     if len(outer_items) == 1:
         root = outer_items[0]
     else:
-        root = host.stack(outer_items, direction="v", align="center")
+        # No explicit align: the default cross-axis "stretch" is required for
+        # the tree to fill the notebook cell / sidecar tab width; "center"
+        # (the previous value) shrinks the whole tree to its content's
+        # natural width and centers it, defeating the responsive-width CSS.
+        root = host.stack(outer_items, direction="v")
 
     return _RenderView(root, closeables)
 
@@ -100,6 +104,7 @@ def _render_dock(
 
     from cellier.convenience.layout._spec import (
         AppearanceControls,
+        ChannelControls,
         HStack,
         SceneControls,
         VStack,
@@ -107,6 +112,8 @@ def _render_dock(
 
     if isinstance(spec, AppearanceControls):
         return _render_appearance_controls(viewer, host, closeables)
+    if isinstance(spec, ChannelControls):
+        return _render_channel_controls(viewer, host, closeables)
     if isinstance(spec, SceneControls):
         return _render_scene_controls(viewer, host)
     if isinstance(spec, (HStack, VStack)):
@@ -122,12 +129,17 @@ def _render_appearance_controls(
     host: LayoutHost,
     closeables: list,
 ) -> object | None:
-    """Build and wire a ControlPanel for the first configured visual."""
-    from cellier.convenience.gui._controls_config import (
-        InMemoryImageControlsConfig,
-        MultiscaleImageControlsConfig,
+    """Build and wire the appearance sub-widgets for the first configured visual.
+
+    Mirrors ``_render_appearance_controls_qt``: builds one anywidget per
+    requested appearance field via ``build_appearance_widgets_anywidget``,
+    then composes them into a single leaf for this dock slot.
+    """
+    from cellier.convenience.gui._appearance_widgets import (
+        build_appearance_widgets_anywidget,
+        compose_appearance_leaf,
     )
-    from cellier.gui.anywidget import ControlPanel
+    from cellier.convenience.gui._controls_config import ChannelControlsConfig
 
     controls_configs: dict = getattr(viewer, "_controls_configs", {})
     scene = getattr(viewer, "scene", None)
@@ -137,47 +149,60 @@ def _render_appearance_controls(
     controls_config = None
     visual = None
     for v in scene.visuals:
-        if v.id in controls_configs:
+        cfg = controls_configs.get(v.id)
+        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
             visual = v
-            controls_config = controls_configs[v.id]
+            controls_config = cfg
             break
 
     if controls_config is None:
         return None
 
-    appearance_fields = (
-        controls_config.appearance
-        if isinstance(controls_config.appearance, list) and controls_config.appearance
-        else None
+    widgets = build_appearance_widgets_anywidget(
+        visual, controls_config, viewer.controller
     )
-    if not appearance_fields:
+    if not widgets:
         return None
 
-    panel_kwargs: dict = {"appearance_fields": appearance_fields}
-    if isinstance(controls_config, InMemoryImageControlsConfig):
-        if controls_config.colormap_names is not None:
-            panel_kwargs["colormap_names"] = controls_config.colormap_names
-        if controls_config.clim_range is not None:
-            panel_kwargs["clim_range"] = controls_config.clim_range
-    if isinstance(controls_config, MultiscaleImageControlsConfig):
-        panel_kwargs["dataset_info"] = controls_config.dataset_info
+    closeables.extend(widgets)
+    return compose_appearance_leaf(widgets, host)
 
-    panel = ControlPanel.from_scene(
-        scene,
-        {},  # axis_ranges unused in the appearance-panel path
-        visual=visual,
-        **panel_kwargs,
+
+def _render_channel_controls(
+    viewer: object,
+    host: LayoutHost,
+    closeables: list,
+) -> object | None:
+    """Build and wire an ``AnywidgetChannelList`` for the configured channel visual(s).
+
+    Multi-scene aware: for an ``OrthoViewer`` the single widget drives every
+    panel's sibling visual via the fan-out ``visual_ids``.  Returns ``None``
+    when no channel controls are configured.
+    """
+    from cellier.convenience.layout._shared import (
+        _resolve_channel_visual_ids,
+        channel_widget_kwargs,
+    )
+    from cellier.gui.anywidget.visuals import AnywidgetChannelList
+
+    resolved = _resolve_channel_visual_ids(viewer)
+    if resolved is None:
+        return None
+    config, visual_ids, channels = resolved
+
+    widget = AnywidgetChannelList(
+        visual_ids, channels, **channel_widget_kwargs(config, channels)
     )
     viewer.controller.connect_widget(
-        panel, subscription_specs=panel.subscription_specs()
+        widget, subscription_specs=widget.subscription_specs()
     )
-    closeables.append(panel)
-    return host.leaf(panel)
+    closeables.append(widget)
+    return host.leaf(widget)
 
 
 def _render_scene_controls(viewer: object, host: LayoutHost) -> object:
     """Build and wire the scene-level controls (2D/3D toggle)."""
-    from cellier.gui.anywidget import make_dim_toggle
+    from cellier.gui.anywidget import make_dim_toggle_anywidget
 
-    toggle = make_dim_toggle(viewer)
+    toggle = make_dim_toggle_anywidget(viewer)
     return host.leaf(toggle)

@@ -22,7 +22,7 @@ import traitlets
 _STATIC = Path(__file__).parent / "static"
 
 
-class AwBox(anywidget.AnyWidget):
+class AnywidgetBox(anywidget.AnyWidget):
     """A flexbox container that mounts child widget views via the manager.
 
     Parameters
@@ -34,12 +34,30 @@ class AwBox(anywidget.AnyWidget):
     align : str
         Cross-axis alignment applied as CSS ``align-items`` (e.g. ``"center"``);
         empty string leaves the flexbox default (``stretch``).
+    min_width : int
+        When set (> 0), the box grows to fill available space but never
+        narrower than this many pixels (``flex: 1 1 <min_width>px``); ``0``
+        leaves the flexbox default (content-sized, no grow).
+    gap : int
+        Spacing between children in pixels.  Defaults to ``4``, tuned for
+        macro layout blocks (canvas/dims/docks).  Pass a smaller value to
+        tightly group sibling controls that used to live inside one widget
+        (see ``compose_appearance_leaf``).
+    padding : int
+        Inner padding in pixels, on all four sides.  Defaults to ``0``.  Used
+        by :class:`~cellier.convenience._hosts.JupyterHost` to keep the
+        outermost box from touching the notebook cell / sidecar tab edges;
+        nested boxes leave this at ``0`` so only the outer border shows.
     """
 
-    _esm = _STATIC / "aw_box.js"
+    _esm = _STATIC / "container.js"
+    _css = _STATIC / "container.css"
 
     children = traitlets.List(traitlets.Instance(ipywidgets.DOMWidget)).tag(
         sync=True, **ipywidgets.widget_serialization
     )
     direction = traitlets.Unicode("v").tag(sync=True)
     align = traitlets.Unicode("").tag(sync=True)
+    min_width = traitlets.Int(0).tag(sync=True)
+    gap = traitlets.Int(4).tag(sync=True)
+    padding = traitlets.Int(0).tag(sync=True)
