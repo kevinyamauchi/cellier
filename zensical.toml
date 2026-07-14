@@ -51,6 +51,7 @@ nav = [
         { "Coordinate systems" = "Explanations/coordinate_systems.md" },
         { "Events" = "Explanations/events.md" },
         { "Logging" = "Explanations/logging.md" },
+        { "Repository Structure" = "Explanations/repo_structure.md" },
         { "Slicing" = "Explanations/slicing.md" },
     ] },
     { "How-to" = [
