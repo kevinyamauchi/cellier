@@ -39,7 +39,8 @@ class SidecarOptions:
     Parameters
     ----------
     title : str or None
-        Tab title. ``None`` uses the sidecar package's default.
+        Tab title. Defaults to ``"Cellier"``; pass ``None`` explicitly to fall
+        back to the ``sidecar`` package's own default title.
     anchor : SidecarAnchor
         Placement of the sidecar panel. ``"right"`` (default) docks in the
         existing right-hand panel; the ``"split-*"`` / ``"tab-*"`` values open
@@ -50,7 +51,7 @@ class SidecarOptions:
         returned by a previous ``display(..., sidecar=...)`` call.
     """
 
-    title: str | None = None
+    title: str | None = "Cellier"
     anchor: SidecarAnchor = "right"
     ref: SidecarOptions | DisplayHandle | None = None
 

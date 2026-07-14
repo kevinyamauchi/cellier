@@ -166,15 +166,28 @@ class JupyterHost:
             direction="v",
         )
 
+    #: Outer padding (pixels) so the composed tree doesn't touch the notebook
+    #: cell / sidecar tab edges; applies to both ``sidecar=True`` and
+    #: ``sidecar=False`` since both flow through this one ``present()``.
+    _OUTER_PADDING = 12
+
     def present(self, root: object) -> object | None:
         """Render *root* imperatively via ``IPython.display.display``.
+
+        Wraps *root* in an outer ``AnywidgetBox`` with a small padding so the
+        canvas/docks don't touch the cell (or sidecar tab) boundary; nested
+        boxes built by cellier.convenience.layout._anywidget_renderer.render_anywidget
+        keep ``padding=0``, so this is the only border added.
 
         Returns ``None`` so ``display()`` yields an inert handle (the viewer is
         already shown), avoiding a duplicate copy from the cell's return value.
         """
         from IPython.display import display as ipy_display
 
-        ipy_display(root)
+        from cellier.gui.anywidget import AnywidgetBox
+
+        wrapped = AnywidgetBox(children=[root], padding=self._OUTER_PADDING)
+        ipy_display(wrapped)
         return None
 
 

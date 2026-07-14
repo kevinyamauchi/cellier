@@ -25,6 +25,8 @@ async function render({ model, el }) {
   box.style.display = "flex";
   box.style.gap = `${model.get("gap")}px`;
   box.style.flexDirection = model.get("direction") === "h" ? "row" : "column";
+  const padding = model.get("padding");
+  if (padding) box.style.padding = `${padding}px`;
   // Cross-axis alignment (e.g. "center" to centre a fixed-width canvas over a
   // wider control panel); empty leaves the flexbox default (stretch).
   const align = model.get("align");

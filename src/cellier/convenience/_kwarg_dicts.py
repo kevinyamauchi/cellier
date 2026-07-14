@@ -566,7 +566,7 @@ class SidecarKwargs(TypedDict, total=False):
     Keys
     ----
     title : str
-        Tab title.
+        Tab title. Defaults to ``"Cellier"``.
     anchor : str
         Placement of the sidecar panel. One of ``"right"``, ``"split-right"``,
         ``"split-left"``, ``"split-top"``, ``"split-bottom"``,

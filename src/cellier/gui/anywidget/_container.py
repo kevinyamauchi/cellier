@@ -43,6 +43,11 @@ class AnywidgetBox(anywidget.AnyWidget):
         macro layout blocks (canvas/dims/docks).  Pass a smaller value to
         tightly group sibling controls that used to live inside one widget
         (see ``compose_appearance_leaf``).
+    padding : int
+        Inner padding in pixels, on all four sides.  Defaults to ``0``.  Used
+        by :class:`~cellier.convenience._hosts.JupyterHost` to keep the
+        outermost box from touching the notebook cell / sidecar tab edges;
+        nested boxes leave this at ``0`` so only the outer border shows.
     """
 
     _esm = _STATIC / "container.js"
@@ -55,3 +60,4 @@ class AnywidgetBox(anywidget.AnyWidget):
     align = traitlets.Unicode("").tag(sync=True)
     min_width = traitlets.Int(0).tag(sync=True)
     gap = traitlets.Int(4).tag(sync=True)
+    padding = traitlets.Int(0).tag(sync=True)
