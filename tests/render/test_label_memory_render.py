@@ -203,6 +203,40 @@ async def test_color_dict_direct_mode_rebuilds_lut(controller, render_scene, res
     assert np.count_nonzero(frame[..., 3]) > 0
 
 
+async def test_render_3d_direct_mode_binds_lut(controller, render_scene, reslice):
+    """A 3D in-memory label volume in direct mode binds the direct-LUT textures.
+
+    Covers the ``colormap_mode == "direct"`` branch of
+    ``LabelVolumeShader.get_bindings`` (``_label_volume.py``), which the
+    random-mode 3D tests never reach: it binds ``t_label_keys`` /
+    ``t_label_colors`` only when direct-mode textures are present.
+    """
+    from cellier.data.label._label_memory_store import LabelMemoryStore
+
+    data = np.zeros((6, 16, 16), dtype=np.int32)
+    data[1:5, 2:8, 2:8] = 1
+    data[1:5, 9:14, 9:14] = 2
+    store = LabelMemoryStore(data=data, name="direct_labels_3d")
+
+    scene = controller.add_scene(dim="3d", name="scene")
+    controller.add_labels(
+        data=store,
+        scene_id=scene.id,
+        appearance=InMemoryLabelsAppearance(
+            colormap_mode="direct",
+            color_dict={
+                1: (1.0, 0.0, 0.0, 1.0),
+                2: (0.0, 0.0, 1.0, 1.0),
+            },
+        ),
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    await reslice(controller, scene.id)
+    frame = render_scene(controller, scene.id)
+    assert np.count_nonzero(frame[..., 3]) > 0
+
+
 async def test_visibility_toggle(controller, render_scene, reslice, labels_volume):
     scene = controller.add_scene(dim="2d", name="scene")
     visual = controller.add_labels(data=labels_volume, scene_id=scene.id)

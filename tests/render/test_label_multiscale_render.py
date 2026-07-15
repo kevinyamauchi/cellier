@@ -132,6 +132,69 @@ async def test_render_3d_commits_bricks_and_draws(
 
 
 # ---------------------------------------------------------------------------
+# Direct colormap mode (binds the direct-LUT textures in get_bindings)
+# ---------------------------------------------------------------------------
+
+
+async def test_render_2d_direct_mode_binds_lut(
+    controller, render_scene, reslice, multiscale_labels_store
+):
+    """2D multiscale labels in direct mode bind the direct-LUT textures.
+
+    Covers the ``label_keys_texture is not None`` branch of
+    ``LabelBlockShader.get_bindings`` (``_label_multiscale.py``), unreached by
+    the random-mode tests.  The store's labels are 3 and 7.
+    """
+    scene = controller.add_scene(dim="2d", name="scene")
+    controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(
+            colormap_mode="direct",
+            color_dict={
+                3: (1.0, 0.0, 0.0, 1.0),
+                7: (0.0, 0.0, 1.0, 1.0),
+            },
+        ),
+        render_config=MultiscaleLabelRenderConfig(block_size=8),
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    await reslice(controller, scene.id)
+    frame = render_scene(controller, scene.id)
+    assert np.count_nonzero(frame[..., 3]) > 0
+
+
+async def test_render_3d_direct_mode_binds_lut(
+    controller, render_scene, reslice, multiscale_labels_store
+):
+    """3D multiscale labels in direct mode bind the direct-LUT textures.
+
+    Covers the direct-mode branch of ``LabelVolumeBrickShader.get_bindings``
+    (``_label_multiscale.py``), unreached by the random-mode 3D tests.
+    """
+    scene = controller.add_scene(dim="3d", name="scene")
+    controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(
+            colormap_mode="direct",
+            color_dict={
+                3: (1.0, 0.0, 0.0, 1.0),
+                7: (0.0, 0.0, 1.0, 1.0),
+            },
+            force_level=0,
+        ),
+        render_config=MultiscaleLabelRenderConfig(block_size=8),
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    await reslice(controller, scene.id)
+    frame = render_scene(controller, scene.id)
+    assert np.count_nonzero(frame[..., 3]) > 0
+
+
+# ---------------------------------------------------------------------------
 # Appearance + visibility updates (drive the render-layer handlers directly)
 # ---------------------------------------------------------------------------
 

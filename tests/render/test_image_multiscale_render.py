@@ -204,6 +204,36 @@ async def test_render_mode_and_iso_threshold_update_3d_material(
     assert gfx.material_3d.render_mode == "mip"
 
 
+async def test_attenuation_update_3d_material(
+    controller, reslice, multiscale_image_store
+):
+    """An ``attenuation`` change reads and writes the brick material's uniform.
+
+    Covers the ``attenuation`` getter/setter on ``MultiscaleVolumeBrickMaterial``
+    (``_multiscale_volume_brick.py``), used by ``"attenuated_mip"`` mode and
+    unreached by the other 3D tests.
+    """
+    scene = controller.add_scene(dim="3d", name="scene")
+    visual = _add(
+        controller,
+        scene.id,
+        multiscale_image_store,
+        MultiscaleImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            render_mode="attenuated_mip",
+            attenuation=1.0,
+            force_level=0,
+        ),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    gfx.on_appearance_changed(_appearance_event(visual.id, "attenuation", 2.5))
+    assert gfx.material_3d.attenuation == 2.5
+
+
 async def test_visibility_toggle_hides_multiscale_image(
     controller, render_scene, reslice, multiscale_image_store
 ):
