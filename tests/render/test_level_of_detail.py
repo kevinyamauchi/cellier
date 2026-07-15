@@ -101,17 +101,33 @@ def test_build_level_grids_power_of_two_fallback_halves_dims(
 # ---------------------------------------------------------------------------
 
 
-def test_select_levels_no_thresholds_no_layout_all_level_one(
-    base_layout, scale_vecs, translation_vecs
+@pytest.mark.parametrize("n_levels", [1, 2, 3])
+def test_select_levels_no_bands_all_finest(
+    base_layout, scale_vecs, translation_vecs, n_levels
 ):
-    # single level so the (missing) higher-level threshold is never indexed
-    grids = build_level_grids(base_layout, 1, scale_vecs, translation_vecs)
-    out = select_levels_from_cache(grids, 1, camera_pos=np.array([0.0, 0.0, 0.0]))
+    # No thresholds and no base_layout -> every brick uses the finest level,
+    # for any n_levels.  (Regression: n_levels >= 2 used to raise IndexError.)
+    scale = [np.full(3, float(2**k)) for k in range(n_levels)]
+    translation = [np.zeros(3)] * n_levels
+    grids = build_level_grids(base_layout, n_levels, scale, translation)
+    out = select_levels_from_cache(
+        grids, n_levels, camera_pos=np.array([0.0, 0.0, 0.0])
+    )
     assert np.all(out[:, 0] == 1)
     assert out.shape[0] == grids[0]["arr"].shape[0]
 
 
-def test_select_levels_default_thresholds_match_explicit(
+def test_select_levels_empty_thresholds_all_finest(
+    base_layout, scale_vecs, translation_vecs
+):
+    # An explicit empty threshold list behaves the same as None.
+    grids = build_level_grids(base_layout, 2, scale_vecs, translation_vecs)
+    out = select_levels_from_cache(grids, 2, camera_pos=np.zeros(3), thresholds=[])
+    assert np.all(out[:, 0] == 1)
+    assert out.shape[0] == grids[0]["arr"].shape[0]
+
+
+def test_select_levels_default_thresholds_match_world_diagonal(
     base_layout, scale_vecs, translation_vecs, level_shapes
 ):
     grids = build_level_grids(
@@ -121,12 +137,51 @@ def test_select_levels_default_thresholds_match_explicit(
     from_default = select_levels_from_cache(
         grids, 2, cam, thresholds=None, base_layout=base_layout
     )
-    # reconstruct the default thresholds from the volume diagonal
-    diag = np.sqrt(sum(s**2 for s in base_layout.volume_shape))
+    # default thresholds are multiples of the finest level's world-space
+    # diagonal, measured the same way the implementation does
+    centres0 = grids[0]["centres"]
+    half0 = grids[0]["half_extents"]
+    diag = float(np.linalg.norm((centres0.max(0) + half0) - (centres0.min(0) - half0)))
     explicit = select_levels_from_cache(
         grids, 2, cam, thresholds=[diag * 1.0], base_layout=None
     )
     np.testing.assert_array_equal(from_default, explicit)
+
+
+def test_select_levels_default_thresholds_anisotropic_use_world_space():
+    # A squashed z scale must shrink the world-space diagonal relative to the
+    # raw voxel diagonal -> the default thresholds differ.  This is what proves
+    # the defaults live in world space, not voxel space.
+    layout = BlockLayout3D(volume_shape=(32, 32, 32), block_size=BLOCK_SIZE)
+    scale = [np.array([1.0, 1.0, 0.25]), np.array([2.0, 2.0, 0.5])]
+    translation = [np.zeros(3), np.zeros(3)]
+    level_shapes = [(32, 32, 32), (16, 16, 16)]
+    grids = build_level_grids(layout, 2, scale, translation, level_shapes)
+
+    # camera well outside the volume in x, so level-1 brick distances span a
+    # range that straddles both the world (~46) and voxel (~55) thresholds
+    cam = np.array([60.0, 20.0, 2.0])
+    from_default = select_levels_from_cache(
+        grids, 2, cam, thresholds=None, base_layout=layout
+    )
+
+    # voxel-diagonal thresholds (the OLD, unit-mismatched behaviour) differ
+    voxel_diag = np.sqrt(sum(s**2 for s in layout.volume_shape))
+    from_voxel = select_levels_from_cache(
+        grids, 2, cam, thresholds=[voxel_diag], base_layout=None
+    )
+    assert not np.array_equal(from_default, from_voxel)
+
+    # world-space diagonal thresholds match
+    centres0 = grids[0]["centres"]
+    half0 = grids[0]["half_extents"]
+    world_diag = float(
+        np.linalg.norm((centres0.max(0) + half0) - (centres0.min(0) - half0))
+    )
+    from_world = select_levels_from_cache(
+        grids, 2, cam, thresholds=[world_diag], base_layout=None
+    )
+    np.testing.assert_array_equal(from_default, from_world)
 
 
 def test_select_levels_near_camera_fine_far_coarse(
