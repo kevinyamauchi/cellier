@@ -36,12 +36,11 @@ class AnywidgetCanvasView:
     When *controls* is non-empty, the layout is two columns::
 
         [controls | canvas]
-        [toggle | dims]
+        [       | dims (includes 2D/3D toggle)]
 
     When *controls* is empty and extra *controls* are provided to
-    :meth:`compose_with_controls` (e.g. a toggle button), those widgets form
-    the left column.  When neither is present, only the right column is
-    returned.
+    :meth:`compose_with_controls`, those widgets form the left column.  When
+    neither is present, only the right column is returned.
 
     Attributes
     ----------
@@ -53,7 +52,8 @@ class AnywidgetCanvasView:
         configured for this visual.  See
         :func:`cellier.convenience.gui._appearance_widgets.build_appearance_widgets_anywidget`.
     dims : AnywidgetDimsPanel
-        Axis slice sliders (right column, below canvas).
+        Axis slice sliders plus the 2D/3D toggle button (right column, below
+        canvas).
     canvas_size : tuple[int, int]
         The CSS pixel size the canvas was constructed with.  Reused by
         :meth:`compose_with_controls` as the canvas+dims column's responsive
@@ -171,8 +171,8 @@ def canvas_widget_for_scene(
         axis_ranges,
     )
     controller.connect_widget(
-        canvas_widget.dims_sliders,
-        subscription_specs=canvas_widget.dims_sliders.subscription_specs(),
+        canvas_widget.dims_control,
+        subscription_specs=canvas_widget.dims_control.subscription_specs(),
     )
     return canvas_widget
 

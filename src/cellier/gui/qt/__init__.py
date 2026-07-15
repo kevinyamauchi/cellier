@@ -5,15 +5,12 @@ from cellier.gui.qt._dataset_info import (
     QtOmeZarrMetadataWidget,
     dataset_info_from_path,
 )
-from cellier.gui.qt._scene import QtCanvasWidget, QtDimsSliders
-from cellier.gui.qt._toggle import QtDimToggle, make_dim_toggle_qt
+from cellier.gui.qt._scene import QtCanvasWidget, QtDimsControl
 
 __all__ = [
     "DatasetInfo",
     "QtCanvasWidget",
-    "QtDimToggle",
-    "QtDimsSliders",
+    "QtDimsControl",
     "QtOmeZarrMetadataWidget",
     "dataset_info_from_path",
-    "make_dim_toggle_qt",
 ]

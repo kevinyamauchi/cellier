@@ -53,7 +53,6 @@ def _():
     from cellier.convenience import (
         AppearanceControls,
         Layout,
-        SceneControls,
         Viewer,
         axis_ranges_from_viewer,
         display,
@@ -68,7 +67,6 @@ def _():
         Layout,
         MultiscaleZarrDataStore,
         Path,
-        SceneControls,
         Viewer,
         axis_ranges_from_viewer,
         build_canvas_widget,
@@ -240,13 +238,12 @@ def _(axis_ranges_from_viewer, build_canvas_widget, viewer):
 
 
 @app.cell
-def _(AppearanceControls, Layout, SceneControls, canvas_view, display, viewer):
+def _(AppearanceControls, Layout, canvas_view, display, viewer):
     display(
         viewer,
         Layout(
             center=canvas_view,
             left_dock=AppearanceControls(),
-            bottom_dock=SceneControls(),
         ),
         fit="ready",
     )

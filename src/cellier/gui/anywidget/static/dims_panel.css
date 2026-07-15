@@ -30,3 +30,26 @@
   text-align: left;
   font-variant-numeric: tabular-nums;
 }
+
+.cellier-dim-toggle {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 4px 14px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  opacity: 0.75;
+  transition: opacity 0.1s, background 0.1s;
+}
+
+.cellier-dim-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.cellier-dim-toggle:active {
+  background: color-mix(in srgb, currentColor 20%, transparent);
+}

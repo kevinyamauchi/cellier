@@ -8,12 +8,11 @@ viewer layout without any rendering logic.  Pass a :class:`Layout` instance to
 Quick start::
 
     from cellier.convenience import display
-    from cellier.convenience.layout import AppearanceControls, Layout, SceneControls
+    from cellier.convenience.layout import AppearanceControls, Layout
 
     layout = Layout(
         center=canvas_view,
         left_dock=AppearanceControls(),
-        bottom_dock=SceneControls(),
     )
     display(viewer, layout)
 """
@@ -24,7 +23,6 @@ from cellier.convenience.layout._spec import (
     Grid,
     HStack,
     Layout,
-    SceneControls,
     VStack,
 )
 
@@ -34,6 +32,5 @@ __all__ = [
     "Grid",
     "HStack",
     "Layout",
-    "SceneControls",
     "VStack",
 ]

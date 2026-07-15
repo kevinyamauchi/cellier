@@ -71,7 +71,7 @@ class OmeBrickViewer:
         self._scene = scene
         self._visual_model = visual_model
         self._canvas_widget = canvas_widget
-        self._dims_sliders = canvas_widget.dims_sliders
+        self._dims_control = canvas_widget.dims_control
         self._n_levels = n_levels
         self._z_max = z_depth - 1
         self._active_mode = "3d"
@@ -225,7 +225,7 @@ class OmeBrickViewer:
             # Set slice_indices before changing displayed_axes so the dims
             # state is consistent when the geometry-rebuild event fires.
             # Read the last Z value the slider stored (retained even while hidden).
-            current_z = self._dims_sliders.current_index().get(0, self._z_max // 2)
+            current_z = self._dims_control.current_index().get(0, self._z_max // 2)
             self._controller.incoming_events.emit(
                 DimsUpdateEvent(
                     source_id=self._controller._id,
@@ -509,8 +509,8 @@ async def async_main(zarr_uri: str):
         scene, canvas_view, axis_ranges=axis_ranges
     )
     controller.connect_widget(
-        canvas_widget.dims_sliders,
-        subscription_specs=canvas_widget.dims_sliders.subscription_specs(),
+        canvas_widget.dims_control,
+        subscription_specs=canvas_widget.dims_control.subscription_specs(),
     )
 
     # ── Show window ───────────────────────────────────────────────────

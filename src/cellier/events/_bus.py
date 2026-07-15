@@ -76,7 +76,7 @@ class SubscriberInfo:
     ----------
     callback_qualname : str
         Dotted qualified name of the registered callback, e.g.
-        ``"QtDimsSliders._on_dims_changed"``.  Reads ``"(dead)"``
+        ``"QtDimsControl._on_dims_changed"``.  Reads ``"(dead)"``
         when the callback was held by a weak reference that has since
         been garbage-collected.
     callback_instance : object

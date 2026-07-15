@@ -73,4 +73,4 @@ canvas_widget = build_canvas_widget(viewer, axis_ranges)
 # Launch
 # ---------------------------------------------------------------------------
 
-run(viewer, Layout.single(canvas_widget, scene_controls="bottom"), fit="ready")
+run(viewer, Layout.single(canvas_widget), fit="ready")

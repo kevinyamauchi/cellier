@@ -5,7 +5,7 @@ Qt widgets for building interactive cellier-based applications.
 ## Canvas and dims
 
 ::: cellier.gui.qt.QtCanvasWidget
-::: cellier.gui.qt.QtDimsSliders
+::: cellier.gui.qt.QtDimsControl
 
 ## Visual controls
 

@@ -67,7 +67,7 @@ Example output:
 ```
 SliceCoordinator._on_dims_changed     <UUID-coordinator>  None    True
 CellierController._on_dims_changed_bus  <UUID-controller>   None    True
-QtDimsSliders._on_dims_changed        <UUID-slider>       <UUID-scene>  True
+QtDimsControl._on_dims_changed        <UUID-slider>       <UUID-scene>  True
 ```
 
 ### Filtering by entity
@@ -98,7 +98,7 @@ for info in controller._outgoing_events.get_subscribers(AppearanceChangedEvent):
 
 | Field | Type | Description |
 |---|---|---|
-| `callback_qualname` | `str` | Dotted name of the callback, e.g. `"QtDimsSliders._on_dims_changed"`. `"(dead)"` if the weak reference was collected. |
+| `callback_qualname` | `str` | Dotted name of the callback, e.g. `"QtDimsControl._on_dims_changed"`. `"(dead)"` if the weak reference was collected. |
 | `callback_instance` | `object` | The bound instance for a method callback; `None` for plain functions or dead weak refs. |
 | `owner_id` | `UUID or None` | UUID used to group this subscription for bulk removal via `unsubscribe_all`. |
 | `entity_id` | `UUID or None` | Entity this subscription is scoped to, or `None` for unscoped. |
@@ -121,7 +121,7 @@ controller._outgoing_events._subs[DimsChangedEvent]
 Each entry now prints as:
 
 ```
-_Subscription(callback='QtDimsSliders._on_dims_changed' owner_id=3f2a... entity_id=9c1b... strong/alive)
+_Subscription(callback='QtDimsControl._on_dims_changed' owner_id=3f2a... entity_id=9c1b... strong/alive)
 _Subscription(callback='CellierController._on_dims_changed_bus' owner_id=1a2b... entity_id=None strong/alive)
 _Subscription(callback='(dead)' owner_id=7d4e... entity_id=9c1b... weak/dead)
 ```

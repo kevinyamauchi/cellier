@@ -353,6 +353,80 @@ def test_dims_bridge_displayed_axes_flag_false():
     assert events[0].displayed_axes_changed is False
 
 
+def test_dims_update_event_expand_applies_displayed_axes_first():
+    """Expanding displayed_axes must land before slice_indices drops entries.
+
+    Regression test: applying slice_indices first would transiently uncover
+    the newly-displayed axis (dropped from slice_indices, but the model's
+    displayed_axes field hadn't caught up yet), which
+    AxisAlignedSelectionState.to_index_selection would read as "still
+    sliced" via absence rather than "now displayed."
+    """
+    from cellier.events import DimsChangedEvent, DimsUpdateEvent
+
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
+    assert scene.dims.selection.slice_indices == {0: 0}
+
+    events = []
+    controller._outgoing_events.subscribe(
+        DimsChangedEvent, events.append, entity_id=scene.id
+    )
+
+    controller._incoming_events.emit(
+        DimsUpdateEvent(
+            source_id=uuid4(),
+            scene_id=scene.id,
+            slice_indices={},
+            displayed_axes=(0, 1, 2),
+        )
+    )
+
+    assert len(events) == 2
+    first, second = events
+    # First mutation: displayed_axes already expanded, slice_indices not
+    # yet touched (axis 0 still present).
+    assert len(first.dims_state.selection.displayed_axes) == 3
+    assert 0 in first.dims_state.selection.slice_indices
+    # Second mutation: slice_indices catches up.
+    assert len(second.dims_state.selection.displayed_axes) == 3
+    assert 0 not in second.dims_state.selection.slice_indices
+
+
+def test_dims_update_event_contract_applies_slice_indices_first():
+    """Contracting must apply slice_indices before displayed_axes shrinks."""
+    from cellier.events import DimsChangedEvent, DimsUpdateEvent
+
+    controller = CellierController()
+    cs = _make_cs()
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
+    assert len(scene.dims.selection.displayed_axes) == 3
+
+    events = []
+    controller._outgoing_events.subscribe(
+        DimsChangedEvent, events.append, entity_id=scene.id
+    )
+
+    controller._incoming_events.emit(
+        DimsUpdateEvent(
+            source_id=uuid4(),
+            scene_id=scene.id,
+            slice_indices={0: 4},
+            displayed_axes=(1, 2),
+        )
+    )
+
+    assert len(events) == 2
+    first, second = events
+    # First mutation: slice_indices already covers axis 0, displayed_axes
+    # not yet shrunk.
+    assert len(first.dims_state.selection.displayed_axes) == 3
+    assert first.dims_state.selection.slice_indices.get(0) == 4
+    # Second mutation: displayed_axes catches up.
+    assert len(second.dims_state.selection.displayed_axes) == 2
+
+
 def test_appearance_bridge_color_map(small_zarr_store):
     from cellier.events import AppearanceChangedEvent
 
