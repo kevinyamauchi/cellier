@@ -44,11 +44,6 @@ class AppearanceControls:
 
 
 @dataclass
-class SceneControls:
-    """Dock spec: scene-level controls (2D/3D dimension toggle)."""
-
-
-@dataclass
 class ChannelControls:
     """Dock spec: per-channel controls for the first configured channel visual.
 
@@ -73,9 +68,12 @@ class Layout:
     center : canvas view or HStack or VStack or Grid
         Main content.  Typically a single ``AnywidgetCanvasView`` /
         ``QtCanvasWidget``, or a composed layout of multiple canvas views.
+        The 2D/3D toggle is part of the dims control embedded in the canvas
+        view, so it does not need a dock of its own.
     left_dock, right_dock, top_dock, bottom_dock :
         Content for each dock region.  Accepts :class:`AppearanceControls`,
-        :class:`SceneControls`, or a stack of those.  ``None`` hides the dock.
+        :class:`ChannelControls`, or a stack of those.  ``None`` hides the
+        dock.
     """
 
     center: object
@@ -90,7 +88,6 @@ class Layout:
         canvas,
         *,
         appearance: Literal["left", "right", "top", "bottom"] | bool = False,
-        scene_controls: Literal["left", "right", "top", "bottom"] | bool = False,
         channels: Literal["left", "right", "top", "bottom"] | bool = False,
     ) -> Layout:
         """Single-canvas preset.
@@ -101,8 +98,6 @@ class Layout:
             Canvas view returned by ``build_canvas_widget``.
         appearance : dock name or False
             Where to place appearance controls.  ``False`` (default) omits them.
-        scene_controls : dock name or False
-            Where to place scene controls (2D/3D toggle).  ``False`` omits them.
         channels : dock name or False
             Where to place per-channel controls.  ``False`` (default) omits
             them.
@@ -110,8 +105,6 @@ class Layout:
         docks: dict[str, object] = {}
         if appearance:
             docks[f"{appearance}_dock"] = AppearanceControls()
-        if scene_controls:
-            docks[f"{scene_controls}_dock"] = SceneControls()
         if channels:
             docks[f"{channels}_dock"] = ChannelControls()
         return cls(center=canvas, **docks)

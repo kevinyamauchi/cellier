@@ -31,7 +31,7 @@ src/cellier/v2/
 │   └── _update_events.py  # AppearanceUpdateEvent, DimsUpdateEvent,
 │                          # AABBUpdateEvent, SubscriptionSpec
 └── gui/
-    ├── _scene.py           # QtDimsSliders, QtCanvasWidget
+    ├── _scene.py           # QtDimsControl, QtCanvasWidget
     └── visuals/
         ├── _contrast_limits.py
         ├── _colormap.py
@@ -912,7 +912,7 @@ class _Subscription:
 
     def __repr__(self) -> str:
         # Produces e.g.:
-        # _Subscription(callback='QtDimsSliders._on_dims_changed'
+        # _Subscription(callback='QtDimsControl._on_dims_changed'
         #   owner_id=3f2a... entity_id=9c1b... strong/alive)
         ...
 ```
@@ -926,7 +926,7 @@ class _Subscription:
 ```python
 @dataclass
 class SubscriberInfo:
-    callback_qualname: str   # e.g. "QtDimsSliders._on_dims_changed"
+    callback_qualname: str   # e.g. "QtDimsControl._on_dims_changed"
     callback_instance: Any   # bound object, or None for plain functions
     owner_id: UUID | None
     entity_id: UUID | None
@@ -1159,7 +1159,7 @@ but `ContextVar` is the more principled choice and matches the intended use case
 ### Full echo-filtering example
 
 ```python
-class QtDimsSliders:
+class QtDimsControl:
     changed: Signal = Signal(object)
     closed: Signal = Signal()
 

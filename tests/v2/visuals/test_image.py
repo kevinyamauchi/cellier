@@ -169,9 +169,6 @@ def test_visual_roundtrip_with_non_identity_transform():
     np.testing.assert_allclose(v2.transform.matrix, t.matrix, atol=1e-6)
 
 
-# ── Phase 2: MultiscaleImageAppearance inherits from BaseImageAppearance ──────────────
-
-
 def test_image_appearance_inherits_color_map_and_clim():
     a = MultiscaleImageAppearance(color_map="viridis")
     assert a.clim == (0.0, 1.0)

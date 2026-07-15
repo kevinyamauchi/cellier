@@ -29,7 +29,7 @@ from PySide6 import QtCore, QtWidgets
 from cellier.controller import CellierController
 from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.gui.qt import QtCanvasWidget, QtDimsSliders
+from cellier.gui.qt import QtCanvasWidget, QtDimsControl
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
@@ -764,7 +764,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     def _make_2d_canvas_widget(scene, slider_style):
         canvas_view = _get_canvas_view(scene.id)
         axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
-        dims_sliders = QtDimsSliders(
+        dims_control = QtDimsControl(
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
@@ -772,10 +772,10 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
             initial_displayed_axes=scene.dims.selection.displayed_axes,
         )
         controller.connect_widget(
-            dims_sliders, subscription_specs=dims_sliders.subscription_specs()
+            dims_control, subscription_specs=dims_control.subscription_specs()
         )
-        dims_sliders.widget.setStyleSheet(slider_style)
-        return QtCanvasWidget(canvas_view=canvas_view, dims_sliders=dims_sliders)
+        dims_control.widget.setStyleSheet(slider_style)
+        return QtCanvasWidget(canvas_view=canvas_view, dims_control=dims_control)
 
     xy_scene = controller.get_scene_by_name("xy")
     xz_scene = controller.get_scene_by_name("xz")
@@ -792,8 +792,8 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         axis_ranges=axis_ranges,
     )
     controller.connect_widget(
-        _vol_cw.dims_sliders,
-        subscription_specs=_vol_cw.dims_sliders.subscription_specs(),
+        _vol_cw.dims_control,
+        subscription_specs=_vol_cw.dims_control.subscription_specs(),
     )
     canvas_widgets["vol"] = _vol_cw
 

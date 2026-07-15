@@ -1541,7 +1541,7 @@ async def async_main(zarr_uri: str) -> None:
 
     from cellier.controller import CellierController
     from cellier.data import OMEZarrImageDataStore
-    from cellier.gui.qt import QtCanvasWidget, QtDimsSliders
+    from cellier.gui.qt import QtCanvasWidget, QtDimsControl
     from cellier.render._config import (
         RenderManagerConfig,
         SlicingConfig,
@@ -1688,7 +1688,7 @@ async def async_main(zarr_uri: str) -> None:
         canvas_view = _canvas_view(scene.id)
         axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
         selection = scene.dims.selection
-        dims_sliders = QtDimsSliders(
+        dims_control = QtDimsControl(
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
@@ -1696,17 +1696,17 @@ async def async_main(zarr_uri: str) -> None:
             initial_displayed_axes=getattr(selection, "displayed_axes", ()),
         )
         controller.connect_widget(
-            dims_sliders, subscription_specs=dims_sliders.subscription_specs()
+            dims_control, subscription_specs=dims_control.subscription_specs()
         )
-        dims_sliders.widget.setStyleSheet(slider_style)
-        return QtCanvasWidget(canvas_view=canvas_view, dims_sliders=dims_sliders)
+        dims_control.widget.setStyleSheet(slider_style)
+        return QtCanvasWidget(canvas_view=canvas_view, dims_control=dims_control)
 
     _vol_cw = QtCanvasWidget.from_scene_and_canvas(
         vol_scene, _canvas_view(vol_scene.id), axis_ranges=axis_ranges
     )
     controller.connect_widget(
-        _vol_cw.dims_sliders,
-        subscription_specs=_vol_cw.dims_sliders.subscription_specs(),
+        _vol_cw.dims_control,
+        subscription_specs=_vol_cw.dims_control.subscription_specs(),
     )
     canvas_widgets = {
         "xy": _make_canvas_widget(xy_scene, SLIDER_STYLE_XY),

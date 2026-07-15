@@ -121,7 +121,7 @@ def test_viewer_default_gui_is_qt():
 
 
 # ---------------------------------------------------------------------------
-# Task 6 - AnywidgetDimsPanel + make_dim_toggle_anywidget
+# Task 6 - AnywidgetDimsPanel (includes the 2D/3D toggle)
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ def _make_dummy_anywidget():
     return AnywidgetDatasetInfo()
 
 
-def _make_dims_panel():
+def _make_dims_panel(*, with_toggle=False):
     from cellier.gui.anywidget import AnywidgetDimsPanel
 
     return AnywidgetDimsPanel(
@@ -158,6 +158,8 @@ def _make_dims_panel():
         slice_indices={0: 0},
         displayed_axes=(1, 2),
         stacked_axes=(),
+        axes_2d=(1, 2) if with_toggle else None,
+        axes_3d=(0, 1, 2) if with_toggle else None,
     )
 
 
@@ -212,24 +214,87 @@ def test_panel_user_change_emits_dims_update_event():
     assert event.slice_indices == {0: 12}
 
 
-def test_make_dim_toggle_toggles_displayed_dimensions():
-    """Clicking the toggle flips the viewer between 2D and 3D."""
-    from cellier.convenience import Viewer
-    from cellier.gui.anywidget import make_dim_toggle_anywidget
+def test_panel_without_toggle_axes_has_no_toggle():
+    """A panel built without axes_2d/axes_3d omits the toggle."""
+    panel = _make_dims_panel(with_toggle=False)
+    assert panel.has_toggle is False
+    assert panel.label == ""
 
-    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
-    toggle = make_dim_toggle_anywidget(viewer)
-    assert toggle.label == "Switch to 3D"
-    assert len(viewer.scene.dims.selection.displayed_axes) == 2
+
+def test_dims_panel_toggle_emits_dims_update_event():
+    """Clicking the toggle emits a DimsUpdateEvent, not a direct model mutation."""
+    from cellier.events import DimsUpdateEvent
+
+    panel = _make_dims_panel(with_toggle=True)
+    emitted = []
+    panel.changed.connect(emitted.append)
 
     # Simulate a JS click (increment the synced counter).
-    toggle._clicks += 1
-    assert len(viewer.scene.dims.selection.displayed_axes) == 3
-    assert toggle.label == "Switch to 2D"
+    panel._clicks += 1
 
-    toggle._clicks += 1
-    assert len(viewer.scene.dims.selection.displayed_axes) == 2
-    assert toggle.label == "Switch to 3D"
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert isinstance(event, DimsUpdateEvent)
+    assert event.source_id == panel._id
+    assert event.displayed_axes == (0, 1, 2)
+    # The controller stamps its echoed DimsChangedEvent with our own
+    # source_id, so it would be swallowed by the echo filter -- the panel
+    # must relabel itself directly from the click, not by waiting for it.
+    assert panel.label == "Switch to 2D"
+    assert list(panel.displayed_axes) == [0, 1, 2]
+
+
+def test_dims_panel_toggle_uses_live_slider_value():
+    """The emitted slice_indices reflect the panel's current slider value.
+
+    Regression test: previously the toggle had no access to slider state and
+    could only reset a newly-hidden axis to a hardcoded default.
+    """
+    panel = _make_dims_panel(with_toggle=True)
+    emitted = []
+    panel.changed.connect(emitted.append)
+
+    # Move axis 0's slider to a non-default value before toggling to 3D.
+    panel.slice_indices = {"0": 42, "1": 0, "2": 0}
+    emitted.clear()
+
+    panel._clicks += 1  # 2D -> 3D: axis 0 becomes displayed, nothing sliced.
+    assert emitted[-1].displayed_axes == (0, 1, 2)
+    assert emitted[-1].slice_indices == {}
+
+    # Toggle back to 2D: axis 0 becomes hidden again and should carry
+    # forward the last value the sliders held for it. (displayed_axes was
+    # already updated in-place by the previous click, not by a bus echo.)
+    panel._clicks += 1
+    assert emitted[-1].displayed_axes == (1, 2)
+    assert emitted[-1].slice_indices == {0: 42}
+
+
+def test_dims_panel_toggle_relabels_from_external_event():
+    """An external DimsChangedEvent relabels the toggle, echoed events do not."""
+    panel = _make_dims_panel(with_toggle=True)
+    assert panel.label == "Switch to 3D"
+
+    event = _dims_changed_event(
+        source_id=uuid4(),
+        scene_id=panel._scene_id,
+        displayed=(0, 1, 2),
+        slices={},
+    )
+    panel._on_dims_changed(event)
+    assert panel.label == "Switch to 2D"
+
+    # An echoed event (our own source_id) must not re-fire relabeling logic
+    # incorrectly -- it's a no-op entirely.
+    panel.label = "unchanged"
+    echo_event = _dims_changed_event(
+        source_id=panel._id,
+        scene_id=panel._scene_id,
+        displayed=(1, 2),
+        slices={0: 0},
+    )
+    panel._on_dims_changed(echo_event)
+    assert panel.label == "unchanged"
 
 
 # ---------------------------------------------------------------------------
@@ -455,13 +520,12 @@ class _FakeReturnValueHost(_FakeHost):
 
 
 def test_display_imports_from_convenience():
-    """display, Layout, AppearanceControls, SceneControls are importable."""
-    from cellier.convenience import AppearanceControls, Layout, SceneControls, display
+    """display, Layout, AppearanceControls are importable."""
+    from cellier.convenience import AppearanceControls, Layout, display
 
     assert callable(display)
     assert Layout is not None
     assert AppearanceControls is not None
-    assert SceneControls is not None
 
 
 def test_display_center_only_presents_and_returns_inert_handle(monkeypatch):
@@ -494,37 +558,6 @@ def test_display_center_only_presents_and_returns_inert_handle(monkeypatch):
     # close() is idempotent.
     handle.close()
     handle.close()
-
-
-def test_display_bottom_dock_stacks_toggle_below_center(monkeypatch):
-    """SceneControls in bottom_dock produces a v-stack: [center, toggle]."""
-    from cellier.convenience import _hosts, _launch
-    from cellier.convenience.gui import build_canvas_widget
-    from cellier.convenience.layout import Layout, SceneControls
-
-    viewer, ranges = _image_viewer()
-    view = build_canvas_widget(viewer, ranges, gui="anywidget")
-
-    fake = _FakeHost()
-    monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
-
-    _launch.display(
-        viewer, Layout(center=view, bottom_dock=SceneControls()), fit="none"
-    )
-
-    # Outer v-stack: [center_composed, toggle_leaf]
-    presented = fake.presented
-    assert presented.kind == "stack"
-    direction, leaves, align, _min_width, _gap = presented.payload
-    assert direction == "v"
-    # No align: default cross-axis "stretch" is required for the responsive-
-    # width layout to fill the notebook cell / sidecar tab (see
-    # _anywidget_renderer.py); "center" would shrink-to-content again.
-    assert align is None
-    assert len(leaves) == 2
-    center_node, toggle_node = leaves
-    assert center_node.kind == "stack"  # canvas+dims v-stack
-    assert toggle_node.kind == "leaf"  # SceneControls -> host.leaf(toggle)
 
 
 def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
@@ -574,16 +607,16 @@ def test_display_return_value_host_yields_renderable(monkeypatch):
     """A return-value host (marimo-like) gets the renderable back from display."""
     from cellier.convenience import _hosts, _launch
     from cellier.convenience.gui import build_canvas_widget
-    from cellier.convenience.layout import Layout, SceneControls
+    from cellier.convenience.layout import AppearanceControls, Layout
 
-    viewer, ranges = _image_viewer()
+    viewer, ranges = _image_viewer_with_controls()
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
 
     fake = _FakeReturnValueHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
 
     result = _launch.display(
-        viewer, Layout(center=view, bottom_dock=SceneControls()), fit="none"
+        viewer, Layout(center=view, left_dock=AppearanceControls()), fit="none"
     )
 
     # Return-value host: display() yields the renderable so marimo renders it.
@@ -636,16 +669,16 @@ def test_layout_single_preset_no_docks():
 
 
 def test_layout_single_preset_with_docks():
-    """Layout.single wires appearance and scene_controls to the requested docks."""
-    from cellier.convenience.layout import AppearanceControls, Layout, SceneControls
+    """Layout.single wires appearance to the requested dock."""
+    from cellier.convenience.layout import AppearanceControls, Layout
 
     viewer, ranges = _image_viewer()
     from cellier.convenience.gui import build_canvas_widget
 
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    layout = Layout.single(view, appearance="left", scene_controls="bottom")
+    layout = Layout.single(view, appearance="left")
     assert isinstance(layout.left_dock, AppearanceControls)
-    assert isinstance(layout.bottom_dock, SceneControls)
+    assert layout.bottom_dock is None
     assert layout.right_dock is None
     assert layout.top_dock is None
 

@@ -1,6 +1,7 @@
-// Dims-only anywidget ESM.  Renders one labeled range slider per non-displayed
-// axis.  All the axis-slice logic extracted from panel.js so dims can live in
-// a separate widget below the canvas while appearance controls stay on the left.
+// Dims anywidget ESM.  Renders one labeled range slider per non-displayed
+// axis, plus an optional 2D/3D toggle button.  All the axis-slice logic
+// extracted from panel.js so dims can live in a separate widget below the
+// canvas while appearance controls stay on the left.
 
 const THROTTLE_MS = 50;
 
@@ -12,6 +13,20 @@ function render({ model, el }) {
   const dimsContainer = document.createElement("div");
   dimsContainer.className = "cellier-dims";
   el.appendChild(dimsContainer);
+
+  const toggleButton = document.createElement("button");
+  toggleButton.className = "cellier-dim-toggle";
+  toggleButton.textContent = model.get("label");
+  toggleButton.addEventListener("click", () => {
+    model.set("_clicks", model.get("_clicks") + 1);
+    model.save_changes();
+  });
+  el.appendChild(toggleButton);
+
+  function updateToggle() {
+    toggleButton.style.display = model.get("has_toggle") ? "" : "none";
+    toggleButton.textContent = model.get("label");
+  }
 
   let rows = {}; // axis(str) -> { row, input, readout }
 
@@ -127,12 +142,15 @@ function render({ model, el }) {
   }
 
   build();
+  updateToggle();
   model.on("change:axis_ranges", build);
   model.on("change:axis_labels", build);
   model.on("change:slice_indices", syncValues);
   model.on("change:displayed_axes", updateVisibility);
   model.on("change:stacked_axes", updateVisibility);
   model.on("change:non_displayed", updateVisibility);
+  model.on("change:label", updateToggle);
+  model.on("change:has_toggle", updateToggle);
 }
 
 export default { render };

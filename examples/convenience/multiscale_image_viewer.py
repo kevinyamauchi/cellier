@@ -31,7 +31,6 @@ import tensorstore as ts
 from cellier.convenience import (
     AppearanceControls,
     Layout,
-    SceneControls,
     Viewer,
     axis_ranges_from_viewer,
     run,
@@ -169,7 +168,6 @@ run(
     Layout(
         center=canvas_view,
         left_dock=AppearanceControls(),
-        bottom_dock=SceneControls(),
     ),
     fit="ready",
 )

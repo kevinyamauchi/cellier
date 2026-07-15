@@ -1,6 +1,6 @@
 """Widgets for scene components.
 
-The QtDimsSliders and QtCanvasWidget classes are modified from
+The QtDimsControl and QtCanvasWidget classes are modified from
 the _QDimsSliders and _QArrayViewer classes from ndv, respectively.
 https://github.com/pyapp-kit/ndv/blob/main/src/ndv/views/_qt/_array_view.py
 
@@ -41,7 +41,13 @@ from uuid import uuid4
 
 from psygnal import Signal
 from qtpy.QtCore import Qt, QTimer
-from qtpy.QtWidgets import QFormLayout, QSizePolicy, QVBoxLayout, QWidget
+from qtpy.QtWidgets import (
+    QFormLayout,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 from superqt import QLabeledSlider
 
 from cellier.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
@@ -92,25 +98,30 @@ QLabel { font-size: 12px; }
 """
 
 
-class QtDimsSliders:
-    """Bidirectional multi-axis dims slider panel wired to the cellier v2 bus.
+class QtDimsControl:
+    """Bidirectional dims slider panel + 2D/3D toggle wired to the cellier v2 bus.
 
     Composes a ``QWidget`` container (with a ``QFormLayout``) holding one
-    ``QLabeledSlider`` per axis.  Sliders for displayed axes are hidden; only
-    sliced (non-displayed) axes are shown.
+    ``QLabeledSlider`` per axis, plus (when *axes_2d*/*axes_3d* are given) a
+    toggle button that switches the scene between its 2D and 3D axis sets.
+    Sliders for displayed axes are hidden; only sliced (non-displayed) axes
+    are shown.
 
     Follows the v2 widget pattern:
 
-    - One ``UUID`` (``self._id``) per panel — all sliders share it.
-    - Subscribed to ``DimsChangedEvent`` via ``controller.on_dims_changed``.
+    - One ``UUID`` (``self._id``) shared by the sliders and the toggle.
+    - Subscribed to ``DimsChangedEvent`` via ``controller.connect_widget``.
     - Echo-filters its own changes using ``source_id``.
     - Suppresses re-entrant slider signals with ``blockSignals`` when applying
       model-driven updates.
+    - The toggle never relabels itself optimistically on click -- it waits
+      for the echoed ``DimsChangedEvent``, same as the sliders, so there is a
+      single source of truth for "what is currently displayed."
 
     Wire to the controller after construction::
 
-        sliders = QtDimsSliders(scene_id, axis_ranges=..., axis_labels=...)
-        controller.connect_widget(sliders, subscription_specs=sliders.subscription_specs())
+        control = QtDimsControl(scene_id, axis_ranges=..., axis_labels=...)
+        controller.connect_widget(control, subscription_specs=control.subscription_specs())
 
     Parameters
     ----------
@@ -124,6 +135,12 @@ class QtDimsSliders:
         Starting slider values; typically ``scene.dims.selection.slice_indices``.
     initial_displayed_axes :
         Axes to hide initially; typically ``scene.dims.selection.displayed_axes``.
+    axes_2d :
+        Axis indices to display when toggling to 2D, or ``None`` to omit the
+        toggle button entirely (e.g. a scene with fewer than 3 axes).
+    axes_3d :
+        Axis indices to display when toggling to 3D, or ``None`` to omit the
+        toggle button entirely.
     parent :
         Optional Qt parent widget for the internal container.
     """
@@ -142,6 +159,8 @@ class QtDimsSliders:
         initial_stacked_axes: tuple[int, ...] = (),
         non_displayed_sliders: set[int] | None = None,
         debounce_ms: int = 50,
+        axes_2d: tuple[int, ...] | None = None,
+        axes_3d: tuple[int, ...] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         # ── Cellier layer ────────────────────────────────────────────────────
@@ -149,6 +168,8 @@ class QtDimsSliders:
         self._scene_id = scene_id
         self._non_displayed_sliders: set[int] = non_displayed_sliders or set()
         self._stacked_axes: tuple[int, ...] = initial_stacked_axes
+        self._axes_2d = axes_2d
+        self._axes_3d = axes_3d
 
         # Single-shot QTimer for rate-limiting rapid slider moves.
         # Fires at most once per interval; a dirty flag ensures the final
@@ -182,6 +203,15 @@ class QtDimsSliders:
             )
             layout.addRow(axis_labels.get(axis, str(axis)), sld)
             self._sliders[axis] = sld
+
+        self._toggle_button: QPushButton | None = None
+        if axes_2d is not None and axes_3d is not None:
+            is_3d = len(initial_displayed_axes) == 3
+            self._toggle_button = QPushButton(
+                "Switch to 2D" if is_3d else "Switch to 3D"
+            )
+            self._toggle_button.clicked.connect(self._on_toggle_click)
+            layout.addRow(self._toggle_button)
 
         self._update_visibility(initial_displayed_axes, initial_stacked_axes)
 
@@ -230,18 +260,26 @@ class QtDimsSliders:
 
     def _on_dims_changed(self, event) -> None:
         if event.source_id == self._id:
-            return  # echo from our own slider move; ignore
+            return  # echo from our own slider move or toggle click; ignore
+
+        sel = event.dims_state.selection
 
         # Update slider values for sliced axes.
         for axis in self._sliders:
-            value = event.dims_state.selection.slice_indices.get(axis)
+            value = sel.slice_indices.get(axis)
             if value is not None:
                 self._set_value(axis, value)
 
         # Show/hide sliders based on which axes are now displayed or stacked.
-        sel = event.dims_state.selection
         stacked = getattr(sel, "stacked_axes", ())
         self._update_visibility(sel.displayed_axes, stacked)
+
+        # Relabel the toggle purely from the event -- this is what lets it
+        # stay correct even when displayed_axes changed via some other
+        # caller, not just this widget's own button.
+        if self._toggle_button is not None:
+            is_3d = len(sel.displayed_axes) == 3
+            self._toggle_button.setText("Switch to 2D" if is_3d else "Switch to 3D")
 
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
@@ -275,6 +313,37 @@ class QtDimsSliders:
             )
         )
 
+    def _on_toggle_click(self) -> None:
+        is_3d = len(self._displayed_axes) == 3
+        target_displayed = self._axes_2d if is_3d else self._axes_3d
+        target_set = set(target_displayed)
+
+        # current_index() already holds a live, correct value for every
+        # axis (including hidden ones, since Qt widgets retain their value
+        # while hidden) -- no separate "saved position" bookkeeping needed.
+        new_slices = {
+            axis: value
+            for axis, value in self.current_index().items()
+            if axis not in target_set and axis not in self._stacked_axes
+        }
+        self.changed.emit(
+            DimsUpdateEvent(
+                source_id=self._id,
+                scene_id=self._scene_id,
+                slice_indices=new_slices,
+                displayed_axes=target_displayed,
+            )
+        )
+
+        # The controller echoes this change back stamped with our own
+        # source_id, so _on_dims_changed's echo filter will ignore it --
+        # same as a slider's own value already reflecting the user's drag
+        # before any bus round trip. Apply the visible state directly here.
+        for axis, value in new_slices.items():
+            self._set_value(axis, value)
+        self._update_visibility(target_displayed, self._stacked_axes)
+        self._toggle_button.setText("Switch to 2D" if not is_3d else "Switch to 3D")
+
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
 
     def _set_value(self, axis: int, value: int) -> None:
@@ -303,10 +372,12 @@ class QtDimsSliders:
 
 
 class QtCanvasWidget:
-    """Wraps a render canvas above a ``QtDimsSliders`` panel.
+    """Wraps a render canvas above a ``QtDimsControl`` panel.
 
     Composes the two elements in a ``QVBoxLayout`` so that the canvas expands
-    to fill available space while the sliders sit below it at a fixed height.
+    to fill available space while the dims control sits below it at a fixed
+    height.  The dims control includes the 2D/3D toggle button (when the
+    scene has 3+ axes), so no separate toggle widget is needed.
 
     Prefer constructing via :meth:`from_scene_and_canvas` rather than calling
     ``__init__`` directly.
@@ -316,8 +387,8 @@ class QtCanvasWidget:
     canvas_view :
         A ``CanvasView`` instance; its ``.widget`` property provides the render
         surface to embed.
-    dims_sliders :
-        An already-constructed ``QtDimsSliders`` instance.
+    dims_control :
+        An already-constructed ``QtDimsControl`` instance.
     parent :
         Optional Qt parent widget.
     """
@@ -325,11 +396,11 @@ class QtCanvasWidget:
     def __init__(
         self,
         canvas_view,
-        dims_sliders: QtDimsSliders,
+        dims_control: QtDimsControl,
         *,
         parent: QWidget | None = None,
     ) -> None:
-        self._dims_sliders = dims_sliders
+        self._dims_control = dims_control
 
         self._container = QWidget(parent)
         self._container.setSizePolicy(
@@ -345,7 +416,7 @@ class QtCanvasWidget:
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         layout.addWidget(canvas_qt_widget, stretch=1)
-        layout.addWidget(dims_sliders.widget)
+        layout.addWidget(dims_control.widget)
 
     @classmethod
     def from_scene_and_canvas(
@@ -360,10 +431,12 @@ class QtCanvasWidget:
 
         Derives axis labels and the initial dims state from *scene* so that
         callers only need to supply *axis_ranges* (which requires data-store
-        knowledge not available on the dims model itself).
+        knowledge not available on the dims model itself).  The 2D/3D toggle
+        is included automatically when the scene has 3 or more axes: 3D
+        displays the last three axis labels, 2D the last two.
 
         Call ``controller.connect_widget`` on the returned widget's
-        ``dims_sliders`` after construction to wire subscriptions.
+        ``dims_control`` after construction to wire subscriptions.
 
         Parameters
         ----------
@@ -377,23 +450,33 @@ class QtCanvasWidget:
         parent :
             Optional Qt parent widget.
         """
-        axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
+        axis_labels_list = scene.dims.coordinate_system.axis_labels
+        axis_labels = dict(enumerate(axis_labels_list))
 
         selection = scene.dims.selection
         initial_slice_indices = dict(getattr(selection, "slice_indices", {}))
         initial_displayed_axes = getattr(selection, "displayed_axes", ())
         initial_stacked_axes = getattr(selection, "stacked_axes", ())
 
-        dims_sliders = QtDimsSliders(
+        axes_2d: tuple[int, ...] | None = None
+        axes_3d: tuple[int, ...] | None = None
+        if len(axis_labels_list) >= 3:
+            ndim = len(axis_labels_list)
+            axes_3d = tuple(range(ndim - 3, ndim))
+            axes_2d = tuple(range(ndim - 2, ndim))
+
+        dims_control = QtDimsControl(
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
             initial_slice_indices=initial_slice_indices,
             initial_displayed_axes=initial_displayed_axes,
             initial_stacked_axes=initial_stacked_axes,
+            axes_2d=axes_2d,
+            axes_3d=axes_3d,
             parent=parent,
         )
-        return cls(canvas_view=canvas_view, dims_sliders=dims_sliders, parent=parent)
+        return cls(canvas_view=canvas_view, dims_control=dims_control, parent=parent)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -403,10 +486,10 @@ class QtCanvasWidget:
         return self._container
 
     @property
-    def dims_sliders(self) -> QtDimsSliders:
-        """The ``QtDimsSliders`` panel embedded below the canvas."""
-        return self._dims_sliders
+    def dims_control(self) -> QtDimsControl:
+        """The ``QtDimsControl`` panel embedded below the canvas."""
+        return self._dims_control
 
     def close(self) -> None:
-        """Unsubscribe the dims sliders from the bus."""
-        self._dims_sliders.close()
+        """Unsubscribe the dims control from the bus."""
+        self._dims_control.close()

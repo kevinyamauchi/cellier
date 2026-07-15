@@ -61,7 +61,7 @@ pyqt = ["PyQt6"]
 # rendercanvas arrive transitively (via anywidget and pygfx respectively); the
 # notebook host applications (jupyter, marimo) are not declared here -- the user
 # installs whichever host they run in.
-anywidget = ["anywidget", "simplejpeg"]
+anywidget = ["anywidget", "simplejpeg", "sidecar"]
 test = [
     "pytest",
     "pytest-asyncio",

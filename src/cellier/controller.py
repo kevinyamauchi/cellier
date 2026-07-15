@@ -2693,14 +2693,41 @@ class CellierController:
         )
 
     def _on_dims_update(self, event: DimsUpdateEvent) -> None:
-        if event.slice_indices is not None:
-            self.update_slice_indices(
-                event.scene_id, event.slice_indices, source_id=event.source_id
+        if event.displayed_axes is not None and event.slice_indices is not None:
+            # Order matters: every axis must stay covered by either
+            # "displayed" or "sliced" at all times (see
+            # AxisAlignedSelectionState.to_index_selection). Expanding the
+            # displayed set must extend displayed_axes before slice_indices
+            # drops the newly-displayed axes; contracting must add the
+            # newly-hidden axes to slice_indices before displayed_axes
+            # shrinks. Mirrors Viewer.set_displayed_dimensions.
+            current_displayed = set(
+                self._model.scenes[event.scene_id].dims.selection.displayed_axes
             )
-        if event.displayed_axes is not None:
-            self.update_displayed_axes(
-                event.scene_id, event.displayed_axes, source_id=event.source_id
-            )
+            is_expanding = bool(set(event.displayed_axes) - current_displayed)
+            if is_expanding:
+                self.update_displayed_axes(
+                    event.scene_id, event.displayed_axes, source_id=event.source_id
+                )
+                self.update_slice_indices(
+                    event.scene_id, event.slice_indices, source_id=event.source_id
+                )
+            else:
+                self.update_slice_indices(
+                    event.scene_id, event.slice_indices, source_id=event.source_id
+                )
+                self.update_displayed_axes(
+                    event.scene_id, event.displayed_axes, source_id=event.source_id
+                )
+        else:
+            if event.slice_indices is not None:
+                self.update_slice_indices(
+                    event.scene_id, event.slice_indices, source_id=event.source_id
+                )
+            if event.displayed_axes is not None:
+                self.update_displayed_axes(
+                    event.scene_id, event.displayed_axes, source_id=event.source_id
+                )
         if event.stacked_axes is not None:
             self.update_stacked_axes(
                 event.scene_id, event.stacked_axes, source_id=event.source_id

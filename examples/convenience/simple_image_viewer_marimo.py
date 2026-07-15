@@ -40,7 +40,6 @@ def _():
 
     from cellier.convenience import (
         Layout,
-        SceneControls,
         Viewer,
         axis_ranges_from_viewer,
         display,
@@ -51,7 +50,6 @@ def _():
     return (
         ImageMemoryStore,
         Layout,
-        SceneControls,
         Viewer,
         axis_ranges_from_viewer,
         binary_blobs,
@@ -109,8 +107,8 @@ def _(mo):
 
 
 @app.cell
-def _(Layout, SceneControls, canvas_widget, display, viewer):
-    display(viewer, Layout.single(canvas_widget, scene_controls="bottom"), fit="ready")
+def _(Layout, canvas_widget, display, viewer):
+    display(viewer, Layout.single(canvas_widget), fit="ready")
     return
 
 

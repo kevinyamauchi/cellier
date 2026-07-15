@@ -168,10 +168,15 @@ def select_levels_from_cache(
     thresholds : list[float] or None
         LOD cutoff distances.  ``thresholds[i]`` is the distance beyond
         which level ``i+2`` is preferred over level ``i+1``.
-        If None, all bricks are assigned level 1.
+        If None (or empty), and no ``base_layout`` is supplied to derive
+        defaults, every brick is assigned the finest level -- for any
+        ``n_levels``.
     base_layout : BlockLayout3D or None
-        Only used to compute default thresholds when ``thresholds`` is
-        None.
+        Enables default thresholds when ``thresholds`` is None.  The
+        default cutoffs are multiples of the finest level's world-space
+        diagonal (measured from ``level_grids``), so they honour
+        anisotropic scale/translation.  When None, ``thresholds`` stays
+        empty and all bricks fall to the finest level.
 
     Returns
     -------
@@ -183,10 +188,25 @@ def select_levels_from_cache(
 
     if thresholds is None:
         if base_layout is not None:
-            diag = np.sqrt(sum(s**2 for s in base_layout.volume_shape))
+            # World-space diagonal from the finest level's precomputed grid, so
+            # the default bands live in the same units as the distances below
+            # (``dist = norm(centres - cam)``).  ``centres`` / ``half_extents``
+            # already bake in per-level scale and translation, which the raw
+            # voxel ``volume_shape`` diagonal ignored on anisotropic data.
+            centres0 = level_grids[0]["centres"]  # (M, 3) world-space
+            half0 = level_grids[0]["half_extents"]  # (3,) world-space
+            world_min = centres0.min(axis=0) - half0
+            world_max = centres0.max(axis=0) + half0
+            diag = float(np.linalg.norm(world_max - world_min))
             thresholds = [diag * (i + 1) for i in range(n_levels - 1)]
         else:
             thresholds = []
+
+    # No LOD bands -> every brick uses the finest level.  This guards the
+    # ``n_levels >= 2`` case, where the per-level loop below would otherwise
+    # index an empty threshold list; it also handles an explicit ``[]``.
+    if not thresholds:
+        return level_grids[0]["arr"]
 
     parts: list[np.ndarray] = []
 
@@ -205,9 +225,9 @@ def select_levels_from_cache(
             max_corner_dist = dist
 
         if level == 1:
-            mask = (
-                dist < thresholds[0] if thresholds else np.ones(len(dist), dtype=bool)
-            )
+            # ``thresholds`` is guaranteed non-empty here (empty was handled by
+            # the early return above).
+            mask = dist < thresholds[0]
         elif level == n_levels:
             mask = max_corner_dist >= thresholds[level - 2]
         else:

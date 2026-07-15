@@ -106,7 +106,6 @@ def _render_dock(
         AppearanceControls,
         ChannelControls,
         HStack,
-        SceneControls,
         VStack,
     )
 
@@ -114,8 +113,6 @@ def _render_dock(
         return _render_appearance_controls(viewer, host, closeables)
     if isinstance(spec, ChannelControls):
         return _render_channel_controls(viewer, host, closeables)
-    if isinstance(spec, SceneControls):
-        return _render_scene_controls(viewer, host)
     if isinstance(spec, (HStack, VStack)):
         direction = "h" if isinstance(spec, HStack) else "v"
         items = [_render_dock(item, viewer, host, closeables) for item in spec.items]
@@ -198,11 +195,3 @@ def _render_channel_controls(
     )
     closeables.append(widget)
     return host.leaf(widget)
-
-
-def _render_scene_controls(viewer: object, host: LayoutHost) -> object:
-    """Build and wire the scene-level controls (2D/3D toggle)."""
-    from cellier.gui.anywidget import make_dim_toggle_anywidget
-
-    toggle = make_dim_toggle_anywidget(viewer)
-    return host.leaf(toggle)

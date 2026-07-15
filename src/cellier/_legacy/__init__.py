@@ -1,1 +1,0 @@
-"""Prototype cellier implementation."""

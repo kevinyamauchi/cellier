@@ -131,13 +131,6 @@ def _render_center_qt(node: object) -> object:
     )
 
 
-def _render_scene_controls_qt(viewer: object) -> object | None:
-    """Build a Qt scene controls widget (2D/3D dim toggle)."""
-    from cellier.gui.qt._toggle import make_dim_toggle_qt
-
-    return make_dim_toggle_qt(viewer)
-
-
 def _render_appearance_controls_qt(viewer: object) -> object | None:
     """Build and wire Qt appearance sub-widgets for the first configured visual.
 
@@ -305,7 +298,6 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
         AppearanceControls,
         ChannelControls,
         HStack,
-        SceneControls,
         VStack,
     )
 
@@ -313,8 +305,6 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
         return _render_appearance_controls_qt(viewer)
     if isinstance(spec, ChannelControls):
         return _render_channel_controls_qt(viewer)
-    if isinstance(spec, SceneControls):
-        return _render_scene_controls_qt(viewer)
     if isinstance(spec, (HStack, VStack)):
         container = QtWidgets.QWidget()
         box = (
