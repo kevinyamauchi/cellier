@@ -409,20 +409,20 @@ class GFXLabelMemoryVisual:
         """Write new values into the existing label_params buffer in place."""
         import numpy as np
 
-        from cellier.render.shaders._label_colormap import LABEL_PARAMS_DTYPE
-
         if background_label is not None:
             self._background_label = background_label
+        # ``buf.data`` is a 0-d structured scalar (``np.zeros((), dtype=...)``),
+        # so it must be written field-by-field -- slicing it (``[:]``) raises
+        # ``IndexError``.  Mirrors ``GFXMultiscaleLabelVisual`` which writes the
+        # same uniform's fields directly.
         buf = self._label_params_buf
-        data = np.frombuffer(buf.data, dtype=LABEL_PARAMS_DTYPE).copy()
         if background_label is not None:
-            data["background_label"] = np.int32(background_label)
+            buf.data["background_label"] = np.int32(background_label)
         if salt is not None:
-            data["salt"] = np.uint32(salt & 0xFFFFFFFF)
+            buf.data["salt"] = np.uint32(salt & 0xFFFFFFFF)
         if n_entries is not None:
-            data["n_entries"] = np.uint32(n_entries)
+            buf.data["n_entries"] = np.uint32(n_entries)
             self._n_entries = n_entries
-        buf.data[:] = data.tobytes()
         buf.update_range(0, 1)
 
     def _rebuild_lut(

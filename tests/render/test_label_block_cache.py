@@ -34,7 +34,7 @@ def test_build_cache_texture_2d_float32_default():
         gpu_budget_bytes=4 * 1024**2,
         block_size=16,
     )
-    data, tex = build_cache_texture_2d(params)
+    data, _tex = build_cache_texture_2d(params)
     assert data.dtype == np.float32
 
 

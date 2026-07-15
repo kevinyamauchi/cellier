@@ -289,7 +289,7 @@ def _make_coordinator_with_scene(
 
 
 def test_slice_coordinator_submit_once_no_prior_task() -> None:
-    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+    coordinator, stub_slicer, _sm, _visuals, scene_id, canvas_id = (
         _make_coordinator_with_scene()
     )
     req = _make_reslicing_request(scene_id=scene_id, canvas_id=canvas_id)
@@ -301,7 +301,7 @@ def test_slice_coordinator_submit_once_no_prior_task() -> None:
 
 def test_slice_coordinator_second_submit_cancels_first() -> None:
     """Second submit from the same canvas must cancel the first task."""
-    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+    coordinator, stub_slicer, _sm, _visuals, scene_id, canvas_id = (
         _make_coordinator_with_scene()
     )
 
@@ -318,7 +318,7 @@ def test_slice_coordinator_second_submit_cancels_first() -> None:
 
 def test_slice_coordinator_cancel_visual_releases_pending() -> None:
     """cancel_visual must call visual.cancel_pending()."""
-    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+    coordinator, _stub_slicer, _sm, visuals, scene_id, canvas_id = (
         _make_coordinator_with_scene()
     )
     visual = visuals[0]
@@ -334,7 +334,7 @@ def test_slice_coordinator_cancel_visual_releases_pending() -> None:
 
 def test_slice_coordinator_cancel_visual_only_affects_one() -> None:
     """Cancelling one visual must not cancel the other visual's task."""
-    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+    coordinator, stub_slicer, _sm, visuals, scene_id, canvas_id = (
         _make_coordinator_with_scene(n_visuals=2)
     )
     v1, v2 = visuals
@@ -351,7 +351,7 @@ def test_slice_coordinator_cancel_visual_only_affects_one() -> None:
 
 
 def test_slice_coordinator_cancel_scene_cancels_all() -> None:
-    coordinator, stub_slicer, sm, visuals, scene_id, canvas_id = (
+    coordinator, _stub_slicer, _sm, _visuals, scene_id, canvas_id = (
         _make_coordinator_with_scene(n_visuals=2)
     )
     coordinator.submit(

@@ -44,7 +44,7 @@ def test_build_direct_lut_warns_over_limit():
     oversized = dict.fromkeys(range(_MAX_DIRECT_ENTRIES + 1), (0.0, 0.0, 0.0, 1.0))
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        keys_tex, colors_tex, n = build_direct_lut_textures(oversized)
+        _keys_tex, _colors_tex, n = build_direct_lut_textures(oversized)
     assert any("65536" in str(warning.message) for warning in w)
     assert n == _MAX_DIRECT_ENTRIES
 
