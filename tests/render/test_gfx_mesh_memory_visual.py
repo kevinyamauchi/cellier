@@ -5,10 +5,18 @@ from uuid import uuid4
 
 import numpy as np
 import pygfx as gfx
+import pytest
 
+from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
-from cellier.data.mesh._mesh_requests import MeshSliceRequest
-from cellier.events._events import AppearanceChangedEvent
+from cellier.data.mesh._mesh_requests import MeshData, MeshSliceRequest
+from cellier.events._events import (
+    AABBChangedEvent,
+    AppearanceChangedEvent,
+    PickWriteChangedEvent,
+    TransformChangedEvent,
+    VisualVisibilityChangedEvent,
+)
 from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.transform import AffineTransform
 from cellier.visuals import (
@@ -16,6 +24,31 @@ from cellier.visuals import (
     MeshPhongAppearance,
     MeshVisual,
 )
+
+
+def _appearance_event(field, value):
+    return AppearanceChangedEvent(
+        source_id=uuid4(),
+        visual_id=uuid4(),
+        field_name=field,
+        new_value=value,
+        requires_reslice=False,
+    )
+
+
+def _aabb_event(field, value):
+    return AABBChangedEvent(
+        source_id=uuid4(), visual_id=uuid4(), field_name=field, new_value=value
+    )
+
+
+def _dims_state(displayed=(0, 1, 2), sliced=None):
+    return DimsState(
+        axis_labels=tuple(str(i) for i in range(3)),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=displayed, slice_indices=sliced or {}
+        ),
+    )
 
 
 def _store():
@@ -193,3 +226,257 @@ def test_opacity_event_updates_alpha_mode():
     v.on_appearance_changed(ev_o)
     assert v._material_3d.alpha_mode == "solid"
     assert v._material_3d.depth_write is True
+
+
+# ── Construction errors / material variants / trivia ───────────────────────────
+
+
+def test_invalid_render_modes_raises():
+    store = _store()
+    model = MeshVisual(
+        name="t", data_store_id=str(store.id), appearance=MeshFlatAppearance()
+    )
+    with pytest.raises(ValueError, match="render_modes"):
+        GFXMeshMemoryVisual(
+            visual_model=model,
+            render_modes={"4d"},
+            transform=AffineTransform.identity(ndim=3),
+        )
+
+
+def test_non_blend_transparency_sets_alpha_mode_directly():
+    """A non-``blend`` transparency mode is written straight onto the material.
+
+    Covers the ``transparency_mode != "blend"`` branch of ``_build_material_3d``.
+    """
+    v = _visual(_store(), appearance=MeshFlatAppearance(transparency_mode="add"))
+    assert v._material_3d.alpha_mode == "add"
+
+
+def test_n_levels_is_one():
+    assert _visual(_store()).n_levels == 1
+
+
+def test_empty_batch_is_noop():
+    v = _visual(_store())
+    v.on_data_ready([])
+    v.on_data_ready_2d([])
+    assert v.node.material is v._empty_material
+
+
+def test_face_index_for_pick_maps_through_original_indices():
+    v = _visual(_store())
+    assert v.face_index_for_pick(2) == 2  # identity pass-through
+    v._original_face_indices = np.array([5, 9, 11], dtype=np.int64)
+    assert v.face_index_for_pick(1) == 9
+    assert v.face_index_for_pick(999) == 999
+
+
+# ── GFXVisual protocol stubs + slice-request planning ──────────────────────────
+
+
+def test_protocol_node_accessors():
+    v = _visual(_store())
+    assert v.has_node("3d") is True
+    assert v.get_node("3d") is v.node
+    assert v.build_node("3d", None, (0, 1, 2), None, None) is v.node
+    assert v.rebuild_node_geometry("3d", (0, 1, 2), None, None) is v.node
+    v.on_stacked_axes_changed((0,))
+
+
+def test_build_slice_request_updates_matrix_on_axis_change():
+    v = _visual(_store())
+    reqs = v.build_slice_request(
+        camera_pos_world=np.zeros(3),
+        frustum_corners_world=None,
+        fov_y_rad=0.0,
+        screen_height_px=100.0,
+        dims_state=_dims_state(displayed=(0, 1, 2)),
+    )
+    assert len(reqs) == 1
+    assert v._last_displayed_axes == (0, 1, 2)
+
+
+def test_build_slice_request_2d_updates_matrix_on_axis_change():
+    v = _visual(_store())
+    reqs = v.build_slice_request_2d(
+        camera_pos_world=np.zeros(3),
+        viewport_width_px=100.0,
+        world_width=10.0,
+        view_min_world=None,
+        view_max_world=None,
+        dims_state=_dims_state(displayed=(1, 2), sliced={0: 0}),
+    )
+    assert len(reqs) == 1
+    assert v._last_displayed_axes == (1, 2)
+
+
+def test_commit_uploads_colors_and_switches_color_mode():
+    v = _visual(_store())
+    data = MeshData(
+        request_id=uuid4(),
+        positions=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+        indices=np.array([[0, 1, 2]], dtype=np.int32),
+        normals=np.tile([0.0, 0.0, 1.0], (3, 1)).astype(np.float32),
+        colors=np.array([[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]], dtype=np.float32),
+        color_mode="face",
+        is_empty=False,
+    )
+    v.on_data_ready([(None, data)])
+    assert v.node.geometry.colors is not None
+    assert v._current_color_mode == "face"
+    assert v._material_3d.color_mode == "face"
+    assert v._material_2d.color_mode == "face"
+
+
+# ── Event handlers — appearance ────────────────────────────────────────────────
+
+
+def test_on_appearance_changed_shared_fields():
+    v = _visual(_store(), appearance=MeshFlatAppearance())
+    v.on_appearance_changed(_appearance_event("color", (1.0, 0.0, 0.0, 1.0)))
+    np.testing.assert_allclose(v._material_3d.color, (1.0, 0.0, 0.0, 1.0))
+    np.testing.assert_allclose(v._material_2d.color, (1.0, 0.0, 0.0, 1.0))
+
+    v.on_appearance_changed(_appearance_event("color_mode", "vertex"))
+    assert v._material_3d.color_mode == "vertex"
+    assert v._current_color_mode == "vertex"
+
+    v.on_appearance_changed(_appearance_event("side", "front"))
+    assert v._material_3d.side == "front"
+
+    v.on_appearance_changed(_appearance_event("depth_test", False))
+    assert v._material_3d.depth_test is False
+    assert v._material_2d.depth_test is False
+
+    v.on_appearance_changed(_appearance_event("depth_write", False))
+    assert v._material_3d.depth_write is False
+    assert v._material_2d.depth_write is False
+
+    v.on_appearance_changed(_appearance_event("depth_compare", "<="))
+    assert v._material_3d.depth_compare == "<="
+    assert v._material_2d.depth_compare == "<="
+
+    v.on_appearance_changed(_appearance_event("render_order", 5))
+    assert v.node.render_order == 5
+
+
+def test_on_appearance_changed_transparency_non_blend_and_blend():
+    v = _visual(_store(), appearance=MeshFlatAppearance(opacity=0.8))
+    v.on_appearance_changed(_appearance_event("transparency_mode", "add"))
+    assert v._material_3d.alpha_mode == "add"
+    assert v._material_2d.alpha_mode == "add"
+
+    # Switching back to blend re-derives the alpha mode from opacity.
+    v.on_appearance_changed(_appearance_event("transparency_mode", "blend"))
+    assert v._material_3d.alpha_mode == "blend"  # opacity 0.8 -> blend
+
+
+def test_on_appearance_changed_flat_only_fields():
+    v = _visual(_store(), appearance=MeshFlatAppearance())
+    v.on_appearance_changed(_appearance_event("wireframe", True))
+    assert v._material_3d.wireframe is True
+    v.on_appearance_changed(_appearance_event("wireframe_thickness", 3.0))
+    assert v._material_3d.wireframe_thickness == pytest.approx(3.0)
+
+
+def test_on_appearance_changed_phong_only_fields():
+    v = _visual(_store(), appearance=MeshPhongAppearance())
+    v.on_appearance_changed(_appearance_event("shininess", 50.0))
+    assert v._material_3d.shininess == pytest.approx(50.0)
+    v.on_appearance_changed(_appearance_event("flat_shading", True))
+    assert v._material_3d.flat_shading is True
+
+
+def test_on_visibility_changed_toggles_node():
+    v = _visual(_store())
+    v.on_visibility_changed(
+        VisualVisibilityChangedEvent(
+            source_id=uuid4(), visual_id=uuid4(), visible=False
+        )
+    )
+    assert v.node.visible is False
+
+
+def test_on_pick_write_changed_applies_to_both_materials():
+    v = _visual(_store())
+    v.on_pick_write_changed(
+        PickWriteChangedEvent(source_id=uuid4(), visual_id=uuid4(), pick_write=False)
+    )
+    assert v._material_3d.pick_write is False
+    assert v._material_2d.pick_write is False
+
+
+def test_on_transform_changed_updates_matrix():
+    v = _visual(_store())
+    v.get_node_for_dims((0, 1, 2))
+    new_tf = AffineTransform.identity(ndim=3)
+    v.on_transform_changed(
+        TransformChangedEvent(
+            source_id=uuid4(), scene_id=uuid4(), visual_id=uuid4(), transform=new_tf
+        )
+    )
+    assert v._transform is new_tf
+
+
+def test_on_aabb_changed_stores_params_without_line():
+    v = _visual(_store())
+    v.on_aabb_changed(_aabb_event("enabled", True))
+    v.on_aabb_changed(_aabb_event("color", "red"))
+    v.on_aabb_changed(_aabb_event("line_width", 3.0))
+    assert v._aabb_enabled is True
+    assert v._aabb_color == "red"
+    assert v._aabb_line_width == 3.0
+
+
+def test_on_aabb_changed_applies_to_line_when_present():
+    v = _visual(_store())
+    v._aabb_line = gfx.Line(
+        gfx.Geometry(positions=np.zeros((2, 3), dtype=np.float32)),
+        gfx.LineSegmentMaterial(),
+    )
+    v.on_aabb_changed(_aabb_event("enabled", False))
+    assert v._aabb_line.visible is False
+    v.on_aabb_changed(_aabb_event("color", (0.0, 1.0, 0.0, 1.0)))
+    np.testing.assert_allclose(v._aabb_line.material.color, (0.0, 1.0, 0.0, 1.0))
+    v.on_aabb_changed(_aabb_event("line_width", 4.0))
+    assert v._aabb_line.material.thickness == pytest.approx(4.0)
+
+
+def test_tick_is_noop():
+    _visual(_store()).tick()
+
+
+# ── Rendered output (controller-driven) ────────────────────────────────────────
+
+
+async def test_render_2d_draws_pixels(controller, render_scene, reslice):
+    pos = np.array([[0, 2, 2], [0, 2, 28], [0, 20, 2], [0, 20, 28]], dtype=np.float32)
+    idx = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int32)
+    store = MeshMemoryStore(positions=pos, indices=idx)
+    scene = controller.add_scene(dim="2d", name="scene")
+    controller.add_mesh(
+        data=store,
+        scene_id=scene.id,
+        appearance=MeshFlatAppearance(color=(1.0, 0.0, 0.0, 1.0)),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    frame = render_scene(controller, scene.id)
+    assert np.count_nonzero(frame[..., 3]) > 0
+
+
+async def test_render_3d_draws_pixels(controller, render_scene, reslice):
+    pos = np.array([[2, 2, 2], [2, 2, 28], [2, 20, 2], [10, 20, 28]], dtype=np.float32)
+    idx = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int32)
+    store = MeshMemoryStore(positions=pos, indices=idx)
+    scene = controller.add_scene(dim="3d", name="scene")
+    controller.add_mesh(
+        data=store,
+        scene_id=scene.id,
+        appearance=MeshFlatAppearance(color=(0.0, 1.0, 0.0, 1.0), side="both"),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    frame = render_scene(controller, scene.id)
+    assert np.count_nonzero(frame[..., 3]) > 0
