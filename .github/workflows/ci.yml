@@ -33,6 +33,14 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
         platform: [ubuntu-latest, macos-latest, windows-latest]
 
+    env:
+      # setup-headless-display-action installs Mesa3D on Windows, which registers a
+      # software OpenGL adapter. wgpu prefers it over D3D12/WARP (WARP reports device
+      # type "CPU", which wgpu's adapter scoring ranks last), landing us on wgpu's
+      # least-complete backend -- where 1D colormap textures sample as black.
+      # Pin Windows to D3D12/WARP. Empty elsewhere, which wgpu treats as unset.
+      WGPU_BACKEND_TYPE: ${{ matrix.platform == 'windows-latest' && 'D3D12' || '' }}
+
     steps:
       - uses: actions/checkout@v7
 
