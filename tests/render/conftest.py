@@ -93,8 +93,33 @@ def offscreen_renderer() -> (
     ) -> np.ndarray:
         canvas = OffscreenRenderCanvas(size=size, pixel_ratio=1)
         renderer = gfx.WgpuRenderer(canvas)
-        canvas.request_draw(lambda: renderer.render(scene, camera))
-        return np.asarray(canvas.draw())
+
+        # ``rendercanvas`` swallows anything the draw callback raises -- silently,
+        # it does not even log it -- and leaves ``_last_image`` as ``None``, so
+        # ``draw()`` returns ``None``.  Capture the error here: otherwise a failed
+        # render reaches the test as ``np.asarray(None)``, and the first pixel
+        # read reports ``IndexError: too many indices for array``, naming neither
+        # the real exception nor the render.
+        draw_errors: list[BaseException] = []
+
+        def _draw() -> None:
+            try:
+                renderer.render(scene, camera)
+            except BaseException as exc:
+                draw_errors.append(exc)
+                raise
+
+        canvas.request_draw(_draw)
+        image = canvas.draw()
+
+        if draw_errors:
+            raise RuntimeError("the offscreen draw callback raised") from draw_errors[0]
+        if image is None:
+            raise RuntimeError(
+                "the offscreen canvas produced no frame, and the draw callback "
+                "did not raise -- rendercanvas never presented an image."
+            )
+        return np.asarray(image)
 
     return _render
 
