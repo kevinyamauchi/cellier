@@ -54,7 +54,6 @@ jobs:
           cache-dependency-path: "pyproject.toml"
           cache: "pip"
 
-
       - name: Install Dependencies
         run: |
           python -m pip install -U pip
@@ -63,6 +62,27 @@ jobs:
 
       - name: Show rendercanvas version
         run: python -m pip show rendercanvas
+
+      - name: Show rendercanvas origin
+        run: |
+          python -m pip show rendercanvas || true
+          python - <<'PY'
+          import json, pathlib, site
+      
+          for d in site.getsitepackages():
+              p = pathlib.Path(d)
+              matches = list(p.glob("rendercanvas-*.dist-info/direct_url.json"))
+              if matches:
+                  data = json.loads(matches[0].read_text())
+                  vcs = data.get("vcs_info", {})
+                  if vcs.get("vcs") == "git":
+                      print(f"rendercanvas source: git ({data.get('url')}) @ {vcs.get('commit_id')}")
+                  else:
+                      print(f"rendercanvas source: direct URL ({data.get('url')})")
+                  break
+          else:
+              print("rendercanvas source: PyPI/index (no direct_url.json)")
+          PY
 
       - name: 🧪 Run Tests
         run: pytest --color=yes --cov --cov-report=xml --cov-report=term-missing
