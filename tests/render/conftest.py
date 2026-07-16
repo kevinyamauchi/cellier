@@ -113,7 +113,14 @@ def offscreen_renderer() -> (
         image = canvas.draw()
 
         if draw_errors:
-            raise RuntimeError("the offscreen draw callback raised") from draw_errors[0]
+            # Lead with the underlying error rather than leaving it to the
+            # ``__cause__`` chain: pytest's ``short test summary info`` prints only
+            # this final line (truncated to terminal width), and that summary is
+            # often all a CI log gets read for.
+            cause = draw_errors[0]
+            raise RuntimeError(
+                f"offscreen draw failed -- {type(cause).__name__}: {cause}"
+            ) from cause
         if image is None:
             raise RuntimeError(
                 "the offscreen canvas produced no frame, and the draw callback "
