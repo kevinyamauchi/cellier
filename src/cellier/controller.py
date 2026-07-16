@@ -3946,6 +3946,21 @@ class CellierController:
         """
         self._render_manager._slice_coordinator.cancel_scene(scene_id)
 
+    def close(self) -> None:
+        """Cancel in-flight slices and close every canvas this viewer owns.
+
+        Releases the render surfaces and GPU resources held by the controller.
+        Closing is explicit because the canvases are owned by the GUI backend,
+        not by Python refcounting, so dropping the controller alone leaks them
+        (see :meth:`CanvasView.close`).
+
+        Safe to call more than once; the controller must not be used afterwards.
+        """
+        for scene_id in list(self._scene_to_canvases):
+            self.cancel_pending_slices(scene_id)
+        self._render_manager.close()
+        self._scene_to_canvases.clear()
+
     def on_aabb_changed(
         self,
         visual_id: UUID,

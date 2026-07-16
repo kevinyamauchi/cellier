@@ -120,7 +120,7 @@ async def test_render_3d_mip_commits_bricks_and_draws(
             color_map="viridis",
             clim=(0.0, 1.0),
             render_mode="mip",
-            force_level=0,
+            force_level=1,
         ),
     )
     controller.add_canvas(scene_id=scene.id)
@@ -189,7 +189,7 @@ async def test_render_mode_and_iso_threshold_update_3d_material(
             clim=(0.0, 1.0),
             render_mode="iso",
             iso_threshold=0.2,
-            force_level=0,
+            force_level=1,
         ),
     )
     controller.add_canvas(scene_id=scene.id)
@@ -223,7 +223,7 @@ async def test_attenuation_update_3d_material(
             clim=(0.0, 1.0),
             render_mode="attenuated_mip",
             attenuation=1.0,
-            force_level=0,
+            force_level=1,
         ),
     )
     controller.add_canvas(scene_id=scene.id)
