@@ -60,23 +60,6 @@ jobs:
           python -m pip install --force-reinstall --upgrade git+https://github.com/pygfx/rendercanvas.git@main # need this for anywidget support
           python -m pip install .[test,pyside,remote,anywidget]
 
-      - name: Verify active rendercanvas provenance
-        run: |
-          python - <<'PY'
-          import importlib, pathlib
-          import rendercanvas
-          print("rendercanvas module:", rendercanvas.__file__)
-          dist_info = next(pathlib.Path(rendercanvas.__file__).resolve().parent.parent.glob("rendercanvas-*.dist-info"), None)
-          print("dist-info:", dist_info)
-          if dist_info:
-              p = dist_info / "direct_url.json"
-              print("direct_url.json exists:", p.exists())
-              if p.exists():
-                  print(p.read_text())
-          importlib.import_module("rendercanvas.anywidget")
-          print("rendercanvas.anywidget import OK")
-          PY
-
       - name: 🧪 Run Tests
         run: pytest --color=yes --cov --cov-report=xml --cov-report=term-missing
 
