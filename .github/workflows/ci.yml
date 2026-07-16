@@ -60,6 +60,74 @@ jobs:
           python -m pip install git+https://github.com/pygfx/rendercanvas.git@main # need this for anywidget support
           python -m pip install .[test,pyside,remote,anywidget]
 
+      # TEMPORARY: diagnosing windows-only render failures (see PR #109).
+      # Remove this step once the adapter/colormap question is settled.
+      - name: 🔍 wgpu adapter + colormap probe (TEMPORARY)
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import pygfx as gfx
+          import wgpu
+          from cmap import Colormap
+          from pygfx.renderers.wgpu import get_shared
+          from rendercanvas.offscreen import RenderCanvas
+
+          print("wgpu", wgpu.__version__, "| pygfx", gfx.__version__)
+
+          print("--- adapters available ---")
+          for a in wgpu.gpu.enumerate_adapters_sync():
+              print(" *", a.summary)
+
+          device = get_shared().device
+          print("--- device pygfx chose ---")
+          print("adapter:", device.adapter.summary)
+          for k, v in device.adapter.info.items():
+              print(f"  {k}: {v}")
+          print("float32-filterable:", "float32-filterable" in device.features)
+          print("features:", sorted(device.features))
+
+          # Pure-pygfx repro of the failing colormap path (no cellier involved):
+          # a 16x16 float32 image ramping 0->1 along X, viridis, clim (0, 1).
+          data = np.repeat(np.linspace(0, 1, 16, dtype=np.float32)[None, :], 16, axis=0)
+          cmap = Colormap("viridis").to_pygfx(N=256)
+          print("--- colormap texture ---")
+          print("dim:", cmap.texture.dim, "format:", cmap.texture.format)
+          print("mag_filter:", cmap.mag_filter, "min_filter:", cmap.min_filter)
+
+          image = gfx.Image(
+              gfx.Geometry(grid=gfx.Texture(data, dim=2)),
+              gfx.ImageBasicMaterial(clim=(0, 1), map=cmap),
+          )
+          scene = gfx.Scene()
+          scene.add(image)
+          camera = gfx.OrthographicCamera()
+          camera.show_object(image)
+
+          canvas = RenderCanvas(size=(64, 64), pixel_ratio=1)
+          renderer = gfx.WgpuRenderer(canvas)
+          canvas.request_draw(lambda: renderer.render(scene, camera))
+          frame = np.asarray(canvas.draw())
+
+          opaque = frame[..., 3] > 0
+          print("--- rendered viridis ramp ---")
+          print("opaque pixels:", int(np.count_nonzero(opaque)), "of", opaque.size)
+          if opaque.any():
+              xs = np.where(opaque.any(axis=0))[0]
+              ys = np.where(opaque.any(axis=1))[0]
+              row = (ys.min() + ys.max()) // 2
+              left = frame[row, xs.min() + 1]
+              right = frame[row, xs.max() - 1]
+              print("left  (expect ~[ 68   2  84 255]):", left)
+              print("right (expect ~[253 231  37 255]):", right)
+              print("distinct rgb values:", len(np.unique(frame[opaque][:, :3], axis=0)))
+              black = bool(left[:3].sum() == 0 and right[:3].sum() == 0)
+              print("VERDICT:", "COLORMAP RETURNS BLACK" if black else "colormap OK")
+          else:
+              print("VERDICT: nothing rendered")
+          PY
+
       - name: 🧪 Run Tests
         run: pytest --color=yes --cov --cov-report=xml --cov-report=term-missing
 
