@@ -117,7 +117,7 @@ async def test_render_3d_commits_bricks_and_draws(
     visual = controller.add_labels_multiscale(
         data=multiscale_labels_store,
         scene_id=scene.id,
-        appearance=MultiscaleLabelsAppearance(force_level=0),
+        appearance=MultiscaleLabelsAppearance(force_level=1),
         render_config=MultiscaleLabelRenderConfig(block_size=8),
     )
     controller.add_canvas(scene_id=scene.id)
@@ -183,7 +183,7 @@ async def test_render_3d_direct_mode_binds_lut(
                 3: (1.0, 0.0, 0.0, 1.0),
                 7: (0.0, 0.0, 1.0, 1.0),
             },
-            force_level=0,
+            force_level=1,
         ),
         render_config=MultiscaleLabelRenderConfig(block_size=8),
     )
@@ -236,7 +236,7 @@ async def test_render_mode_change_updates_3d_material(
     visual = controller.add_labels_multiscale(
         data=multiscale_labels_store,
         scene_id=scene.id,
-        appearance=MultiscaleLabelsAppearance(force_level=0),
+        appearance=MultiscaleLabelsAppearance(force_level=1),
         render_config=MultiscaleLabelRenderConfig(block_size=8),
     )
     controller.add_canvas(scene_id=scene.id)

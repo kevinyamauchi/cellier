@@ -267,6 +267,30 @@ def test_select_levels_forced_no_cache_matches_cache(
         np.testing.assert_array_equal(cached, recomputed)
 
 
+def test_select_levels_forced_clamps(base_layout, scale_vecs, translation_vecs):
+    """Out-of-range levels clamp, mirroring ``select_lod_2d``.
+
+    ``force_level`` is 1-indexed, so ``0`` is out of range.  Without the lower
+    clamp it indexed ``level_grids[-1]`` and silently returned the *coarsest*
+    level -- the exact opposite of the finest level a caller passing ``0`` means.
+    """
+    grids = build_level_grids(base_layout, 2, scale_vecs, translation_vecs)
+
+    # force below 1 clamps to 1 (finest), not to level_grids[-1] (coarsest)
+    low = select_levels_arr_forced(base_layout, force_level=0, level_grids=grids)
+    assert np.all(low[:, 0] == 1)
+
+    # force above n_levels clamps to n_levels
+    high = select_levels_arr_forced(base_layout, force_level=5, level_grids=grids)
+    assert np.all(high[:, 0] == 2)
+
+
+def test_select_levels_forced_no_cache_clamps(base_layout):
+    """The uncached branch clamps too -- it used to raise on ``1 << -1``."""
+    recomputed = select_levels_arr_forced(base_layout, force_level=0)
+    assert np.all(recomputed[:, 0] == 1)
+
+
 # ---------------------------------------------------------------------------
 # sort_arr_by_distance
 # ---------------------------------------------------------------------------

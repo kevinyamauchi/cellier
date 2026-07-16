@@ -258,16 +258,28 @@ def select_levels_arr_forced(
     base_layout : BlockLayout3D
         The block layout of the finest (level 1) resolution.
     force_level : int
-        1-indexed level to force.
+        1-indexed level to force: 1 is the finest level.  Note this does *not*
+        match the 0-indexed naming used for the levels themselves elsewhere
+        (``level_grids[0]`` is the finest, as is a store's ``s0``), so a caller
+        meaning "the finest level" may reasonably reach for ``0``.  Values are
+        clamped to the valid range rather than rejected, matching
+        ``select_lod_2d``: without the lower clamp ``force_level=0`` would index
+        ``level_grids[-1]`` and silently return the *coarsest* level, and the
+        uncached branch below would raise on ``1 << -1``.
     level_grids : list[dict] or None
-        If provided, returns ``level_grids[force_level - 1]["arr"]``
+        If provided, returns ``level_grids[level - 1]["arr"]``
         directly (zero-copy view).
     """
-    if level_grids is not None:
-        return level_grids[force_level - 1]["arr"]
+    level = max(force_level, 1)
 
+    if level_grids is not None:
+        level = min(level, len(level_grids))
+        return level_grids[level - 1]["arr"]
+
+    # The uncached branch has no ``n_levels`` to clamp against, so only the
+    # lower bound applies here.
     gd, gh, gw = base_layout.grid_dims
-    scale = 1 << (force_level - 1)
+    scale = 1 << (level - 1)
     cgd = (gd + scale - 1) // scale
     cgh = (gh + scale - 1) // scale
     cgw = (gw + scale - 1) // scale
@@ -281,7 +293,7 @@ def select_levels_arr_forced(
     gz_c = gz_c.ravel()
     gy_c = gy_c.ravel()
     gx_c = gx_c.ravel()
-    lvl = np.full(len(gz_c), force_level, dtype=np.int32)
+    lvl = np.full(len(gz_c), level, dtype=np.int32)
     return np.stack([lvl, gz_c, gy_c, gx_c], axis=1)
 
 
