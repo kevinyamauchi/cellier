@@ -545,8 +545,9 @@ class RenderManager:
     def remove_scene(self, scene_id: UUID) -> None:
         """Remove a scene and all its visuals and canvases.
 
-        Drops all Python references so GC can reclaim GPU resources.
-        pygfx has no explicit destroy API; reference dropping is sufficient.
+        Visuals are released by dropping references (pygfx has no explicit
+        destroy API), but each canvas is closed explicitly -- see
+        :meth:`CanvasView.close`, which GC alone cannot substitute for.
 
         Parameters
         ----------
@@ -564,13 +565,12 @@ class RenderManager:
         ]
         for cid in canvas_ids:
             self._canvas_to_scene.pop(cid)
-            self._canvases.pop(cid)
+            self._canvases.pop(cid).close()
             self._active_gestures.pop(cid, None)
             self._pick_details_enabled.pop(cid, None)
-        # CanvasView references dropped; GC handles Qt widget + wgpu renderer.
 
     def remove_canvas(self, canvas_id: UUID) -> None:
-        """Remove a single canvas and drop its render references.
+        """Remove a single canvas, closing it and dropping its references.
 
         Parameters
         ----------
@@ -583,10 +583,21 @@ class RenderManager:
             If ``canvas_id`` is not registered.
         """
         self._canvas_to_scene.pop(canvas_id)
-        self._canvases.pop(canvas_id)
+        self._canvases.pop(canvas_id).close()
         self._active_gestures.pop(canvas_id, None)
         self._pick_details_enabled.pop(canvas_id, None)
-        # CanvasView reference dropped; GC handles Qt widget + wgpu renderer.
+
+    def close(self) -> None:
+        """Close every registered canvas and drop the render references.
+
+        Safe to call more than once.
+        """
+        for canvas_view in list(self._canvases.values()):
+            canvas_view.close()
+        self._canvases.clear()
+        self._canvas_to_scene.clear()
+        self._active_gestures.clear()
+        self._pick_details_enabled.clear()
 
     def _make_tick_fn(self, scene_id: UUID):
         """Return a callable that ticks all visuals in *scene_id*."""

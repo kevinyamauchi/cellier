@@ -83,6 +83,8 @@ class CanvasView:
         self._event_bus: EventBus | None = event_bus
         self._camera_dirty: bool = False
         self._tick_visuals_fn: Callable[[], None] | None = None
+        self._closed: bool = False
+        self._resize_filter: object | None = None
 
         self._fov = fov
         self._depth_range = depth_range
@@ -197,6 +199,8 @@ class CanvasView:
                 string.
                 """
 
+                _cellier_closing = False
+
                 def _rfb_handle_msg(self, widget, content, buffers) -> None:
                     super()._rfb_handle_msg(widget, content, buffers)
                     if content.get("type") == "resize":
@@ -204,6 +208,17 @@ class CanvasView:
                         if cb is not None:
                             w, h = self._size_info["logical_size"]
                             cb(round(w), round(h))
+
+                def _rc_close(self) -> None:
+                    # rendercanvas's anywidget backend closes re-entrantly:
+                    # _rc_close dispatches a synthetic "close" message whose
+                    # handler calls close() again, and it only sets _is_closed
+                    # *after* that dispatch -- while close() never checks it
+                    # anyway.  Left alone this recurses until the stack blows.
+                    if self._cellier_closing:
+                        return
+                    self._cellier_closing = True
+                    super()._rc_close()
 
             canvas = _CellierAnywidgetCanvas(
                 size=size or (600, 600), update_mode="continuous"
@@ -273,6 +288,34 @@ class CanvasView:
         for the anywidget backend.
         """
         return self._canvas
+
+    def close(self) -> None:
+        """Close the canvas, stopping its draw loop and releasing the GPU.
+
+        Dropping the last Python reference to a ``CanvasView`` is *not* enough
+        to reclaim it.  The canvas is a parentless (top-level) render widget,
+        so the backend owns it and keeps it alive; through its draw callback
+        and event filter it in turn pins this view, the ``WgpuRenderer``, and
+        the whole object graph they reach.  Closing the canvas is what breaks
+        that chain, after which normal refcounting reclaims everything.
+
+        Safe to call more than once, and safe when the GUI backend has already
+        destroyed the canvas itself (e.g. the user closed the window).
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._overlays.clear()
+
+        try:
+            if self._resize_filter is not None:
+                self._canvas.removeEventFilter(self._resize_filter)
+            self._canvas.close()
+        except RuntimeError:
+            # Qt already deleted the underlying C++ widget; nothing to release.
+            pass
+        finally:
+            self._resize_filter = None
 
     def capture_reslicing_request(
         self,
@@ -553,6 +596,11 @@ class CanvasView:
             )
 
     def _draw_frame(self) -> None:
+        # A draw already queued with the backend can still arrive after close();
+        # rendering it would touch a released surface.
+        if self._closed:
+            return
+
         # Detect camera changes by comparing against the cached state.
         current_state = self.capture_camera_state()
         if current_state != self._last_camera_state and not self._applying_model_state:
