@@ -18,9 +18,6 @@ In scope:
 
 Not in scope:
 
-- A full application. If you are interested in a ready-to-use viewer, there are many great projects such as napari, ndv, and FIJI.
+- A full application. If you are interested in a ready-to-use viewer, there are many great projects such as [napari](https://napari.org/), [ndv](https://napari.org/), and [FIJI](https://imagej.net/software/fiji/downloads).
 - A plugin interface
-
-
-## Documentation
 
