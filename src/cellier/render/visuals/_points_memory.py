@@ -8,6 +8,7 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.data.points._points_requests import PointsSliceRequest
+from cellier.render.shaders._alpha_modulated import AlphaPointsMaterial
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -45,13 +46,20 @@ def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
     return m
 
 
-def _build_material(appearance: PointsMarkerAppearance) -> gfx.PointsMaterial:
-    """Construct a PointsMaterial from a PointsMarkerAppearance."""
-    mat = gfx.PointsMaterial(
+def _build_material(appearance: PointsMarkerAppearance) -> AlphaPointsMaterial:
+    """Construct the points material from a PointsMarkerAppearance.
+
+    ``AlphaPointsMaterial`` rather than ``gfx.PointsMaterial`` so every
+    in-memory visual shares one pipeline shape with the graph visual.  It
+    reads an all-ones ``alphas`` buffer here and is otherwise identical;
+    see ``render/shaders/_alpha_modulated.py``.
+    """
+    mat = AlphaPointsMaterial(
         size=appearance.size,
         size_space=appearance.size_space,
         color=appearance.color,
         color_mode=appearance.color_mode,
+        size_mode=appearance.size_mode,
         opacity=appearance.opacity,
         depth_test=appearance.depth_test,
         depth_write=appearance.depth_write,
@@ -130,11 +138,13 @@ class GFXPointsMemoryVisual:
         # Plumb the model's pick_write flag into the pygfx material so the
         # pick buffer records this visual; pygfx materials default to False.
         self._material.pick_write = visual_model.pick_write
-        self._empty_material = gfx.PointsMaterial(color=(0, 0, 0, 0), opacity=0.0)
+        self._empty_material = AlphaPointsMaterial(color=(0, 0, 0, 0), opacity=0.0)
 
-        # Track color_mode and size_mode as instance state to detect transitions.
-        self._current_color_mode: str = appearance.color_mode
-        self._current_size_mode: str = "uniform"
+        # The declared color_mode, honoured verbatim.  It is a caller
+        # declaration of where RGB comes from and is never inferred from
+        # the data nor written back at commit time (D20).
+        self._color_mode: str = appearance.color_mode
+        self._size_mode: str = appearance.size_mode
         self._is_empty: bool = True
 
         # Maps each rendered-buffer row to its index in the store's full point
@@ -144,7 +154,10 @@ class GFXPointsMemoryVisual:
         # None means identity (no filtering / placeholder).
         self._original_indices: np.ndarray | None = None
 
-        geom = gfx.Geometry(positions=_PLACEHOLDER_POSITIONS.copy())
+        geom = gfx.Geometry(
+            positions=_PLACEHOLDER_POSITIONS.copy(),
+            alphas=np.ones(1, dtype=np.float32),
+        )
         self.node = gfx.Points(geom, self._empty_material)
         self.node.render_order = appearance.render_order
 
@@ -301,7 +314,11 @@ class GFXPointsMemoryVisual:
         Pads 2D positions to 3D with z=0.
         Applies axis reversal for 3D data to match pygfx coordinate order.
         Swaps material between _material and _empty_material as needed.
-        Updates _current_color_mode when the incoming data changes mode.
+
+        ``color_mode`` and ``size_mode`` are written from the *appearance*,
+        never from the data (D20).  A declared ``"vertex"`` with nothing in
+        the store to back it raises here rather than silently falling back
+        to uniform, which is the exact class of behaviour D20 removes.
 
         Coordinate convention (DO NOT reorder positions elsewhere):
         - 3D path: positions[:, [2, 1, 0]] reverses (z, y, x) → (x, y, z)
@@ -324,25 +341,36 @@ class GFXPointsMemoryVisual:
             # positions anywhere else in the pipeline.
             pos3d = np.ascontiguousarray(positions)[:, [2, 1, 0]]
 
-        geom_kwargs: dict = {"positions": pos3d}
-
         colors = points_data.colors
+        if self._color_mode == "vertex" and colors is None and not points_data.is_empty:
+            raise ValueError(
+                f"Visual {self.visual_model_id}: appearance declares "
+                "color_mode='vertex' but the points store carries no "
+                "per-point colors. Set color_mode='uniform', or give the "
+                "store colors."
+            )
+
+        # An all-ones alpha buffer: the material multiplies it in, so this
+        # is visually identical to the stock material.
+        geom_kwargs: dict = {
+            "positions": pos3d,
+            "alphas": np.ones(n_points, dtype=np.float32),
+        }
         if colors is not None:
             geom_kwargs["colors"] = np.ascontiguousarray(colors)
 
         sizes = points_data.sizes
+        if self._size_mode == "vertex" and sizes is None and not points_data.is_empty:
+            raise ValueError(
+                f"Visual {self.visual_model_id}: appearance declares "
+                "size_mode='vertex' but the points store carries no "
+                "per-point sizes. Set size_mode='uniform', or give the "
+                "store sizes."
+            )
         if sizes is not None:
             geom_kwargs["sizes"] = np.ascontiguousarray(sizes)
 
         self.node.geometry = gfx.Geometry(**geom_kwargs)
-
-        # Update color_mode on live material if it changed.
-        incoming_color_mode = (
-            points_data.color_mode if colors is not None else "uniform"
-        )
-        if incoming_color_mode != self._current_color_mode and not points_data.is_empty:
-            self._current_color_mode = incoming_color_mode
-            self._material.color_mode = incoming_color_mode
 
         # Select material.
         target = self._empty_material if points_data.is_empty else self._material
@@ -384,12 +412,13 @@ class GFXPointsMemoryVisual:
     def on_appearance_changed(self, event: AppearanceChangedEvent) -> None:
         """Apply appearance field changes to the live material.
 
-        ``color_mode`` changes also update ``_current_color_mode`` so
-        the next ``_commit`` call does not overwrite them.
+        ``color_mode`` and ``size_mode`` are applied straight to the
+        material; nothing in ``_commit`` overwrites them (D20).
 
-        Note: ``size_space`` is a constructor-only parameter on
-        ``gfx.PointsMaterial``; changes to ``size_space`` require
-        rebuilding the material.
+        ``size_space`` is applied live.  It was previously documented here
+        as constructor-only, which is not true of the pinned pygfx:
+        assigning it on a live material re-renders (measured 80 -> 1280 lit
+        pixels for a 10-unit marker under a 4x world-to-screen scale).
         """
         name = event.field_name
         val = event.new_value
@@ -397,7 +426,12 @@ class GFXPointsMemoryVisual:
             self._material.color = val
         elif name == "color_mode":
             self._material.color_mode = val
-            self._current_color_mode = val
+            self._color_mode = val
+        elif name == "size_mode":
+            self._material.size_mode = val
+            self._size_mode = val
+        elif name == "size_space":
+            self._material.size_space = val
         elif name == "opacity":
             self._material.opacity = val
         elif name == "size":
