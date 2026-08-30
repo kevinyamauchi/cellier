@@ -13,18 +13,21 @@ import pytest
 
 pytest.importorskip("anywidget")
 
-from cellier.convenience import Viewer  # noqa: E402
-from cellier.convenience._hosts import JupyterHost  # noqa: E402
-from cellier.convenience.layout._anywidget_renderer import (  # noqa: E402
+from cellier.convenience import Viewer
+from cellier.convenience._hosts import JupyterHost
+from cellier.convenience.gui import (
+    ChannelControlsConfig,
+)
+from cellier.convenience.layout._anywidget_renderer import (
     _render_appearance_controls,
     _render_center,
     _render_channel_controls,
     _RenderView,
 )
-from cellier.convenience.layout._spec import Grid, HStack, VStack  # noqa: E402
-from cellier.data.image._image_memory_store import ImageMemoryStore  # noqa: E402
-from cellier.visuals._channel_appearance import ChannelAppearance  # noqa: E402
-from cellier.visuals._image_memory import InMemoryImageAppearance  # noqa: E402
+from cellier.convenience.layout._spec import Grid, HStack, VStack
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.visuals._channel_appearance import ChannelAppearance
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 class _FakeHost:
@@ -62,7 +65,9 @@ def _multichannel_viewer():
         0: ChannelAppearance(color_map="red", clim=(0.0, 1.0)),
         1: ChannelAppearance(color_map="green", clim=(0.0, 1.0)),
     }
-    viewer.add_multichannel_image(store, channel_axis=1, channels=channels, controls={})
+    viewer.add_multichannel_image(
+        store, channel_axis=1, channels=channels, controls=ChannelControlsConfig()
+    )
     return viewer
 
 

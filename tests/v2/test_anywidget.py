@@ -15,6 +15,7 @@ import pytest
 rendercanvas_anywidget = pytest.importorskip("rendercanvas.anywidget")
 
 from cellier.controller import CellierController  # noqa: E402
+from cellier.convenience.gui import InMemoryImageControlsConfig  # noqa: E402
 from cellier.render.canvas_view import CanvasView  # noqa: E402
 from cellier.scene.dims import (  # noqa: E402
     AxisAlignedSelection,
@@ -389,7 +390,7 @@ def _image_viewer_with_controls():
     viewer.add_image(
         store,
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
     return viewer, axis_ranges_from_viewer(viewer)
 
@@ -1007,7 +1008,7 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     viewer.add_image(
         store,
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
     ranges = axis_ranges_from_viewer(viewer)

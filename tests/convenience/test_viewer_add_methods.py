@@ -12,6 +12,11 @@ import pytest
 
 from cellier.controller import CellierController
 from cellier.convenience import Viewer
+from cellier.convenience.gui import (
+    ChannelControlsConfig,
+    InMemoryImageControlsConfig,
+    MultiscaleImageControlsConfig,
+)
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
@@ -152,56 +157,9 @@ def test_add_multichannel_image_multiscale_records_controls(
         multichannel_multiscale_store,
         channel_axis=0,
         channels=channels,
-        controls={},
+        controls=ChannelControlsConfig(),
     )
     assert visual.id in viewer._controls_configs
-
-
-# ---------------------------------------------------------------------------
-# Dict-coercion branches
-# ---------------------------------------------------------------------------
-
-
-def test_add_labels_accepts_dict_appearance(labels_store):
-    viewer = Viewer(("z", "y", "x"))
-    visual = viewer.add_labels(labels_store, appearance={})
-    assert isinstance(visual.appearance, InMemoryLabelsAppearance)
-
-
-def test_add_mesh_accepts_dict_appearance_with_discriminator(mesh_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
-    with pytest.warns(UserWarning, match="requires lights"):
-        visual = viewer.add_mesh(mesh_store, appearance={"appearance_type": "phong"})
-    assert isinstance(visual.appearance, MeshPhongAppearance)
-
-
-def test_add_points_accepts_dict_appearance(points_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
-    visual = viewer.add_points(points_store, appearance={"size": 12.0})
-    assert isinstance(visual.appearance, PointsMarkerAppearance)
-    assert visual.appearance.size == pytest.approx(12.0)
-
-
-def test_add_lines_accepts_dict_appearance(lines_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
-    visual = viewer.add_lines(lines_store, appearance={"thickness": 4.0})
-    assert isinstance(visual.appearance, LinesMemoryAppearance)
-    assert visual.appearance.thickness == pytest.approx(4.0)
-
-
-def test_add_image_multiscale_accepts_dict_appearance(multiscale_image_store):
-    viewer = Viewer(("z", "y", "x"))
-    visual = viewer.add_image_multiscale(
-        multiscale_image_store,
-        appearance={"color_map": "viridis", "render_mode": "mip"},
-    )
-    assert isinstance(visual.appearance, MultiscaleImageAppearance)
-
-
-def test_add_labels_multiscale_accepts_dict_appearance(multiscale_labels_store):
-    viewer = Viewer(("z", "y", "x"))
-    visual = viewer.add_labels_multiscale(multiscale_labels_store, appearance={})
-    assert isinstance(visual.appearance, MultiscaleLabelsAppearance)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +190,7 @@ def test_add_image_records_controls_config(image_store):
     visual = viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
     assert visual.id in viewer._controls_configs
 
@@ -242,7 +200,7 @@ def test_add_image_multiscale_records_controls_config(multiscale_image_store):
     visual = viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
-        controls={"appearance": ["color_map"]},
+        controls=MultiscaleImageControlsConfig(appearance=["color_map"]),
     )
     assert visual.id in viewer._controls_configs
 

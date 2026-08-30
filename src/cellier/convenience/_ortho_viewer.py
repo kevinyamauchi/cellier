@@ -23,21 +23,6 @@ from cellier.scene.scene import Scene
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cellier.convenience._kwarg_dicts import (
-        ChannelAppearanceKwargs,
-        ChannelControlsKwargs,
-        GraphAppearanceKwargs,
-        InMemoryImageAppearanceKwargs,
-        InMemoryLabelsAppearanceKwargs,
-        LinesMemoryAppearanceKwargs,
-        MeshFlatAppearanceKwargs,
-        MeshPhongAppearanceKwargs,
-        MultiscaleImageAppearanceKwargs,
-        MultiscaleImageRenderConfigKwargs,
-        MultiscaleLabelRenderConfigKwargs,
-        MultiscaleLabelsAppearanceKwargs,
-        PointsMarkerAppearanceKwargs,
-    )
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         ChannelControlsConfig,
@@ -485,7 +470,7 @@ class OrthoViewer:
     def add_image(
         self,
         data: ImageMemoryStore | UUID,
-        appearance: BaseImageAppearance | InMemoryImageAppearanceKwargs,
+        appearance: BaseImageAppearance,
         name: str = "image",
     ) -> dict[str, ImageVisual]:
         """Add an in-memory image to every panel from a single data store.
@@ -494,10 +479,8 @@ class OrthoViewer:
         ----------
         data : ImageMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseImageAppearance or dict
-            Appearance parameters.  Accepts an ``InMemoryImageAppearance``
-            instance or a plain dict with the same keys (see
-            ``InMemoryImageAppearanceKwargs``).
+        appearance : BaseImageAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
 
@@ -506,24 +489,17 @@ class OrthoViewer:
         dict[str, ImageVisual]
             The per-panel visuals keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``.
         """
-        from cellier.visuals._image_memory import InMemoryImageAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            InMemoryImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_image(
-                store, scene.id, resolved, f"{name}_{key}"
+                store, scene.id, appearance, f"{name}_{key}"
             )
         )
 
     def add_labels(
         self,
         data: LabelMemoryStore | UUID,
-        appearance: BaseLabelsAppearance | InMemoryLabelsAppearanceKwargs | None = None,
+        appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
     ) -> dict[str, LabelMemoryVisual]:
@@ -533,9 +509,8 @@ class OrthoViewer:
         ----------
         data : LabelMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseLabelsAppearance, dict, or None
-            Appearance parameters.  Accepts an ``InMemoryLabelsAppearance``
-            instance or a plain dict (see ``InMemoryLabelsAppearanceKwargs``).
+        appearance : BaseLabelsAppearance or None
+            Appearance parameters.
             Defaults to ``InMemoryLabelsAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -546,26 +521,17 @@ class OrthoViewer:
         -------
         dict[str, LabelMemoryVisual]
         """
-        from cellier.visuals._label_memory import InMemoryLabelsAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            InMemoryLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_labels(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
 
     def add_mesh(
         self,
         data: MeshMemoryStore | UUID,
-        appearance: MeshAppearance
-        | MeshFlatAppearanceKwargs
-        | MeshPhongAppearanceKwargs,
+        appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
     ) -> dict[str, MeshVisual]:
@@ -575,7 +541,7 @@ class OrthoViewer:
         ----------
         data : MeshMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : MeshFlatAppearance, MeshPhongAppearance, or dict
+        appearance : MeshFlatAppearance, MeshPhongAppearance,
             Appearance parameters.  When passing a dict, include the
             ``appearance_type`` key (``"flat"`` or ``"phong"``).
         name : str
@@ -587,26 +553,17 @@ class OrthoViewer:
         -------
         dict[str, MeshVisual]
         """
-        from pydantic import TypeAdapter
-
-        from cellier.visuals._mesh_memory import MeshAppearance as _MeshAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            TypeAdapter(_MeshAppearance).validate_python(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_mesh(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
 
     def add_points(
         self,
         data: PointsMemoryStore | UUID,
-        appearance: PointsMarkerAppearance | PointsMarkerAppearanceKwargs | None = None,
+        appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
     ) -> dict[str, PointsVisual]:
@@ -616,8 +573,8 @@ class OrthoViewer:
         ----------
         data : PointsMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : PointsMarkerAppearance, dict, or None
-            Appearance parameters (see ``PointsMarkerAppearanceKwargs``).
+        appearance : PointsMarkerAppearance or None
+            Appearance parameters.
             Defaults to ``PointsMarkerAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -628,26 +585,17 @@ class OrthoViewer:
         -------
         dict[str, PointsVisual]
         """
-        from cellier.visuals._points_memory import (
-            PointsMarkerAppearance as _PointsMarkerAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _PointsMarkerAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_points(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
 
     def add_graph(
         self,
         data: GraphMemoryStore | UUID,
-        appearance: GraphAppearance | GraphAppearanceKwargs | None = None,
+        appearance: GraphAppearance | None = None,
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
@@ -658,8 +606,8 @@ class OrthoViewer:
         ----------
         data : GraphMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : GraphAppearance, dict, or None
-            Appearance parameters (see ``GraphAppearanceKwargs``). Defaults
+        appearance : GraphAppearance or None
+            Appearance parameters. Defaults
             to ``GraphAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -673,26 +621,17 @@ class OrthoViewer:
         -------
         dict[str, GraphVisual]
         """
-        from cellier.visuals._graph_memory import (
-            GraphAppearance as _GraphAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _GraphAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_graph(
-                store, scene.id, resolved, f"{name}_{key}", transform, trail
+                store, scene.id, appearance, f"{name}_{key}", transform, trail
             )
         )
 
     def add_lines(
         self,
         data: LinesMemoryStore | UUID,
-        appearance: LinesMemoryAppearance | LinesMemoryAppearanceKwargs | None = None,
+        appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
     ) -> dict[str, LinesVisual]:
@@ -702,8 +641,8 @@ class OrthoViewer:
         ----------
         data : LinesMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : LinesMemoryAppearance, dict, or None
-            Appearance parameters (see ``LinesMemoryAppearanceKwargs``).
+        appearance : LinesMemoryAppearance or None
+            Appearance parameters.
             Defaults to ``LinesMemoryAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -714,30 +653,19 @@ class OrthoViewer:
         -------
         dict[str, LinesVisual]
         """
-        from cellier.visuals._lines_memory import (
-            LinesMemoryAppearance as _LinesMemoryAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _LinesMemoryAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_lines(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
 
     def add_image_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleImageAppearance | MultiscaleImageAppearanceKwargs,
+        appearance: MultiscaleImageAppearance,
         name: str = "image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
     ) -> dict[str, MultiscaleImageVisual]:
         """Add a multiscale image to every panel from a single data store.
@@ -746,13 +674,12 @@ class OrthoViewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale store or UUID of an already-registered store.
-        appearance : MultiscaleImageAppearance or dict
-            Appearance parameters (see ``MultiscaleImageAppearanceKwargs``).
+        appearance : MultiscaleImageAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleImageRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
 
@@ -760,31 +687,14 @@ class OrthoViewer:
         -------
         dict[str, MultiscaleImageVisual]
         """
-        from cellier.visuals._image import (
-            MultiscaleImageAppearance as _MultiscaleImageAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_appearance = (
-            _MultiscaleImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_image_multiscale(
                 store,
                 scene.id,
-                resolved_appearance,
+                appearance,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
             )
         )
@@ -792,11 +702,9 @@ class OrthoViewer:
     def add_labels_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleLabelsAppearance | MultiscaleLabelsAppearanceKwargs,
+        appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
-        render_config: MultiscaleLabelRenderConfig
-        | MultiscaleLabelRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
     ) -> dict[str, MultiscaleLabelVisual]:
         """Add a multiscale label image to every panel from one data store.
@@ -805,13 +713,12 @@ class OrthoViewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale label store or UUID of an already-registered store.
-        appearance : MultiscaleLabelsAppearance or dict
-            Appearance parameters (see ``MultiscaleLabelsAppearanceKwargs``).
+        appearance : MultiscaleLabelsAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleLabelRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleLabelRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleLabelRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
 
@@ -819,31 +726,14 @@ class OrthoViewer:
         -------
         dict[str, MultiscaleLabelVisual]
         """
-        from cellier.visuals._labels import (
-            MultiscaleLabelRenderConfig as _MultiscaleLabelRenderConfig,
-        )
-        from cellier.visuals._labels import (
-            MultiscaleLabelsAppearance as _MultiscaleLabelsAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_appearance = (
-            _MultiscaleLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleLabelRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         return self._fan_out(
             lambda key, scene: self._controller.add_labels_multiscale(
                 store,
                 scene.id,
-                resolved_appearance,
+                appearance,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
             )
         )
@@ -852,11 +742,11 @@ class OrthoViewer:
         self,
         data: ImageMemoryStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
     ) -> dict[str, MultichannelImageVisual]:
         """Add an in-memory multichannel image to every panel from one store.
 
@@ -866,40 +756,29 @@ class OrthoViewer:
             Backing data store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index (see
-            ``ChannelAppearanceKwargs``).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration shared across all four panels.
-            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
-            ``ChannelControlsKwargs``). When ``None`` (default), no channel
-            controls are created.
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration shared across all four
+            panels. When ``None`` (default), no channel controls are created.
 
         Returns
         -------
         dict[str, MultichannelImageVisual]
         """
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image(
                 store,
                 scene.id,
                 channel_axis,
-                resolved_channels,
+                channels,
                 f"{name}_{key}",
                 max_channels_2d,
                 max_channels_3d,
@@ -912,15 +791,13 @@ class OrthoViewer:
         self,
         data: BaseDataStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
     ) -> dict[str, MultichannelMultiscaleImageVisual]:
         """Add a multiscale multichannel image to every panel from one store.
 
@@ -930,55 +807,35 @@ class OrthoViewer:
             Backing multiscale store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index (see
-            ``ChannelAppearanceKwargs``).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleImageRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration shared across all four panels.
-            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
-            ``ChannelControlsKwargs``). When ``None`` (default), no channel
-            controls are created.
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration shared across all four
+            panels. When ``None`` (default), no channel controls are created.
 
         Returns
         -------
         dict[str, MultichannelMultiscaleImageVisual]
         """
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image_multiscale(
                 store,
                 scene.id,
                 channel_axis,
-                resolved_channels,
+                channels,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
                 max_channels_2d,
                 max_channels_3d,
@@ -990,20 +847,17 @@ class OrthoViewer:
     def _record_channel_controls(
         self,
         visuals: dict[str, object],
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None,
+        controls: ChannelControlsConfig | None,
     ) -> None:
         """Record a channel controls config for a fanned-out multichannel add.
 
-        Stores the resolved config keyed by a representative (first-panel)
-        visual id, and maps that id to every panel's sibling visual id so one
-        channel widget can drive all four panels (design section 7.4).
+        Stores the config keyed by a representative (first-panel) visual id,
+        and maps that id to every panel's sibling visual id so one channel
+        widget can drive all four panels (design section 7.4).
         """
-        from cellier.convenience.gui._controls_config import resolve_channel_controls
-
-        resolved = resolve_channel_controls(controls)
-        if resolved is None or not visuals:
+        if controls is None or not visuals:
             return
         panel_ids = [v.id for v in visuals.values()]
         rep_id = panel_ids[0]
-        self._controls_configs[rep_id] = resolved
+        self._controls_configs[rep_id] = controls
         self._channel_visual_groups[rep_id] = panel_ids

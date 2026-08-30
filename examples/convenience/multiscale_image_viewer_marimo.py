@@ -57,14 +57,20 @@ def _():
         axis_ranges_from_viewer,
         display,
     )
-    from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.gui import (
+        MultiscaleImageControlsConfig,
+        build_canvas_widget,
+    )
     from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
     from cellier.transform import AffineTransform
+    from cellier.visuals import MultiscaleImageAppearance
 
     return (
         AffineTransform,
         AppearanceControls,
         Layout,
+        MultiscaleImageAppearance,
+        MultiscaleImageControlsConfig,
         MultiscaleZarrDataStore,
         Path,
         Viewer,
@@ -169,7 +175,14 @@ def _(Path, block_average, concentric_shells, tempfile, write_zarr3):
 
 @app.cell
 def _(
-    AffineTransform, MultiscaleZarrDataStore, Viewer, make_dataset_info, tmpdir, volume
+    AffineTransform,
+    MultiscaleImageAppearance,
+    MultiscaleImageControlsConfig,
+    MultiscaleZarrDataStore,
+    Viewer,
+    make_dataset_info,
+    tmpdir,
+    volume,
 ):
     store = MultiscaleZarrDataStore(
         zarr_path=str(tmpdir),
@@ -189,16 +202,16 @@ def _(
 
     viewer.add_image_multiscale(
         store,
-        appearance={
-            "color_map": "viridis",
-            "clim": (0.0, 1.0),
-            "render_mode": "iso",
-            "iso_threshold": 0.45,
-            "lod_bias": 1.0,
-            "attenuation": 1.0,
-        },
-        controls={
-            "appearance": [
+        appearance=MultiscaleImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            render_mode="iso",
+            iso_threshold=0.45,
+            lod_bias=1.0,
+            attenuation=1.0,
+        ),
+        controls=MultiscaleImageControlsConfig(
+            appearance=[
                 "color_map",
                 "clim",
                 "render_mode",
@@ -206,7 +219,7 @@ def _(
                 "attenuation",
                 "lod_bias",
             ],
-            "colormap_names": [
+            colormap_names=[
                 "grays",
                 "viridis",
                 "plasma",
@@ -218,9 +231,9 @@ def _(
                 "bwr",
                 "RdYlBu",
             ],
-            "clim_range": (0.0, 1.0),
-            "dataset_info": make_dataset_info(store, volume),
-        },
+            clim_range=(0.0, 1.0),
+            dataset_info=make_dataset_info(store, volume),
+        ),
     )
     return store, viewer
 

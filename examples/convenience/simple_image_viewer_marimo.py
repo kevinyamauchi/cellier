@@ -46,9 +46,11 @@ def _():
     )
     from cellier.convenience.gui import build_canvas_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
+    from cellier.visuals import InMemoryImageAppearance
 
     return (
         ImageMemoryStore,
+        InMemoryImageAppearance,
         Layout,
         Viewer,
         axis_ranges_from_viewer,
@@ -66,7 +68,7 @@ def _(binary_blobs, np):
 
 
 @app.cell
-def _(ImageMemoryStore, Viewer, blobs_3d):
+def _(ImageMemoryStore, InMemoryImageAppearance, Viewer, blobs_3d):
     viewer = Viewer(axis_labels=("z", "y", "x"), dim="2d", gui="anywidget")
 
     store = ImageMemoryStore(data=blobs_3d, name="blobs")
@@ -74,12 +76,12 @@ def _(ImageMemoryStore, Viewer, blobs_3d):
 
     viewer.add_image(
         store,
-        appearance={
-            "color_map": "viridis",
-            "clim": (0.0, 1.0),
-            "render_mode": "iso",
-            "iso_threshold": 0.5,
-        },
+        appearance=InMemoryImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            render_mode="iso",
+            iso_threshold=0.5,
+        ),
         name="blobs",
     )
     return (viewer,)

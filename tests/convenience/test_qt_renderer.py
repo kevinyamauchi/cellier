@@ -15,23 +15,27 @@ import pytest
 pytest.importorskip("qtpy")
 pytest.importorskip("superqt")
 
-from cellier.convenience import Viewer  # noqa: E402
-from cellier.convenience.layout._qt_renderer import (  # noqa: E402
+from cellier.convenience import Viewer
+from cellier.convenience.gui import (
+    InMemoryImageControlsConfig,
+    MultiscaleImageControlsConfig,
+)
+from cellier.convenience.layout._qt_renderer import (
     _render_appearance_controls_qt,
     _render_center_qt,
     _render_dock_qt,
     _wrap_dock_widget,
     render_qt,
 )
-from cellier.convenience.layout._spec import (  # noqa: E402
+from cellier.convenience.layout._spec import (
     AppearanceControls,
     Grid,
     HStack,
     Layout,
     VStack,
 )
-from cellier.visuals._image import MultiscaleImageAppearance  # noqa: E402
-from cellier.visuals._image_memory import InMemoryImageAppearance  # noqa: E402
+from cellier.visuals._image import MultiscaleImageAppearance
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 def _leaf():
@@ -56,7 +60,7 @@ def test_appearance_controls_builds_colormap_and_clim_groups(qtbot, image_store)
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
     container = _render_appearance_controls_qt(viewer)
@@ -70,7 +74,9 @@ def test_appearance_controls_explicit_clim_range(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["clim"], "clim_range": (0.0, 5.0)},
+        controls=InMemoryImageControlsConfig(
+            appearance=["clim"], clim_range=(0.0, 5.0)
+        ),
     )
 
     container = _render_appearance_controls_qt(viewer)
@@ -84,7 +90,7 @@ def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_s
     viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
-        controls={"appearance": ["render_mode", "lod_bias"]},
+        controls=MultiscaleImageControlsConfig(appearance=["render_mode", "lod_bias"]),
     )
 
     container = _render_appearance_controls_qt(viewer)
@@ -169,7 +175,7 @@ def test_render_dock_stack_of_appearance(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map"]),
     )
 
     rendered = _render_dock_qt(VStack(items=[AppearanceControls()]), viewer)
@@ -189,7 +195,7 @@ def test_render_qt_builds_window_with_dock(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
     leaf = _leaf()
     layout = Layout(center=leaf, right_dock=AppearanceControls())

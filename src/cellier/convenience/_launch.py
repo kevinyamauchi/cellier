@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Callable, Literal
 if TYPE_CHECKING:
     from sidecar import Sidecar
 
-    from cellier.convenience._kwarg_dicts import SidecarKwargs
     from cellier.convenience._ortho_viewer import OrthoViewer
     from cellier.convenience._sidecar import SidecarOptions
     from cellier.convenience._viewer import Viewer
@@ -174,7 +173,7 @@ def display(
     fit: FitMode = "ready",
     on_ready: Callable[[], None] | None = None,
     host: str | None = None,
-    sidecar: bool | SidecarOptions | SidecarKwargs | None = None,
+    sidecar: bool | SidecarOptions | None = None,
 ) -> object:
     """Compose and present an anywidget viewer non-blockingly.
 
@@ -198,10 +197,10 @@ def display(
         has committed to the GPU.
     host : "jupyter", "marimo", or None
         Explicit host override; auto-detected when ``None``.
-    sidecar : True, SidecarOptions, dict, or None
+    sidecar : True, SidecarOptions, or None
         Present the viewer in a ``jupyterlab-sidecar`` tab instead of below
         the cell.  ``True`` uses :class:`~cellier.convenience.SidecarOptions`
-        defaults; a dict is coerced via ``SidecarOptions(**sidecar)``.
+        defaults.
         Requires the optional ``sidecar`` package and the Jupyter host (not
         marimo, which already places cell output in its own tab).
 

@@ -35,9 +35,10 @@ from cellier.convenience import (
     axis_ranges_from_viewer,
     run,
 )
-from cellier.convenience.gui import build_canvas_widget
+from cellier.convenience.gui import MultiscaleImageControlsConfig, build_canvas_widget
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.transform import AffineTransform
+from cellier.visuals import MultiscaleImageAppearance
 
 # ---------------------------------------------------------------------------
 # Data helpers
@@ -119,16 +120,16 @@ viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d")
 
 viewer.add_image_multiscale(
     store,
-    appearance={
-        "color_map": "viridis",
-        "clim": (0.0, 1.0),
-        "render_mode": "iso",
-        "iso_threshold": 0.45,
-        "lod_bias": 1.0,
-        "attenuation": 1.0,
-    },
-    controls={
-        "appearance": [
+    appearance=MultiscaleImageAppearance(
+        color_map="viridis",
+        clim=(0.0, 1.0),
+        render_mode="iso",
+        iso_threshold=0.45,
+        lod_bias=1.0,
+        attenuation=1.0,
+    ),
+    controls=MultiscaleImageControlsConfig(
+        appearance=[
             "color_map",
             "clim",
             "render_mode",
@@ -136,7 +137,7 @@ viewer.add_image_multiscale(
             "attenuation",
             "lod_bias",
         ],
-        "colormap_names": [
+        colormap_names=[
             "grays",
             "viridis",
             "plasma",
@@ -148,8 +149,8 @@ viewer.add_image_multiscale(
             "bwr",
             "RdYlBu",
         ],
-        "clim_range": (0.0, 1.0),
-    },
+        clim_range=(0.0, 1.0),
+    ),
 )
 
 # ---------------------------------------------------------------------------

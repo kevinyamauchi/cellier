@@ -35,20 +35,6 @@ def test_add_graph_defaults_appearance_when_none(graph_store):
     assert visual.appearance.node_depth_compare == "<="
 
 
-def test_add_graph_dict_appearance(graph_store):
-    """A plain dict coerces to GraphAppearance."""
-    viewer = Viewer(("z", "y", "x"), dim="3d")
-    visual = viewer.add_graph(
-        graph_store,
-        appearance={"node_size": 9.0, "edge_color": (0.1, 0.2, 0.3, 1.0)},
-        name="g",
-    )
-
-    assert isinstance(visual.appearance, GraphAppearance)
-    assert visual.appearance.node_size == 9.0
-    assert visual.appearance.edge_color == (0.1, 0.2, 0.3, 1.0)
-
-
 def test_add_graph_with_trail(graph_store):
     """The trail reaches the visual."""
     viewer = Viewer(("z", "y", "x"), dim="3d")
@@ -96,11 +82,11 @@ def test_ortho_add_graph_fans_out(graph_store):
         assert len(scene.visuals) == 1
 
 
-def test_ortho_add_graph_dict_appearance_and_trail(graph_store):
+def test_ortho_add_graph_appearance_and_trail(graph_store):
     ortho = OrthoViewer(("z", "y", "x"))
     visuals = ortho.add_graph(
         graph_store,
-        appearance={"node_size": 7.0},
+        appearance=GraphAppearance(node_size=7.0),
         name="g",
         trail={0: TrailConfig(before=2.0)},
     )
