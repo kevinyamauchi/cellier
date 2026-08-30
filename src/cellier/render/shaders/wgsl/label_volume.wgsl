@@ -31,11 +31,13 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
     }
 }
 
+{$ include 'cellier.label_outline_key.wgsl' $}
+{$ include 'cellier.view_normal.wgsl' $}
+
 fn random_label_color(label_id: i32, salt: u32) -> vec4<f32> {
-    var x = bitcast<u32>(label_id) ^ salt;
-    x = (x ^ (x >> 16u)) * 0x45d9f3bu;
-    x = (x ^ (x >> 16u)) * 0x45d9f3bu;
-    x = x ^ (x >> 16u);
+    // Shared with the outline key, so a key collision is also a hue
+    // collision; see cellier.label_outline_key.wgsl.
+    let x = random_label_hash(label_id, salt);
     let hue  = f32(x & 0xFFFFu) / 65535.0;
     let sat  = 0.9 + 0.1 * f32((x >> 16u) & 0x3Fu) / 63.0;
     let val_ = 0.7 + 0.3 * f32((x >> 22u) & 0xFu)  / 15.0;
@@ -246,14 +248,18 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     if (color.a < 0.001) { discard; }
 
     // Surface position and analytic, view-invariant face normal.
+    // The normal is needed for shading in iso_categorical mode, and for the
+    // ambient occlusion target in every mode -- a flat_categorical surface
+    // is still a real voxel face.
+    $$ set needs_normal = render_mode == "iso_categorical" or write_normal
     var surface_pos = vec3<f32>(0.0);
-    $$ if render_mode == "iso_categorical"
+    $$ if needs_normal
     var obj_normal  = vec3<f32>(0.0, 1.0, 0.0);
     $$ endif
     if (last_axis < 0) {
         // Entry cell already foreground: the surface is the entry point itself.
         surface_pos = P_in;
-        $$ if render_mode == "iso_categorical"
+        $$ if needs_normal
         if (entered_box_face) {
             // Boundary block clipped by the volume extent: use the box face.
             obj_normal = unit_axis(t_hit.entry_axis);
@@ -265,7 +271,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     } else {
         // Exact crossing of the cell face between background and foreground.
         surface_pos = near_pos + ray_dir * t_cross;
-        $$ if render_mode == "iso_categorical"
+        $$ if needs_normal
         let face_axis = unit_axis(last_axis);
         let face_sign = dot(vec3<f32>(step), face_axis);
         obj_normal    = -face_sign * face_axis;
@@ -295,6 +301,19 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     out.color = vec4<f32>(lit_color, color.a * u_material.opacity);
     out.depth = ndc_surface.z / ndc_surface.w;
 
+    $$ if write_normal
+    // Ambient occlusion normal target.  Local space here *is* voxel space
+    // (voxel i is centred at local i), so the face normal needs no scale
+    // correction before the object-to-view transform.
+    out.normal = pack_view_normal(
+        obj_normal, (u_stdinfo.cam_transform * world_surface).xyz);
+    $$ endif
+
+    $$ if write_outline_id
+    // Label key for the screen-space outline pass.  Zero-initialised
+    // to 0 (= not outlined) on canvases without the outline_id target.
+    out.outline_id = label_outline_key(surface_lid);
+    $$ endif
     $$ if write_pick
     // Encode surface position in normalised [0, 1] voxel space.
     // Local convention: voxel i centred at i, so shift by +0.5 then divide
