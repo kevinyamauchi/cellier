@@ -184,23 +184,24 @@ def test_appearance_true_builds_the_default_qt_dock(qtbot, kind, stores):
     config the renderer cannot resolve.
     """
     from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
-    from tests.convenience._qt_acceptance import assert_panel_renders, group_titles
+    from tests.convenience._qt_acceptance import assert_panel_renders, control_labels
 
     viewer = Viewer(("z", "y", "x"), gui="qt")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=True))
 
     container = _render_appearance_controls_qt(viewer)
 
-    assert group_titles(container) == EXPECTED_DEFAULT_TITLES[kind]
+    assert control_labels(container) == EXPECTED_DEFAULT_TITLES[kind]
     assert_panel_renders(container)
 
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_appearance_true_builds_the_same_anywidget_dock(kind, stores):
-    """Same titles, same order, other toolkit -- section 4.2's whole point."""
+    """Same names, same order, other toolkit -- section 4.2's whole point."""
     from cellier.convenience.gui._appearance_widgets import (
         build_appearance_widgets_anywidget,
     )
+    from tests.convenience._qt_acceptance import control_labels_anywidget
 
     viewer = Viewer(("z", "y", "x"), gui="anywidget")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=True))
@@ -210,7 +211,7 @@ def test_appearance_true_builds_the_same_anywidget_dock(kind, stores):
         target.visual, target.config, viewer.controller, target.visual_ids
     )
 
-    assert [title for title, _w in built] == EXPECTED_DEFAULT_TITLES[kind]
+    assert control_labels_anywidget(built) == EXPECTED_DEFAULT_TITLES[kind]
 
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
@@ -231,7 +232,7 @@ def test_a_phong_mesh_gets_its_own_fields_from_the_same_config(qtbot, mesh_store
     either without two config classes.
     """
     from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
-    from tests.convenience._qt_acceptance import group_titles
+    from tests.convenience._qt_acceptance import control_labels
 
     viewer = Viewer(("z", "y", "x"), gui="qt")
     # A phong mesh warns about scene lighting, which is unrelated to controls.
@@ -242,7 +243,7 @@ def test_a_phong_mesh_gets_its_own_fields_from_the_same_config(qtbot, mesh_store
             controls=MeshControlsConfig(appearance=True),
         )
 
-    assert group_titles(_render_appearance_controls_qt(viewer)) == [
+    assert control_labels(_render_appearance_controls_qt(viewer)) == [
         "Visible",
         "Opacity",
         "Color",
@@ -377,6 +378,75 @@ def test_colormap_mode_is_not_in_the_labels_vocabulary():
     """It is ``frozen=True``; a control for it could only raise."""
     with pytest.raises(ValueError, match="colormap_mode"):
         LabelsControlsConfig(appearance=["colormap_mode"])
+
+
+def test_the_shared_widget_table_agrees_with_the_field_classes():
+    """One name per control, not two that happen to match.
+
+    ``APPEARANCE_FIELD_WIDGETS`` names each single-field control for the
+    toolkit-neutral spec layer, and each widget class names itself with
+    ``_label`` -- and since ``plans/label_ownership_unification.md`` the class
+    is what actually gets drawn, in both toolkits.  Letting the two drift would
+    mean a panel whose controls are named one thing and asserted to be named
+    another.
+    """
+    from cellier.gui._appearance_fields import (
+        APPEARANCE_FIELD_WIDGETS,
+        field_widget_class,
+    )
+
+    for kind, (_stem, title) in APPEARANCE_FIELD_WIDGETS.items():
+        for toolkit in ("qt", "anywidget"):
+            widget_class = field_widget_class(kind, toolkit)
+            assert widget_class._label == title, (
+                f"{widget_class.__name__}._label != "
+                f"APPEARANCE_FIELD_WIDGETS[{kind!r}] title"
+            )
+
+
+def test_composite_default_titles_match_the_shared_vocabulary():
+    """The same check for the controls that read several fields at once.
+
+    A composite's ``DEFAULT_TITLE`` is what it calls itself when constructed
+    directly; ``_CONTROL_TITLES`` is what the renderers pass it.  They are two
+    declarations of one name, so they are pinned together.
+    """
+    from cellier.convenience.layout._shared import _CONTROL_TITLES
+    from cellier.gui.anywidget import AnywidgetDatasetInfo
+    from cellier.gui.anywidget.visuals import (
+        AnywidgetAABBWidget,
+        AnywidgetClimSlider,
+        AnywidgetColormapControl,
+        AnywidgetLodBiasSlider,
+        AnywidgetVolumeRenderControls,
+    )
+    from cellier.gui.qt.visuals import (
+        QtAABBWidget,
+        QtClimRangeSlider,
+        QtColormapComboBox,
+        QtLodBiasSlider,
+        QtVolumeRenderControls,
+    )
+
+    # ``dataset_info`` has no Qt widget -- a documented gap (design section
+    # 7.1), not an omission here.
+    composites = {
+        "color_map": (QtColormapComboBox, AnywidgetColormapControl),
+        "clim": (QtClimRangeSlider, AnywidgetClimSlider),
+        "render": (QtVolumeRenderControls, AnywidgetVolumeRenderControls),
+        "lod_bias": (QtLodBiasSlider, AnywidgetLodBiasSlider),
+        "aabb": (QtAABBWidget, AnywidgetAABBWidget),
+        "dataset_info": (None, AnywidgetDatasetInfo),
+    }
+    assert set(composites) == set(_CONTROL_TITLES)
+
+    for kind, classes in composites.items():
+        for widget_class in classes:
+            if widget_class is None:
+                continue
+            assert widget_class.DEFAULT_TITLE == _CONTROL_TITLES[kind], (
+                f"{widget_class.__name__}.DEFAULT_TITLE != _CONTROL_TITLES[{kind!r}]"
+            )
 
 
 def test_every_valid_field_name_has_a_widget():

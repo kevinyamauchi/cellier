@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.events import DimsChangedEvent
     from cellier.render._config import RenderManagerConfig
+    from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
@@ -297,6 +298,22 @@ class OrthoViewer:
     def scenes(self) -> dict[str, Scene]:
         """The four panel scenes keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``."""
         return self._scenes
+
+    def set_background(self, background: BackgroundAppearance) -> None:
+        """Apply one background appearance to all four panels.
+
+        Each panel is its own ``Scene`` and so owns its own background; use
+        ``viewer.scenes["xy"].background`` to change just one.  A copy is
+        given to each panel so that later edits to one panel's background do
+        not leak into the others.
+
+        Parameters
+        ----------
+        background : BackgroundAppearance
+            The background appearance to apply to every panel.
+        """
+        for scene in self._scenes.values():
+            scene.background = background.model_copy(deep=True)
 
     # ------------------------------------------------------------------
     # Readiness

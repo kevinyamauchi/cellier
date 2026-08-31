@@ -234,14 +234,14 @@ def test_the_widgets_own_echoes_are_all_dropped(qtbot):
 def test_appearance_dock_renders_on_an_ortho_viewer_qt(qtbot):
     """Was ``None`` before stage 2 -- no dock, no error (section 4.1)."""
     from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
-    from tests.convenience._qt_acceptance import assert_panel_renders, group_titles
+    from tests.convenience._qt_acceptance import assert_panel_renders, control_labels
 
     ortho, _visuals = _ortho_with_controls(appearance=["color_map", "clim"])
 
     container = _render_appearance_controls_qt(ortho)
 
     assert container is not None
-    assert group_titles(container) == [
+    assert control_labels(container) == [
         "Colormap",
         "Contrast limits",
         "Bounding box",
@@ -273,6 +273,7 @@ def test_appearance_dock_renders_on_an_ortho_viewer_anywidget():
     from cellier.convenience.gui._appearance_widgets import (
         build_appearance_widgets_anywidget,
     )
+    from tests.convenience._qt_acceptance import control_labels_anywidget
 
     ortho = OrthoViewer(("z", "y", "x"), gui="anywidget")
     visuals = ortho.add_image(
@@ -286,8 +287,8 @@ def test_appearance_dock_renders_on_an_ortho_viewer_anywidget():
         target.visual, target.config, ortho.controller, target.visual_ids
     )
 
-    assert [title for title, _w in built] == ["Contrast limits", "Bounding box"]
-    for _title, widget in built:
+    assert control_labels_anywidget(built) == ["Contrast limits", "Bounding box"]
+    for widget in built:
         assert widget.visual_ids == tuple(visuals[key].id for key in _PANELS)
 
 

@@ -317,9 +317,9 @@ renderers resolve a widget from this by prefixing the stem with ``Qt`` or
 ``Anywidget``, which is what lets 22 field classes reach the dock through one
 generic builder instead of 22 dispatch entries per toolkit.
 
-The title is here rather than derived from the field name because these are
-the titles the Qt group boxes show and the anywidget path carries as data --
-one source, checked against each field class's ``_label`` by
+The title is here rather than derived from the field name because it is the
+toolkit-neutral name for the control -- checked against each field class's
+``_label``, which is what both front ends actually draw, by
 ``test_the_shared_widget_table_agrees_with_the_field_classes``.
 
 Not listed: the multi-field image controls (``color_map``, ``clim``,

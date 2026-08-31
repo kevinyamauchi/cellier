@@ -75,6 +75,23 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     _esm = _STATIC / "dataset_info.js"
     _css = _STATIC / "dataset_info.css"
 
+    DEFAULT_TITLE = "Dataset info"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this is
+    what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the two
+    together.
+    """
+
+    title = traitlets.Unicode(DEFAULT_TITLE).tag(sync=True)
+    """What this control calls itself, drawn by its own front end.
+
+    A control names itself rather than being named by whatever lays it out
+    (``plans/label_ownership_unification.md``), which is what lets the dock
+    stack controls and stop.
+    """
+
     dataset_info = traitlets.Unicode("").tag(sync=True)
 
     def __init__(self, dataset_info: str = "", **kwargs) -> None:

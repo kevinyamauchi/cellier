@@ -336,11 +336,14 @@ def test_appearance_true_now_means_the_default_panel_in_both_renderers(qtbot):
     )
     config = viewer._controls_configs[visual.id]
 
-    from tests.convenience._qt_acceptance import group_titles
+    from tests.convenience._qt_acceptance import (
+        control_labels,
+        control_labels_anywidget,
+    )
 
     container = _render_appearance_controls_qt(viewer)
     assert container is not None
-    assert group_titles(container) == [
+    assert control_labels(container) == [
         "Visible",
         "Opacity",
         "Colormap",
@@ -350,7 +353,7 @@ def test_appearance_true_now_means_the_default_panel_in_both_renderers(qtbot):
     ]
 
     built = build_appearance_widgets_anywidget(visual, config, viewer.controller)
-    assert [title for title, _w in built] == group_titles(container)
+    assert control_labels_anywidget(built) == control_labels(container)
 
 
 @pytest.mark.parametrize("value", [False, True])

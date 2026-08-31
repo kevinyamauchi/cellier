@@ -37,6 +37,15 @@ class _StubToggle(QtToggle):
     _default_value: ClassVar[Any] = False
 
 
+def _row_label_text(widget) -> str:
+    """The name a control shows for itself, read off its label row.
+
+    The row's first layout item is its label -- see
+    ``LABELLED_ROW_OBJECT_NAME`` in ``cellier.gui.qt.visuals._chrome``.
+    """
+    return widget.widget.layout().itemAt(0).widget().text()
+
+
 def _appearance_event(visual_id, field_name, new_value, source_id=None):
     return AppearanceChangedEvent(
         source_id=source_id or uuid4(),
@@ -91,7 +100,7 @@ def test_edit_emits_one_update_event_per_visual_id(qtbot):
     emitted: list = []
     widget.changed.connect(emitted.append)
 
-    widget.widget.setChecked(True)
+    widget.control.setChecked(True)
 
     assert [event.visual_id for event in emitted] == ids
     assert {event.field for event in emitted} == {"wireframe"}
@@ -155,7 +164,10 @@ def test_visible_toggle_binds_field_and_label(qtbot):
     qtbot.addWidget(widget.widget)
 
     assert widget.field == "visible"
-    assert widget.widget.text() == "Visible"
+    # The row's label carries the name; the checkbox itself has no text (see
+    # ``plans/label_ownership_unification.md``).
+    assert _row_label_text(widget) == "Visible"
+    assert widget.control.text() == ""
     assert widget.value() is True  # matches the model default
 
 
@@ -203,7 +215,7 @@ def test_edit_reaches_every_visual_in_the_group(qtbot):
         widget, subscription_specs=widget.subscription_specs()
     )
 
-    widget.widget.setChecked(False)
+    widget.control.setChecked(False)
 
     assert [v.appearance.visible for v in visuals] == [False, False]
 
@@ -219,7 +231,7 @@ def test_group_write_echoes_do_not_reemit(qtbot):
     emitted: list = []
     widget.changed.connect(emitted.append)
 
-    widget.widget.setChecked(False)
+    widget.control.setChecked(False)
 
     # Exactly the N the edit itself produced -- no echo-driven extras.
     assert len(emitted) == len(visuals)

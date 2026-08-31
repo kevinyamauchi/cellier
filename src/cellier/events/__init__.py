@@ -5,6 +5,7 @@ from cellier.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
+    BackgroundChangedEvent,
     CameraChangedEvent,
     CanvasMouseMove2DEvent,
     CanvasMouseMove3DEvent,
@@ -44,6 +45,7 @@ from cellier.events._events import (
 from cellier.events._update_events import (
     AABBUpdateEvent,
     AppearanceUpdateEvent,
+    BackgroundUpdateEvent,
     CellierUpdateEventTypes,
     ChannelAppearanceUpdateEvent,
     DimsUpdateEvent,
@@ -55,6 +57,8 @@ __all__ = [
     "AABBUpdateEvent",
     "AppearanceChangedEvent",
     "AppearanceUpdateEvent",
+    "BackgroundChangedEvent",
+    "BackgroundUpdateEvent",
     "CameraChangedEvent",
     "CameraState",
     "CanvasMouseMove2DEvent",

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from cellier.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
+    BackgroundChangedEvent,
     CameraChangedEvent,
     CanvasMouseMove2DEvent,
     CanvasMouseMove3DEvent,
@@ -56,6 +57,7 @@ _ENTITY_FIELD: dict[type, str] = {
     TrailChangedEvent: "visual_id",
     TransformChangedEvent: "visual_id",
     SceneAddedEvent: "scene_id",
+    BackgroundChangedEvent: "scene_id",
     SceneRemovedEvent: "scene_id",
     CanvasMousePress2DEvent: "source_id",
     CanvasMouseMove2DEvent: "source_id",

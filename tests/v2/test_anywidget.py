@@ -952,11 +952,12 @@ def test_aabb_widget_user_color_change_emits_aabb_update():
 
 
 def test_build_appearance_widgets_anywidget_from_visual():
-    """Builds one ``(title, widget)`` pair per spec, plus the always-on AABB.
+    """Builds one widget per spec, plus the always-on AABB.
 
-    Titles come from the shared ``appearance_specs`` layer so the two front
-    ends name the same control the same way (stage 1, section 7.3); the
-    anywidget side does not display them yet (section 6.5.1 decision 2).
+    Names come from the shared ``appearance_specs`` layer so the two front
+    ends name the same control the same way (stage 1, section 7.3), and each
+    widget carries its own -- ``label`` on a single-field control, ``title``
+    on a multi-row one (``plans/label_ownership_unification.md``).
     """
     import numpy as np
 
@@ -984,13 +985,13 @@ def test_build_appearance_widgets_anywidget_from_visual():
         visual, controls_config, viewer.controller
     )
 
-    assert [title for title, _w in widgets] == [
+    assert [w.title for w in widgets] == [
         "Colormap",
         "Contrast limits",
         "Bounding box",
     ]
 
-    built = [w for _title, w in widgets]
+    built = widgets
     # anywidget dynamically subclasses each widget at construction time (the
     # same mechanism AnywidgetChannelList's add_traits relies on), so compare
     # via isinstance rather than exact type equality.

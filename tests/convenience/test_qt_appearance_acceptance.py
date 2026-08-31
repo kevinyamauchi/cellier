@@ -28,7 +28,7 @@ from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 from tests.convenience._qt_acceptance import (
     assert_panel_renders,
-    group_titles,
+    control_labels,
 )
 
 # The full field vocabulary the appearance path accepts today.  Kept explicit
@@ -43,7 +43,7 @@ _ALL_MULTISCALE_FIELDS = [
 ]
 
 
-def test_multiscale_panel_group_titles_in_order(qtbot, multiscale_image_store):
+def test_multiscale_panel_control_names_in_order(qtbot, multiscale_image_store):
     """Every field requested, so this is the maximal panel Qt builds today.
 
     ``lod_bias`` and the three render fields are multiscale-only; the render
@@ -60,7 +60,7 @@ def test_multiscale_panel_group_titles_in_order(qtbot, multiscale_image_store):
 
     container = _render_appearance_controls_qt(viewer)
 
-    assert group_titles(container) == [
+    assert control_labels(container) == [
         "Colormap",
         "Contrast limits",
         "Render mode",
@@ -70,7 +70,7 @@ def test_multiscale_panel_group_titles_in_order(qtbot, multiscale_image_store):
     assert_panel_renders(container)
 
 
-def test_in_memory_panel_group_titles_in_order(qtbot, image_store):
+def test_in_memory_panel_control_names_in_order(qtbot, image_store):
     """The in-memory model has no ``lod_bias``/``attenuation``.
 
     This is the one drop stage 3's validation cannot catch, and so the reason
@@ -92,7 +92,7 @@ def test_in_memory_panel_group_titles_in_order(qtbot, image_store):
     with pytest.warns(UserWarning, match="attenuation"):
         container = _render_appearance_controls_qt(viewer)
 
-    assert group_titles(container) == [
+    assert control_labels(container) == [
         "Colormap",
         "Contrast limits",
         "Render mode",
@@ -116,7 +116,7 @@ def test_panel_order_follows_the_builder_not_the_config(qtbot, image_store):
 
     container = _render_appearance_controls_qt(viewer)
 
-    assert group_titles(container) == [
+    assert control_labels(container) == [
         "Colormap",
         "Contrast limits",
         "Bounding box",
@@ -139,7 +139,7 @@ def test_bounding_box_group_is_seeded_from_the_visual(qtbot, image_store):
     """The new AABB group reads its initial state off ``visual.aabb``.
 
     A group with the right title but a control seeded from defaults would
-    pass ``group_titles`` and still be wrong, so this checks the wiring
+    pass ``control_labels`` and still be wrong, so this checks the wiring
     rather than the label.
     """
     from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QGroupBox

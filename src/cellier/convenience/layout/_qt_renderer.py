@@ -186,7 +186,9 @@ def _qt_color_map(spec, visual_ids, controller, parent):
     from cellier.gui.qt.visuals import QtColormapComboBox
 
     combo = QtColormapComboBox(
-        visual_ids, initial_colormap=spec.values["initial_colormap"]
+        visual_ids,
+        initial_colormap=spec.values["initial_colormap"],
+        title=spec.title,
     )
     names = spec.values["colormap_names"]
     if names is not None:
@@ -201,6 +203,7 @@ def _qt_clim(spec, visual_ids, controller, parent):
         visual_ids,
         clim_range=spec.values["clim_range"],
         initial_clim=spec.values["initial_clim"],
+        title=spec.title,
     )
 
 
@@ -216,13 +219,18 @@ def _qt_render(spec, visual_ids, controller, parent):
         initial_render_mode=spec.values["initial_render_mode"],
         initial_threshold=spec.values["initial_threshold"],
         initial_attenuation=spec.values["initial_attenuation"],
+        title=spec.title,
     )
 
 
 def _qt_lod_bias(spec, visual_ids, controller, parent):
     from cellier.gui.qt.visuals import QtLodBiasSlider
 
-    return QtLodBiasSlider(visual_ids, initial_lod_bias=spec.values["initial_lod_bias"])
+    return QtLodBiasSlider(
+        visual_ids,
+        initial_lod_bias=spec.values["initial_lod_bias"],
+        title=spec.title,
+    )
 
 
 def _qt_aabb(spec, visual_ids, controller, parent):
@@ -233,11 +241,12 @@ def _qt_aabb(spec, visual_ids, controller, parent):
         initial_enabled=spec.values["initial_enabled"],
         initial_line_width=spec.values["initial_line_width"],
         initial_color=spec.values["initial_color"],
+        title=spec.title,
     )
 
 
 def _qt_field_control(spec, visual_ids, controller, parent):
-    """Build any of the 22 single-field controls from the shared table.
+    """Build any of the 23 single-field controls from the shared table.
 
     One builder rather than 22 dispatch entries: the layer-3 classes have a
     uniform constructor (``initial_value=``, plus ``choices=`` for a combo),
@@ -275,8 +284,14 @@ def _render_appearance_controls_qt(
 
     The decision of *which* controls, in what order, with what values is made
     by ``layout._shared.appearance_specs`` and shared with the anywidget path;
-    this function is only the Qt view layer -- a dispatch table and a
-    ``QGroupBox`` per spec.
+    this function is only the Qt view layer -- a dispatch table and a column.
+
+    It draws no chrome of its own.  Each control names itself -- a label row
+    for a single control, an owned ``QGroupBox`` for a block of rows that only
+    means something together -- so this stacks them and stops
+    (``plans/label_ownership_unification.md``).  Before that this function
+    wrapped every control in a group box, which named the 18 of 23 field
+    widgets that rendered bare and double-named the 5 that did not.
     """
     from PySide6 import QtWidgets
     from PySide6.QtWidgets import QSizePolicy
@@ -319,11 +334,7 @@ def _render_appearance_controls_qt(
         )
         if closeables is not None:
             closeables.append(widget)
-        group = QtWidgets.QGroupBox(spec.title)
-        box = QtWidgets.QVBoxLayout(group)
-        box.setContentsMargins(12, 4, 12, 4)
-        box.addWidget(widget.widget)
-        layout.addWidget(group)
+        layout.addWidget(widget.widget)
 
     layout.addStretch()
     return container

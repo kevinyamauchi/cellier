@@ -130,9 +130,10 @@ class ControlSpec:
         builder for a kind skips it -- that is how ``dataset_info`` stays
         anywidget-only without the Qt path needing to know it exists.
     title : str
-        Group title, e.g. ``"Contrast limits"``.  Qt renders it as a
-        ``QGroupBox`` title; the anywidget front end carries it as data
-        (design section 6.5.1 decision 2 deferred showing it).
+        What the control is called, e.g. ``"Contrast limits"``.  Both front
+        ends pass it to the widget, which draws it itself -- as a label beside
+        a single control, or as a heading over a block of rows
+        (``plans/label_ownership_unification.md``).
     values : dict[str, object]
         Construction keywords for the widget, already read off the model.
         Toolkit-neutral: a keyword only one toolkit accepts (Qt's
@@ -178,6 +179,11 @@ _CONTROL_TITLES = {
 A kind not listed here is a plain single-field control, and its title is
 derived from the field name -- so a config class can name a new kind without
 registering anything.
+
+Each of these is also a widget class's ``DEFAULT_TITLE`` on both toolkits,
+pinned by ``test_composite_default_titles_match_the_shared_vocabulary``: this
+is the name the renderers pass in, that is the name a directly-constructed
+widget uses.
 """
 
 

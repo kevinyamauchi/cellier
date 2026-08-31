@@ -202,7 +202,7 @@ async def test_the_qt_visible_checkbox_hides_and_restores_the_picture(
     one assertion -- and both directions are, since a model-side write has to
     move the checkbox back.
     """
-    from PySide6.QtWidgets import QCheckBox
+    from PySide6.QtWidgets import QCheckBox, QWidget
 
     from cellier.convenience import Viewer
     from cellier.convenience.gui import MeshControlsConfig
@@ -225,9 +225,17 @@ async def test_the_qt_visible_checkbox_hides_and_restores_the_picture(
     dock = _render_dock_qt(AppearanceControls(), viewer)
     await reslice(viewer.controller, viewer.scene.id)
 
-    checkbox = next(
-        box for box in dock.findChildren(QCheckBox) if box.text() == "Visible"
+    # The checkbox carries no text of its own: its row's label names it
+    # (``plans/label_ownership_unification.md``), so find the row first.
+    from cellier.gui.qt.visuals._chrome import LABELLED_ROW_OBJECT_NAME
+
+    row = next(
+        candidate
+        for candidate in dock.findChildren(QWidget)
+        if candidate.objectName() == LABELLED_ROW_OBJECT_NAME
+        and candidate.layout().itemAt(0).widget().text() == "Visible"
     )
+    checkbox = row.findChild(QCheckBox)
     assert checkbox.isChecked() is True
 
     shown = render_scene(viewer.controller, viewer.scene.id)

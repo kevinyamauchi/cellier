@@ -10,7 +10,7 @@ function render({ model, el }) {
 
     const details = document.createElement("details");
     const summary = document.createElement("summary");
-    summary.textContent = "Dataset info";
+    summary.textContent = model.get("title") || "Dataset info";
     details.appendChild(summary);
     const body = document.createElement("div");
     body.innerHTML = infoHtml;
@@ -20,6 +20,7 @@ function render({ model, el }) {
 
   build();
   model.on("change:dataset_info", build);
+  model.on("change:title", build);
 }
 
 export default { render };

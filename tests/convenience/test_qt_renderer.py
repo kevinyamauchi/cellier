@@ -44,10 +44,15 @@ def _leaf():
     return SimpleNamespace(widget=QtWidgets.QLabel())
 
 
-def _group_titles(container):
-    from PySide6 import QtWidgets
+def _control_names(container):
+    """What the panel calls each control it holds.
 
-    return {g.title() for g in container.findChildren(QtWidgets.QGroupBox)}
+    A set, because these tests assert presence rather than order (that is
+    ``test_qt_appearance_acceptance``'s job).
+    """
+    from tests.convenience._qt_acceptance import control_labels
+
+    return set(control_labels(container))
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +71,7 @@ def test_appearance_controls_builds_colormap_and_clim_groups(qtbot, image_store)
     container = _render_appearance_controls_qt(viewer)
 
     assert container is not None
-    assert {"Colormap", "Contrast limits"} <= _group_titles(container)
+    assert {"Colormap", "Contrast limits"} <= _control_names(container)
 
 
 def test_appearance_controls_explicit_clim_range(qtbot, image_store):
@@ -82,7 +87,7 @@ def test_appearance_controls_explicit_clim_range(qtbot, image_store):
     container = _render_appearance_controls_qt(viewer)
 
     assert container is not None
-    assert "Contrast limits" in _group_titles(container)
+    assert "Contrast limits" in _control_names(container)
 
 
 def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_store):
@@ -96,7 +101,7 @@ def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_s
     container = _render_appearance_controls_qt(viewer)
 
     assert container is not None
-    assert {"Render mode", "LOD bias"} <= _group_titles(container)
+    assert {"Render mode", "LOD bias"} <= _control_names(container)
 
 
 def test_appearance_controls_none_without_configs(qtbot, image_store):

@@ -139,20 +139,36 @@ def offscreen_renderer() -> Callable[
 @pytest.fixture
 def render_scene(
     offscreen_renderer: Callable[..., np.ndarray],
-) -> Callable[[CellierController, UUID], np.ndarray]:
-    """Return ``render(controller, scene_id, size=(128, 128)) -> RGBA array``.
+) -> Callable[..., np.ndarray]:
+    """Return ``render(controller, scene_id, size=..., background=False) -> RGBA``.
 
     Fits the scene's camera (``fit_camera`` uses the same ``show_object`` call
     the app does) and draws the controller's live pygfx scene through the
     offscreen renderer.  A square ``size`` keeps the camera aspect (fit on the
     default square canvas) consistent with the offscreen framebuffer.
+
+    The scene background is **hidden by default**, and that is what makes this
+    harness's central contract hold: *a pixel with alpha > 0 is a pixel a
+    visual drew*.  cellier ships an opaque gray gradient behind every scene
+    (see ``BackgroundAppearance``), and with it drawn the whole framebuffer
+    comes back at alpha 255, so the mask means nothing -- and content blended
+    over gray stops reading as a pure hue, which breaks colour assertions just
+    as thoroughly.
+
+    Pass ``background=True`` to draw the scene's own background instead.  Only
+    a test *about* the background should need it; see
+    ``test_render_harness.py`` for the ones that do.
     """
 
     def _render(
         controller: CellierController,
         scene_id: UUID,
         size: tuple[int, int] = (128, 128),
+        background: bool = False,
     ) -> np.ndarray:
+        # Through the public write API rather than reaching into the render
+        # layer, so the harness travels the same path the app does.
+        controller.update_background_field(scene_id, "visible", background)
         controller.fit_camera(scene_id)
         canvas_id = controller.get_canvas_ids(scene_id)[0]
         canvas_view = controller._render_manager._canvases[canvas_id]

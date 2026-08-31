@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from cellier._state import CameraState, DimsState
+    from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
 
 
@@ -171,6 +172,43 @@ class VisualRemovedEvent(NamedTuple):
 class SceneAddedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+
+
+class BackgroundChangedEvent(NamedTuple):
+    """Emitted when a scene's ``BackgroundAppearance`` changes.
+
+    Routed from the psygnal bridge in
+    ``CellierController._wire_scene_background`` -- both from a field change
+    on the background model and from wholesale replacement
+    (``scene.background = BackgroundAppearance(...)``).  The background is a
+    property of the scene rather than of any visual, so it travels on its own
+    event keyed by ``scene_id`` rather than riding on
+    ``AppearanceChangedEvent``.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    scene_id : UUID
+        Model-layer ID of the scene whose background changed.
+    background : BackgroundAppearance
+        The scene's complete background model *after* the change.  Carried
+        whole, not just the delta, because which fields are meaningful
+        depends on ``mode`` -- a subscriber holding a snapshot cannot
+        reconstruct the rest from one field.
+    field_name : str or None
+        Name of the changed field (e.g. ``"top_color"``, ``"mode"``), or
+        ``None`` when the whole model was replaced.
+    new_value : Any
+        The new field value, or ``None`` for whole-model replacement.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    background: BackgroundAppearance
+    field_name: str | None = None
+    new_value: Any = None
 
 
 class TrailChangedEvent(NamedTuple):
@@ -536,6 +574,7 @@ CellierEventTypes = (
     | TrailChangedEvent
     | TransformChangedEvent
     | SceneAddedEvent
+    | BackgroundChangedEvent
     | SceneRemovedEvent
     | CanvasMousePress2DEvent
     | CanvasMouseMove2DEvent

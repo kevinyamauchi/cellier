@@ -8,6 +8,7 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.render._scene_config import VisualRenderConfig
+from cellier.scene._background import BackgroundAppearance
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -50,19 +51,30 @@ class SceneManager:
     ----------
     scene_id : UUID
         Unique identifier for this scene.
+    lighting : str
+        ``"none"`` (default) or ``"default"``.
+    background : BackgroundAppearance or None
+        Background appearance to apply at construction.  ``None`` uses the
+        model defaults.
     """
 
     def __init__(
         self,
         scene_id: UUID,
         lighting: str = "none",
+        background: BackgroundAppearance | None = None,
     ) -> None:
         self._scene_id = scene_id
         self._scene = gfx.Scene()
-        dark_gray = np.array((169, 167, 168, 255)) / 255
-        light_gray = np.array((100, 100, 100, 255)) / 255
-        background = gfx.Background.from_color(light_gray, dark_gray)
-        self._scene.add(background)
+        # The background object and its material are kept so the colors can be
+        # rewritten in place at runtime; set_colors writes the material's
+        # uniform buffer, so nothing is rebuilt on a change.
+        self._background_material = gfx.BackgroundMaterial()
+        self._background = gfx.Background(None, self._background_material)
+        self._scene.add(self._background)
+        self.set_background(
+            background if background is not None else BackgroundAppearance()
+        )
         self._visuals: dict[UUID, _GFXVisual] = {}
         self._active_nodes: dict[UUID, gfx.WorldObject | None] = {}
 
@@ -72,6 +84,27 @@ class SceneManager:
             dir_light = gfx.DirectionalLight(intensity=3.0)
             dir_light.local.position = np.array([500, 500, 1000], dtype=np.float32)
             self._scene.add(dir_light)
+
+    @property
+    def background(self) -> gfx.Background:
+        """The pygfx background object drawn behind this scene's visuals."""
+        return self._background
+
+    def set_background(self, appearance: BackgroundAppearance) -> None:
+        """Apply *appearance* to the scene's background object.
+
+        The whole model is applied rather than a single field so the render
+        layer never has to dispatch on field names -- ``set_colors`` takes a
+        different number of colors per mode, so a per-field push would have
+        to reconstruct the others anyway.
+
+        Parameters
+        ----------
+        appearance : BackgroundAppearance
+            The background appearance to apply.
+        """
+        self._background_material.set_colors(*appearance.to_colors())
+        self._background.visible = appearance.visible
 
     @property
     def has_lighting(self) -> bool:

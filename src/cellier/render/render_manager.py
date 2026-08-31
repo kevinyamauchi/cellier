@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
     from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+    from cellier.scene._background import BackgroundAppearance
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
@@ -730,7 +731,12 @@ class RenderManager:
         ids.discard(0)
         return ids
 
-    def add_scene(self, scene_id: UUID, lighting: str = "none") -> SceneManager:
+    def add_scene(
+        self,
+        scene_id: UUID,
+        lighting: str = "none",
+        background: BackgroundAppearance | None = None,
+    ) -> SceneManager:
         """Create and register a new scene.
 
         Parameters
@@ -741,19 +747,43 @@ class RenderManager:
             ``"none"`` (default) or ``"default"``.  Pass ``"default"`` to
             add ambient and directional lights — required for
             ``MeshPhongAppearance``.
+        background : BackgroundAppearance or None
+            Background appearance for the scene.  ``None`` uses the model
+            defaults.
 
         Returns
         -------
         SceneManager
             The newly created scene manager.
         """
-        scene_manager = SceneManager(scene_id=scene_id, lighting=lighting)
+        scene_manager = SceneManager(
+            scene_id=scene_id, lighting=lighting, background=background
+        )
         self._scenes[scene_id] = scene_manager
         return scene_manager
 
     def scene_has_lighting(self, scene_id: UUID) -> bool:
         """Return True if *scene_id* was created with lighting enabled."""
         return self._scenes[scene_id].has_lighting
+
+    def set_scene_background(
+        self, scene_id: UUID, background: BackgroundAppearance
+    ) -> None:
+        """Apply *background* to the scene registered under *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene to update.
+        background : BackgroundAppearance
+            The background appearance to apply.
+
+        Raises
+        ------
+        KeyError
+            If ``scene_id`` is not registered.
+        """
+        self._scenes[scene_id].set_background(background)
 
     def add_canvas(
         self,

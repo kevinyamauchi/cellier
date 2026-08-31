@@ -5,6 +5,10 @@ what values, is made once in ``convenience.layout._shared.appearance_specs``
 and shared with the Qt renderer (design section 7.3).  This module is only the
 anywidget half of the view: a dispatch table from ``ControlSpec.kind`` to a
 widget class, and the composition of the built widgets into one host leaf.
+
+Like the Qt renderer, it draws no chrome: each control carries its own name --
+``label`` on a single-field control, ``title`` on a multi-row one -- and
+composition only stacks them (``plans/label_ownership_unification.md``).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ def _any_color_map(spec: ControlSpec, visual_ids):
         visual_ids,
         initial_colormap=spec.values["initial_colormap"],
         colormap_names=spec.values["colormap_names"],
+        title=spec.title,
     )
 
 
@@ -36,6 +41,7 @@ def _any_clim(spec: ControlSpec, visual_ids):
         visual_ids,
         clim_range=spec.values["clim_range"],
         initial_clim=spec.values["initial_clim"],
+        title=spec.title,
     )
 
 
@@ -50,6 +56,7 @@ def _any_render(spec: ControlSpec, visual_ids):
         initial_render_mode=spec.values["initial_render_mode"],
         initial_threshold=spec.values["initial_threshold"],
         initial_attenuation=spec.values["initial_attenuation"],
+        title=spec.title,
     )
 
 
@@ -57,7 +64,9 @@ def _any_lod_bias(spec: ControlSpec, visual_ids):
     from cellier.gui.anywidget.visuals import AnywidgetLodBiasSlider
 
     return AnywidgetLodBiasSlider(
-        visual_ids, initial_lod_bias=spec.values["initial_lod_bias"]
+        visual_ids,
+        initial_lod_bias=spec.values["initial_lod_bias"],
+        title=spec.title,
     )
 
 
@@ -69,17 +78,18 @@ def _any_aabb(spec: ControlSpec, visual_ids):
         initial_enabled=spec.values["initial_enabled"],
         initial_line_width=spec.values["initial_line_width"],
         initial_color=spec.values["initial_color"],
+        title=spec.title,
     )
 
 
 def _any_dataset_info(spec: ControlSpec, visual_ids):
     from cellier.gui.anywidget import AnywidgetDatasetInfo
 
-    return AnywidgetDatasetInfo(spec.values["html"])
+    return AnywidgetDatasetInfo(spec.values["html"], title=spec.title)
 
 
 def _any_field_control(spec: ControlSpec, visual_ids):
-    """Build any of the 22 single-field controls from the shared table.
+    """Build any of the 23 single-field controls from the shared table.
 
     The anywidget twin of ``_qt_field_control``; see it for why one builder
     serves them all.
@@ -112,15 +122,19 @@ def build_appearance_widgets_anywidget(
     controls_config: BaseControlsConfig,
     controller: CellierController,
     visual_ids: list | None = None,
-) -> list[tuple[str, object]]:
+) -> list[object]:
     """Build and wire the anywidget appearance sub-widgets for *visual*.
 
-    Returns ``(title, widget)`` pairs in display order, each widget already
-    ``connect_widget``-wired where it has a bus contract.  The title comes
-    from the shared spec and is carried as data: the anywidget front end does
-    not display it today (design section 6.5.1 decision 2 deferred the
-    ``LayoutHost`` seam that would), but Qt does, and having one source for
-    both is the point.
+    Returns the widgets in display order, each already
+    ``connect_widget``-wired where it has a bus contract, and each carrying
+    the name the shared spec gave it -- ``label`` on a single-field control,
+    ``title`` on a multi-row one.
+
+    The name used to be returned alongside the widget, as a ``(title,
+    widget)`` pair the anywidget front end then dropped on the floor (design
+    section 6.5.1 decision 2).  Handing it to the widget instead is what
+    removed the drop, and with it the second place a control's name lived
+    (``plans/label_ownership_unification.md``).
 
     *visual_ids* is every visual the controls should write to: one on a
     ``Viewer``, the four panel siblings on an ``OrthoViewer``.  Defaults to
@@ -139,7 +153,7 @@ def build_appearance_widgets_anywidget(
     warn_skipped_appearance_fields(skipped, visual, controls_config)
     ids = [visual.id] if visual_ids is None else list(visual_ids)
 
-    built: list[tuple[str, object]] = []
+    built: list[object] = []
     for spec in specs:
         builder = _ANYWIDGET_BUILDERS.get(spec.kind)
         if builder is None and spec.kind in APPEARANCE_FIELD_WIDGETS:
@@ -151,30 +165,25 @@ def build_appearance_widgets_anywidget(
             controller.connect_widget(
                 widget, subscription_specs=widget.subscription_specs()
             )
-        built.append((spec.title, widget))
+        built.append(widget)
     return built
 
 
 _TIGHT_GAP_PX = 4
-"""Spacing between grouped appearance sub-widgets, mirroring the ~6px
-``setSpacing`` Qt's ``_group()`` helper uses for its one shared QVBoxLayout
-(``_qt_renderer.py``) -- explicit rather than relying on the host's macro
-layout default (tuned for spacing unrelated blocks like canvas/dims apart).
+"""Spacing between stacked appearance controls, mirroring the 6px
+``setSpacing`` the Qt dock column uses (``_qt_renderer.py``) -- explicit
+rather than relying on the host's macro layout default (tuned for spacing
+unrelated blocks like canvas/dims apart).
 """
 
 
-def compose_appearance_leaf(
-    widgets: list[tuple[str, object]], host: LayoutHost
-) -> object | None:
-    """Compose built ``(title, widget)`` pairs into one host leaf, or ``None``.
+def compose_appearance_leaf(widgets: list[object], host: LayoutHost) -> object | None:
+    """Compose built widgets into one host leaf, or ``None``.
 
-    Titles are dropped here rather than rendered; see
-    :func:`build_appearance_widgets_anywidget`.
+    Stacking is all this does: each widget already draws its own name.
     """
     if not widgets:
         return None
     if len(widgets) == 1:
-        return host.leaf(widgets[0][1])
-    return host.stack(
-        [host.leaf(w) for _title, w in widgets], direction="v", gap=_TIGHT_GAP_PX
-    )
+        return host.leaf(widgets[0])
+    return host.stack([host.leaf(w) for w in widgets], direction="v", gap=_TIGHT_GAP_PX)

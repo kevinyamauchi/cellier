@@ -274,8 +274,20 @@ class QtVolumeRenderControls(VisualIdGroup):
         Number of decimal places shown in the threshold slider label.  Use
         ``0`` for integer dtypes and ``2`` (or similar) for float data.
         Default is ``2``.
+    title :
+        The name shown on the group frame.  Defaults to
+        :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
+    """
+
+    DEFAULT_TITLE = "Render mode"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this
+    is what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
+    two together.
     """
 
     changed: Signal = Signal(object)
@@ -290,11 +302,14 @@ class QtVolumeRenderControls(VisualIdGroup):
         initial_threshold: float,
         initial_attenuation: float = 1.0,
         decimals: int = 2,
+        title: str | None = None,
         parent=None,
     ) -> None:
         from qtpy.QtCore import Qt
         from qtpy.QtWidgets import QComboBox, QFormLayout, QWidget
         from superqt import QLabeledDoubleSlider
+
+        from cellier.gui.qt.visuals._chrome import titled_group
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
@@ -332,14 +347,25 @@ class QtVolumeRenderControls(VisualIdGroup):
         # Show mode-specific controls; hide the others.
         self._update_mode_controls_visibility(initial_render_mode)
 
+        self._group = titled_group(
+            self.DEFAULT_TITLE if title is None else title, self._container, parent
+        )
+
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout.
+        """The titled group to insert into a layout.
 
-        Qt seam 1: replace with the backend element for other toolkits.
+        The rows inside only mean something together, so the group names them
+        (``plans/label_ownership_unification.md``); reach for :attr:`control`
+        for the bare rows.
         """
+        return self._group
+
+    @property
+    def control(self):
+        """The bare row container inside the group."""
         return self._container
 
     def close(self) -> None:

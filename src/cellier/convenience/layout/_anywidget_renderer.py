@@ -156,7 +156,7 @@ def _render_appearance_controls(
     if not widgets:
         return None
 
-    closeables.extend(w for _title, w in widgets if hasattr(w, "close"))
+    closeables.extend(w for w in widgets if hasattr(w, "close"))
     return compose_appearance_leaf(widgets, host)
 
 

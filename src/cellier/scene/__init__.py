@@ -1,5 +1,6 @@
 """Scene models for cellier v2."""
 
+from cellier.scene._background import BackgroundAppearance
 from cellier.scene.cameras import (
     CameraControllerType,
     CameraType,
@@ -13,6 +14,7 @@ from cellier.scene.dims import CoordinateSystem, DimsManager
 from cellier.scene.scene import Scene
 
 __all__ = [
+    "BackgroundAppearance",
     "CameraControllerType",
     "CameraType",
     "Canvas",

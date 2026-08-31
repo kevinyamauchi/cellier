@@ -46,11 +46,23 @@ class QtClimRangeSlider(VisualIdGroup):
         ``(min, max)`` for the slider range.
     initial_clim :
         Starting value — typically ``visual_model.appearance.clim``.
+    title :
+        The name shown beside the control.  Defaults to
+        :data:`DEFAULT_TITLE`.
     decimals :
         Number of decimal places shown in the slider label.  Use ``0`` for
         integer dtypes and ``2`` (or similar) for float data.  Default is ``2``.
     parent :
         Optional Qt parent widget.
+    """
+
+    DEFAULT_TITLE = "Contrast limits"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this
+    is what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
+    two together.
     """
 
     changed: Signal = Signal(object)
@@ -63,10 +75,13 @@ class QtClimRangeSlider(VisualIdGroup):
         clim_range: tuple[float, float],
         initial_clim: tuple[float, float],
         decimals: int = 2,
+        title: str | None = None,
         parent=None,
     ) -> None:
         from qtpy.QtCore import Qt
         from superqt import QLabeledDoubleRangeSlider
+
+        from cellier.gui.qt.visuals._chrome import labelled_row
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
@@ -102,14 +117,24 @@ class QtClimRangeSlider(VisualIdGroup):
             _hl.setFixedWidth(_lw)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
+        self._row = labelled_row(
+            self.DEFAULT_TITLE if title is None else title, self._slider, parent
+        )
+
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout.
+        """The labelled row to insert into a layout.
 
-        Qt seam 1: replace with the backend element for other toolkits.
+        The control names itself (``plans/label_ownership_unification.md``);
+        reach for :attr:`control` to drive the input directly.
         """
+        return self._row
+
+    @property
+    def control(self):
+        """The bare input inside the row."""
         return self._slider
 
     def close(self) -> None:

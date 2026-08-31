@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.render._config import RenderManagerConfig
+    from cellier.scene._background import BackgroundAppearance
     from cellier.scene.scene import Scene
     from cellier.transform import AffineTransform
     from cellier.visuals._channel_appearance import ChannelAppearance
@@ -135,6 +136,23 @@ class Viewer:
     def scene(self) -> Scene:
         """The single scene managed by this viewer."""
         return self._scene
+
+    @property
+    def background(self) -> BackgroundAppearance:
+        """Appearance of the background drawn behind the scene's visuals.
+
+        Mutate its fields to update the canvas at runtime::
+
+            viewer.background.mode = "uniform"
+            viewer.background.color = (0.0, 0.0, 0.0, 1.0)
+
+        Assigning a whole new ``BackgroundAppearance`` works too.
+        """
+        return self._scene.background
+
+    @background.setter
+    def background(self, value: BackgroundAppearance) -> None:
+        self._scene.background = value
 
     # ------------------------------------------------------------------
     # Readiness

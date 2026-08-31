@@ -115,11 +115,34 @@ class ChannelAppearanceUpdateEvent(NamedTuple):
     value: Any
 
 
+class BackgroundUpdateEvent(NamedTuple):
+    """Request to set one field on a scene's background appearance.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``BackgroundChangedEvent``
+        so the caller can echo-filter on its own subscription.
+    scene_id :
+        Target scene.
+    field :
+        Attribute name on the background model, e.g. ``"top_color"``.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    field: str
+    value: Any
+
+
 CellierUpdateEventTypes = (
     AppearanceUpdateEvent
     | DimsUpdateEvent
     | AABBUpdateEvent
     | ChannelAppearanceUpdateEvent
+    | BackgroundUpdateEvent
 )
 
 

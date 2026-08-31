@@ -15,6 +15,8 @@ from cellier.events import (
     AABBUpdateEvent,
     AppearanceChangedEvent,
     AppearanceUpdateEvent,
+    BackgroundChangedEvent,
+    BackgroundUpdateEvent,
     CameraChangedEvent,
     CanvasSizeChangedEvent,
     ChannelAppearanceChangedEvent,
@@ -69,6 +71,7 @@ from cellier.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
 from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
 from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
 from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+from cellier.scene._background import BackgroundAppearance
 from cellier.scene.cameras import (
     CameraType,
     OrbitCameraController,
@@ -152,6 +155,14 @@ _aabb_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.Cont
     "_aabb_source_id_override", default=None
 )
 
+# Parallel context variable for update_background_field /
+# _make_background_handler.  Background writes are unrelated to appearance
+# writes, so they get their own variable rather than sharing one that an
+# in-flight appearance write may already have set.
+_background_source_id_override: contextvars.ContextVar[UUID | None] = (
+    contextvars.ContextVar("_background_source_id_override", default=None)
+)
+
 
 class CellierController:
     """The main class for constructing and controlling a cellier visualization.
@@ -211,6 +222,11 @@ class CellierController:
         # closes over ``self`` -- keeps the whole controller reachable from
         # the scene's psygnal signal for the lifetime of the process.
         self._scene_psygnal_handlers: dict[UUID, list[tuple]] = {}
+        # The BackgroundAppearance object each scene's background bridge is
+        # currently attached to, with its handler.  Needed to move the bridge
+        # when the whole model is replaced (scene.background = ...), which
+        # would otherwise leave the bridge listening to an orphaned object.
+        self._scene_background_bridges: dict[UUID, tuple] = {}
         # When True, transform-change handlers skip reslice_scene.  Managed
         # by the suppress_reslice context manager.  This is a flat boolean, so
         # nested suppress_reslice calls or concurrent async transform mutations
@@ -270,13 +286,19 @@ class CellierController:
             self._on_channel_appearance_update,
             owner_id=self._id,
         )
+        self._incoming_events.subscribe(
+            BackgroundUpdateEvent,
+            self._on_background_update,
+            owner_id=self._id,
+        )
 
     @property
     def incoming_events(self) -> EventBus:
         """Incoming event bus for GUI-driven model mutations.
 
-        Emit ``AppearanceUpdateEvent``, ``DimsUpdateEvent``, or
-        ``AABBUpdateEvent`` onto this bus to request model changes.
+        Emit ``AppearanceUpdateEvent``, ``DimsUpdateEvent``,
+        ``AABBUpdateEvent`` or ``BackgroundUpdateEvent`` onto this bus to
+        request model changes.
         The controller dispatches each event to the corresponding
         ``update_*`` method, preserving ``source_id`` end-to-end.
         """
@@ -418,9 +440,12 @@ class CellierController:
         """
         self._model.scenes[scene.id] = scene
         self._scene_render_modes[scene.id] = scene.render_modes
-        self._render_manager.add_scene(scene.id, lighting=scene.lighting)
+        self._render_manager.add_scene(
+            scene.id, lighting=scene.lighting, background=scene.background
+        )
         self._scene_to_canvases[scene.id] = []
         self._wire_dims_model(scene)
+        self._wire_scene_background(scene)
         self._outgoing_events.emit(
             SceneAddedEvent(source_id=self._id, scene_id=scene.id)
         )
@@ -434,6 +459,7 @@ class CellierController:
         coordinate_system: CoordinateSystem | None = None,
         render_modes: set[Literal["2d", "3d"]] | None = None,
         lighting: Literal["none", "default"] = "none",
+        background: BackgroundAppearance | None = None,
     ) -> Scene:
         """Create a Scene from keyword arguments and register it.
 
@@ -454,6 +480,9 @@ class CellierController:
         lighting : "none" or "default"
             Pass ``"default"`` to add ambient/directional lights (required for
             ``MeshPhongAppearance``).
+        background : BackgroundAppearance or None
+            Background appearance for the scene.  ``None`` uses the model
+            defaults (the cellier vertical gray gradient).
 
         Returns
         -------
@@ -485,6 +514,7 @@ class CellierController:
             dims=dims,
             render_modes=render_modes if render_modes is not None else {"2d", "3d"},
             lighting=lighting,
+            background=background if background is not None else BackgroundAppearance(),
         )
         return self.add_scene_model(scene)
 
@@ -2119,6 +2149,108 @@ class CellierController:
             (scene.dims.events, handler)
         )
 
+    def _wire_scene_background(self, scene: Scene) -> None:
+        """Bridge a scene's background model to the render layer and the bus.
+
+        Two connections, for the same reason ``_wire_trail`` needs two:
+
+        1. ``scene.background.events`` for per-field changes.  psygnal does
+           not propagate a nested ``EventedModel``'s field changes to the
+           parent's event group, which is also why ``_wire_dims_model``
+           connects to ``scene.dims.events``.
+        2. ``scene.events.background`` for wholesale replacement
+           (``scene.background = BackgroundAppearance(...)``), which has to
+           move connection 1 onto the new object.
+        """
+        self._connect_background_bridge(scene.id, scene.background)
+        assigned_handler = self._make_background_assigned_handler(scene.id)
+        scene.events.background.connect(assigned_handler)
+        self._scene_psygnal_handlers.setdefault(scene.id, []).append(
+            (scene.events.background, assigned_handler)
+        )
+
+    def _connect_background_bridge(
+        self, scene_id: UUID, background: BackgroundAppearance
+    ) -> None:
+        """Attach the per-field background bridge for *scene_id* to *background*."""
+        handler = self._make_background_handler(scene_id)
+        background.events.connect(handler)
+        self._scene_background_bridges[scene_id] = (background, handler)
+        self._scene_psygnal_handlers.setdefault(scene_id, []).append(
+            (background.events, handler)
+        )
+
+    def _make_background_assigned_handler(self, scene_id: UUID) -> Callable:
+        """Return a handler that moves the bridge onto a replaced background model.
+
+        ``scene.events.background`` also fires for nested field changes (the
+        ``Scene`` relay re-emits it), so the identity check against the object
+        the bridge is attached to is what distinguishes an actual replacement
+        -- and what keeps this from duplicating the per-field path.
+        """
+
+        def _on_background_assigned(background: BackgroundAppearance) -> None:
+            wired, handler = self._scene_background_bridges[scene_id]
+            if background is wired:
+                return
+            wired.events.disconnect(handler)
+            self._scene_psygnal_handlers[scene_id].remove((wired.events, handler))
+            self._connect_background_bridge(scene_id, background)
+            self._push_background(scene_id, background, field_name=None, new_value=None)
+
+        return _on_background_assigned
+
+    def _make_background_handler(self, scene_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a scene's background model."""
+
+        def _on_background_psygnal(info: EmissionInfo) -> None:
+            self._push_background(
+                scene_id,
+                self._model.scenes[scene_id].background,
+                field_name=info.signal.name,
+                new_value=info.args[0],
+            )
+
+        return _on_background_psygnal
+
+    def _push_background(
+        self,
+        scene_id: UUID,
+        background: BackgroundAppearance,
+        *,
+        field_name: str | None,
+        new_value: Any,
+    ) -> None:
+        """Apply *background* to the render layer and announce the change.
+
+        The whole model goes to the render layer -- the background modes take
+        different numbers of colors, so a per-field push would have to
+        reconstruct the rest anyway -- while the bus event also carries the
+        delta so widgets can echo-filter and update one control.
+        """
+        self._render_manager.set_scene_background(scene_id, background)
+        resolved_source_id = _background_source_id_override.get() or self._id
+        _SOURCE_ID_LOGGER.debug(
+            "bridge  handler=_on_background_psygnal  scene=%s  field=%s"
+            "  resolved_source=%s  override_active=%s",
+            scene_id,
+            field_name,
+            resolved_source_id,
+            _background_source_id_override.get() is not None,
+        )
+        self._outgoing_events.emit(
+            BackgroundChangedEvent(
+                source_id=resolved_source_id,
+                scene_id=scene_id,
+                background=background,
+                field_name=field_name,
+                new_value=new_value,
+            )
+        )
+        # The background is not a visual and does not reslice, so nothing else
+        # on this path asks for a frame.
+        self._request_draw_for_scene(scene_id)
+
     def _make_dims_handler(self, scene_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a scene's DimsManager."""
 
@@ -2683,6 +2815,77 @@ class CellierController:
             _source_id_override.reset(token)
             _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
 
+    def update_background_field(
+        self,
+        scene_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field on a scene's background appearance model.
+
+        Tags the emitted bus event with *source_id*.  GUI widgets should pass
+        ``source_id=self._id`` so their own ``BackgroundChangedEvent``
+        subscription can ignore the echo.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        field :
+            Attribute name on the background model, e.g. ``"top_color"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``BackgroundChangedEvent``.  Defaults
+            to the controller's own ID.
+        """
+        background = self._model.scenes[scene_id].background
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  background_field=%s  scene=%s  source=%s",
+            field,
+            scene_id,
+            resolved_source_id,
+        )
+        token = _background_source_id_override.set(source_id)
+        try:
+            setattr(background, field, value)
+        finally:
+            _background_source_id_override.reset(token)
+            _SOURCE_ID_LOGGER.debug(
+                "reset  background_field=%s  scene=%s", field, scene_id
+            )
+
+    def set_background(
+        self,
+        scene_id: UUID,
+        background: BackgroundAppearance,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Replace a scene's background appearance model wholesale.
+
+        Emits a single ``BackgroundChangedEvent`` with ``field_name=None``.
+        Assigning ``scene.background`` directly does the same thing; this
+        method exists to stamp a *source_id* on the resulting event.
+
+        Parameters
+        ----------
+        scene_id :
+            Target scene.
+        background :
+            The background appearance to apply.
+        source_id :
+            UUID to stamp on the emitted ``BackgroundChangedEvent``.
+        """
+        token = _background_source_id_override.set(source_id)
+        try:
+            self._model.scenes[scene_id].background = background
+        finally:
+            _background_source_id_override.reset(token)
+
     def update_appearance_group_field(
         self,
         visual_ids: list[UUID],
@@ -3044,6 +3247,11 @@ class CellierController:
     def _on_aabb_update(self, event: AABBUpdateEvent) -> None:
         self.update_aabb_field(
             event.visual_id, event.field, event.value, source_id=event.source_id
+        )
+
+    def _on_background_update(self, event: BackgroundUpdateEvent) -> None:
+        self.update_background_field(
+            event.scene_id, event.field, event.value, source_id=event.source_id
         )
 
     def _on_channel_appearance_update(
@@ -3504,6 +3712,7 @@ class CellierController:
         # 5. Clean up controller-side scene maps.
         self._dims_cache.pop(scene_id, None)
         self._scene_render_modes.pop(scene_id, None)
+        self._scene_background_bridges.pop(scene_id, None)
 
         # 6. Remove from model layer.
         self._model.scenes.pop(scene_id)

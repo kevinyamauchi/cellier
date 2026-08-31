@@ -4,14 +4,14 @@
 pixels, so a rendered Qt dock can be checked by test rather than by eye.  These
 helpers turn "run the dock once and look at it" into two assertions:
 
-* :func:`group_titles` -- which controls the panel contains, **in order**, so a
-  stage that adds or reorders a group shows up as a diff;
+* :func:`control_labels` -- what the panel calls each control, **in order**, so
+  a stage that adds, renames or reorders one shows up as a diff;
 * :func:`assert_panel_renders` -- that the panel actually paints something, so
-  a panel of correctly-titled but empty groups fails.
+  a panel of correctly-titled but empty controls fails.
 
 Import from a test module::
 
-    from tests.convenience._qt_acceptance import assert_panel_renders, group_titles
+    from tests.convenience._qt_acceptance import assert_panel_renders, control_labels
 """
 
 from __future__ import annotations
@@ -32,16 +32,36 @@ _SAMPLE_STRIDE = 3
 _MIN_DISTINCT_COLORS = 8
 
 
-def group_titles(container: QWidget) -> list[str]:
-    """Return the ``QGroupBox`` titles inside *container*, in layout order.
+def control_labels(container: QWidget) -> list[str]:
+    """Return what *container* calls each control it holds, in layout order.
 
-    Walks the layout tree rather than using ``findChildren``, so the result is
-    the order the user sees top-to-bottom, not the order of construction.
-    Nested groups follow their parent.
+    The toolkit-neutral question "which controls does this panel contain, and
+    what does it call them?" has two Qt answers, because a control is named in
+    one of two ways (``plans/label_ownership_unification.md``):
+
+    * a **single-control widget** carries its own label row, stamped with
+      ``LABELLED_ROW_OBJECT_NAME``.  The row's first item is that label, and
+      the walk does not descend past it -- a slider's own value readout and a
+      colour picker's ``Alpha:`` are parts of the control, not names for it.
+    * a **multi-row widget** (the AABB and volume-render groups) carries a
+      ``QGroupBox``, whose title names the group.  The walk *does* descend
+      into it, so a group holding labelled rows reports both.
+
+    Anything else is scaffolding -- containers, stretches, the sub-labels
+    inside a composite -- and contributes nothing.
     """
-    from PySide6.QtWidgets import QGroupBox
+    from PySide6.QtWidgets import QGroupBox, QLabel
 
-    titles: list[str] = []
+    from cellier.gui.qt.visuals._chrome import LABELLED_ROW_OBJECT_NAME
+
+    labels: list[str] = []
+
+    def _row_label(row: QWidget) -> str:
+        layout = row.layout()
+        if layout is None or layout.count() == 0:
+            return ""
+        first = layout.itemAt(0).widget()
+        return first.text() if isinstance(first, QLabel) else ""
 
     def _walk(layout: QLayout | None) -> None:
         if layout is None:
@@ -52,12 +72,36 @@ def group_titles(container: QWidget) -> list[str]:
             if widget is None:
                 _walk(item.layout())
                 continue
+            if widget.objectName() == LABELLED_ROW_OBJECT_NAME:
+                labels.append(_row_label(widget))
+                continue
             if isinstance(widget, QGroupBox):
-                titles.append(widget.title())
+                labels.append(widget.title())
             _walk(widget.layout())
 
     _walk(container.layout())
-    return titles
+    return labels
+
+
+def control_labels_anywidget(widgets: list) -> list[str]:
+    """Return what each built anywidget control calls itself, in order.
+
+    The anywidget twin of :func:`control_labels`, and the reason the two front
+    ends can be compared at all: both sides answer the same question about the
+    same controls, so ``control_labels(qt_panel) == control_labels_anywidget(
+    anywidget_widgets)`` is a real cross-toolkit assertion rather than two
+    lists that happen to be written down side by side.
+
+    A multi-row widget names itself with ``title``; a single-control widget
+    with ``label``.  A widget carrying neither is one that cannot name itself,
+    which is the state this plan removed -- it reports ``""`` rather than
+    being skipped, so a regression shows up as a diff and not as a shorter
+    list.
+    """
+    return [
+        str(getattr(widget, "title", "") or getattr(widget, "label", ""))
+        for widget in widgets
+    ]
 
 
 def panel_distinct_colors(container: QWidget) -> int:

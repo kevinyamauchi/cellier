@@ -5,6 +5,16 @@ Layer 1 of the three-layer design in ``plans/convenience_cleanup.md`` section
 (one class per control type -- toggle, slider, spin, combo, colour) implements
 the ``_build`` / ``_read`` / ``_apply`` seam; layer 3 binds a field name and a
 label and is a few lines per field.
+
+Layer 1 also builds the **label row**: a control names itself, here, rather
+than being named by whatever lays it out
+(``plans/label_ownership_unification.md``).  Before that, five of the six
+layer-2 types rendered a bare control and were named only by the ``QGroupBox``
+the appearance renderer wrapped them in -- so a widget used anywhere else was
+anonymous, and the one type that *did* label itself (``QtToggle``) showed its
+name twice.  The anywidget side always worked this way; this is Qt catching
+up, which is why the row mirrors ``.cellier-app-row`` down to the 5.5em
+right-aligned label column.
 """
 
 from __future__ import annotations
@@ -20,6 +30,7 @@ from cellier.gui._appearance_fields import (
     appearance_field_spec,
     normalize_visual_ids,
 )
+from cellier.gui.qt.visuals._chrome import labelled_row
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -89,12 +100,29 @@ class QtAppearanceField:
 
         value = self._default_value if initial_value is _UNSET else initial_value
         self._control = self._build(value, parent)
+        # ``_build`` is left alone: layer 2 keeps building exactly the control
+        # it always did and knows nothing about being labelled.
+        self._row = labelled_row(self._label, self._control, parent)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout."""
+        """The labelled row to insert into a layout.
+
+        This is the whole control, name included -- what a caller wants in
+        every case except reaching for the input itself, which is
+        :attr:`control`.
+        """
+        return self._row
+
+    @property
+    def control(self):
+        """The bare input inside the row -- the checkbox, slider or combo.
+
+        For tests and for callers driving the input directly.  Layer 2's
+        ``_read`` / ``_apply`` use ``self._control`` and never go through here.
+        """
         return self._control
 
     @property
@@ -182,7 +210,8 @@ class QtToggle(QtAppearanceField):
     def _build(self, initial_value: Any, parent):
         from qtpy.QtWidgets import QCheckBox
 
-        box = QCheckBox(self._label, parent)
+        # No text: the row's label names it, like every other control type.
+        box = QCheckBox(parent)
         box.setChecked(bool(initial_value))
         box.toggled.connect(self._emit)
         return box

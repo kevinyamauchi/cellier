@@ -40,8 +40,20 @@ class QtColormapComboBox(VisualIdGroup):
         ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_colormap :
         Starting colormap — typically ``visual_model.appearance.color_map``.
+    title :
+        The name shown beside the control.  Defaults to
+        :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
+    """
+
+    DEFAULT_TITLE = "Colormap"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this
+    is what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
+    two together.
     """
 
     changed: Signal = Signal(object)
@@ -52,9 +64,12 @@ class QtColormapComboBox(VisualIdGroup):
         visual_id: UUID | Sequence[UUID],
         *,
         initial_colormap,
+        title: str | None = None,
         parent=None,
     ) -> None:
         from superqt import QColormapComboBox
+
+        from cellier.gui.qt.visuals._chrome import labelled_row
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
@@ -65,14 +80,24 @@ class QtColormapComboBox(VisualIdGroup):
         self._combo.setCurrentColormap(initial_colormap)
         self._combo.currentColormapChanged.connect(self._on_combo_changed)
 
+        self._row = labelled_row(
+            self.DEFAULT_TITLE if title is None else title, self._combo, parent
+        )
+
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout.
+        """The labelled row to insert into a layout.
 
-        Qt seam 1: replace with the backend element for other toolkits.
+        The control names itself (``plans/label_ownership_unification.md``);
+        reach for :attr:`control` to drive the input directly.
         """
+        return self._row
+
+    @property
+    def control(self):
+        """The bare input inside the row."""
         return self._combo
 
     def close(self) -> None:
