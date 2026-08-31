@@ -6,15 +6,15 @@ type: unchecking ``Visible`` appears to do nothing, and afterwards the canvas
 seems frozen -- until you drag the camera, at which point the visual
 disappears.
 
-The model, the bus, the pygfx node and the redraw are all correct, and the
-tests here cover that. The remaining defect is one layer further down, in
+The model, the bus, the pygfx node and the redraw were all correct, and the
+tests here cover that. The defect was one layer further down, in
 ``CanvasView``'s ``TemporalAccumulationPass``: it blends each frame into a
-history texture and its ``reset()`` is called from exactly one place, guarded
-by "did the camera move". A content change therefore leaves the history in
-place, so a single frame moves the picture only ``alpha`` (0.2) of the way
-toward the new one and the visual lingers as a ghost. Dragging the camera
-resets the history, which is why that clears it. See
-``plans/visibility_debugging.md``.
+history texture whose ``reset()`` was called from exactly one place, guarded
+by "did the camera move". A content change left the history in place, so the
+hidden visual lingered as a ghost -- and dragging the camera cleared it, which
+is what made this look like a redraw bug. Fixed by
+``CanvasView.invalidate_accumulation``; see
+``plans/temporal_accumulation_fix.md``.
 
 **Read the paths these tests use carefully.** ``render_scene`` builds a
 *fresh* offscreen renderer per call, with no effect passes and no history, so
@@ -293,29 +293,20 @@ async def test_moving_the_camera_discards_the_accumulation_history(
     assert resets, "a camera move must discard the history"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known bug: TemporalAccumulationPass.reset() is called only when the "
-        "camera moves, so a content change blends 20% toward the new frame "
-        "and the old content lingers as a ghost. See "
-        "plans/visibility_debugging.md."
-    ),
-)
 @pytest.mark.asyncio
 async def test_hiding_a_visual_discards_the_accumulation_history(
     monkeypatch, controller, reslice
 ):
     """Hiding changes what should be drawn, so the history is stale.
 
-    With ``alpha=0.2`` a single frame moves the picture only a fifth of the
-    way toward "the visual is gone", and nothing requests further frames, so
-    roughly 80% of the visual stays on screen indefinitely.  That is the ghost
-    reported against both example apps.
+    Without this the hidden visual lingered as a ghost: the history was
+    invalidated only by a camera move, so the frames after the change were
+    an average with a picture that no longer applied.  Dragging the canvas
+    cleared it, which is what made the bug look like a redraw problem.
 
-    The same argument applies to every other content change -- colormap, clim,
-    opacity, a data commit, a transform -- so a fix should invalidate the
-    history for all of them, not for ``visible`` alone.
+    The same argument applies to every other content change -- colormap,
+    clim, opacity, a data commit, a transform -- which is why the
+    invalidation hangs off ``request_draw`` rather than off ``visible``.
     """
     scene, visual = _mesh_scene(controller)
     await reslice(controller, scene.id)

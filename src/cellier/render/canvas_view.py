@@ -104,6 +104,11 @@ class CanvasView:
         self._dim = dim
         self._event_bus: EventBus | None = event_bus
         self._camera_dirty: bool = False
+        # Set by ``invalidate_accumulation``; consumed at the top of
+        # ``_draw_frame``.  A flag rather than a direct ``reset()`` so the
+        # discard is guaranteed to land *before* the next render rather
+        # than racing a frame the backend has already queued.
+        self._accum_dirty: bool = False
         self._tick_visuals_fn: Callable[[], None] | None = None
         self._closed: bool = False
         self._resize_filter: object | None = None
@@ -575,8 +580,31 @@ class CanvasView:
         """
         self._overlays.append(overlay)
 
+    def invalidate_accumulation(self) -> None:
+        """Discard the temporal accumulation history before the next frame.
+
+        Call whenever the image that *should* be drawn changes, so the
+        next frame is not an average with a picture that no longer
+        applies.  Cheap and idempotent: it sets a flag that
+        ``_draw_frame`` consumes, and the pass itself only zeroes a
+        counter.
+
+        Every content change needs this, not just the conspicuous ones.
+        Hiding a visual is merely the case where the stale average is
+        obvious; a colormap, clim, opacity, transform or data commit
+        leaves the same residue and reads as sluggishness instead.
+        """
+        self._accum_dirty = True
+
     def request_draw(self) -> None:
-        """Request a redraw of the canvas."""
+        """Request a redraw of the canvas.
+
+        Cellier calls this for content changes, so it also invalidates
+        the accumulation history.  Idle and continuous redraws come from
+        the backend's own scheduler and never reach here, which is what
+        lets them keep accumulating.
+        """
+        self.invalidate_accumulation()
         self._canvas.request_draw(self._draw_frame)
 
     def apply_camera_state(self, request: ReslicingRequest) -> None:
@@ -597,7 +625,11 @@ class CanvasView:
             self._camera.world.position = tuple(request.camera_pos)
         finally:
             self._applying_model_state = False
+        # Caching the new state suppresses the diff in ``_draw_frame``, which
+        # is what stops the feedback loop -- but the camera really did move,
+        # so the history has to be discarded here instead.
         self._last_camera_state = self.capture_camera_state()
+        self.invalidate_accumulation()
 
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
@@ -651,7 +683,12 @@ class CanvasView:
         self._controller.enabled = True
         self._dim = new_dim
         self._apply_ssao_enabled()
+        # Caching the state of the camera we just swapped *to* means the diff
+        # in ``_draw_frame`` sees no change, even though the whole view did.
+        # And on the way back to 3D the pass has been skipped for the entire
+        # 2D excursion, so its history still holds the pre-excursion image.
         self._last_camera_state = self.capture_camera_state()
+        self.invalidate_accumulation()
         first_visit = new_dim not in self._fitted
         return first_visit
 
@@ -732,6 +769,13 @@ class CanvasView:
         # rendering it would touch a released surface.
         if self._closed:
             return
+
+        # Content changed since the last frame: the history is of a picture
+        # that no longer applies.  Ahead of the render, so the stale blend
+        # never lands even once.
+        if self._accum_dirty:
+            self._accum_dirty = False
+            self._accum_pass.reset()
 
         # Detect camera changes by comparing against the cached state.
         current_state = self.capture_camera_state()

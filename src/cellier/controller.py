@@ -236,6 +236,13 @@ class CellierController:
             self._on_dims_changed_bus,
             owner_id=self._id,
         )
+        # New data on the GPU is a content change like any other, and unlike
+        # an appearance write nothing on this path asks for a frame.
+        self._outgoing_events.subscribe(
+            ResliceCompletedEvent,
+            self._on_reslice_completed_redraw,
+            owner_id=self._id,
+        )
         # Subscribe to internal raw pointer events emitted by RenderManager.
         self._outgoing_events.subscribe(
             _CanvasRawPointerEvent,
@@ -1200,6 +1207,7 @@ class CellierController:
                 visual_id=visual_model.id,
             )
         )
+        self._request_draw_for_scene(scene_id)
 
     def _add_multiscale_image_visual(
         self,
@@ -2231,6 +2239,9 @@ class CellierController:
             )
             if not self._suppress_reslice:
                 self.reslice_scene(scene_id)
+            # A transform moves the visual whether or not it reslices, and the
+            # reslice path would only redraw once its data commits.
+            self._request_draw_for_scene(scene_id)
 
         return _on_transform
 
@@ -2393,12 +2404,9 @@ class CellierController:
             # the pipeline asks for a frame.  Measured in a headless harness,
             # every appearance write requested zero draws.
             #
-            # A frame is necessary but **not sufficient** for the change to be
-            # seen: CanvasView's TemporalAccumulationPass blends each frame
-            # into a history it discards only on camera movement, so one frame
-            # moves the picture a fraction of the way toward the new content
-            # and the old content lingers.  See
-            # plans/visibility_debugging.md.
+            # This also discards the canvas's accumulation history, without
+            # which the frame would be an average with the pre-change picture
+            # -- see CanvasView.invalidate_accumulation.
             self._request_draw_for_visual(visual_id)
 
         return _on_appearance_psygnal
@@ -3598,6 +3606,9 @@ class CellierController:
                 visual_id=visual_id,
             )
         )
+        # Removal happens after the visual left _visual_to_scene, so this has
+        # to go through the scene rather than the (now unmapped) visual.
+        self._request_draw_for_scene(scene_id)
 
     def remove_data_store(self, data_store_id: UUID) -> None:
         """Remove a data store from the model.
@@ -4396,11 +4407,31 @@ class CellierController:
         self._render_manager.set_label_selection(visual_id, selection)
         self._request_draw_for_visual(visual_id)
 
+    def _on_reslice_completed_redraw(self, event: ResliceCompletedEvent) -> None:
+        """Redraw once a reslice has committed its data to the GPU.
+
+        Fires per visual per canvas at the end of a reslice round, so a
+        progressive multiscale load still averages its intermediate levels
+        together -- only the settled result is guaranteed a clean frame.
+        """
+        self._request_draw_for_visual(event.visual_id)
+
     def _request_draw_for_visual(self, visual_id: UUID) -> None:
         """Ask every canvas showing *visual_id*'s scene to redraw."""
         scene_id = self._visual_to_scene.get(visual_id)
         if scene_id is None:
             return
+        self._request_draw_for_scene(scene_id)
+
+    def _request_draw_for_scene(self, scene_id: UUID) -> None:
+        """Ask every canvas showing *scene_id* to redraw.
+
+        For changes that are not attributable to one visual's appearance --
+        a visual added or removed, a transform, freshly committed data.
+        ``CanvasView.request_draw`` also discards the accumulation history,
+        which is what these need: they all change the image, and a frame
+        averaged with the previous content would show the change fading in.
+        """
         for canvas_id in self.get_canvas_ids(scene_id):
             canvas_view = self._render_manager._canvases.get(canvas_id)
             if canvas_view is not None:

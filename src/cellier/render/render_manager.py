@@ -214,6 +214,11 @@ class RenderManager:
         self._config.temporal.enabled = value
         for canvas in self._canvases.values():
             canvas._accum_pass.enabled = value
+            # A disabled pass is skipped outright, so its history and frame
+            # count freeze at whatever they held.  Switching back on without
+            # this would blend ``alpha`` of that stale image into the first
+            # frame, with no warm-up, however long the pass was off.
+            canvas.invalidate_accumulation()
 
     # ------------------------------------------------------------------
     # Screen-space ambient occlusion
