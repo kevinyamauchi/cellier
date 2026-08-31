@@ -8,12 +8,14 @@ from uuid import uuid4
 from psygnal import Signal
 
 from cellier.events import AABBChangedEvent, AABBUpdateEvent, SubscriptionSpec
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtAABBWidget:
+class QtAABBWidget(VisualIdGroup):
     """Bidirectional AABB parameter controls wired to the cellier v2 bus.
 
     Wraps three Qt sub-controls — a ``QCheckBox`` for *enabled*, a
@@ -32,6 +34,8 @@ class QtAABBWidget:
     ----------
     visual_id :
         UUID of the visual whose ``aabb`` params this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_enabled :
         Starting value for the *enabled* checkbox.
     initial_line_width :
@@ -47,7 +51,7 @@ class QtAABBWidget:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_enabled: bool = False,
         initial_line_width: float = 2.0,
@@ -66,7 +70,7 @@ class QtAABBWidget:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._current_color = initial_color
 
         # ── Qt seam 1: container ─────────────────────────────────────────────
@@ -131,13 +135,7 @@ class QtAABBWidget:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AABBChangedEvent,
-                handler=self._on_aabb_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AABBChangedEvent, self._on_aabb_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -154,24 +152,10 @@ class QtAABBWidget:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_enabled_changed(self, value: bool) -> None:
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="enabled",
-                value=value,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "enabled", value)
 
     def _on_line_width_changed(self, value: float) -> None:
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="line_width",
-                value=value,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "line_width", value)
 
     def _on_color_btn_clicked(self) -> None:
         from qtpy.QtGui import QColor
@@ -182,14 +166,7 @@ class QtAABBWidget:
         if not color.isValid():
             return  # user cancelled
         css = color.name()  # e.g. "#ff00ff"
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="color",
-                value=css,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "color", css)
         # Update local cache and swatch immediately — echo filtering will
         # suppress the round-tripped AABBChangedEvent.
         self._current_color = css

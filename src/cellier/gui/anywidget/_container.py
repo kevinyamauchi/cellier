@@ -19,6 +19,8 @@ import anywidget
 import ipywidgets
 import traitlets
 
+from cellier.gui.anywidget._teardown import close_aux_widgets
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -61,3 +63,21 @@ class AnywidgetBox(anywidget.AnyWidget):
     min_width = traitlets.Int(0).tag(sync=True)
     gap = traitlets.Int(4).tag(sync=True)
     padding = traitlets.Int(0).tag(sync=True)
+
+    def close(self) -> None:
+        """Close this box and every widget beneath it.
+
+        A container is the only thing holding the composed tree, so closing it
+        has to close the children too or the whole panel stays registered with
+        ``ipywidgets`` (see ``cellier.gui.anywidget._teardown``).  ``children``
+        is cleared first so the box does not keep them reachable afterwards.
+
+        ``Widget.close()`` no-ops once the comm is gone, so a child that is
+        also closed through another path -- a control tracked as a leaf by
+        ``_RenderView`` -- is safe to reach twice.
+        """
+        for child in list(self.children):
+            child.close()
+        self.children = []
+        close_aux_widgets(self)
+        super().close()

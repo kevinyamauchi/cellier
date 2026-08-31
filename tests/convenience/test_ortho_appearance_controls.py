@@ -1,0 +1,368 @@
+"""Appearance controls on an ``OrthoViewer``.
+
+Stage 2 of ``plans/convenience_cleanup.md`` (section 8).  Before it,
+``AppearanceControls()`` in an ortho ``Layout`` was a **silent no-op**: both
+renderers read ``viewer.scene``, an ``OrthoViewer`` exposes only ``scenes``,
+and the dock came back ``None`` with no error (section 4.1).  The fix
+generalises the channel path's fan-out rather than making the no-op loud, so
+one widget drives all four panel visuals in lock-step.
+
+Mirrors ``test_channel_controls.py``, which is the template section 8.5 names.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from cellier.convenience import OrthoViewer, Viewer
+from cellier.convenience.gui._controls_config import (
+    InMemoryImageControlsConfig,
+    MultiscaleImageControlsConfig,
+)
+from cellier.convenience.layout._shared import select_appearance_target
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.visuals._image_memory import InMemoryImageAppearance
+
+_PANELS = ("xy", "xz", "yz", "vol")
+
+
+def _store() -> ImageMemoryStore:
+    data = np.random.default_rng(0).random((8, 16, 16)).astype(np.float32)
+    return ImageMemoryStore(data=data)
+
+
+def _appearance() -> InMemoryImageAppearance:
+    return InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0))
+
+
+def _ortho_with_controls(**config_kwargs):
+    ortho = OrthoViewer(("z", "y", "x"))
+    visuals = ortho.add_image(
+        _store(),
+        appearance=_appearance(),
+        controls=InMemoryImageControlsConfig(
+            appearance=config_kwargs.pop("appearance", ["clim"]), **config_kwargs
+        ),
+    )
+    return ortho, visuals
+
+
+# ---------------------------------------------------------------------------
+# Recording the config and the panel group
+# ---------------------------------------------------------------------------
+
+
+def test_add_image_records_the_config_and_the_group():
+    ortho, visuals = _ortho_with_controls()
+
+    panel_ids = [visuals[key].id for key in _PANELS]
+    rep_id = panel_ids[0]
+    assert list(ortho._controls_configs) == [rep_id]
+    assert ortho._visual_groups[rep_id] == panel_ids
+
+
+def test_add_image_multiscale_records_the_config_and_the_group(multiscale_image_store):
+    from cellier.visuals._image import MultiscaleImageAppearance
+
+    ortho = OrthoViewer(("z", "y", "x"))
+    visuals = ortho.add_image_multiscale(
+        multiscale_image_store,
+        appearance=MultiscaleImageAppearance(color_map="viridis"),
+        controls=MultiscaleImageControlsConfig(appearance=["lod_bias"]),
+    )
+
+    panel_ids = [visuals[key].id for key in _PANELS]
+    assert ortho._visual_groups[panel_ids[0]] == panel_ids
+
+
+def test_controls_none_records_nothing():
+    ortho = OrthoViewer(("z", "y", "x"))
+    ortho.add_image(_store(), appearance=_appearance())
+
+    assert ortho._controls_configs == {}
+    assert ortho._visual_groups == {}
+
+
+# ---------------------------------------------------------------------------
+# select_appearance_target: the ortho cases (pure, no toolkit fixtures)
+# ---------------------------------------------------------------------------
+
+
+def test_target_expands_to_all_four_panels():
+    ortho, visuals = _ortho_with_controls()
+
+    target = select_appearance_target(ortho)
+
+    assert target is not None
+    # The representative is the first panel; the controls are seeded from it
+    # and written to all four.
+    assert target.visual is visuals["xy"]
+    assert target.visual_ids == [visuals[key].id for key in _PANELS]
+
+
+def test_target_on_a_single_scene_viewer_is_one_id():
+    viewer = Viewer(("z", "y", "x"))
+    visual = viewer.add_image(
+        _store(),
+        appearance=_appearance(),
+        controls=InMemoryImageControlsConfig(appearance=["clim"]),
+    )
+
+    target = select_appearance_target(viewer)
+
+    assert target.visual is visual
+    assert target.visual_ids == [visual.id]
+
+
+def test_target_is_none_on_an_unconfigured_ortho():
+    ortho = OrthoViewer(("z", "y", "x"))
+    ortho.add_image(_store(), appearance=_appearance())
+
+    assert select_appearance_target(ortho) is None
+
+
+# ---------------------------------------------------------------------------
+# One edit reaches every panel
+# ---------------------------------------------------------------------------
+
+
+def test_qt_edit_reaches_all_four_panels(qtbot):
+    """The regression test for section 4.1, driven through a real controller.
+
+    ``clim`` rather than ``color_map`` deliberately: writing ``color_map``
+    poisons ``==`` on the appearance class for the rest of the process
+    (section 6.2.2), which would break unrelated round-trip tests.
+    """
+    from cellier.gui.qt.visuals import QtClimRangeSlider
+
+    ortho, visuals = _ortho_with_controls()
+    target = select_appearance_target(ortho)
+
+    widget = QtClimRangeSlider(
+        target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
+    )
+    ortho.controller.connect_widget(
+        widget, subscription_specs=widget.subscription_specs()
+    )
+
+    widget._slider.setValue((0.25, 0.75))
+
+    for key in _PANELS:
+        assert visuals[key].appearance.clim == pytest.approx((0.25, 0.75))
+
+
+def test_aabb_edit_reaches_all_four_panels(qtbot):
+    """AABB is not an appearance field, so it fans out on its own event."""
+    from cellier.gui.qt.visuals import QtAABBWidget
+
+    ortho, visuals = _ortho_with_controls()
+    target = select_appearance_target(ortho)
+
+    widget = QtAABBWidget(target.visual_ids)
+    ortho.controller.connect_widget(
+        widget, subscription_specs=widget.subscription_specs()
+    )
+
+    widget._enabled_check.setChecked(True)
+    widget._line_width_spin.setValue(4.5)
+
+    for key in _PANELS:
+        assert visuals[key].aabb.enabled is True
+        assert visuals[key].aabb.line_width == pytest.approx(4.5)
+
+
+def test_a_foreign_write_to_one_panel_reaches_the_widget(qtbot):
+    """Subscribe-to-all, not subscribe-to-first (section 8.1 part 2).
+
+    A sibling written by something other than the widget -- here panel 2,
+    never the representative -- must still update the control.  Subscribing
+    only to the first id would make "panel 0 represents the group" a
+    load-bearing invariant with no way to self-heal.
+    """
+    from cellier.gui.qt.visuals import QtClimRangeSlider
+
+    ortho, visuals = _ortho_with_controls()
+    target = select_appearance_target(ortho)
+
+    widget = QtClimRangeSlider(
+        target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
+    )
+    ortho.controller.connect_widget(
+        widget, subscription_specs=widget.subscription_specs()
+    )
+
+    ortho.controller.update_appearance_field(visuals["yz"].id, "clim", (0.1, 0.6))
+
+    assert tuple(widget._slider.value()) == pytest.approx((0.1, 0.6))
+
+
+def test_the_widgets_own_echoes_are_all_dropped(qtbot):
+    """A group edit produces N echoes, not one; every one must be filtered.
+
+    Section 8.6 flags this as the subtle part of the fan-out.  If an echo got
+    through, the widget would re-apply its own value -- harmless here because
+    the applies are idempotent, but it would mean the filter is not doing its
+    job and a lossy control type would oscillate.
+    """
+    from cellier.gui.qt.visuals import QtClimRangeSlider
+
+    ortho, _visuals = _ortho_with_controls()
+    target = select_appearance_target(ortho)
+
+    widget = QtClimRangeSlider(
+        target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
+    )
+    ortho.controller.connect_widget(
+        widget, subscription_specs=widget.subscription_specs()
+    )
+
+    applied: list = []
+    original = widget._set_value
+    widget._set_value = lambda value: (applied.append(value), original(value))
+
+    widget._slider.setValue((0.25, 0.75))
+
+    assert applied == []
+
+
+# ---------------------------------------------------------------------------
+# The dock itself: AppearanceControls() in an ortho Layout
+# ---------------------------------------------------------------------------
+
+
+def test_appearance_dock_renders_on_an_ortho_viewer_qt(qtbot):
+    """Was ``None`` before stage 2 -- no dock, no error (section 4.1)."""
+    from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
+    from tests.convenience._qt_acceptance import assert_panel_renders, group_titles
+
+    ortho, _visuals = _ortho_with_controls(appearance=["color_map", "clim"])
+
+    container = _render_appearance_controls_qt(ortho)
+
+    assert container is not None
+    assert group_titles(container) == [
+        "Colormap",
+        "Contrast limits",
+        "Bounding box",
+    ]
+    assert_panel_renders(container)
+
+
+def test_the_rendered_ortho_dock_drives_every_panel(qtbot):
+    """End to end: build the dock from a Layout spec, then edit it."""
+    from cellier.convenience.layout._qt_renderer import _render_dock_qt
+    from cellier.convenience.layout._spec import AppearanceControls
+
+    ortho, visuals = _ortho_with_controls(appearance=["clim"])
+
+    container = _render_dock_qt(AppearanceControls(), ortho)
+    assert container is not None
+
+    from superqt import QLabeledDoubleRangeSlider
+
+    slider = container.findChild(QLabeledDoubleRangeSlider)
+    slider.setValue((0.3, 0.7))
+
+    for key in _PANELS:
+        assert visuals[key].appearance.clim == pytest.approx((0.3, 0.7))
+
+
+def test_appearance_dock_renders_on_an_ortho_viewer_anywidget():
+    """The same fix reaches the anywidget renderer, which shares the resolver."""
+    from cellier.convenience.gui._appearance_widgets import (
+        build_appearance_widgets_anywidget,
+    )
+
+    ortho = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    visuals = ortho.add_image(
+        _store(),
+        appearance=_appearance(),
+        controls=InMemoryImageControlsConfig(appearance=["clim"]),
+    )
+    target = select_appearance_target(ortho)
+
+    built = build_appearance_widgets_anywidget(
+        target.visual, target.config, ortho.controller, target.visual_ids
+    )
+
+    assert [title for title, _w in built] == ["Contrast limits", "Bounding box"]
+    for _title, widget in built:
+        assert widget.visual_ids == tuple(visuals[key].id for key in _PANELS)
+
+
+# ---------------------------------------------------------------------------
+# The controller's write-side companions (design section 8.3 step 2)
+# ---------------------------------------------------------------------------
+
+
+def test_update_appearance_group_field_writes_every_visual():
+    """The programmatic companion to the widget's subscribe-to-all read side."""
+    from cellier.events import AppearanceChangedEvent
+
+    ortho, visuals = _ortho_with_controls()
+    panel_ids = [visuals[key].id for key in _PANELS]
+
+    received: list = []
+    ortho.controller._outgoing_events.subscribe(AppearanceChangedEvent, received.append)
+
+    ortho.controller.update_appearance_group_field(panel_ids, "clim", (0.2, 0.9))
+
+    for key in _PANELS:
+        assert visuals[key].appearance.clim == pytest.approx((0.2, 0.9))
+    assert len(received) == len(panel_ids)
+
+
+def test_update_aabb_group_field_writes_every_visual():
+    """AABB needs its own helper: different model, different event."""
+    from cellier.events import AABBChangedEvent
+
+    ortho, visuals = _ortho_with_controls()
+    panel_ids = [visuals[key].id for key in _PANELS]
+
+    received: list = []
+    ortho.controller._outgoing_events.subscribe(AABBChangedEvent, received.append)
+
+    ortho.controller.update_aabb_group_field(panel_ids, "enabled", True)
+
+    for key in _PANELS:
+        assert visuals[key].aabb.enabled is True
+    assert len(received) == len(panel_ids)
+
+
+def test_the_group_helpers_stamp_the_given_source_id():
+    """So a widget writing through them still filters its own echoes."""
+    from uuid import uuid4
+
+    from cellier.events import AppearanceChangedEvent
+
+    ortho, visuals = _ortho_with_controls()
+    panel_ids = [visuals[key].id for key in _PANELS]
+    source_id = uuid4()
+
+    received: list = []
+    ortho.controller._outgoing_events.subscribe(AppearanceChangedEvent, received.append)
+
+    ortho.controller.update_appearance_group_field(
+        panel_ids, "clim", (0.4, 0.6), source_id=source_id
+    )
+
+    assert {event.source_id for event in received} == {source_id}
+
+
+def test_the_renderer_warns_about_a_field_the_model_does_not_have(qtbot):
+    """The residual drop stage 3's validation cannot catch, on ortho too."""
+    from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
+
+    ortho = OrthoViewer(("z", "y", "x"))
+    ortho.add_image(
+        _store(),
+        appearance=_appearance(),
+        # Valid for the multiscale config class; absent from the in-memory model.
+        controls=MultiscaleImageControlsConfig(appearance=["clim", "lod_bias"]),
+    )
+
+    with pytest.warns(UserWarning, match="lod_bias"):
+        container = _render_appearance_controls_qt(ortho)
+
+    assert container is not None

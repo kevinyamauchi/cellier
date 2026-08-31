@@ -12,12 +12,14 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtClimRangeSlider:
+class QtClimRangeSlider(VisualIdGroup):
     """Bidirectional contrast-limits slider wired to the cellier v2 bus.
 
     Wraps a ``superqt.QLabeledDoubleRangeSlider`` and keeps it in sync with
@@ -27,13 +29,19 @@ class QtClimRangeSlider:
 
     Wire to the controller after construction::
 
-        slider = QtClimRangeSlider(visual_id, clim_range=(0, 255), initial_clim=(0, 200))
-        controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+        slider = QtClimRangeSlider(
+            visual_id, clim_range=(0, 255), initial_clim=(0, 200)
+        )
+        controller.connect_widget(
+            slider, subscription_specs=slider.subscription_specs()
+        )
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``clim`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     clim_range :
         ``(min, max)`` for the slider range.
     initial_clim :
@@ -50,7 +58,7 @@ class QtClimRangeSlider:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         clim_range: tuple[float, float],
         initial_clim: tuple[float, float],
@@ -62,7 +70,7 @@ class QtClimRangeSlider:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         from qtpy.QtGui import QFontMetrics
@@ -113,13 +121,7 @@ class QtClimRangeSlider:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -133,14 +135,7 @@ class QtClimRangeSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, value: tuple[float, float]) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="clim",
-                value=value,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "clim", value)
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
 

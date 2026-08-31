@@ -12,6 +12,7 @@ detected by default with an explicit ``host=`` override via
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -132,6 +133,10 @@ class MarimoHost:
 class JupyterHost:
     """Jupyter host -- manager-rendered anywidget container (``AnywidgetBox``)."""
 
+    def __init__(self) -> None:
+        # Widgets rendered by ``present``; see ``close_presented``.
+        self._presented: list[object] = []
+
     def leaf(self, widget: object) -> object:
         """A ``DOMWidget`` is directly displayable; pass it through."""
         return widget
@@ -187,8 +192,28 @@ class JupyterHost:
         from cellier.gui.anywidget import AnywidgetBox
 
         wrapped = AnywidgetBox(children=[root], padding=self._OUTER_PADDING)
+        # Kept so it can be closed later.  Because this host renders as a side
+        # effect and returns ``None``, the caller never sees this wrapper, so
+        # without a reference here nothing could ever release it -- and it is
+        # an ``ipywidgets`` widget like any other (see
+        # ``cellier.gui.anywidget._teardown``).
+        self._presented.append(wrapped)
         ipy_display(wrapped)
         return None
+
+    def close_presented(self) -> None:
+        """Close everything this host has rendered.
+
+        Optional part of the ``LayoutHost`` contract, called by
+        ``DisplayHandle.close``.  A host that hands its root back to the caller
+        (``MarimoHost``) does not need it: whoever owns the root closes it.
+        """
+        for widget in self._presented:
+            close = getattr(widget, "close", None)
+            if close is not None:
+                with suppress(Exception):
+                    close()
+        self._presented.clear()
 
 
 def _marimo_running() -> bool:

@@ -14,6 +14,10 @@ Run::
 
 Controls
 --------
+Visible : checkbox in the appearance dock.  Known issue: the canvas does not
+          fully update until you drag it -- temporal accumulation blends each
+          frame into a history discarded only on camera movement, so the image
+          lingers as a ghost.  See plans/visibility_debugging.md.
 3D mode : orbit (left-drag), zoom (scroll), pan (right-drag)
 2D mode : pan (left-drag), zoom (scroll)
 Toggle  : "Switch to 2D / 3D" button in the bottom dock
@@ -130,6 +134,9 @@ viewer.add_image_multiscale(
     ),
     controls=MultiscaleImageControlsConfig(
         appearance=[
+            # First in the panel: the group order follows the config class's
+            # control map, not this list.
+            "visible",
             "color_map",
             "clim",
             "render_mode",

@@ -11,8 +11,11 @@ import traitlets
 from psygnal import Signal
 
 from cellier.events import AABBChangedEvent, AABBUpdateEvent, SubscriptionSpec
+from cellier.gui._appearance_fields import VisualIdGroup
+from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 _STATIC = Path(__file__).parent / "static"
@@ -20,7 +23,7 @@ _STATIC = Path(__file__).parent / "static"
 _FIELDS = ("enabled", "line_width", "color")
 
 
-class AnywidgetAABBWidget(anywidget.AnyWidget):
+class AnywidgetAABBWidget(VisualIdGroup, anywidget.AnyWidget):
     """Bidirectional AABB parameter controls wired to the cellier v2 bus.
 
     Mirrors ``QtAABBWidget``: an *enabled* checkbox, a *line_width* number
@@ -36,6 +39,8 @@ class AnywidgetAABBWidget(anywidget.AnyWidget):
     ----------
     visual_id :
         UUID of the visual whose ``aabb`` params this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_enabled :
         Starting value for the *enabled* checkbox. Default ``False``.
     initial_line_width :
@@ -56,7 +61,7 @@ class AnywidgetAABBWidget(anywidget.AnyWidget):
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_enabled: bool = False,
         initial_line_width: float = 2.0,
@@ -70,7 +75,7 @@ class AnywidgetAABBWidget(anywidget.AnyWidget):
             **kwargs,
         )
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._applying = False
         self.observe(self._on_trait_change, names=list(_FIELDS))
 
@@ -82,18 +87,21 @@ class AnywidgetAABBWidget(anywidget.AnyWidget):
         return self
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires."""
-        return [
-            SubscriptionSpec(
-                event_type=AABBChangedEvent,
-                handler=self._on_aabb_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AABBChangedEvent, self._on_aabb_changed)
 
     # ── model -> widget ──────────────────────────────────────────────────────
 
@@ -116,11 +124,4 @@ class AnywidgetAABBWidget(anywidget.AnyWidget):
     def _on_trait_change(self, change) -> None:
         if self._applying:
             return
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field=change["name"],
-                value=change["new"],
-            )
-        )
+        self._emit_group(AABBUpdateEvent, change["name"], change["new"])

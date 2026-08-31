@@ -1,0 +1,38 @@
+.cellier-color-picker {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  min-width: 260px;
+}
+
+.cellier-color-picker .cellier-app-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-color-picker .cellier-app-label {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.cellier-color-picker .cellier-color-input {
+  flex-shrink: 0;
+  width: 2.5em;
+  height: 1.6em;
+  padding: 0;
+  cursor: pointer;
+}
+
+.cellier-color-picker .cellier-alpha-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cellier-color-picker .cellier-alpha-readout {
+  flex-shrink: 0;
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

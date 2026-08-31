@@ -134,11 +134,16 @@ class DisplayHandle:
     """
 
     def __init__(
-        self, viewer: ViewerLike, view: object, sidecar: Sidecar | None = None
+        self,
+        viewer: ViewerLike,
+        view: object,
+        sidecar: Sidecar | None = None,
+        host: object | None = None,
     ) -> None:
         self._viewer = viewer
         self._view = view
         self._sidecar = sidecar
+        self._host = host
         self._closed = False
 
     def close(self) -> None:
@@ -147,6 +152,11 @@ class DisplayHandle:
             return
         self._closed = True
         self._view.close()
+        # An imperative host renders a wrapper of its own that the caller never
+        # sees, so only the host can release it.
+        close_presented = getattr(self._host, "close_presented", None)
+        if close_presented is not None:
+            close_presented()
         scenes = getattr(self._viewer, "scenes", None)
         scene_list = scenes.values() if scenes is not None else [self._viewer.scene]
         for scene in scene_list:
@@ -238,7 +248,9 @@ def display(
 
     _init_view(viewer, fit=fit, on_ready=on_ready)
 
-    handle = DisplayHandle(viewer, render_view, sidecar=sidecar_instance)
+    handle = DisplayHandle(
+        viewer, render_view, sidecar=sidecar_instance, host=resolved_host
+    )
     if cell_value is None:
         return handle
     try:

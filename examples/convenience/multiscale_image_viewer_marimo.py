@@ -20,6 +20,8 @@ def _(mo):
 
     A multiscale image viewer demonstrating all appearance widgets:
 
+    - **Visible** -- show or hide the image.  *Known issue: the canvas does
+      not fully update until you drag it; see `plans/visibility_debugging.md`.*
     - **Colormap** -- choose from ten scientific colormaps
     - **Contrast limits** -- drag the lo and hi handles independently
     - **Render mode** -- ISO surface / MIP / attenuated MIP
@@ -212,6 +214,9 @@ def _(
         ),
         controls=MultiscaleImageControlsConfig(
             appearance=[
+                # First in the panel: the group order follows the config
+                # class's control map, not this list.
+                "visible",
                 "color_map",
                 "clim",
                 "render_mode",

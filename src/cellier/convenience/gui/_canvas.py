@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from cellier.controller import CellierController
     from cellier.convenience._hosts import LayoutHost
     from cellier.convenience._viewer import Viewer
-    from cellier.convenience.gui._controls_config import BaseControlsConfig
     from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
     from cellier.gui.qt import QtCanvasWidget
     from cellier.scene.scene import Scene
@@ -29,79 +28,42 @@ def _resolve_gui(viewer: Viewer, gui: str | None) -> str:
 
 @dataclass
 class AnywidgetCanvasView:
-    """An anywidget canvas leaf plus its control and dims panel leaves.
+    """An anywidget canvas leaf plus its dims panel leaf.
 
-    Returned by :func:`build_canvas_widget` for ``gui="anywidget"``.
+    Returned by :func:`build_canvas_widget` for ``gui="anywidget"``.  Composes
+    to a single column: canvas above the dims sliders.
 
-    When *controls* is non-empty, the layout is two columns::
-
-        [controls | canvas]
-        [       | dims (includes 2D/3D toggle)]
-
-    When *controls* is empty and extra *controls* are provided to
-    :meth:`compose_with_controls`, those widgets form the left column.  When
-    neither is present, only the right column is returned.
+    Appearance controls are **not** part of this view.  An earlier design put
+    them in a left column here as well as in a dock; nothing ever reached that
+    path -- ``build_canvas_widget`` never forwarded the parameters it needed --
+    and ``Layout(left_dock=AppearanceControls())`` already produces the same
+    ``[controls | canvas]`` arrangement through the supported path, on both
+    toolkits (design section 7.2).
 
     Attributes
     ----------
     canvas : object
         The ``rendercanvas`` anywidget canvas.
-    controls : list[object]
-        The split appearance / AABB / dataset-info sub-widgets (left column,
-        one per row), or an empty list when no appearance panel was
-        configured for this visual.  See
-        :func:`cellier.convenience.gui._appearance_widgets.build_appearance_widgets_anywidget`.
     dims : AnywidgetDimsPanel
-        Axis slice sliders plus the 2D/3D toggle button (right column, below
-        canvas).
+        Axis slice sliders plus the 2D/3D toggle button, below the canvas.
     canvas_size : tuple[int, int]
         The CSS pixel size the canvas was constructed with.  Reused by
-        :meth:`compose_with_controls` as the canvas+dims column's responsive
-        min-width floor.
+        :meth:`compose` as the column's responsive min-width floor.
     """
 
     canvas: object
-    controls: list[object]
     dims: AnywidgetDimsPanel
     canvas_size: tuple[int, int] = (600, 600)
 
     def compose(self, host: LayoutHost) -> object:
-        """Compose without extra controls (backward-compatible entry point)."""
-        return self.compose_with_controls(host, ())
-
-    def compose_with_controls(self, host: LayoutHost, controls: object = ()) -> object:
-        """Arrange into a two-column layout when a left column exists.
-
-        Left column: the appearance sub-widgets grouped tightly together
-        (see cellier.convenience.gui._appearance_widgets.compose_appearance_leaf`),
-        then *controls* (e.g. toggle button) at the host's normal spacing.
-        Right column: canvas above dims sliders, floored at ``canvas_size[0]``
-        and otherwise responsive.  When the left column would be empty, only
-        the right column is returned.
-        """
-        from cellier.convenience.gui._appearance_widgets import (
-            compose_appearance_leaf,
-        )
-
-        appearance_leaf = compose_appearance_leaf(self.controls, host)
-        left_items = [] if appearance_leaf is None else [appearance_leaf]
-        left_items.extend(host.leaf(c) for c in controls)
-        right = host.stack(
+        """Arrange canvas above dims, floored at ``canvas_size[0]``."""
+        return host.stack(
             [host.leaf(self.canvas), host.leaf(self.dims)],
             min_width=self.canvas_size[0],
         )
-        if not left_items:
-            return right
-        left = host.stack(left_items)
-        return host.stack([left, right], direction="h")
 
     def close(self) -> None:
-        """Unsubscribe the panels from the bus."""
-        from cellier.convenience.gui._appearance_widgets import (
-            close_appearance_widgets,
-        )
-
-        close_appearance_widgets(self.controls)
+        """Unsubscribe the dims panel from the bus."""
         self.dims.close()
 
 
@@ -305,16 +267,13 @@ def anywidget_canvas_view_for_scene(
     depth_range_2d: tuple[float, float] = (-500.0, 500.0),
     canvas_size: tuple[int, int] | None = None,
     non_displayed: tuple[int, ...] = (),
-    controls: BaseControlsConfig | None = None,
-    visual=None,
 ) -> AnywidgetCanvasView:
     """Build a wired :class:`AnywidgetCanvasView` for *scene*, reusing any canvas.
 
     Mirrors :func:`canvas_widget_for_scene` for the anywidget gui: ensures a
     canvas exists (the controller's ``gui == "anywidget"`` makes it a
-    rendercanvas anywidget), builds a dims panel, optionally builds the split
-    appearance sub-widgets when *controls* is provided, wires them all to the
-    bus, and returns the leaves.
+    rendercanvas anywidget), builds a dims panel, wires it to the bus, and
+    returns the leaves.
 
     Parameters
     ----------
@@ -329,25 +288,11 @@ def anywidget_canvas_view_for_scene(
         created.  Ignored when reusing an existing canvas.
     non_displayed : tuple[int, ...]
         Axes to exclude from the sliders regardless of dims state.
-    controls : BaseControlsConfig or None
-        Controls configuration for the appearance panel.  When ``None`` or
-        when ``controls.appearance`` is ``False`` or an empty list, no
-        appearance panel is created.  Typically an
-        ``InMemoryImageControlsConfig`` or ``MultiscaleImageControlsConfig``
-        obtained from ``viewer._controls_configs``.
-    visual : BaseVisual or None
-        The visual whose appearance the panel will control.  Required when
-        *controls* specifies a non-empty appearance field list; ignored
-        otherwise.
 
     Returns
     -------
     AnywidgetCanvasView
     """
-    from cellier.convenience.gui._appearance_widgets import (
-        build_appearance_widgets_anywidget,
-    )
-    from cellier.convenience.gui._controls_config import BaseControlsConfig
     from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
 
     canvas_ids = controller.get_canvas_ids(scene.id)
@@ -374,19 +319,8 @@ def anywidget_canvas_view_for_scene(
         dims_panel, subscription_specs=dims_panel.subscription_specs()
     )
 
-    # Build the appearance sub-widgets only when controls specifies a
-    # non-empty field list and a visual is available.
-    widgets: list[object] = []
-    if (
-        controls is not None
-        and isinstance(controls, BaseControlsConfig)
-        and visual is not None
-    ):
-        widgets = build_appearance_widgets_anywidget(visual, controls, controller)
-
     return AnywidgetCanvasView(
         canvas=canvas_view.widget,
-        controls=widgets,
         dims=dims_panel,
         canvas_size=canvas_size or (600, 600),
     )

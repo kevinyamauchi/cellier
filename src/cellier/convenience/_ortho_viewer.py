@@ -26,6 +26,14 @@ if TYPE_CHECKING:
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         ChannelControlsConfig,
+        GraphControlsConfig,
+        InMemoryImageControlsConfig,
+        LabelsControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
+        MultiscaleImageControlsConfig,
+        MultiscaleLabelsControlsConfig,
+        PointsControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.graph._graph_memory_store import GraphMemoryStore
@@ -217,10 +225,11 @@ class OrthoViewer:
         self._scenes = self._build_scenes(coordinate_system)
         self._syncer: _ExtraAxisSyncer | None = None
         # Per-visual controls configs, keyed by a representative (first-panel)
-        # visual id; _channel_visual_groups maps that id to every panel's
-        # sibling visual id so one channel widget can drive them all.
+        # visual id; _visual_groups maps that id to every panel's sibling
+        # visual id so one widget can drive them all.  Not channel-specific:
+        # any fanned-out add_* records its group here (design section 8.3).
         self._controls_configs: dict[UUID, BaseControlsConfig] = {}
-        self._channel_visual_groups: dict[UUID, list[UUID]] = {}
+        self._visual_groups: dict[UUID, list[UUID]] = {}
         # Callbacks fired once all panel scenes' startup data is on the GPU;
         # consumed by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
@@ -414,7 +423,7 @@ class OrthoViewer:
         obj._extra_axes = {i for i in range(ndim) if i not in vol_displayed}
         obj._syncer = None
         obj._controls_configs = {}
-        obj._channel_visual_groups = {}
+        obj._visual_groups = {}
         if link_extra_axes and obj._extra_axes:
             obj._wire_extra_axis_sync()
         return obj
@@ -472,6 +481,7 @@ class OrthoViewer:
         data: ImageMemoryStore | UUID,
         appearance: BaseImageAppearance,
         name: str = "image",
+        controls: InMemoryImageControlsConfig | None = None,
     ) -> dict[str, ImageVisual]:
         """Add an in-memory image to every panel from a single data store.
 
@@ -483,6 +493,10 @@ class OrthoViewer:
             Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
+        controls : InMemoryImageControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
@@ -490,11 +504,13 @@ class OrthoViewer:
             The per-panel visuals keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``.
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_image(
                 store, scene.id, appearance, f"{name}_{key}"
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_labels(
         self,
@@ -502,6 +518,7 @@ class OrthoViewer:
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
+        controls: LabelsControlsConfig | None = None,
     ) -> dict[str, LabelMemoryVisual]:
         """Add an in-memory label image to every panel from one data store.
 
@@ -516,17 +533,23 @@ class OrthoViewer:
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : LabelsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, LabelMemoryVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_labels(
                 store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_mesh(
         self,
@@ -534,6 +557,7 @@ class OrthoViewer:
         appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
+        controls: MeshControlsConfig | None = None,
     ) -> dict[str, MeshVisual]:
         """Add a mesh to every panel from a single data store.
 
@@ -548,17 +572,23 @@ class OrthoViewer:
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, MeshVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_mesh(
                 store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_points(
         self,
@@ -566,6 +596,7 @@ class OrthoViewer:
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
+        controls: PointsControlsConfig | None = None,
     ) -> dict[str, PointsVisual]:
         """Add a points visual to every panel from a single data store.
 
@@ -580,17 +611,23 @@ class OrthoViewer:
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : PointsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, PointsVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_points(
                 store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_graph(
         self,
@@ -599,6 +636,7 @@ class OrthoViewer:
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
+        controls: GraphControlsConfig | None = None,
     ) -> dict[str, GraphVisual]:
         """Add a spatial-graph visual to every panel from a single data store.
 
@@ -616,17 +654,23 @@ class OrthoViewer:
             then to identity.
         trail : dict[int, TrailConfig] or None
             Axis index -> window configuration, applied to every panel.
+        controls : GraphControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, GraphVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_graph(
                 store, scene.id, appearance, f"{name}_{key}", transform, trail
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_lines(
         self,
@@ -634,6 +678,7 @@ class OrthoViewer:
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
+        controls: LinesControlsConfig | None = None,
     ) -> dict[str, LinesVisual]:
         """Add a lines visual to every panel from a single data store.
 
@@ -648,17 +693,23 @@ class OrthoViewer:
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : LinesControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, LinesVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_lines(
                 store, scene.id, appearance, f"{name}_{key}", transform
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_image_multiscale(
         self,
@@ -667,6 +718,7 @@ class OrthoViewer:
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleImageControlsConfig | None = None,
     ) -> dict[str, MultiscaleImageVisual]:
         """Add a multiscale image to every panel from a single data store.
 
@@ -682,13 +734,17 @@ class OrthoViewer:
             LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MultiscaleImageControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, MultiscaleImageVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_image_multiscale(
                 store,
                 scene.id,
@@ -698,6 +754,8 @@ class OrthoViewer:
                 transform,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_labels_multiscale(
         self,
@@ -706,6 +764,7 @@ class OrthoViewer:
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleLabelsControlsConfig | None = None,
     ) -> dict[str, MultiscaleLabelVisual]:
         """Add a multiscale label image to every panel from one data store.
 
@@ -721,13 +780,17 @@ class OrthoViewer:
             LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MultiscaleLabelsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
 
         Returns
         -------
         dict[str, MultiscaleLabelVisual]
         """
         store = self._resolve_data_store(data)
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_labels_multiscale(
                 store,
                 scene.id,
@@ -737,6 +800,8 @@ class OrthoViewer:
                 transform,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_multichannel_image(
         self,
@@ -784,7 +849,7 @@ class OrthoViewer:
                 max_channels_3d,
             )
         )
-        self._record_channel_controls(visuals, controls)
+        self._record_controls(visuals, controls)
         return visuals
 
     def add_multichannel_image_multiscale(
@@ -841,23 +906,29 @@ class OrthoViewer:
                 max_channels_3d,
             )
         )
-        self._record_channel_controls(visuals, controls)
+        self._record_controls(visuals, controls)
         return visuals
 
-    def _record_channel_controls(
+    def _record_controls(
         self,
         visuals: dict[str, object],
-        controls: ChannelControlsConfig | None,
+        controls: BaseControlsConfig | None,
     ) -> None:
-        """Record a channel controls config for a fanned-out multichannel add.
+        """Record a controls config for a fanned-out add.
 
         Stores the config keyed by a representative (first-panel) visual id,
-        and maps that id to every panel's sibling visual id so one channel
-        widget can drive all four panels (design section 7.4).
+        and maps that id to every panel's sibling visual id so one widget can
+        drive all four panels (design section 7.4).
+
+        Channel-agnostic: the appearance path resolves the same record through
+        ``select_appearance_target`` that the channel path resolves through
+        ``_resolve_channel_visual_ids``, which is what makes
+        ``AppearanceControls()`` work on an ``OrthoViewer`` at all (section
+        4.1).
         """
         if controls is None or not visuals:
             return
         panel_ids = [v.id for v in visuals.values()]
         rep_id = panel_ids[0]
         self._controls_configs[rep_id] = controls
-        self._channel_visual_groups[rep_id] = panel_ids
+        self._visual_groups[rep_id] = panel_ids

@@ -12,12 +12,14 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtLodBiasSlider:
+class QtLodBiasSlider(VisualIdGroup):
     """Single-value LOD-bias slider wired to the cellier v2 bus.
 
     Wraps a ``superqt.QLabeledDoubleSlider`` and keeps it in sync with
@@ -31,12 +33,16 @@ class QtLodBiasSlider:
     Wire to the controller after construction::
 
         slider = QtLodBiasSlider(visual_id, initial_lod_bias=1.0)
-        controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+        controller.connect_widget(
+            slider, subscription_specs=slider.subscription_specs()
+        )
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``lod_bias`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_lod_bias :
         Starting value — typically ``visual_model.appearance.lod_bias``.
     lod_range :
@@ -52,7 +58,7 @@ class QtLodBiasSlider:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_lod_bias: float = 1.0,
         lod_range: tuple[float, float] = (1e-6, 5.0),
@@ -63,7 +69,7 @@ class QtLodBiasSlider:
         from superqt import QLabeledDoubleSlider
 
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         self._slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal, parent)
         self._slider.setRange(*lod_range)
@@ -87,13 +93,7 @@ class QtLodBiasSlider:
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires."""
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -107,14 +107,7 @@ class QtLodBiasSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_released(self) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="lod_bias",
-                value=self._slider.value(),
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "lod_bias", self._slider.value())
 
     # ── Qt seam: push value without re-firing signals ────────────────────────
 

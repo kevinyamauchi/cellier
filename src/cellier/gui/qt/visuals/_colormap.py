@@ -12,12 +12,14 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtColormapComboBox:
+class QtColormapComboBox(VisualIdGroup):
     """Bidirectional colormap selector wired to the cellier v2 bus.
 
     Wraps a ``superqt.QColormapComboBox`` and keeps it in sync with
@@ -34,6 +36,8 @@ class QtColormapComboBox:
     ----------
     visual_id :
         UUID of the visual whose ``color_map`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_colormap :
         Starting colormap — typically ``visual_model.appearance.color_map``.
     parent :
@@ -45,7 +49,7 @@ class QtColormapComboBox:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_colormap,
         parent=None,
@@ -54,7 +58,7 @@ class QtColormapComboBox:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._combo = QColormapComboBox(parent)
@@ -92,13 +96,7 @@ class QtColormapComboBox:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -112,14 +110,7 @@ class QtColormapComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, colormap) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="color_map",
-                value=colormap,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "color_map", colormap)
 
     # ── Qt seam 2: push value without re-firing currentColormapChanged ────────
 

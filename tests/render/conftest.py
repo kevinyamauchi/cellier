@@ -38,7 +38,7 @@ from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.data.label._label_memory_store import LabelMemoryStore
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Iterator
     from uuid import UUID
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def controller(qtbot) -> CellierController:
+def controller(qtbot) -> Iterator[CellierController]:
     """A ``CellierController`` with camera-driven reslicing disabled.
 
     The render tests drive reslicing explicitly and read pixels deterministically.
@@ -60,7 +60,12 @@ def controller(qtbot) -> CellierController:
     """
     ctrl = CellierController()
     ctrl.camera_reslice_enabled = False
-    return ctrl
+    yield ctrl
+    # The autouse fixture in tests/conftest.py would catch this too, but the
+    # shared fixture that hands out the controller is the honest place to give
+    # it back: close() cancels pending slices, closes the canvases, disconnects
+    # the psygnal bridges and clears the buses.
+    ctrl.close()
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +74,9 @@ def controller(qtbot) -> CellierController:
 
 
 @pytest.fixture(scope="session")
-def offscreen_renderer() -> (
-    Callable[[gfx.Scene, gfx.Camera, tuple[int, int]], np.ndarray]
-):
+def offscreen_renderer() -> Callable[
+    [gfx.Scene, gfx.Camera, tuple[int, int]], np.ndarray
+]:
     """Return an ``(scene, camera, size) -> RGBA array`` renderer.
 
     Creating the offscreen canvas + ``WgpuRenderer`` is what actually touches

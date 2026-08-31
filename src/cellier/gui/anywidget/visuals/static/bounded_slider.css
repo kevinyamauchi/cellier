@@ -1,0 +1,30 @@
+.cellier-bounded-slider {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  min-width: 260px;
+}
+
+.cellier-bounded-slider .cellier-app-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-bounded-slider .cellier-app-label {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.cellier-bounded-slider .cellier-slider-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cellier-bounded-slider .cellier-slider-readout {
+  flex-shrink: 0;
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

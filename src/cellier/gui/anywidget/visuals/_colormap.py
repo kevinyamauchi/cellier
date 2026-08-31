@@ -15,9 +15,12 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 from cellier.gui._colormap_util import colormap_to_str
+from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 _STATIC = Path(__file__).parent / "static"
@@ -36,7 +39,7 @@ _DEFAULT_COLORMAP_NAMES = [
 ]
 
 
-class AnywidgetColormapControl(anywidget.AnyWidget):
+class AnywidgetColormapControl(VisualIdGroup, anywidget.AnyWidget):
     """Bidirectional colormap selector wired to the cellier v2 bus.
 
     Mirrors ``QtColormapComboBox``: one UUID per widget, source-ID echo
@@ -45,12 +48,16 @@ class AnywidgetColormapControl(anywidget.AnyWidget):
     Wire to the controller after construction::
 
         control = AnywidgetColormapControl(visual_id, initial_colormap="grays")
-        controller.connect_widget(control, subscription_specs=control.subscription_specs())
+        controller.connect_widget(
+            control, subscription_specs=control.subscription_specs()
+        )
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``color_map`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_colormap :
         Starting colormap -- typically ``visual_model.appearance.color_map``.
     colormap_names :
@@ -68,7 +75,7 @@ class AnywidgetColormapControl(anywidget.AnyWidget):
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_colormap: str = "grays",
         colormap_names: list[str] | None = None,
@@ -82,7 +89,7 @@ class AnywidgetColormapControl(anywidget.AnyWidget):
             **kwargs,
         )
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._applying = False
         self.observe(self._on_trait_change, names="color_map")
 
@@ -94,18 +101,21 @@ class AnywidgetColormapControl(anywidget.AnyWidget):
         return self
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires."""
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_appearance_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_appearance_changed)
 
     # ── model -> widget ──────────────────────────────────────────────────────
 
@@ -128,11 +138,4 @@ class AnywidgetColormapControl(anywidget.AnyWidget):
     def _on_trait_change(self, change) -> None:
         if self._applying:
             return
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="color_map",
-                value=change["new"],
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "color_map", change["new"])

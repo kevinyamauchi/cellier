@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any, Callable, Generator, Literal
 from uuid import UUID, uuid4
 
@@ -206,6 +206,11 @@ class CellierController:
         # Storing the signal alongside the handler avoids branching on visual
         # type during teardown.
         self._visual_psygnal_handlers: dict[UUID, list[tuple]] = {}
+        # Same bookkeeping for the scene-level dims bridge, so it can be
+        # disconnected on teardown.  Without a record the handler -- which
+        # closes over ``self`` -- keeps the whole controller reachable from
+        # the scene's psygnal signal for the lifetime of the process.
+        self._scene_psygnal_handlers: dict[UUID, list[tuple]] = {}
         # When True, transform-change handlers skip reslice_scene.  Managed
         # by the suppress_reslice context manager.  This is a flat boolean, so
         # nested suppress_reslice calls or concurrent async transform mutations
@@ -2100,7 +2105,11 @@ class CellierController:
     def _wire_dims_model(self, scene: Scene) -> None:
         """Subscribe to all field changes on a scene's DimsManager."""
         self._dims_cache[scene.id] = scene.dims.selection.displayed_axes
-        scene.dims.events.connect(self._make_dims_handler(scene.id))
+        handler = self._make_dims_handler(scene.id)
+        scene.dims.events.connect(handler)
+        self._scene_psygnal_handlers.setdefault(scene.id, []).append(
+            (scene.dims.events, handler)
+        )
 
     def _make_dims_handler(self, scene_id: UUID) -> Callable:
         """Return a psygnal catch-all handler for a scene's DimsManager."""
@@ -2309,6 +2318,9 @@ class CellierController:
                     new_value=new_value,
                 )
             )
+            # See _make_appearance_handler: toggling the box changes only
+            # scene-graph flags, so nothing else asks for a frame.
+            self._request_draw_for_visual(visual_id)
 
         return _on_aabb_psygnal
 
@@ -2375,6 +2387,19 @@ class CellierController:
                 )
                 if field_name in _RESLICE_FIELDS:
                     self.reslice_visual(visual_id)
+
+            # An appearance change repaints the same data, so it triggers no
+            # reslice (only the three _RESLICE_FIELDS do) and nothing else in
+            # the pipeline asks for a frame.  Measured in a headless harness,
+            # every appearance write requested zero draws.
+            #
+            # A frame is necessary but **not sufficient** for the change to be
+            # seen: CanvasView's TemporalAccumulationPass blends each frame
+            # into a history it discards only on camera movement, so one frame
+            # moves the picture a fraction of the way toward the new content
+            # and the old content lingers.  See
+            # plans/visibility_debugging.md.
+            self._request_draw_for_visual(visual_id)
 
         return _on_appearance_psygnal
 
@@ -2649,6 +2674,66 @@ class CellierController:
         finally:
             _source_id_override.reset(token)
             _SOURCE_ID_LOGGER.debug("reset  field=%s  visual=%s", field, visual_id)
+
+    def update_appearance_group_field(
+        self,
+        visual_ids: list[UUID],
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one appearance field across a group of visuals in lock-step.
+
+        Fan-out over :meth:`update_appearance_field` so every visual in the
+        group -- the per-panel visuals of an ``OrthoViewer``, say -- receives
+        the same change.  This is the programmatic write-side companion to the
+        widget subscribe-to-all read side, matching
+        :meth:`update_channel_group_field`.
+
+        Parameters
+        ----------
+        visual_ids :
+            Target visuals, kept equal.
+        field :
+            Attribute name on each appearance model, e.g. ``"clim"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on each emitted event.  Defaults to the
+            controller's own ID.
+        """
+        for visual_id in visual_ids:
+            self.update_appearance_field(visual_id, field, value, source_id=source_id)
+
+    def update_aabb_group_field(
+        self,
+        visual_ids: list[UUID],
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one AABB field across a group of visuals in lock-step.
+
+        The AABB is **not** an appearance field: it lives on ``visual.aabb``
+        and travels on ``AABBChangedEvent``, so it needs its own group helper
+        rather than riding on :meth:`update_appearance_group_field`.
+
+        Parameters
+        ----------
+        visual_ids :
+            Target visuals, kept equal.
+        field :
+            Attribute name on each AABB model, e.g. ``"enabled"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on each emitted ``AABBChangedEvent``.  Defaults to
+            the controller's own ID.
+        """
+        for visual_id in visual_ids:
+            self.update_aabb_field(visual_id, field, value, source_id=source_id)
 
     def update_channel_appearance_field(
         self,
@@ -3403,17 +3488,22 @@ class CellierController:
             self._canvas_to_scene.pop(canvas_id, None)
         self._outgoing_events.unsubscribe_all(scene_id)
 
-        # 4. Clean up controller-side scene maps.
+        # 4. Disconnect the scene-level psygnal bridge, as remove_visual does
+        #    for its own.
+        for signal, handler in self._scene_psygnal_handlers.pop(scene_id, []):
+            signal.disconnect(handler)
+
+        # 5. Clean up controller-side scene maps.
         self._dims_cache.pop(scene_id, None)
         self._scene_render_modes.pop(scene_id, None)
 
-        # 5. Remove from model layer.
+        # 6. Remove from model layer.
         self._model.scenes.pop(scene_id)
 
-        # 6. Render-layer teardown (drops gfx.Scene, canvas widgets, GPU refs).
+        # 7. Render-layer teardown (drops gfx.Scene, canvas widgets, GPU refs).
         self._render_manager.remove_scene(scene_id)
 
-        # 7. Notify external observers.
+        # 8. Notify external observers.
         self._outgoing_events.emit(
             SceneRemovedEvent(source_id=self._id, scene_id=scene_id)
         )
@@ -4466,12 +4556,36 @@ class CellierController:
         not by Python refcounting, so dropping the controller alone leaks them
         (see :meth:`CanvasView.close`).
 
+        Also disconnects the psygnal bridges from the model and clears the
+        event buses.  Those hold the
+        controller's own handlers, and psygnal keeps them **strongly**, so a
+        closed-but-connected controller stays reachable from the models it was
+        watching -- and keeps reacting to them.  ``remove_visual`` and
+        ``remove_scene`` already do this for what they remove; this does it for
+        whatever is left.
+
         Safe to call more than once; the controller must not be used afterwards.
         """
         for scene_id in list(self._scene_to_canvases):
             self.cancel_pending_slices(scene_id)
         self._render_manager.close()
         self._scene_to_canvases.clear()
+
+        for registry in (self._visual_psygnal_handlers, self._scene_psygnal_handlers):
+            for handlers in registry.values():
+                for signal, handler in handlers:
+                    # A signal whose model is already gone, or a handler
+                    # disconnected by an earlier remove_*, is not an error here.
+                    with suppress(Exception):
+                        signal.disconnect(handler)
+            registry.clear()
+
+        # The buses hold strong references to every handler subscribed to
+        # them -- render visuals, widgets, and the controller's own methods --
+        # so dropping the controller without this leaves that whole graph
+        # reachable through them.
+        self._outgoing_events.clear()
+        self._incoming_events.clear()
 
     def on_aabb_changed(
         self,

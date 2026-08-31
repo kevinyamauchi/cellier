@@ -1,0 +1,38 @@
+"""Uniform-colour control, shared by mesh, points and lines (Qt).
+
+Layer 3 of the three-layer design in ``plans/convenience_cleanup.md`` section
+10.2: each class is a field name, a label, and the per-field defaults.  All
+behaviour -- the bus contract, the echo filter, the fan-out over an
+``OrthoViewer``'s panel group -- lives in the layer-1 base, and the control
+itself in the layer-2 type.
+"""
+
+from __future__ import annotations
+
+from typing import ClassVar
+
+from cellier.gui.qt.visuals._base import (
+    QtColorPicker,
+)
+
+
+class QtUniformColorPicker(QtColorPicker):
+    """Uniform RGBA colour.
+
+    One class for mesh, points and lines: they spell the field
+    ``color`` alike, so the control is shared rather than
+    triplicated.  Only used when the visual's ``color_mode`` is
+    ``"uniform"``; per-vertex colours come from the data store.
+
+    Parameters
+    ----------
+    visual_id :
+        UUID of the visual, or a sequence of UUIDs to drive as one
+        group.
+    initial_value :
+        Starting value -- typically ``visual.appearance.color``.
+    """
+
+    _field: ClassVar[str] = "color"
+    _label: ClassVar[str] = "Color"
+    _default_value: ClassVar[tuple[float, float, float, float]] = (1.0, 1.0, 1.0, 1.0)

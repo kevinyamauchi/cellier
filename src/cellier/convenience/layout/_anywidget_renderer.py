@@ -25,9 +25,17 @@ class _RenderView:
         if self._closed:
             return
         self._closed = True
-        for obj in self._closeables:
+        # The leaves first, so each control emits ``closed`` and the controller
+        # drops its subscriptions, then the root -- which closes the container
+        # widgets the host built to compose them.  Those are widgets too, and
+        # nothing else holds them, so skipping the root leaves the whole
+        # scaffolding registered with ``ipywidgets``.
+        for obj in [*self._closeables, self.root]:
+            close = getattr(obj, "close", None)
+            if close is None:
+                continue
             try:
-                obj.close()
+                close()
             except Exception:
                 pass
 
@@ -128,40 +136,27 @@ def _render_appearance_controls(
 ) -> object | None:
     """Build and wire the appearance sub-widgets for the first configured visual.
 
-    Mirrors ``_render_appearance_controls_qt``: builds one anywidget per
-    requested appearance field via ``build_appearance_widgets_anywidget``,
-    then composes them into a single leaf for this dock slot.
+    Mirrors ``_render_appearance_controls_qt``: both resolve the target with
+    ``select_appearance_target`` and build from the same ``appearance_specs``,
+    so the two front ends cannot drift (design section 4.2).
     """
     from cellier.convenience.gui._appearance_widgets import (
         build_appearance_widgets_anywidget,
         compose_appearance_leaf,
     )
-    from cellier.convenience.gui._controls_config import ChannelControlsConfig
+    from cellier.convenience.layout._shared import select_appearance_target
 
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    scene = getattr(viewer, "scene", None)
-    if scene is None or not controls_configs:
-        return None
-
-    controls_config = None
-    visual = None
-    for v in scene.visuals:
-        cfg = controls_configs.get(v.id)
-        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
-            visual = v
-            controls_config = cfg
-            break
-
-    if controls_config is None:
+    target = select_appearance_target(viewer)
+    if target is None:
         return None
 
     widgets = build_appearance_widgets_anywidget(
-        visual, controls_config, viewer.controller
+        target.visual, target.config, viewer.controller, target.visual_ids
     )
     if not widgets:
         return None
 
-    closeables.extend(widgets)
+    closeables.extend(w for _title, w in widgets if hasattr(w, "close"))
     return compose_appearance_leaf(widgets, host)
 
 

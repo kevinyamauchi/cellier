@@ -303,6 +303,13 @@ class CanvasView:
                         return
                     self._cellier_closing = True
                     super()._rc_close()
+                    # The canvas is an ipywidgets widget, so it owns a
+                    # ``Layout`` widget registered in the same process-global
+                    # table and not released with its owner -- see
+                    # ``cellier.gui.anywidget._teardown``.
+                    from cellier.gui.anywidget._teardown import close_aux_widgets
+
+                    close_aux_widgets(self)
 
             canvas = _CellierAnywidgetCanvas(
                 size=size or (600, 600), update_mode="continuous"

@@ -59,6 +59,10 @@ class SceneManager:
     ) -> None:
         self._scene_id = scene_id
         self._scene = gfx.Scene()
+        dark_gray = np.array((169, 167, 168, 255)) / 255
+        light_gray = np.array((100, 100, 100, 255)) / 255
+        background = gfx.Background.from_color(light_gray, dark_gray)
+        self._scene.add(background)
         self._visuals: dict[UUID, _GFXVisual] = {}
         self._active_nodes: dict[UUID, gfx.WorldObject | None] = {}
 

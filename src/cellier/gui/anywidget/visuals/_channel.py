@@ -23,6 +23,7 @@ from cellier.events import (
     SubscriptionSpec,
 )
 from cellier.gui._colormap_util import colormap_to_str
+from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -157,8 +158,17 @@ class AnywidgetChannelList(anywidget.AnyWidget):
         return self
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return one inbound subscription per visual id (subscribe-to-all)."""

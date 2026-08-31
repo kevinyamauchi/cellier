@@ -405,11 +405,10 @@ def test_build_canvas_widget_anywidget_returns_view():
 
     assert isinstance(view, AnywidgetCanvasView)
     assert isinstance(view.canvas, rendercanvas_anywidget.RenderCanvas)
-    # No controls config was registered, so no appearance sub-widgets exist.
-    assert view.controls == []
+    # The view is canvas + dims only; appearance controls live in a dock.
+    assert not hasattr(view, "controls")
     assert callable(view.compose)
 
-    # Without controls, compose() returns only the right column (no h-stack).
     composed = view.compose(JupyterHost())
     from cellier.gui.anywidget import AnywidgetBox
 
@@ -418,7 +417,12 @@ def test_build_canvas_widget_anywidget_returns_view():
 
 
 def test_build_canvas_widget_anywidget_with_controls():
-    """build_canvas_widget always returns view.controls=[]; the renderer builds it."""
+    """A registered controls config does not change the canvas view.
+
+    Panel building belongs to the renderer, from a dock spec.  The canvas
+    view composes identically whether or not a config is registered, which is
+    what makes the removed in-canvas path (section 7.2) purely dead weight.
+    """
     from cellier.convenience._hosts import JupyterHost
     from cellier.convenience.gui import AnywidgetCanvasView, build_canvas_widget
 
@@ -426,14 +430,13 @@ def test_build_canvas_widget_anywidget_with_controls():
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
 
     assert isinstance(view, AnywidgetCanvasView)
-    # Panel building is deferred to the renderer; the canvas view never holds it.
-    assert view.controls == []
+    assert not hasattr(view, "controls")
 
     composed = view.compose(JupyterHost())
     from cellier.gui.anywidget import AnywidgetBox
 
     assert isinstance(composed, AnywidgetBox)
-    # No controls in the canvas view, so compose returns only the right column.
+    # One column: canvas above dims.
     assert composed.direction == "v"
 
 
@@ -949,7 +952,12 @@ def test_aabb_widget_user_color_change_emits_aabb_update():
 
 
 def test_build_appearance_widgets_anywidget_from_visual():
-    """Builds one widget per requested field, plus the always-on AABB widget."""
+    """Builds one ``(title, widget)`` pair per spec, plus the always-on AABB.
+
+    Titles come from the shared ``appearance_specs`` layer so the two front
+    ends name the same control the same way (stage 1, section 7.3); the
+    anywidget side does not display them yet (section 6.5.1 decision 2).
+    """
     import numpy as np
 
     from cellier.convenience import Viewer
@@ -976,15 +984,22 @@ def test_build_appearance_widgets_anywidget_from_visual():
         visual, controls_config, viewer.controller
     )
 
+    assert [title for title, _w in widgets] == [
+        "Colormap",
+        "Contrast limits",
+        "Bounding box",
+    ]
+
+    built = [w for _title, w in widgets]
     # anywidget dynamically subclasses each widget at construction time (the
     # same mechanism AnywidgetChannelList's add_traits relies on), so compare
     # via isinstance rather than exact type equality.
-    assert any(isinstance(w, AnywidgetColormapControl) for w in widgets)
-    assert any(isinstance(w, AnywidgetClimSlider) for w in widgets)
+    assert isinstance(built[0], AnywidgetColormapControl)
+    assert isinstance(built[1], AnywidgetClimSlider)
     # AABB is always wired alongside whenever the visual has one, regardless
     # of whether "aabb" was requested in the appearance field list -- this
     # mirrors ControlPanel's previous (pre-split) behaviour.
-    assert any(isinstance(w, AnywidgetAABBWidget) for w in widgets)
+    assert isinstance(built[2], AnywidgetAABBWidget)
 
 
 def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
@@ -1013,8 +1028,9 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
 
     ranges = axis_ranges_from_viewer(viewer)
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    # build_canvas_widget no longer builds the appearance widgets.
-    assert view.controls == []
+    # The canvas view is canvas + dims only: the in-canvas controls column was
+    # unreachable through the public API and is gone (section 7.2).
+    assert not hasattr(view, "controls")
 
     fake = _FakeHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)

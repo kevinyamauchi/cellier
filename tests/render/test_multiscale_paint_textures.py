@@ -83,7 +83,8 @@ def visual_setup(qtbot, tmp_path):
     return controller, gfx_visual
 
 
-def test_paint_textures_are_allocated(visual_setup):
+@pytest.mark.asyncio
+async def test_paint_textures_are_allocated(visual_setup):
     _ctrl, gfx_visual = visual_setup
     # block_size=16, paint_max_tiles=4 ⇒ paint cache shape (64, 16, 2).
     assert gfx_visual._t_paint_cache.data.shape == (64, 16, 2)
@@ -93,7 +94,8 @@ def test_paint_textures_are_allocated(visual_setup):
     np.testing.assert_array_equal(gfx_visual._t_paint_lut.data, 0.0)
 
 
-def test_patch_writes_value_and_alpha(visual_setup):
+@pytest.mark.asyncio
+async def test_patch_writes_value_and_alpha(visual_setup):
     _ctrl, gfx_visual = visual_setup
     # Paint two voxels in the same tile (g0=1, g1=2): voxels at (16, 32) and (17, 33).
     voxels = np.array([[16, 32], [17, 33]], dtype=np.int64)
@@ -112,7 +114,8 @@ def test_patch_writes_value_and_alpha(visual_setup):
     np.testing.assert_allclose(gfx_visual._t_paint_cache.data[1, 1], [0.4, 1.0])
 
 
-def test_multiple_tiles_get_distinct_slots(visual_setup):
+@pytest.mark.asyncio
+async def test_multiple_tiles_get_distinct_slots(visual_setup):
     _ctrl, gfx_visual = visual_setup
     voxels = np.array([[0, 0], [16, 0], [0, 16]], dtype=np.int64)
     values = np.array([0.1, 0.2, 0.3], dtype=np.float32)
@@ -122,7 +125,8 @@ def test_multiple_tiles_get_distinct_slots(visual_setup):
     assert {sm.get((0, 0)), sm.get((1, 0)), sm.get((0, 1))} == {0, 1, 2}
 
 
-def test_pool_exhaustion_drops_excess_tiles(visual_setup):
+@pytest.mark.asyncio
+async def test_pool_exhaustion_drops_excess_tiles(visual_setup):
     _ctrl, gfx_visual = visual_setup
     # paint_max_tiles=4 — paint into 5 distinct tiles.
     voxels = np.array(
@@ -137,7 +141,8 @@ def test_pool_exhaustion_drops_excess_tiles(visual_setup):
     assert gfx_visual._paint_slot_manager.get((2, 0)) is None
 
 
-def test_clear_resets_textures(visual_setup):
+@pytest.mark.asyncio
+async def test_clear_resets_textures(visual_setup):
     _ctrl, gfx_visual = visual_setup
     voxels = np.array([[0, 0]], dtype=np.int64)
     gfx_visual.patch_paint_texture(

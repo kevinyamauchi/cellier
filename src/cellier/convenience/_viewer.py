@@ -16,8 +16,14 @@ if TYPE_CHECKING:
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         ChannelControlsConfig,
+        GraphControlsConfig,
         InMemoryImageControlsConfig,
+        LabelsControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
         MultiscaleImageControlsConfig,
+        MultiscaleLabelsControlsConfig,
+        PointsControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.graph._graph_memory_store import GraphMemoryStore
@@ -397,6 +403,7 @@ class Viewer:
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
+        controls: LabelsControlsConfig | None = None,
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual.
 
@@ -411,18 +418,24 @@ class Viewer:
             Human-readable label. Default ``"labels"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : LabelsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         LabelMemoryVisual
         """
-        return self._controller.add_labels(
+        visual = self._controller.add_labels(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
             name,
             transform,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_mesh(
         self,
@@ -430,6 +443,7 @@ class Viewer:
         appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
+        controls: MeshControlsConfig | None = None,
     ) -> MeshVisual:
         """Add a mesh visual.
 
@@ -443,18 +457,24 @@ class Viewer:
             Human-readable label. Default ``"mesh"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         MeshVisual
         """
-        return self._controller.add_mesh(
+        visual = self._controller.add_mesh(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
             name,
             transform,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_points(
         self,
@@ -462,6 +482,7 @@ class Viewer:
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
+        controls: PointsControlsConfig | None = None,
     ) -> PointsVisual:
         """Add a points visual.
 
@@ -476,18 +497,24 @@ class Viewer:
             Human-readable label. Default ``"points"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : PointsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         PointsVisual
         """
-        return self._controller.add_points(
+        visual = self._controller.add_points(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
             name,
             transform,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_graph(
         self,
@@ -496,6 +523,7 @@ class Viewer:
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
+        controls: GraphControlsConfig | None = None,
     ) -> GraphVisual:
         """Add a spatial-graph visual.
 
@@ -516,12 +544,15 @@ class Viewer:
             Data-to-world transform. When ``None`` the store's own transform
             is used if it has one (a geff file's per-axis scale and offset),
             and identity otherwise.
+        controls : GraphControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         GraphVisual
         """
-        return self._controller.add_graph(
+        visual = self._controller.add_graph(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
@@ -529,6 +560,9 @@ class Viewer:
             transform,
             trail,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_lines(
         self,
@@ -536,6 +570,7 @@ class Viewer:
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
+        controls: LinesControlsConfig | None = None,
     ) -> LinesVisual:
         """Add a lines visual.
 
@@ -550,18 +585,24 @@ class Viewer:
             Human-readable label. Default ``"lines"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : LinesControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         LinesVisual
         """
-        return self._controller.add_lines(
+        visual = self._controller.add_lines(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
             name,
             transform,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_image_multiscale(
         self,
@@ -614,6 +655,7 @@ class Viewer:
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleLabelsControlsConfig | None = None,
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual.
 
@@ -630,12 +672,15 @@ class Viewer:
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MultiscaleLabelsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
 
         Returns
         -------
         MultiscaleLabelVisual
         """
-        return self._controller.add_labels_multiscale(
+        visual = self._controller.add_labels_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
             appearance,
@@ -643,6 +688,9 @@ class Viewer:
             render_config,
             transform,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_multichannel_image(
         self,

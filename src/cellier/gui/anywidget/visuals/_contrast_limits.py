@@ -15,14 +15,17 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
+from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 _STATIC = Path(__file__).parent / "static"
 
 
-class AnywidgetClimSlider(anywidget.AnyWidget):
+class AnywidgetClimSlider(VisualIdGroup, anywidget.AnyWidget):
     """Bidirectional contrast-limits slider wired to the cellier v2 bus.
 
     Mirrors ``QtClimRangeSlider``: one UUID per widget, source-ID echo
@@ -31,13 +34,19 @@ class AnywidgetClimSlider(anywidget.AnyWidget):
 
     Wire to the controller after construction::
 
-        slider = AnywidgetClimSlider(visual_id, clim_range=(0, 255), initial_clim=(0, 200))
-        controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+        slider = AnywidgetClimSlider(
+            visual_id, clim_range=(0, 255), initial_clim=(0, 200)
+        )
+        controller.connect_widget(
+            slider, subscription_specs=slider.subscription_specs()
+        )
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``clim`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     clim_range :
         ``(min, max)`` for the slider range.
     initial_clim :
@@ -55,7 +64,7 @@ class AnywidgetClimSlider(anywidget.AnyWidget):
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         clim_range: tuple[float, float] | list = (0.0, 1.0),
         initial_clim: tuple[float, float] | list = (0.0, 1.0),
@@ -67,7 +76,7 @@ class AnywidgetClimSlider(anywidget.AnyWidget):
             **kwargs,
         )
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._applying = False
         self.observe(self._on_trait_change, names="clim")
 
@@ -79,18 +88,21 @@ class AnywidgetClimSlider(anywidget.AnyWidget):
         return self
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires."""
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_appearance_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_appearance_changed)
 
     # ── model -> widget ──────────────────────────────────────────────────────
 
@@ -114,11 +126,4 @@ class AnywidgetClimSlider(anywidget.AnyWidget):
     def _on_trait_change(self, change) -> None:
         if self._applying:
             return
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="clim",
-                value=tuple(change["new"]),
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "clim", tuple(change["new"]))

@@ -2,15 +2,60 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
-
-from cellier.gui._colormap_util import colormap_to_str as _colormap_to_str
 
 if TYPE_CHECKING:
     from cellier.convenience.layout._spec import Layout
 
-# render_mode, iso_threshold, and attenuation are handled by one shared widget.
-_RENDER_FIELDS = frozenset({"render_mode", "iso_threshold", "attenuation"})
+
+class _CellierMainWindow:
+    """Mixin giving a ``QMainWindow`` the teardown ``_RenderView`` provides.
+
+    The anywidget path hands the caller a ``DisplayHandle`` whose ``close()``
+    unsubscribes every control it built.  The Qt path hands back a window and
+    nothing else, so its controls stayed subscribed to the bus for as long as
+    the controller lived -- **and kept being delivered events** -- even after
+    the window was closed.  Measured: building and dropping a Qt viewer left
+    ~30 widgets and its controller alive per cycle, growing linearly.
+
+    Closing the window now closes those controls, which is what makes them
+    emit ``closed`` and the controller drop their subscriptions.  It
+    deliberately does not close the *controller*: a window is a view, and the
+    viewer may outlive it.  Releasing the canvases and the controller is
+    ``CellierController.close()``, exactly as on the anywidget side.
+    """
+
+    def _cellier_init(self) -> None:
+        self._cellier_closeables: list = []
+        self._cellier_torn_down = False
+
+    def _cellier_teardown(self) -> None:
+        if self._cellier_torn_down:
+            return
+        self._cellier_torn_down = True
+        for obj in self._cellier_closeables:
+            close = getattr(obj, "close", None)
+            if close is None:
+                continue
+            with suppress(Exception):
+                close()
+        self._cellier_closeables.clear()
+
+
+def _make_window(QtWidgets):
+    """Build the ``QMainWindow`` subclass, at call time so Qt stays optional."""
+
+    class CellierMainWindow(_CellierMainWindow, QtWidgets.QMainWindow):
+        def __init__(self) -> None:
+            super().__init__()
+            self._cellier_init()
+
+        def closeEvent(self, event) -> None:
+            self._cellier_teardown()
+            super().closeEvent(event)
+
+    return CellierMainWindow
 
 
 def render_qt(layout: Layout, viewer: object) -> object:
@@ -34,7 +79,7 @@ def render_qt(layout: Layout, viewer: object) -> object:
     from PySide6 import QtWidgets
     from PySide6.QtCore import Qt
 
-    window = QtWidgets.QMainWindow()
+    window = _make_window(QtWidgets)()
     window.setCentralWidget(_render_center_qt(layout.center))
 
     dock_map = {
@@ -44,7 +89,7 @@ def render_qt(layout: Layout, viewer: object) -> object:
         "bottom": (layout.bottom_dock, Qt.DockWidgetArea.BottomDockWidgetArea),
     }
     for name, (spec, area) in dock_map.items():
-        widget = _render_dock_qt(spec, viewer)
+        widget = _render_dock_qt(spec, viewer, window._cellier_closeables)
         if widget is not None:
             widget = _wrap_dock_widget(widget, name)
             dock = QtWidgets.QDockWidget(name.capitalize(), window)
@@ -131,70 +176,129 @@ def _render_center_qt(node: object) -> object:
     )
 
 
-def _render_appearance_controls_qt(viewer: object) -> object | None:
-    """Build and wire Qt appearance sub-widgets for the first configured visual.
+# Each builder takes ``visual_ids`` -- one id on a ``Viewer``, the four panel
+# siblings on an ``OrthoViewer``.  Every widget below accepts either shape via
+# ``VisualIdGroup`` (design section 8.3 step 1), so the fan-out costs the
+# builders nothing.
 
-    Mirrors _render_appearance_controls in _anywidget_renderer.py: reads
-    viewer._controls_configs, finds the visual, instantiates each requested
-    sub-widget from cellier.gui.qt.visuals, wires each to the controller,
-    and returns a QWidget container.
+
+def _qt_color_map(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.visuals import QtColormapComboBox
+
+    combo = QtColormapComboBox(
+        visual_ids, initial_colormap=spec.values["initial_colormap"]
+    )
+    names = spec.values["colormap_names"]
+    if names is not None:
+        combo.add_colormaps(names)
+    return combo
+
+
+def _qt_clim(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.visuals import QtClimRangeSlider
+
+    return QtClimRangeSlider(
+        visual_ids,
+        clim_range=spec.values["clim_range"],
+        initial_clim=spec.values["initial_clim"],
+    )
+
+
+def _qt_render(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.visuals import QtVolumeRenderControls
+
+    # ``dtype_max`` is a Qt-only construction keyword; the anywidget control
+    # does not accept it.  Deriving it here from the neutral ``clim_range`` is
+    # what keeps it out of the shared spec (design section 7.3).
+    return QtVolumeRenderControls(
+        visual_ids,
+        dtype_max=float(spec.values["clim_range"][1]),
+        initial_render_mode=spec.values["initial_render_mode"],
+        initial_threshold=spec.values["initial_threshold"],
+        initial_attenuation=spec.values["initial_attenuation"],
+    )
+
+
+def _qt_lod_bias(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.visuals import QtLodBiasSlider
+
+    return QtLodBiasSlider(visual_ids, initial_lod_bias=spec.values["initial_lod_bias"])
+
+
+def _qt_aabb(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.visuals import QtAABBWidget
+
+    return QtAABBWidget(
+        visual_ids,
+        initial_enabled=spec.values["initial_enabled"],
+        initial_line_width=spec.values["initial_line_width"],
+        initial_color=spec.values["initial_color"],
+    )
+
+
+def _qt_field_control(spec, visual_ids, controller, parent):
+    """Build any of the 22 single-field controls from the shared table.
+
+    One builder rather than 22 dispatch entries: the layer-3 classes have a
+    uniform constructor (``initial_value=``, plus ``choices=`` for a combo),
+    so the only thing that varies is which class, and that is a table lookup
+    (``cellier.gui._appearance_fields.APPEARANCE_FIELD_WIDGETS``).
+    """
+    from cellier.gui._appearance_fields import field_widget_class
+
+    widget_class = field_widget_class(spec.kind, "qt")
+    kwargs = {"initial_value": spec.values["initial_value"]}
+    if "choices" in spec.values:
+        kwargs["choices"] = spec.values["choices"]
+    return widget_class(visual_ids, parent=parent, **kwargs)
+
+
+_QT_BUILDERS = {
+    "color_map": _qt_color_map,
+    "clim": _qt_clim,
+    "render": _qt_render,
+    "lod_bias": _qt_lod_bias,
+    "aabb": _qt_aabb,
+}
+"""``ControlSpec.kind`` -> Qt widget constructor.
+
+``dataset_info`` is deliberately absent: there is no Qt dataset-info widget,
+so the spec is skipped.  That is a documented gap (design section 7.1 and the
+``dataset_info`` field docstring), not an oversight.
+"""
+
+
+def _render_appearance_controls_qt(
+    viewer: object, closeables: list | None = None
+) -> object | None:
+    """Build and wire the Qt appearance dock for the first configured visual.
+
+    The decision of *which* controls, in what order, with what values is made
+    by ``layout._shared.appearance_specs`` and shared with the anywidget path;
+    this function is only the Qt view layer -- a dispatch table and a
+    ``QGroupBox`` per spec.
     """
     from PySide6 import QtWidgets
     from PySide6.QtWidgets import QSizePolicy
 
-    from cellier.convenience.gui._controls_config import (
-        ChannelControlsConfig,
-        InMemoryImageControlsConfig,
+    from cellier.convenience.layout._shared import (
+        appearance_specs,
+        select_appearance_target,
+        warn_skipped_appearance_fields,
     )
-    from cellier.gui.qt.visuals import (
-        QtClimRangeSlider,
-        QtColormapComboBox,
-        QtLodBiasSlider,
-        QtVolumeRenderControls,
-    )
+    from cellier.gui._appearance_fields import APPEARANCE_FIELD_WIDGETS
 
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    scene = getattr(viewer, "scene", None)
-    if scene is None or not controls_configs:
+    target = select_appearance_target(viewer)
+    if target is None:
         return None
 
-    controls_config = None
-    visual = None
-    for v in scene.visuals:
-        cfg = controls_configs.get(v.id)
-        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
-            visual = v
-            controls_config = cfg
-            break
-
-    if controls_config is None:
+    specs, skipped = appearance_specs(target.visual, target.config)
+    warn_skipped_appearance_fields(skipped, target.visual, target.config)
+    if not specs:
+        # No requested field resolved to a control, so there is nothing to
+        # dock.  Matches the anywidget path, and keeps ``appearance=True``
+        # (still a dead value until stage 5) producing no panel.
         return None
-
-    field_list = (
-        controls_config.appearance
-        if isinstance(controls_config.appearance, list) and controls_config.appearance
-        else None
-    )
-    if not field_list or not hasattr(visual, "appearance"):
-        return None
-
-    fields = set(field_list)
-    app = visual.appearance
-
-    raw_clim = tuple(getattr(app, "clim", (0.0, 1.0)))
-    if (
-        isinstance(controls_config, InMemoryImageControlsConfig)
-        and controls_config.clim_range is not None
-    ):
-        clim_range: tuple[float, float] = controls_config.clim_range
-    else:
-        clim_range = (min(0.0, float(raw_clim[0])), max(1.0, float(raw_clim[1])))
-
-    colormap_names = (
-        controls_config.colormap_names
-        if isinstance(controls_config, InMemoryImageControlsConfig)
-        else None
-    )
 
     container = QtWidgets.QWidget()
     container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -203,64 +307,31 @@ def _render_appearance_controls_qt(viewer: object) -> object | None:
     layout.setContentsMargins(4, 4, 4, 4)
     layout.setSpacing(6)
 
-    def _group(title: str, widget: object) -> None:
-        grp = QtWidgets.QGroupBox(title)
-        box = QtWidgets.QVBoxLayout(grp)
+    for spec in specs:
+        builder = _QT_BUILDERS.get(spec.kind)
+        if builder is None and spec.kind in APPEARANCE_FIELD_WIDGETS:
+            builder = _qt_field_control
+        if builder is None:
+            continue
+        widget = builder(spec, target.visual_ids, viewer.controller, container)
+        viewer.controller.connect_widget(
+            widget, subscription_specs=widget.subscription_specs()
+        )
+        if closeables is not None:
+            closeables.append(widget)
+        group = QtWidgets.QGroupBox(spec.title)
+        box = QtWidgets.QVBoxLayout(group)
         box.setContentsMargins(12, 4, 12, 4)
-        box.addWidget(widget)
-        layout.addWidget(grp)
-
-    if "color_map" in fields and hasattr(app, "color_map"):
-        combo = QtColormapComboBox(
-            visual.id,
-            initial_colormap=_colormap_to_str(getattr(app, "color_map", "grays")),
-        )
-        if colormap_names is not None:
-            combo.add_colormaps(colormap_names)
-        viewer.controller.connect_widget(
-            combo, subscription_specs=combo.subscription_specs()
-        )
-        _group("Colormap", combo.widget)
-
-    if "clim" in fields and hasattr(app, "clim"):
-        clim_w = QtClimRangeSlider(
-            visual.id,
-            clim_range=clim_range,
-            initial_clim=raw_clim,
-        )
-        viewer.controller.connect_widget(
-            clim_w, subscription_specs=clim_w.subscription_specs()
-        )
-        _group("Contrast limits", clim_w.widget)
-
-    if fields & _RENDER_FIELDS and any(hasattr(app, f) for f in _RENDER_FIELDS):
-        render_w = QtVolumeRenderControls(
-            visual.id,
-            dtype_max=float(clim_range[1]),
-            initial_render_mode=getattr(app, "render_mode", "mip"),
-            initial_threshold=getattr(app, "iso_threshold", 0.2),
-            initial_attenuation=getattr(app, "attenuation", 1.0),
-        )
-        viewer.controller.connect_widget(
-            render_w, subscription_specs=render_w.subscription_specs()
-        )
-        _group("Render mode", render_w.widget)
-
-    if "lod_bias" in fields and hasattr(app, "lod_bias"):
-        lod_w = QtLodBiasSlider(
-            visual.id,
-            initial_lod_bias=float(getattr(app, "lod_bias", 1.0)),
-        )
-        viewer.controller.connect_widget(
-            lod_w, subscription_specs=lod_w.subscription_specs()
-        )
-        _group("LOD bias", lod_w.widget)
+        box.addWidget(widget.widget)
+        layout.addWidget(group)
 
     layout.addStretch()
     return container
 
 
-def _render_channel_controls_qt(viewer: object) -> object | None:
+def _render_channel_controls_qt(
+    viewer: object, closeables: list | None = None
+) -> object | None:
     """Build and wire a ``QtChannelList`` for the configured channel visual(s).
 
     Multi-scene aware: for an ``OrthoViewer`` the single widget drives every
@@ -284,10 +355,14 @@ def _render_channel_controls_qt(viewer: object) -> object | None:
     viewer.controller.connect_widget(
         widget, subscription_specs=widget.subscription_specs()
     )
+    if closeables is not None:
+        closeables.append(widget)
     return widget.widget
 
 
-def _render_dock_qt(spec: object, viewer: object) -> object | None:
+def _render_dock_qt(
+    spec: object, viewer: object, closeables: list | None = None
+) -> object | None:
     """Render one dock spec to a Qt widget, or return None."""
     if spec is None:
         return None
@@ -302,9 +377,9 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
     )
 
     if isinstance(spec, AppearanceControls):
-        return _render_appearance_controls_qt(viewer)
+        return _render_appearance_controls_qt(viewer, closeables)
     if isinstance(spec, ChannelControls):
-        return _render_channel_controls_qt(viewer)
+        return _render_channel_controls_qt(viewer, closeables)
     if isinstance(spec, (HStack, VStack)):
         container = QtWidgets.QWidget()
         box = (
@@ -314,7 +389,7 @@ def _render_dock_qt(spec: object, viewer: object) -> object | None:
         )
         box.setContentsMargins(4, 4, 4, 4)
         for item in spec.items:
-            widget = _render_dock_qt(item, viewer)
+            widget = _render_dock_qt(item, viewer, closeables)
             if widget is not None:
                 box.addWidget(widget)
         return container

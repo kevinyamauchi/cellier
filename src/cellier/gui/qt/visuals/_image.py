@@ -12,8 +12,10 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
@@ -38,7 +40,7 @@ def _fix_label_width(label, lo: float, hi: float, decimals: int) -> None:
     label.setFixedWidth(w)
 
 
-class QtRenderModeComboBox:
+class QtRenderModeComboBox(VisualIdGroup):
     """Bidirectional render-mode selector wired to the cellier v2 bus.
 
     Wraps a ``QComboBox`` with ``"iso"``, ``"mip"``, and ``"smooth_iso"`` options
@@ -56,6 +58,8 @@ class QtRenderModeComboBox:
     ----------
     visual_id :
         UUID of the visual whose ``render_mode`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_render_mode :
         Starting value — typically ``visual_model.appearance.render_mode``.
     parent :
@@ -67,7 +71,7 @@ class QtRenderModeComboBox:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_render_mode: str,
         parent=None,
@@ -76,7 +80,7 @@ class QtRenderModeComboBox:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._combo = QComboBox(parent)
@@ -103,13 +107,7 @@ class QtRenderModeComboBox:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -123,14 +121,7 @@ class QtRenderModeComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, text: str) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="render_mode",
-                value=text,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "render_mode", text)
 
     # ── Qt seam 2: push value without re-firing currentTextChanged ───────────
 
@@ -140,7 +131,7 @@ class QtRenderModeComboBox:
         self._combo.blockSignals(False)
 
 
-class QtIsoThresholdSlider:
+class QtIsoThresholdSlider(VisualIdGroup):
     """Bidirectional ISO threshold slider wired to the cellier v2 bus.
 
     Wraps a ``superqt.QLabeledDoubleSlider`` and keeps it in sync with
@@ -151,12 +142,16 @@ class QtIsoThresholdSlider:
     Wire to the controller after construction::
 
         slider = QtIsoThresholdSlider(visual_id, dtype_max=65535, initial_threshold=0.2)
-        controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
+        controller.connect_widget(
+            slider, subscription_specs=slider.subscription_specs()
+        )
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``iso_threshold`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     dtype_max :
         Upper bound of the slider range — typically the maximum value of the
         volume's dtype (e.g. 65535 for uint16, 1.0 for float32).
@@ -174,7 +169,7 @@ class QtIsoThresholdSlider:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         dtype_max: float,
         initial_threshold: float,
@@ -186,7 +181,7 @@ class QtIsoThresholdSlider:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal, parent)
@@ -214,13 +209,7 @@ class QtIsoThresholdSlider:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -234,14 +223,7 @@ class QtIsoThresholdSlider:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_slider_changed(self, value: float) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="iso_threshold",
-                value=value,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "iso_threshold", value)
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
 
@@ -251,7 +233,7 @@ class QtIsoThresholdSlider:
         self._slider.blockSignals(False)
 
 
-class QtVolumeRenderControls:
+class QtVolumeRenderControls(VisualIdGroup):
     """Combined render-mode, ISO-threshold, and attenuation widget wired to the cellier v2 bus.
 
     Contains a render-mode ``QComboBox`` (``"iso"`` / ``"smooth_iso"`` /
@@ -276,6 +258,8 @@ class QtVolumeRenderControls:
     visual_id :
         UUID of the visual whose ``render_mode``, ``iso_threshold``, and
         ``attenuation`` fields this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     dtype_max :
         Upper bound of the threshold slider — typically the dtype maximum
         (e.g. 65535 for uint16, 1.0 for float32).
@@ -299,7 +283,7 @@ class QtVolumeRenderControls:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         dtype_max: float,
         initial_render_mode: str,
@@ -314,7 +298,7 @@ class QtVolumeRenderControls:
 
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._container = QWidget(parent)
@@ -367,13 +351,7 @@ class QtVolumeRenderControls:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -391,34 +369,13 @@ class QtVolumeRenderControls:
 
     def _on_combo_changed(self, text: str) -> None:
         self._update_mode_controls_visibility(text)
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="render_mode",
-                value=text,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "render_mode", text)
 
     def _on_slider_changed(self, value: float) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="iso_threshold",
-                value=value,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "iso_threshold", value)
 
     def _on_attenuation_slider_changed(self, value: float) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="attenuation",
-                value=value,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "attenuation", value)
 
     # ── Qt seam 2: push values without re-firing signals ─────────────────────
 

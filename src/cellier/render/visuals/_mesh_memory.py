@@ -8,6 +8,10 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.data.mesh._mesh_requests import MeshSliceRequest
+from cellier.render.visuals._aabb import (
+    make_aabb_line,
+    refresh_aabb_line,
+)
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -145,7 +149,13 @@ class GFXMeshMemoryVisual:
         self._aabb_enabled: bool = visual_model.aabb.enabled
         self._aabb_color: str = visual_model.aabb.color
         self._aabb_line_width: float = visual_model.aabb.line_width
-        self._aabb_line: gfx.Line | None = None
+        # False until a commit gives the box a real extent; enabling
+        # it before then stays pending rather than drawing a
+        # zero-sized box at the origin.
+        self._aabb_has_bounds: bool = False
+        self._aabb_line: gfx.Line | None = make_aabb_line(
+            self._aabb_color, self._aabb_line_width
+        )
 
         appearance = visual_model.appearance
         self._material_3d = _build_material_3d(appearance)
@@ -175,6 +185,10 @@ class GFXMeshMemoryVisual:
         )
         self.node = gfx.Mesh(geom, self._empty_material)
         self.node.render_order = appearance.render_order
+        # A child of the data node, so it inherits that node's transform
+        # and is hidden with it.  Sized on first commit -- a geometry
+        # visual's extent is its vertices, not a known shape.
+        self.node.add(self._aabb_line)
 
         # Both attributes point to the same node.
         # swap_node's old_node is new_node guard makes dim-toggling a no-op.
@@ -367,6 +381,7 @@ class GFXMeshMemoryVisual:
         if colors is not None:
             geom_kwargs["colors"] = np.ascontiguousarray(colors)
         self.node.geometry = gfx.Geometry(**geom_kwargs)
+        self._refresh_aabb()
 
         # Select material.
         if mesh_data.is_empty:
@@ -491,12 +506,23 @@ class GFXMeshMemoryVisual:
         self._material_3d.pick_write = event.pick_write
         self._material_2d.pick_write = event.pick_write
 
+    def _refresh_aabb(self) -> None:
+        """Resize the bounding box to the data that just committed.
+
+        Unlike an image, a geometry visual's extent is whatever
+        vertices arrived, so the box is rebuilt on every commit
+        rather than once on first data.
+        """
+        self._aabb_has_bounds = refresh_aabb_line(
+            self._aabb_line, (self.node,), enabled=self._aabb_enabled
+        )
+
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to line node if it exists."""
         if event.field_name == "enabled":
             self._aabb_enabled = event.new_value
             if self._aabb_line is not None:
-                self._aabb_line.visible = event.new_value
+                self._aabb_line.visible = event.new_value and self._aabb_has_bounds
         elif event.field_name == "color":
             self._aabb_color = event.new_value
             if self._aabb_line is not None:
