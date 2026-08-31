@@ -68,21 +68,6 @@ ADDERS = {
 }
 
 
-@pytest.fixture(autouse=True)
-def _close_controller(controller):
-    """Release this module's canvases rather than leaving them to the GC.
-
-    ``tests/render/conftest.py``'s ``controller`` fixture has no teardown, so
-    every render test leaks its wgpu canvases and the sockets behind them.
-    pytest's unraisable-exception plugin collects those warnings whenever the
-    GC happens to run and reports them against whatever test is executing
-    then, which is how a module like this one can appear to break an
-    unrelated test.  Closing here keeps this module from adding to it.
-    """
-    yield
-    controller.close()
-
-
 def _scene_with(controller, kind):
     """A 3-D scene holding one geometry visual, with a canvas."""
     scene = controller.add_scene(dim="3d", name="scene")

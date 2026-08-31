@@ -8,6 +8,7 @@ whenever the garbage collector happens to run (which is how these were found).
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 
 import numpy as np
@@ -67,6 +68,127 @@ def test_close_clears_the_event_buses():
     assert controller._outgoing_events._subs == {}
     assert controller._outgoing_events._handle_index == {}
     assert controller._incoming_events._subs == {}
+
+
+async def test_close_cancels_pending_camera_settle_tasks(qtbot):
+    """A closed controller must not leave the camera-settle debounce running.
+
+    Every other teardown path cancels these -- the ``camera_reslice_enabled``
+    setter, ``remove_scene``, ``remove_canvas`` -- and ``close`` was the one
+    that did not, so closing mid-gesture left a task holding the scene it was
+    about to reslice.
+    """
+    controller, scene, _visual = _controller_with_visual()
+    controller.add_canvas(scene_id=scene.id)
+    canvas_id = controller._scene_to_canvases[scene.id][0]
+
+    # Exactly what _on_camera_changed schedules once the camera moves.
+    task = asyncio.create_task(controller._settle_after(canvas_id, scene.id))
+    controller._settle_tasks[canvas_id] = task
+    await asyncio.sleep(0)
+    assert not task.done(), "sanity: the settle task is still pending"
+
+    controller.close()
+    await asyncio.sleep(0)
+
+    assert controller._settle_tasks == {}
+    assert task.cancelled()
+
+
+async def test_close_cancels_slice_tasks_the_coordinator_no_longer_tracks(qtbot):
+    """A superseded non-cancellable reslice must still be stopped by ``close``.
+
+    ``SliceCoordinator.submit`` deliberately lets a non-cancellable visual
+    (mesh, lines, points) run to completion rather than cancelling it, then
+    overwrites its entry in ``_active_slice_ids``.  The predecessor keeps
+    running under an id nothing upstream can name, so walking the scenes
+    cannot reach it -- only going straight to the slicer can.
+    """
+    controller, scene, _visual = _controller_with_visual()
+    controller.add_canvas(scene_id=scene.id)
+    slicer = controller._render_manager._slicer
+    coordinator = controller._render_manager._slice_coordinator
+
+    # No await between them, so nothing completes and each supersedes the last.
+    for _ in range(3):
+        controller.reslice_all()
+
+    tracked = set(coordinator._active_slice_ids.values())
+    untracked = [sid for sid in slicer._tasks if sid not in tracked]
+    assert untracked, "sanity: resubmission left an untracked task behind"
+
+    controller.close()
+
+    assert slicer._tasks == {}
+    assert coordinator._active_slice_ids == {}
+
+
+async def test_a_completed_slice_stops_being_tracked(qtbot):
+    """Finishing a reslice must clear its ``_active_slice_ids`` entry.
+
+    Only cancellation used to remove one, so a scene that simply loaded left
+    its key behind forever and every later ``cancel_scene`` walked a dead
+    request.
+    """
+    controller, scene, _visual = _controller_with_visual()
+    controller.add_canvas(scene_id=scene.id)
+    coordinator = controller._render_manager._slice_coordinator
+    slicer = controller._render_manager._slicer
+
+    controller.reslice_all()
+    assert coordinator._active_slice_ids, "sanity: the request was tracked"
+
+    await asyncio.gather(*list(slicer._tasks.values()))
+
+    assert coordinator._active_slice_ids == {}
+    assert slicer._tasks == {}
+
+
+async def test_a_superseded_slice_completing_does_not_untrack_its_successor(qtbot):
+    """The late finisher must drop only its own entry, never the newer one.
+
+    A non-cancellable visual (points here) is left running when a newer
+    reslice supersedes it, so the *older* task finishes after the newer one
+    was recorded under the same key.  Pruning unconditionally would untrack
+    work that is still in flight, putting back the orphan that
+    ``cancel_all`` exists to sweep up.
+
+    Both tasks share one event loop, so awaiting either runs both to
+    completion; the invariant is checked at the moment each completion fires
+    rather than afterwards.
+    """
+    controller, scene, _visual = _controller_with_visual()
+    controller.add_canvas(scene_id=scene.id)
+    coordinator = controller._render_manager._slice_coordinator
+    slicer = controller._render_manager._slicer
+
+    # Snapshot the tracking table at each completion — the pruning happens
+    # immediately before this call, so it captures the effect of one finisher.
+    snapshots: list[dict] = []
+    emit = coordinator._emit_reslice_completed
+
+    def _spy(*args, **kwargs):
+        snapshots.append(dict(coordinator._active_slice_ids))
+        return emit(*args, **kwargs)
+
+    coordinator._emit_reslice_completed = _spy
+
+    controller.reslice_all()
+    first = dict(coordinator._active_slice_ids)
+    controller.reslice_all()
+    second = dict(coordinator._active_slice_ids)
+    assert first and second and first != second, (
+        "sanity: the second reslice superseded the first under the same key"
+    )
+
+    await asyncio.gather(*list(slicer._tasks.values()))
+
+    assert len(snapshots) == 2, "sanity: both tasks ran to completion"
+    # The superseded task finished first and must have left the successor's
+    # entry alone.
+    assert snapshots[0] == second
+    # Once the successor finishes too, nothing is tracked.
+    assert coordinator._active_slice_ids == {}
 
 
 def test_close_is_idempotent():

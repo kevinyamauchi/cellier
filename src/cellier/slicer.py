@@ -231,6 +231,33 @@ class AsyncSlicer:
             return True
         return False
 
+    def cancel_all(self) -> int:
+        """Cancel every in-flight task and forget all of them.
+
+        ``cancel`` reaches one ``slice_request_id``, which is enough while the
+        app runs because the caller still holds that ID.  At teardown it is
+        not: a superseding ``submit`` for a **non-cancellable** visual leaves
+        its predecessor running and the coordinator overwrites the ID that
+        named it, so nothing upstream can ask for that task by name any more.
+        This is the only way to reach those.
+
+        Cancellation is *requested*, not completed.  Each task observes its
+        ``CancelledError`` the next time the event loop runs, which may be
+        after this returns -- or never, if the loop is already closed.
+
+        Returns
+        -------
+        cancelled :
+            How many tasks were still running when they were cancelled.
+        """
+        cancelled = 0
+        for task in self._tasks.values():
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+        self._tasks.clear()
+        return cancelled
+
     # ── Internal coroutine ──────────────────────────────────────────────
 
     async def _run(

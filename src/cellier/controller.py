@@ -3278,10 +3278,19 @@ class CellierController:
     def camera_reslice_enabled(self, value: bool) -> None:
         self._render_manager.config.camera.reslice_enabled = value
         if not value:
-            for task in self._settle_tasks.values():
-                if not task.done():
-                    task.cancel()
-            self._settle_tasks.clear()
+            self._cancel_settle_tasks()
+
+    def _cancel_settle_tasks(self) -> None:
+        """Cancel and forget every pending camera-settle task.
+
+        Shared by the ``camera_reslice_enabled`` setter and :meth:`close`.
+        ``remove_scene`` and ``remove_canvas`` cancel only their own subset,
+        because they leave the rest of the controller running.
+        """
+        for task in self._settle_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._settle_tasks.clear()
 
     @property
     def render_config(self) -> RenderManagerConfig:
@@ -4796,6 +4805,10 @@ class CellierController:
         not by Python refcounting, so dropping the controller alone leaks them
         (see :meth:`CanvasView.close`).
 
+        Cancels the pending camera-settle tasks and every in-flight slice
+        task -- including the ones the slice coordinator no longer tracks --
+        so a closed controller holds no live ``asyncio.Task``.
+
         Also disconnects the psygnal bridges from the model and clears the
         event buses.  Those hold the
         controller's own handlers, and psygnal keeps them **strongly**, so a
@@ -4806,8 +4819,15 @@ class CellierController:
 
         Safe to call more than once; the controller must not be used afterwards.
         """
-        for scene_id in list(self._scene_to_canvases):
-            self.cancel_pending_slices(scene_id)
+        # Both of these cancel rather than await: close is synchronous, so a
+        # task only observes its CancelledError once the loop runs again.  What
+        # is guaranteed here is that nothing stays tracked and nothing is left
+        # un-cancelled -- not that everything has already stopped.
+        self._cancel_settle_tasks()
+        # cancel_all rather than a cancel_pending_slices walk per scene: a
+        # superseded non-cancellable reslice is no longer named by any scene's
+        # bookkeeping, so the per-scene walk cannot reach it.
+        self._render_manager._slice_coordinator.cancel_all()
         self._render_manager.close()
         self._scene_to_canvases.clear()
 
