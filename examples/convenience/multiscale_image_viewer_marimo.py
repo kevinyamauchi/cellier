@@ -133,8 +133,8 @@ def _(np, ts):
         ts_store[...].write(data).result()
 
     def make_dataset_info(store, volume):
-        """Return an HTML table summarising the multiscale dataset."""
-        rows = [
+        """Return ``(label, value)`` rows summarising the multiscale dataset."""
+        return [
             ("Shape (level 0)", " x ".join(str(s) for s in volume.shape)),
             ("Data type", str(volume.dtype)),
             ("Value range", f"[{volume.min():.3f}, {volume.max():.3f}]"),
@@ -143,12 +143,6 @@ def _(np, ts):
             ("Level 1 scale", "2x isotropic"),
             ("Level 2 scale", "4x isotropic"),
         ]
-        html = ["<table>"]
-        html.append("<tr><th>Property</th><th>Value</th></tr>")
-        for k, v in rows:
-            html.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
-        html.append("</table>")
-        return "".join(html)
 
     return (
         block_average,

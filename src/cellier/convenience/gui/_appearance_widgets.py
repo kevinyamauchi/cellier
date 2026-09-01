@@ -85,7 +85,7 @@ def _any_aabb(spec: ControlSpec, visual_ids):
 def _any_dataset_info(spec: ControlSpec, visual_ids):
     from cellier.gui.anywidget import AnywidgetDatasetInfo
 
-    return AnywidgetDatasetInfo(spec.values["html"], title=spec.title)
+    return AnywidgetDatasetInfo(spec.values["rows"], title=spec.title)
 
 
 def _any_field_control(spec: ControlSpec, visual_ids):
@@ -112,9 +112,6 @@ _ANYWIDGET_BUILDERS = {
     "dataset_info": _any_dataset_info,
 }
 """``ControlSpec.kind`` -> anywidget widget constructor."""
-
-# Static display widgets have nothing on the bus to wire or tear down.
-_UNWIRED_KINDS = frozenset({"dataset_info"})
 
 
 def build_appearance_widgets_anywidget(
@@ -144,6 +141,7 @@ def build_appearance_widgets_anywidget(
     no ``appearance``.
     """
     from cellier.convenience.layout._shared import (
+        STATIC_CONTROL_KINDS,
         appearance_specs,
         warn_skipped_appearance_fields,
     )
@@ -161,7 +159,7 @@ def build_appearance_widgets_anywidget(
         if builder is None:
             continue
         widget = builder(spec, ids)
-        if spec.kind not in _UNWIRED_KINDS:
+        if spec.kind not in STATIC_CONTROL_KINDS:
             controller.connect_widget(
                 widget, subscription_specs=widget.subscription_specs()
             )

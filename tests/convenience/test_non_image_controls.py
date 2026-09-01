@@ -22,6 +22,7 @@ from cellier.convenience.gui._controls_config import (
     LabelsControlsConfig,
     LinesControlsConfig,
     MeshControlsConfig,
+    MultiscaleImageControlsConfig,
     MultiscaleLabelsControlsConfig,
     PointsControlsConfig,
 )
@@ -29,6 +30,7 @@ from cellier.convenience.layout._shared import (
     appearance_specs,
     select_appearance_target,
 )
+from cellier.visuals import MultiscaleImageAppearance
 from cellier.visuals._mesh_memory import MeshFlatAppearance, MeshPhongAppearance
 
 _PANELS = ("xy", "xz", "yz", "vol")
@@ -212,6 +214,76 @@ def test_appearance_true_builds_the_same_anywidget_dock(kind, stores):
     )
 
     assert control_labels_anywidget(built) == EXPECTED_DEFAULT_TITLES[kind]
+
+
+def test_dataset_info_reaches_both_docks(qtbot, multiscale_image_store):
+    """The block is a control like any other, on both front ends.
+
+    It was anywidget-only for as long as the config carried pre-formatted HTML,
+    which Qt has nothing to do with; rows are what both toolkits can render, so
+    the parity assertion the other controls get now covers this one too.
+    """
+    from cellier.convenience.gui._appearance_widgets import (
+        build_appearance_widgets_anywidget,
+    )
+    from cellier.convenience.layout._qt_renderer import _render_appearance_controls_qt
+    from tests.convenience._qt_acceptance import (
+        assert_panel_renders,
+        control_labels,
+        control_labels_anywidget,
+    )
+
+    rows = [("Scale levels", "2"), ("Data type", "float32")]
+    expected = ["Colormap", "Bounding box", "Dataset info"]
+
+    qt_viewer = Viewer(("z", "y", "x"), gui="qt")
+    qt_viewer.add_image_multiscale(
+        multiscale_image_store,
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        controls=MultiscaleImageControlsConfig(
+            appearance=["color_map"], dataset_info=rows
+        ),
+    )
+    container = _render_appearance_controls_qt(qt_viewer)
+    assert control_labels(container) == expected
+    assert_panel_renders(container)
+
+    any_viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    any_viewer.add_image_multiscale(
+        multiscale_image_store,
+        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
+        controls=MultiscaleImageControlsConfig(
+            appearance=["color_map"], dataset_info=rows
+        ),
+    )
+    target = select_appearance_target(any_viewer)
+    built = build_appearance_widgets_anywidget(
+        target.visual, target.config, any_viewer.controller, target.visual_ids
+    )
+    assert control_labels_anywidget(built) == expected
+
+
+def test_dataset_info_rows_reach_each_front_end_as_data(qtbot):
+    """The rows are displayed, not parsed, so both widgets carry them verbatim."""
+    from cellier.gui.anywidget import AnywidgetDatasetInfo
+    from cellier.gui.qt import QtDatasetInfo
+
+    rows = [("Path", "<b>a & b</b>")]
+
+    any_widget = AnywidgetDatasetInfo(rows)
+    assert any_widget.rows == [["Path", "<b>a & b</b>"]]
+
+    from PySide6.QtWidgets import QLabel
+
+    qt_widget = QtDatasetInfo(rows)
+    values = [
+        qt_widget._form.itemAt(row, qt_widget._form.ItemRole.FieldRole).widget().text()
+        for row in range(qt_widget._form.rowCount())
+    ]
+    assert values == ["<b>a & b</b>"]
+    assert isinstance(
+        qt_widget._form.itemAt(0, qt_widget._form.ItemRole.FieldRole).widget(), QLabel
+    )
 
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
@@ -420,6 +492,7 @@ def test_composite_default_titles_match_the_shared_vocabulary():
         AnywidgetLodBiasSlider,
         AnywidgetVolumeRenderControls,
     )
+    from cellier.gui.qt import QtDatasetInfo
     from cellier.gui.qt.visuals import (
         QtAABBWidget,
         QtClimRangeSlider,
@@ -428,22 +501,18 @@ def test_composite_default_titles_match_the_shared_vocabulary():
         QtVolumeRenderControls,
     )
 
-    # ``dataset_info`` has no Qt widget -- a documented gap (design section
-    # 7.1), not an omission here.
     composites = {
         "color_map": (QtColormapComboBox, AnywidgetColormapControl),
         "clim": (QtClimRangeSlider, AnywidgetClimSlider),
         "render": (QtVolumeRenderControls, AnywidgetVolumeRenderControls),
         "lod_bias": (QtLodBiasSlider, AnywidgetLodBiasSlider),
         "aabb": (QtAABBWidget, AnywidgetAABBWidget),
-        "dataset_info": (None, AnywidgetDatasetInfo),
+        "dataset_info": (QtDatasetInfo, AnywidgetDatasetInfo),
     }
     assert set(composites) == set(_CONTROL_TITLES)
 
     for kind, classes in composites.items():
         for widget_class in classes:
-            if widget_class is None:
-                continue
             assert widget_class.DEFAULT_TITLE == _CONTROL_TITLES[kind], (
                 f"{widget_class.__name__}.DEFAULT_TITLE != _CONTROL_TITLES[{kind!r}]"
             )

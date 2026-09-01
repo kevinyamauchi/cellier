@@ -1,32 +1,104 @@
-"""Qt widget for displaying OME-Zarr dataset metadata."""
+"""Qt widget for displaying dataset metadata."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from cellier.gui._dataset_info import DatasetInfo, dataset_info_from_path
 
-__all__ = ["DatasetInfo", "QtOmeZarrMetadataWidget", "dataset_info_from_path"]
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+__all__ = [
+    "DatasetInfo",
+    "QtDatasetInfo",
+    "QtOmeZarrMetadataWidget",
+    "dataset_info_from_path",
+]
 
 
-class QtOmeZarrMetadataWidget:
-    """Read-only display widget for OME-Zarr dataset metadata.
+class QtDatasetInfo:
+    """Read-only display widget for dataset metadata.
 
-    Shows file name, type, storage source, world-to-data affine matrix, and
-    the shape of each resolution level inside a ``superqt.QCollapsible``
-    titled ``"dataset"``.
+    Shows ``(label, value)`` rows inside a ``superqt.QCollapsible``, the Qt
+    idiom for the anywidget front end's ``<details>`` block.  Built from rows
+    for the general case, or from a :class:`DatasetInfo` via :meth:`from_info`
+    for an OME-Zarr store, which adds the world-to-data affine matrix and the
+    per-level shapes.
 
     Uses ``qtpy`` for PyQt6/PySide6 compatibility.  Follows the cellier v2
     widget pattern: a non-``QWidget`` class exposing a ``.widget`` property.
+    It is a pure-output control with nothing on the bus, so it carries no
+    ``changed``/``closed`` signals and is never passed to ``connect_widget``
+    (``layout._shared.STATIC_CONTROL_KINDS``).
 
     Parameters
     ----------
-    info :
-        Pre-extracted :class:`DatasetInfo`.  Use
-        :func:`dataset_info_from_path` to build one from a zarr URI.
+    rows :
+        ``(label, value)`` pairs to display, in order.  Both halves are
+        coerced to ``str``.
+    title :
+        The name shown on the collapsible header.  Defaults to
+        :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """
 
-    def __init__(self, info: DatasetInfo, *, parent=None) -> None:
+    DEFAULT_TITLE = "Dataset info"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this is
+    what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the two
+    together.
+    """
+
+    def __init__(
+        self,
+        rows: Sequence[tuple[str, str]] = (),
+        *,
+        title: str | None = None,
+        parent=None,
+    ) -> None:
+        from qtpy.QtWidgets import QFormLayout, QLabel, QWidget
+        from superqt import QCollapsible
+
+        self._collapsible = QCollapsible(
+            self.DEFAULT_TITLE if title is None else title, parent=parent
+        )
+        # collapsed by default
+
+        content = QWidget()
+        self._form = QFormLayout(content)
+        self._form.setContentsMargins(4, 4, 4, 4)
+        self._collapsible.addWidget(content)
+
+        for label, value in rows:
+            self._form.addRow(str(label), QLabel(str(value)))
+
+    # ── Public interface ─────────────────────────────────────────────────────
+
+    @property
+    def widget(self):
+        """The ``QCollapsible`` widget to insert into a layout.
+
+        Qt seam 1: replace with the backend element for other toolkits.
+        """
+        return self._collapsible
+
+    @classmethod
+    def from_info(
+        cls,
+        info: DatasetInfo,
+        *,
+        title: str | None = None,
+        parent=None,
+    ) -> QtDatasetInfo:
+        """Build from a pre-extracted :class:`DatasetInfo`.
+
+        Adds two blocks the plain row list has no shape for: the world-to-data
+        affine as a table, and the per-level shapes in a nested collapsible.
+        """
         from qtpy.QtWidgets import (
             QFormLayout,
             QHeaderView,
@@ -37,22 +109,15 @@ class QtOmeZarrMetadataWidget:
         )
         from superqt import QCollapsible
 
-        self._collapsible = QCollapsible("dataset info", parent=parent)
-        # collapsed by default
-
-        content = QWidget()
-        form = QFormLayout(content)
-        form.setContentsMargins(4, 4, 4, 4)
-        self._collapsible.addWidget(content)
-
-        # ── File name ────────────────────────────────────────────────────────
-        form.addRow("File name", QLabel(info.file_name))
-
-        # ── Type ────────────────────────────────────────────────────────────
-        form.addRow("Type", QLabel(info.zarr_type))
-
-        # ── Source ──────────────────────────────────────────────────────────
-        form.addRow("Source", QLabel(info.source))
+        self = cls(
+            rows=[
+                ("File name", info.file_name),
+                ("Type", info.zarr_type),
+                ("Source", info.source),
+            ],
+            title=title,
+            parent=parent,
+        )
 
         # ── World-to-data transform matrix ──────────────────────────────────
         n = len(info.axis_names)
@@ -81,7 +146,7 @@ class QtOmeZarrMetadataWidget:
                 item = QTableWidgetItem(text)
                 table.setItem(row, col, item)
 
-        form.addRow("World→data", table)
+        self._form.addRow("World→data", table)
 
         # ── Shapes per scale level (nested collapsible) ──────────────────────
         shapes_collapsible = QCollapsible("scale shapes")
@@ -97,16 +162,7 @@ class QtOmeZarrMetadataWidget:
             shapes_form.addRow(f"level {level_idx} ({axis_label})", QLabel(shape_str))
 
         self._collapsible.addWidget(shapes_collapsible)
-
-    # ── Public interface ─────────────────────────────────────────────────────
-
-    @property
-    def widget(self):
-        """The ``QCollapsible`` widget to insert into a layout.
-
-        Qt seam 1: replace with the backend element for other toolkits.
-        """
-        return self._collapsible
+        return self
 
     @classmethod
     def from_path(
@@ -115,8 +171,9 @@ class QtOmeZarrMetadataWidget:
         *,
         multiscale_index: int = 0,
         series_index: int = 0,
+        title: str | None = None,
         parent=None,
-    ) -> QtOmeZarrMetadataWidget:
+    ) -> QtDatasetInfo:
         """Construct directly from an OME-Zarr URI.
 
         Parameters
@@ -128,6 +185,8 @@ class QtOmeZarrMetadataWidget:
             Which ``multiscales[]`` entry to display. Defaults to 0.
         series_index :
             For Bf2Raw containers, which series to display. Defaults to 0.
+        title :
+            The name shown on the collapsible header.
         parent :
             Optional Qt parent widget.
         """
@@ -136,4 +195,12 @@ class QtOmeZarrMetadataWidget:
             multiscale_index=multiscale_index,
             series_index=series_index,
         )
-        return cls(info, parent=parent)
+        return cls.from_info(info, title=title, parent=parent)
+
+
+QtOmeZarrMetadataWidget = QtDatasetInfo
+"""Deprecated alias.
+
+The widget renders any ``(label, value)`` rows, not only OME-Zarr metadata,
+so the name moved with the capability.
+"""

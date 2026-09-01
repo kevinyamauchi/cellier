@@ -246,14 +246,28 @@ def test_the_aabb_spec_is_seeded_from_the_visual_not_from_defaults():
 
 def test_dataset_info_is_appended_last_and_only_when_non_empty():
     config = MultiscaleImageControlsConfig(
-        appearance=["color_map"], dataset_info="<b>4 levels</b>"
+        appearance=["color_map"], dataset_info=[("Scale levels", "4")]
     )
     result = appearance_specs(_multiscale(), config)
     assert kinds(result) == ["color_map", "aabb", "dataset_info"]
-    assert result.specs[-1].values == {"html": "<b>4 levels</b>"}
+    assert result.specs[-1].values == {"rows": [("Scale levels", "4")]}
 
-    config.dataset_info = ""
+    config.dataset_info = ()
     assert kinds(appearance_specs(_multiscale(), config)) == ["color_map", "aabb"]
+
+
+def test_dataset_info_rows_are_coerced_to_strings():
+    """A value read off a store is rarely already a string.
+
+    Both front ends display what they are given verbatim, so the neutral layer
+    is where an int shape or a numpy dtype becomes text -- once, rather than
+    once per toolkit.
+    """
+    config = MultiscaleImageControlsConfig(
+        appearance=["color_map"], dataset_info=[("Scale levels", 4)]
+    )
+    result = appearance_specs(_multiscale(), config)
+    assert result.specs[-1].values == {"rows": [("Scale levels", "4")]}
 
 
 def test_titles_are_shared_by_both_front_ends():

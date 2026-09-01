@@ -127,8 +127,7 @@ class ControlSpec:
     kind : str
         Which control to build: ``color_map``, ``clim``, ``render``,
         ``lod_bias``, ``aabb`` or ``dataset_info``.  A renderer with no
-        builder for a kind skips it -- that is how ``dataset_info`` stays
-        anywidget-only without the Qt path needing to know it exists.
+        builder for a kind skips it.
     title : str
         What the control is called, e.g. ``"Contrast limits"``.  Both front
         ends pass it to the widget, which draws it itself -- as a label beside
@@ -184,6 +183,17 @@ Each of these is also a widget class's ``DEFAULT_TITLE`` on both toolkits,
 pinned by ``test_composite_default_titles_match_the_shared_vocabulary``: this
 is the name the renderers pass in, that is the name a directly-constructed
 widget uses.
+"""
+
+
+STATIC_CONTROL_KINDS = frozenset({"dataset_info"})
+"""Kinds that are pure display, with nothing on the event bus.
+
+Whether a control can be driven by the model is a fact about the control, not
+about a toolkit, so it is declared once here and read by both renderers.  A
+kind listed here is built and stacked like any other and then *not* passed to
+``CellierController.connect_widget``: it has no ``changed``/``closed`` to
+connect and no subscriptions to register.
 """
 
 
@@ -331,14 +341,14 @@ def appearance_specs(visual: object, config: object) -> AppearanceSpecs:
         )
 
     dataset_info = (
-        config.dataset_info if isinstance(config, MultiscaleImageControlsConfig) else ""
+        config.dataset_info if isinstance(config, MultiscaleImageControlsConfig) else ()
     )
     if dataset_info:
         specs.append(
             ControlSpec(
                 "dataset_info",
                 _CONTROL_TITLES["dataset_info"],
-                {"html": dataset_info},
+                {"rows": [(str(label), str(value)) for label, value in dataset_info]},
             )
         )
 

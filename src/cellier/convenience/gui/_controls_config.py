@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
 AppearanceField = Literal[
     # Every visual type
@@ -218,14 +218,16 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
         Names available in the colormap dropdown.
     clim_range : tuple[float, float] or None
         ``(min, max)`` bounds for the contrast-limits slider.
-    dataset_info : str
-        Pre-formatted HTML for the dataset-info detail block.
-        Empty string hides the block.
+    dataset_info : Sequence[tuple[str, str]]
+        ``(label, value)`` pairs for the dataset-info block, in order.  An
+        empty sequence hides the block.  Rendered on both front ends: a
+        ``QFormLayout`` inside a ``QCollapsible`` on Qt, a table inside a
+        ``<details>`` on anywidget.
 
-        **Rendered on the anywidget front end only.**  There is no Qt
-        dataset-info widget, so a Qt viewer that sets this gets no block and
-        no error (design section 7.1 -- a documented gap rather than a silent
-        no-op).
+        Values are displayed, never interpreted as markup, so anything read
+        off a store is safe to pass verbatim.  For an OME-Zarr store,
+        ``QtDatasetInfo.from_path`` renders the affine and per-level shapes
+        in more detail than a flat row list can carry.
     """
 
     APPEARANCE_CONTROLS: ClassVar[dict[str, str]] = {
@@ -234,7 +236,7 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
         "lod_bias": "lod_bias",
     }
 
-    dataset_info: str = ""
+    dataset_info: Sequence[tuple[str, str]] = ()
 
 
 @dataclass

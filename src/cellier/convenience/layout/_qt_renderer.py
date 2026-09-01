@@ -262,19 +262,27 @@ def _qt_field_control(spec, visual_ids, controller, parent):
     return widget_class(visual_ids, parent=parent, **kwargs)
 
 
+def _qt_dataset_info(spec, visual_ids, controller, parent):
+    """Build the read-only dataset-info block.
+
+    Takes neither *visual_ids* nor *controller*: it displays what the config
+    handed it and drives nothing, which is why ``STATIC_CONTROL_KINDS`` keeps
+    it off the bus.
+    """
+    from cellier.gui.qt import QtDatasetInfo
+
+    return QtDatasetInfo(spec.values["rows"], title=spec.title, parent=parent)
+
+
 _QT_BUILDERS = {
     "color_map": _qt_color_map,
     "clim": _qt_clim,
     "render": _qt_render,
     "lod_bias": _qt_lod_bias,
     "aabb": _qt_aabb,
+    "dataset_info": _qt_dataset_info,
 }
-"""``ControlSpec.kind`` -> Qt widget constructor.
-
-``dataset_info`` is deliberately absent: there is no Qt dataset-info widget,
-so the spec is skipped.  That is a documented gap (design section 7.1 and the
-``dataset_info`` field docstring), not an oversight.
-"""
+"""``ControlSpec.kind`` -> Qt widget constructor."""
 
 
 def _render_appearance_controls_qt(
@@ -297,6 +305,7 @@ def _render_appearance_controls_qt(
     from PySide6.QtWidgets import QSizePolicy
 
     from cellier.convenience.layout._shared import (
+        STATIC_CONTROL_KINDS,
         appearance_specs,
         select_appearance_target,
         warn_skipped_appearance_fields,
@@ -329,9 +338,10 @@ def _render_appearance_controls_qt(
         if builder is None:
             continue
         widget = builder(spec, target.visual_ids, viewer.controller, container)
-        viewer.controller.connect_widget(
-            widget, subscription_specs=widget.subscription_specs()
-        )
+        if spec.kind not in STATIC_CONTROL_KINDS:
+            viewer.controller.connect_widget(
+                widget, subscription_specs=widget.subscription_specs()
+            )
         if closeables is not None:
             closeables.append(widget)
         layout.addWidget(widget.widget)

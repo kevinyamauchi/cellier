@@ -46,11 +46,15 @@ def control_labels(container: QWidget) -> list[str]:
     * a **multi-row widget** (the AABB and volume-render groups) carries a
       ``QGroupBox``, whose title names the group.  The walk *does* descend
       into it, so a group holding labelled rows reports both.
+    * a **static display block** (dataset info) carries a ``QCollapsible``,
+      whose header names it.  The walk does *not* descend: the rows inside are
+      values on display, not controls with names of their own.
 
     Anything else is scaffolding -- containers, stretches, the sub-labels
     inside a composite -- and contributes nothing.
     """
     from PySide6.QtWidgets import QGroupBox, QLabel
+    from superqt import QCollapsible
 
     from cellier.gui.qt.visuals._chrome import LABELLED_ROW_OBJECT_NAME
 
@@ -74,6 +78,9 @@ def control_labels(container: QWidget) -> list[str]:
                 continue
             if widget.objectName() == LABELLED_ROW_OBJECT_NAME:
                 labels.append(_row_label(widget))
+                continue
+            if isinstance(widget, QCollapsible):
+                labels.append(widget.text())
                 continue
             if isinstance(widget, QGroupBox):
                 labels.append(widget.title())

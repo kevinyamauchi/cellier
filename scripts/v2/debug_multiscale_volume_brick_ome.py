@@ -58,7 +58,7 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.gui.qt import QtOmeZarrMetadataWidget
+        from cellier.gui.qt import QtDatasetInfo
         from cellier.gui.qt.visuals import (
             QtAABBWidget,
             QtClimRangeSlider,
@@ -114,7 +114,7 @@ class OmeBrickViewer:
             self._render_controls,
             subscription_specs=self._render_controls.subscription_specs(),
         )
-        self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
+        self._metadata_widget = QtDatasetInfo.from_path(zarr_uri)
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")

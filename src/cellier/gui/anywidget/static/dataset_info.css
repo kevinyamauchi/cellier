@@ -14,13 +14,6 @@
   opacity: 0.65;
 }
 
-.cellier-dataset-info-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: 4px;
-}
-
 .cellier-dataset-info table {
   border-collapse: collapse;
   margin-top: 4px;
@@ -30,4 +23,5 @@
 .cellier-dataset-info th {
   padding: 1px 6px;
   border: 1px solid #ccc;
+  text-align: left;
 }
