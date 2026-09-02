@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from cellier.data._dataset_info import DatasetInfo
+
 AppearanceField = Literal[
     # Every visual type
     "visible",
@@ -115,6 +117,21 @@ class BaseControlsConfig:
 
         Note that the panel's group order follows ``APPEARANCE_CONTROLS``,
         not this list.
+    dataset_info : bool or DatasetInfo or Sequence[tuple[str, str]]
+        The read-only dataset-info block, appended last in the panel.
+
+        ``False`` (default) hides it.  ``True`` asks the visual's data store
+        to describe itself via ``BaseDataStore.dataset_info()`` -- the usual
+        choice, since it stays correct as the store changes and costs no
+        array reads.  A :class:`~cellier.data.DatasetInfo` is displayed as
+        given.  A sequence of ``(label, value)`` pairs is the escape hatch
+        for rows that no store knows about; both halves are coerced to
+        ``str``.
+
+        Values are displayed, never interpreted as markup, so anything read
+        off a store is safe to pass verbatim.  Rendered on both front ends:
+        a ``QFormLayout`` inside a ``QCollapsible`` on Qt, a table inside a
+        ``<details>`` on anywidget.
 
     Attributes
     ----------
@@ -144,6 +161,7 @@ class BaseControlsConfig:
     DEFAULT_APPEARANCE_FIELDS: ClassVar[tuple[str, ...] | None] = None
 
     appearance: list[AppearanceField] | bool = False
+    dataset_info: bool | DatasetInfo | Sequence[tuple[str, str]] = False
 
     @classmethod
     def default_appearance_fields(cls) -> tuple[str, ...]:
@@ -218,16 +236,12 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
         Names available in the colormap dropdown.
     clim_range : tuple[float, float] or None
         ``(min, max)`` bounds for the contrast-limits slider.
-    dataset_info : Sequence[tuple[str, str]]
-        ``(label, value)`` pairs for the dataset-info block, in order.  An
-        empty sequence hides the block.  Rendered on both front ends: a
-        ``QFormLayout`` inside a ``QCollapsible`` on Qt, a table inside a
-        ``<details>`` on anywidget.
 
-        Values are displayed, never interpreted as markup, so anything read
-        off a store is safe to pass verbatim.  For an OME-Zarr store,
-        ``QtDatasetInfo.from_path`` renders the affine and per-level shapes
-        in more detail than a flat row list can carry.
+    Notes
+    -----
+    ``dataset_info`` is inherited from ``BaseControlsConfig``: it used to
+    live here, which meant only a multiscale image could show the block at
+    all.  Every store now describes itself, so every config class offers it.
     """
 
     APPEARANCE_CONTROLS: ClassVar[dict[str, str]] = {
@@ -235,8 +249,6 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
         "attenuation": "render",
         "lod_bias": "lod_bias",
     }
-
-    dataset_info: Sequence[tuple[str, str]] = ()
 
 
 @dataclass

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cellier.gui._dataset_info import DatasetInfo, dataset_info_from_path
+from cellier.gui._dataset_info import (
+    DatasetInfo,
+    MatrixSection,
+    RowSection,
+    dataset_info_from_path,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,8 +28,8 @@ class QtDatasetInfo:
     Shows ``(label, value)`` rows inside a ``superqt.QCollapsible``, the Qt
     idiom for the anywidget front end's ``<details>`` block.  Built from rows
     for the general case, or from a :class:`DatasetInfo` via :meth:`from_info`
-    for an OME-Zarr store, which adds the world-to-data affine matrix and the
-    per-level shapes.
+    for the sectioned description a data store returns from its
+    ``dataset_info()``, which adds nested blocks and matrix tables.
 
     Uses ``qtpy`` for PyQt6/PySide6 compatibility.  Follows the cellier v2
     widget pattern: a non-``QWidget`` class exposing a ``.widget`` property.
@@ -86,47 +91,39 @@ class QtDatasetInfo:
         """
         return self._collapsible
 
-    @classmethod
-    def from_info(
-        cls,
-        info: DatasetInfo,
-        *,
-        title: str | None = None,
-        parent=None,
-    ) -> QtDatasetInfo:
-        """Build from a pre-extracted :class:`DatasetInfo`.
+    # ── Section renderers ────────────────────────────────────────────────────
 
-        Adds two blocks the plain row list has no shape for: the world-to-data
-        affine as a table, and the per-level shapes in a nested collapsible.
-        """
-        from qtpy.QtWidgets import (
-            QFormLayout,
-            QHeaderView,
-            QLabel,
-            QTableWidget,
-            QTableWidgetItem,
-            QWidget,
-        )
+    def _add_row_section(self, section: RowSection) -> None:
+        """Draw a :class:`RowSection`, nesting it when it carries a label."""
+        from qtpy.QtWidgets import QFormLayout, QLabel, QWidget
         from superqt import QCollapsible
 
-        self = cls(
-            rows=[
-                ("File name", info.file_name),
-                ("Type", info.zarr_type),
-                ("Source", info.source),
-            ],
-            title=title,
-            parent=parent,
-        )
+        if section.label is None:
+            for label, value in section.rows:
+                self._form.addRow(label, QLabel(value))
+            return
 
-        # ── World-to-data transform matrix ──────────────────────────────────
-        n = len(info.axis_names)
-        headers = [*info.axis_names, "1"]  # homogeneous coordinate label
-        row_labels = [*info.axis_names, ""]
+        nested = QCollapsible(section.label)
+        content = QWidget()
+        form = QFormLayout(content)
+        form.setContentsMargins(4, 4, 4, 4)
+        for label, value in section.rows:
+            form.addRow(label, QLabel(value))
+        nested.addWidget(content)
+        if not section.collapsed:
+            nested.expand(animate=False)
+        self._collapsible.addWidget(nested)
 
-        table = QTableWidget(n + 1, n + 1)
-        table.setHorizontalHeaderLabels(headers)
-        table.setVerticalHeaderLabels(row_labels)
+    def _add_matrix_section(self, section: MatrixSection) -> None:
+        """Draw a :class:`MatrixSection` as a non-editable table."""
+        from qtpy.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
+
+        n_rows = len(section.row_labels)
+        n_cols = len(section.col_labels)
+
+        table = QTableWidget(n_rows, n_cols)
+        table.setHorizontalHeaderLabels(section.col_labels)
+        table.setVerticalHeaderLabels(section.row_labels)
         table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
@@ -138,30 +135,38 @@ class QtDatasetInfo:
             table.verticalHeader().length() + table.horizontalHeader().height() + 4
         )
 
-        mat = info.world_to_data_matrix
-        for row in range(n + 1):
-            for col in range(n + 1):
-                val = mat[row, col]
-                text = f"{val:.4g}"
-                item = QTableWidgetItem(text)
+        for row in range(n_rows):
+            for col in range(n_cols):
+                item = QTableWidgetItem(f"{section.matrix[row, col]:.4g}")
                 table.setItem(row, col, item)
 
-        self._form.addRow("World→data", table)
+        self._form.addRow(section.label, table)
 
-        # ── Shapes per scale level (nested collapsible) ──────────────────────
-        shapes_collapsible = QCollapsible("scale shapes")
-        # collapsed by default
-        shapes_content = QWidget()
-        shapes_form = QFormLayout(shapes_content)
-        shapes_form.setContentsMargins(4, 4, 4, 4)
-        shapes_collapsible.addWidget(shapes_content)
+    @classmethod
+    def from_info(
+        cls,
+        info: DatasetInfo,
+        *,
+        title: str | None = None,
+        parent=None,
+    ) -> QtDatasetInfo:
+        """Build from a sectioned :class:`DatasetInfo`.
 
-        axis_label = ", ".join(info.axis_names)
-        for level_idx, shape in enumerate(info.scale_shapes):
-            shape_str = " x ".join(str(s) for s in shape)
-            shapes_form.addRow(f"level {level_idx} ({axis_label})", QLabel(shape_str))
+        Draws each section in the shape it declares: inline rows, a nested
+        collapsible, or a matrix table.  Anything a store can say about
+        itself is one of those three, so a new store type needs no change
+        here.
+        """
+        self = cls(rows=(), title=title, parent=parent)
 
-        self._collapsible.addWidget(shapes_collapsible)
+        for section in info.sections:
+            if isinstance(section, RowSection):
+                self._add_row_section(section)
+            elif isinstance(section, MatrixSection):
+                self._add_matrix_section(section)
+            else:  # pragma: no cover - guards a future section type
+                raise TypeError(f"Unknown dataset-info section: {section!r}")
+
         return self
 
     @classmethod
@@ -196,6 +201,22 @@ class QtDatasetInfo:
             series_index=series_index,
         )
         return cls.from_info(info, title=title, parent=parent)
+
+    @classmethod
+    def from_store(
+        cls,
+        store,
+        *,
+        title: str | None = None,
+        parent=None,
+    ) -> QtDatasetInfo:
+        """Construct from any data store, by asking it to describe itself.
+
+        The general entry point: every ``BaseDataStore`` implements
+        ``dataset_info()``, so this works for points and graphs as much as
+        for an OME-Zarr pyramid.
+        """
+        return cls.from_info(store.dataset_info(), title=title, parent=parent)
 
 
 QtOmeZarrMetadataWidget = QtDatasetInfo

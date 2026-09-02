@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    RowSection,
+    array_extent_row,
+    format_bytes,
+)
 from cellier.data.lines._lines_requests import LinesData, LinesSliceRequest
 
 # Placeholder returned when the slab filter produces zero surviving segments.
@@ -44,6 +50,7 @@ class LinesMemoryStore(BaseDataStore):
     """
 
     store_type: Literal["lines_memory"] = "lines_memory"
+    DATASET_INFO_LABEL: ClassVar[str] = "in-memory lines"
     name: str = "lines_memory_store"
     positions: np.ndarray
     colors: np.ndarray | None = None
@@ -112,6 +119,28 @@ class LinesMemoryStore(BaseDataStore):
         time.
         """
         return "vertex" if self.colors is not None else "uniform"
+
+    # ------------------------------------------------------------------
+    # Self-description
+    # ------------------------------------------------------------------
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the segments: count, dimensionality, extent, footprint.
+
+        The vertex count is spelled out beside the segment count to make the
+        two-vertices-per-segment layout visible; a reader comparing this
+        block against the raw array would otherwise see twice what they
+        expect.  ``color_mode`` is absent -- it is a display property.
+        """
+        rows = [
+            *self._identity_rows(),
+            ("Segments", str(self.n_segments)),
+            ("Vertices", str(self.positions.shape[0])),
+            ("Dimensions", str(self.ndim)),
+            *array_extent_row(self.positions),
+            ("Memory", format_bytes(self.positions.nbytes)),
+        ]
+        return DatasetInfo(sections=[RowSection(None, rows)])
 
     # ------------------------------------------------------------------
     # Async data access — one checkpoint for cancellability

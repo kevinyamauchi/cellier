@@ -29,7 +29,8 @@ def _(mo):
     - **Attenuation** -- visible in attenuated MIP mode; controls depth darkening
     - **LOD bias** -- coarsen or refine level-of-detail (most visible when zoomed out)
     - **Bounding box** -- enable, line width, and color
-    - **Dataset info** -- expand the detail block for array metadata
+    - **Dataset info** -- expand the detail block for array metadata, built
+      by the data store from its own metadata (`dataset_info=True`)
 
     **Interaction (3D):** orbit (left-drag), zoom (scroll), pan (right-drag)
 
@@ -132,22 +133,9 @@ def _(np, ts):
         ts_store = ts.open(spec).result()
         ts_store[...].write(data).result()
 
-    def make_dataset_info(store, volume):
-        """Return ``(label, value)`` rows summarising the multiscale dataset."""
-        return [
-            ("Shape (level 0)", " x ".join(str(s) for s in volume.shape)),
-            ("Data type", str(volume.dtype)),
-            ("Value range", f"[{volume.min():.3f}, {volume.max():.3f}]"),
-            ("Scale levels", str(len(store.scale_names))),
-            ("Level names", ", ".join(store.scale_names)),
-            ("Level 1 scale", "2x isotropic"),
-            ("Level 2 scale", "4x isotropic"),
-        ]
-
     return (
         block_average,
         concentric_shells,
-        make_dataset_info,
         write_zarr3,
     )
 
@@ -176,9 +164,7 @@ def _(
     MultiscaleImageControlsConfig,
     MultiscaleZarrDataStore,
     Viewer,
-    make_dataset_info,
     tmpdir,
-    volume,
 ):
     store = MultiscaleZarrDataStore(
         zarr_path=str(tmpdir),
@@ -231,7 +217,9 @@ def _(
                 "RdYlBu",
             ],
             clim_range=(0.0, 1.0),
-            dataset_info=make_dataset_info(store, volume),
+            # The store describes itself: path, dtype, and the per-level
+            # shapes and scales read off its own level_transforms.
+            dataset_info=True,
         ),
     )
     return store, viewer

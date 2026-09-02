@@ -7,14 +7,15 @@ tensorstore handles for async data access.
 from __future__ import annotations
 
 import pathlib
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlparse
 
 import numpy as np
 import tensorstore as ts
-from pydantic import ConfigDict, PrivateAttr
+from pydantic import ConfigDict, Field, PrivateAttr
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._axis_info import AxisInfo
 from cellier.transform import AffineTransform
 
@@ -218,6 +219,29 @@ def _extract_global_transform(
     return global_scale, global_translation
 
 
+def _level0_physical_transform(
+    ms: v05.Multiscale,
+    global_scale: list[float],
+    global_translation: list[float],
+) -> tuple[list[float], list[float]]:
+    """Return the level-0 data-to-world scale and translation.
+
+    The same composition ``_derive_level_transforms`` performs for level 0,
+    kept before it is normalised away: that function expresses every level
+    relative to level-0 voxels, which by construction makes level 0 the
+    identity and discards where the array actually sits in world space.
+    """
+    n_axes = len(ms.axes)
+    ds0 = ms.datasets[0]
+    scale = [g * s for g, s in zip(global_scale, ds0.scale_transform.scale)]
+    tr_raw = ds0.translation_transform
+    tr_ds = list(tr_raw.translation) if tr_raw is not None else [0.0] * n_axes
+    translation = [
+        gs * t + gt for gs, t, gt in zip(global_scale, tr_ds, global_translation)
+    ]
+    return scale, translation
+
+
 def _derive_level_transforms(
     ms: v05.Multiscale,
     global_scale: list[float],
@@ -280,11 +304,20 @@ class OMEZarrImageDataStore(BaseDataStore):
         Physical units per axis (``None`` if unspecified).
     axis_types : list[str]
         OME axis type per axis.
+    physical_scale : list[float]
+        Level-0 data-to-world scale per axis, i.e. the OME global scale
+        composed with the level-0 dataset scale.  ``level_transforms`` is
+        normalised to level-0 voxels and so has this divided out; it is kept
+        here for display.  Empty when not known.
+    physical_translation : list[float]
+        Level-0 data-to-world translation per axis, the companion to
+        ``physical_scale``.  Empty when not known.
     name : str
         Human-readable name for the store.
     """
 
     store_type: Literal["ome_zarr_image"] = "ome_zarr_image"
+    DATASET_INFO_LABEL: ClassVar[str] = "OME-Zarr image"
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
@@ -292,6 +325,8 @@ class OMEZarrImageDataStore(BaseDataStore):
     axis_names: list[str]
     axis_units: list[str | None]
     axis_types: list[str]
+    physical_scale: list[float] = Field(default_factory=list)
+    physical_translation: list[float] = Field(default_factory=list)
     anonymous: bool = False
     name: str = "ome zarr image data store"
 
@@ -393,6 +428,13 @@ class OMEZarrImageDataStore(BaseDataStore):
         # 9. Collect scale_names.
         scale_names = [ds.path for ds in ms.datasets]
 
+        # 10. Retain the level-0 physical transform.  ``level_transforms``
+        #     divides it out, so without this the store cannot say where it
+        #     sits in world space.
+        physical_scale, physical_translation = _level0_physical_transform(
+            ms, global_scale, global_translation
+        )
+
         return cls(
             zarr_path=zarr_path,
             multiscale_index=multiscale_index,
@@ -401,6 +443,8 @@ class OMEZarrImageDataStore(BaseDataStore):
             axis_names=axis_names,
             axis_units=axis_units,
             axis_types=axis_types,
+            physical_scale=physical_scale,
+            physical_translation=physical_translation,
             anonymous=anonymous,
             name=name,
         )
@@ -508,6 +552,21 @@ class OMEZarrImageDataStore(BaseDataStore):
     def dtype(self) -> np.dtype:
         """Data type of the underlying arrays."""
         return self._ts_stores[0].dtype.numpy_dtype
+
+    # ── Self-description ────────────────────────────────────────────────
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the store from metadata it already holds.
+
+        Reads only fields parsed at construction plus the open tensorstore
+        handles' shapes and dtype -- it never re-opens the group, which for
+        an ``s3://`` store would mean a network round trip every time an
+        appearance panel is built.
+
+        No value range, for the same reason: it would be a full read of
+        level 0.
+        """
+        return ome_zarr_dataset_info(self, self.dtype)
 
     # ── Async data access ───────────────────────────────────────────────
 

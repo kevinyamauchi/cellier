@@ -6,15 +6,16 @@ for async data access.  Returns int32 bricks (never float32).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import ConfigDict, PrivateAttr
+from pydantic import ConfigDict, Field, PrivateAttr
 
 if TYPE_CHECKING:
     import tensorstore as ts
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._ome_zarr_image_store import _validate_uri_scheme
 from cellier.transform import AffineTransform
 
@@ -48,11 +49,20 @@ class OMEZarrLabelDataStore(BaseDataStore):
         Physical units per axis (``None`` if unspecified).
     axis_types : list[str]
         OME axis type per axis.
+    physical_scale : list[float]
+        Level-0 data-to-world scale per axis, i.e. the OME global scale
+        composed with the level-0 dataset scale.  ``level_transforms`` is
+        normalised to level-0 voxels and so has this divided out; it is kept
+        here for display.  Empty when not known.
+    physical_translation : list[float]
+        Level-0 data-to-world translation per axis, the companion to
+        ``physical_scale``.  Empty when not known.
     name : str
         Human-readable name for the store.
     """
 
     store_type: Literal["ome_zarr_label"] = "ome_zarr_label"
+    DATASET_INFO_LABEL: ClassVar[str] = "OME-Zarr labels"
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
@@ -60,6 +70,8 @@ class OMEZarrLabelDataStore(BaseDataStore):
     axis_names: list[str]
     axis_units: list[str | None]
     axis_types: list[str]
+    physical_scale: list[float] = Field(default_factory=list)
+    physical_translation: list[float] = Field(default_factory=list)
     anonymous: bool = False
     name: str = "ome zarr label data store"
 
@@ -163,6 +175,9 @@ class OMEZarrLabelDataStore(BaseDataStore):
                 )
             )
 
+        # ``s0``/``t0`` are the level-0 data-to-world transform, which the
+        # normalisation above divides out of ``level_transforms``.  Retained
+        # so the store can say where it sits in world space.
         return cls(
             zarr_path=zarr_path,
             multiscale_index=multiscale_index,
@@ -171,6 +186,8 @@ class OMEZarrLabelDataStore(BaseDataStore):
             axis_names=axis_names,
             axis_units=axis_units,
             axis_types=axis_types,
+            physical_scale=s0,
+            physical_translation=t0,
             anonymous=anonymous,
             name=name,
         )
@@ -223,6 +240,23 @@ class OMEZarrLabelDataStore(BaseDataStore):
     def ndim(self) -> int:
         """Number of data dimensions."""
         return len(self.axis_names)
+
+    # ── Self-description ────────────────────────────────────────────────
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the store from metadata it already holds.
+
+        Like the image store, this never re-opens the group and never reads
+        array data -- so no label count, which would require a full pass
+        over level 0.  ``LabelMemoryStore`` reports one because its data is
+        already in RAM.
+
+        The ``Data type`` row names the on-disk dtype and the int32 the
+        store hands out, which differ whenever the source is int8 or int16.
+        """
+        native = self.dtype
+        dtype_text = str(native) if native == np.int32 else f"{native} (read as int32)"
+        return ome_zarr_dataset_info(self, dtype_text)
 
     # ── Async data access ───────────────────────────────────────────────
 

@@ -18,13 +18,20 @@ base class definition.
 from __future__ import annotations
 
 import pathlib
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, PrivateAttr, model_validator
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    RowSection,
+    format_scale,
+    format_shape,
+    source_label,
+)
 from cellier.transform import AffineTransform
 
 if TYPE_CHECKING:
@@ -136,6 +143,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
 
     # ── Public pydantic fields ──────────────────────────────────────────
     store_type: Literal["multiscale_zarr"] = "multiscale_zarr"
+    DATASET_INFO_LABEL: ClassVar[str] = "multiscale zarr"
     zarr_path: str
     scale_names: list[str]
     level_transforms: list[AffineTransform]
@@ -229,6 +237,55 @@ class MultiscaleZarrDataStore(BaseDataStore):
     def level_shapes(self) -> list[tuple[int, ...]]:
         """Shape for each scale level, finest first."""
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
+
+    @property
+    def dtype(self) -> np.dtype:
+        """Data type of the underlying arrays.
+
+        Read off the level-0 tensorstore handle, which is already open, so
+        this costs nothing.  ``get_data`` converts to float32 on the way
+        out; this reports what is actually on disk.
+        """
+        return self._ts_stores[0].dtype.numpy_dtype
+
+    # ── Self-description ────────────────────────────────────────────────
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the pyramid: path, dtype, and the per-level geometry.
+
+        No value range: unlike the in-memory stores, computing one here
+        would mean reading every level-0 chunk off disk or over the network.
+
+        The per-level scale rows are derived from ``level_transforms``
+        rather than asserted -- the examples used to hardcode strings like
+        ``"2x isotropic"`` that no longer matched an anisotropic pyramid.
+        """
+        shapes = self.level_shapes
+        level_rows: list[tuple[str, str]] = []
+        for index, (level_name, shape) in enumerate(zip(self.scale_names, shapes)):
+            scale = np.diag(self.level_transforms[index].matrix)[:-1]
+            level_rows.append(
+                (
+                    level_name,
+                    f"{format_shape(shape)}  ({format_scale(scale)})",
+                )
+            )
+
+        return DatasetInfo(
+            sections=[
+                RowSection(
+                    None,
+                    [
+                        *self._identity_rows(),
+                        ("Path", self.zarr_path),
+                        ("Source", source_label(self.zarr_path)),
+                        ("Data type", str(self.dtype)),
+                        ("Scale levels", str(self.n_levels)),
+                    ],
+                ),
+                RowSection("Scale levels", level_rows, collapsed=True),
+            ]
+        )
 
     # ── Async data access ───────────────────────────────────────────────
 

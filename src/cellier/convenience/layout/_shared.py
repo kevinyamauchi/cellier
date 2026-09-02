@@ -5,12 +5,11 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
+from uuid import UUID
 
 from cellier.convenience.gui._controls_config import ChannelControlsConfig
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     from cellier.visuals._channel_appearance import ChannelAppearance
 
 
@@ -202,7 +201,41 @@ def _default_title(field: str) -> str:
     return field.replace("_", " ").capitalize()
 
 
-def appearance_specs(visual: object, config: object) -> AppearanceSpecs:
+def _resolve_data_store(controller: object, visual: object) -> object | None:
+    """Return the visual's backing data store, or ``None`` if there is none.
+
+    Only ``dataset_info=True`` needs it.  A visual with no controller or no
+    ``data_store_id`` yields ``None`` quietly -- there is nothing to look up.
+    A lookup that *fails* is different: the visual names a store the
+    controller does not have, which is a wiring bug, and it warns rather
+    than silently producing a panel with the block missing.
+
+    ``BaseVisual.data_store_id`` is a ``str`` while
+    ``CellierController._model.data.stores`` is keyed by ``UUID``, so the id
+    is coerced here; passing the string through looks up nothing and finds
+    nothing.
+    """
+    store_id = getattr(visual, "data_store_id", None)
+    if controller is None or store_id is None:
+        return None
+
+    key = UUID(store_id) if isinstance(store_id, str) else store_id
+    try:
+        return controller.get_data_store(key)
+    except (KeyError, AttributeError):
+        warnings.warn(
+            f"Visual {getattr(visual, 'name', visual)!r} names data store "
+            f"{store_id} but the controller has no such store; the "
+            f"dataset-info block was not built.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return None
+
+
+def appearance_specs(
+    visual: object, config: object, store: object | None = None
+) -> AppearanceSpecs:
     """Decide which appearance controls *visual* should get under *config*.
 
     Pure: reads the visual's appearance model and the config, and returns
@@ -221,15 +254,18 @@ def appearance_specs(visual: object, config: object) -> AppearanceSpecs:
         The visual whose appearance the panel will drive.
     config : BaseControlsConfig
         The recorded controls config.
+    store : BaseDataStore or None
+        The visual's backing data store, needed only to honour
+        ``dataset_info=True``, which asks the store to describe itself.
+        Passed in rather than looked up so this stays pure: the shared
+        decision layer takes no controller and imports no toolkit.  A
+        renderer resolves it from ``visual.data_store_id``.
 
     Returns
     -------
     AppearanceSpecs
     """
-    from cellier.convenience.gui._controls_config import (
-        InMemoryImageControlsConfig,
-        MultiscaleImageControlsConfig,
-    )
+    from cellier.convenience.gui._controls_config import InMemoryImageControlsConfig
     from cellier.gui._appearance_fields import (
         APPEARANCE_FIELD_WIDGETS,
         literal_choices,
@@ -340,19 +376,53 @@ def appearance_specs(visual: object, config: object) -> AppearanceSpecs:
             )
         )
 
-    dataset_info = (
-        config.dataset_info if isinstance(config, MultiscaleImageControlsConfig) else ()
+    dataset_info_spec = _dataset_info_spec(
+        getattr(config, "dataset_info", False), store
     )
-    if dataset_info:
-        specs.append(
-            ControlSpec(
-                "dataset_info",
-                _CONTROL_TITLES["dataset_info"],
-                {"rows": [(str(label), str(value)) for label, value in dataset_info]},
-            )
-        )
+    if dataset_info_spec is not None:
+        specs.append(dataset_info_spec)
 
     return AppearanceSpecs(specs, skipped)
+
+
+def _dataset_info_spec(requested: object, store: object) -> ControlSpec | None:
+    """Resolve a config's ``dataset_info`` setting into a spec, or ``None``.
+
+    The setting has three useful forms and one that hides the block:
+
+    ``True``
+        Ask *store* to describe itself.  Yields nothing when no store was
+        resolved -- the caller could not find one, and a block asserting
+        that a store has no metadata would be worse than no block.
+    a ``DatasetInfo``
+        Displayed as given.
+    a sequence of pairs
+        The hand-authored escape hatch, carried through as flat rows.
+    ``False`` / empty
+        No block.
+    """
+    from cellier.data._dataset_info import DatasetInfo
+
+    if requested is False or requested is None:
+        return None
+
+    if requested is True:
+        if store is None or not hasattr(store, "dataset_info"):
+            return None
+        info: DatasetInfo | None = store.dataset_info()
+    elif isinstance(requested, DatasetInfo):
+        info = requested
+    else:
+        rows = [(str(label), str(value)) for label, value in requested]
+        if not rows:
+            return None
+        return ControlSpec(
+            "dataset_info", _CONTROL_TITLES["dataset_info"], {"rows": rows}
+        )
+
+    if info is None or not info.sections:
+        return None
+    return ControlSpec("dataset_info", _CONTROL_TITLES["dataset_info"], {"info": info})
 
 
 def warn_skipped_appearance_fields(

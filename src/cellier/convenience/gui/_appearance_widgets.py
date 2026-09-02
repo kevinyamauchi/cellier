@@ -83,8 +83,16 @@ def _any_aabb(spec: ControlSpec, visual_ids):
 
 
 def _any_dataset_info(spec: ControlSpec, visual_ids):
+    """Build the read-only dataset-info block.
+
+    The spec carries either an ``info`` (a store's sectioned
+    self-description) or flat ``rows``; the widget has a constructor for
+    each.  The Qt twin dispatches identically.
+    """
     from cellier.gui.anywidget import AnywidgetDatasetInfo
 
+    if "info" in spec.values:
+        return AnywidgetDatasetInfo.from_info(spec.values["info"], title=spec.title)
     return AnywidgetDatasetInfo(spec.values["rows"], title=spec.title)
 
 
@@ -142,12 +150,15 @@ def build_appearance_widgets_anywidget(
     """
     from cellier.convenience.layout._shared import (
         STATIC_CONTROL_KINDS,
+        _resolve_data_store,
         appearance_specs,
         warn_skipped_appearance_fields,
     )
     from cellier.gui._appearance_fields import APPEARANCE_FIELD_WIDGETS
 
-    specs, skipped = appearance_specs(visual, controls_config)
+    specs, skipped = appearance_specs(
+        visual, controls_config, _resolve_data_store(controller, visual)
+    )
     warn_skipped_appearance_fields(skipped, visual, controls_config)
     ids = [visual.id] if visual_ids is None else list(visual_ids)
 

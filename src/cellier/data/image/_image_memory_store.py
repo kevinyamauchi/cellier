@@ -1,12 +1,18 @@
 # src/cellier/v2/data/image/_image_memory_store.py
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    RowSection,
+    format_bytes,
+    format_shape,
+)
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
@@ -30,6 +36,7 @@ class ImageMemoryStore(BaseDataStore):
     """
 
     store_type: Literal["image_memory"] = "image_memory"
+    DATASET_INFO_LABEL: ClassVar[str] = "in-memory image"
     name: str = "image_memory_store"
     data: np.ndarray
 
@@ -74,6 +81,29 @@ class ImageMemoryStore(BaseDataStore):
     def level_shapes(self) -> list[tuple[int, ...]]:
         """List with one entry (level 0 = the full array)."""
         return [self.shape]
+
+    # ------------------------------------------------------------------
+    # Self-description
+    # ------------------------------------------------------------------
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the array: shape, dtype, value range and footprint.
+
+        The value range is a full pass over the array, affordable only
+        because the data is already resident in RAM.  The zarr-backed stores
+        deliberately omit it (see their ``dataset_info``).
+        """
+        rows = [
+            *self._identity_rows(),
+            ("Shape", format_shape(self.shape)),
+            ("Data type", str(self.data.dtype)),
+        ]
+        if self.data.size:
+            rows.append(
+                ("Value range", f"[{self.data.min():.4g}, {self.data.max():.4g}]")
+            )
+        rows.append(("Memory", format_bytes(self.data.nbytes)))
+        return DatasetInfo(sections=[RowSection(None, rows)])
 
     # ------------------------------------------------------------------
     # Async data access (called by AsyncSlicer)

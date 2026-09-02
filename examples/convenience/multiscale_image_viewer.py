@@ -22,7 +22,8 @@ Visible : checkbox in the appearance dock.  Known issue: the canvas does not
 2D mode : pan (left-drag), zoom (scroll)
 Toggle  : "Switch to 2D / 3D" button in the bottom dock
 Z slice : dims slider (2D mode only)
-Dataset info : collapsible block at the bottom of the appearance dock
+Dataset info : collapsible block at the bottom of the appearance dock,
+          built by the store from its own metadata (``dataset_info=True``)
 """
 
 from __future__ import annotations
@@ -72,19 +73,6 @@ def _block_average(arr, factor):
     return (
         trimmed.reshape(shape).mean(axis=tuple(range(1, 2 * d, 2))).astype(np.float32)
     )
-
-
-def _make_dataset_info(store, volume):
-    """Return ``(label, value)`` rows summarising the multiscale dataset."""
-    return [
-        ("Shape (level 0)", " x ".join(str(s) for s in volume.shape)),
-        ("Data type", str(volume.dtype)),
-        ("Value range", f"[{volume.min():.3f}, {volume.max():.3f}]"),
-        ("Scale levels", str(len(store.scale_names))),
-        ("Level names", ", ".join(store.scale_names)),
-        ("Level 1 scale", "2x isotropic"),
-        ("Level 2 scale", "4x isotropic"),
-    ]
 
 
 def _write_zarr3(base_path, name, data):
@@ -171,7 +159,9 @@ viewer.add_image_multiscale(
             "RdYlBu",
         ],
         clim_range=(0.0, 1.0),
-        dataset_info=_make_dataset_info(store, volume),
+        # The store describes itself: path, dtype, axes, and the per-level
+        # shapes and scales read off its own level_transforms.
+        dataset_info=True,
     ),
 )
 

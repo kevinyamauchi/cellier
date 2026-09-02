@@ -378,3 +378,79 @@ def test_select_returns_none_without_a_scene_or_a_config():
     assert select_appearance_target(_FakeViewer(_FakeScene([visual]), {})) is None
     assert select_appearance_target(_FakeViewer(None, {"a": object()})) is None
     assert select_appearance_target(object()) is None
+
+
+# ── dataset_info: the three forms of the setting ─────────────────────────────
+
+
+class _FakeStore:
+    """A minimal store: the one method ``dataset_info=True`` calls."""
+
+    def __init__(self, info):
+        self._info = info
+
+    def dataset_info(self):
+        return self._info
+
+
+def test_dataset_info_true_asks_the_store_to_describe_itself():
+    """The point of the generalization: rows come from the store, not the caller.
+
+    Before this, every caller hand-wrote the rows, which is why both example
+    scripts asserted a hardcoded ``"2x isotropic"`` that no longer matched an
+    anisotropic pyramid.
+    """
+    from cellier.data._dataset_info import DatasetInfo, RowSection
+
+    info = DatasetInfo(sections=[RowSection(None, [("Points", "12")])])
+    result = appearance_specs(
+        _multiscale(),
+        MultiscaleImageControlsConfig(appearance=["color_map"], dataset_info=True),
+        _FakeStore(info),
+    )
+    assert kinds(result) == ["color_map", "aabb", "dataset_info"]
+    assert result.specs[-1].values == {"info": info}
+
+
+def test_dataset_info_true_without_a_store_builds_no_block():
+    """A block asserting that a store has no metadata is worse than no block."""
+    config = MultiscaleImageControlsConfig(appearance=["color_map"], dataset_info=True)
+    assert kinds(appearance_specs(_multiscale(), config)) == ["color_map", "aabb"]
+
+
+def test_dataset_info_accepts_a_prebuilt_dataset_info():
+    from cellier.data._dataset_info import DatasetInfo, RowSection
+
+    info = DatasetInfo(sections=[RowSection(None, [("Nodes", "3")])])
+    result = appearance_specs(
+        _multiscale(),
+        MultiscaleImageControlsConfig(appearance=["color_map"], dataset_info=info),
+    )
+    assert result.specs[-1].values == {"info": info}
+
+
+def test_dataset_info_is_available_on_every_config_class():
+    """It used to live on ``MultiscaleImageControlsConfig`` alone.
+
+    That gate meant a points or graph visual could not show the block at all,
+    however well its store could describe itself.
+    """
+    from cellier.convenience.gui._controls_config import (
+        GraphControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
+        PointsControlsConfig,
+    )
+    from cellier.data._dataset_info import DatasetInfo, RowSection
+
+    info = DatasetInfo(sections=[RowSection(None, [("Points", "12")])])
+    for config_class in (
+        PointsControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
+        GraphControlsConfig,
+        BaseControlsConfig,
+    ):
+        config = config_class(appearance=["visible"], dataset_info=True)
+        result = appearance_specs(_multiscale(), config, _FakeStore(info))
+        assert "dataset_info" in kinds(result), config_class.__name__

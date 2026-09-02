@@ -265,12 +265,20 @@ def _qt_field_control(spec, visual_ids, controller, parent):
 def _qt_dataset_info(spec, visual_ids, controller, parent):
     """Build the read-only dataset-info block.
 
-    Takes neither *visual_ids* nor *controller*: it displays what the config
+    Takes neither *visual_ids* nor *controller*: it displays what the spec
     handed it and drives nothing, which is why ``STATIC_CONTROL_KINDS`` keeps
     it off the bus.
+
+    The spec carries either an ``info`` (a store's sectioned self-description)
+    or flat ``rows`` (the hand-authored escape hatch); the widget has a
+    constructor for each.
     """
     from cellier.gui.qt import QtDatasetInfo
 
+    if "info" in spec.values:
+        return QtDatasetInfo.from_info(
+            spec.values["info"], title=spec.title, parent=parent
+        )
     return QtDatasetInfo(spec.values["rows"], title=spec.title, parent=parent)
 
 
@@ -306,6 +314,7 @@ def _render_appearance_controls_qt(
 
     from cellier.convenience.layout._shared import (
         STATIC_CONTROL_KINDS,
+        _resolve_data_store,
         appearance_specs,
         select_appearance_target,
         warn_skipped_appearance_fields,
@@ -316,7 +325,11 @@ def _render_appearance_controls_qt(
     if target is None:
         return None
 
-    specs, skipped = appearance_specs(target.visual, target.config)
+    specs, skipped = appearance_specs(
+        target.visual,
+        target.config,
+        _resolve_data_store(getattr(viewer, "controller", None), target.visual),
+    )
     warn_skipped_appearance_fields(skipped, target.visual, target.config)
     if not specs:
         # No requested field resolved to a control, so there is nothing to

@@ -542,3 +542,94 @@ def test_every_valid_field_name_has_a_widget():
             assert kind in APPEARANCE_FIELD_WIDGETS or kind in bespoke, (
                 f"{config_class.__name__}.{field} -> {kind} has no widget"
             )
+
+
+# ── sectioned dataset info reaches both front ends ───────────────────────────
+
+
+def _sectioned_info():
+    """A DatasetInfo exercising all three block shapes."""
+    import numpy as np
+
+    from cellier.data._dataset_info import DatasetInfo, MatrixSection, RowSection
+
+    return DatasetInfo(
+        sections=[
+            RowSection(None, [("Name", "store"), ("Store type", "in-memory points")]),
+            RowSection("Axes", [("z", "space, um"), ("y", "space, um")]),
+            MatrixSection(
+                "World to data",
+                np.array([[0.5, 0.0, -1.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]]),
+                row_labels=["z", "y", "1"],
+                col_labels=["z", "y", "1"],
+            ),
+            RowSection("Scale levels", [("s0", "8 x 8")], collapsed=True),
+        ]
+    )
+
+
+def test_sections_reach_the_anywidget_front_end(qtbot):
+    """The anywidget block could previously draw only a flat row list.
+
+    A store's affine and per-level shapes were reachable from Qt alone, so a
+    notebook user saw strictly less than a desktop one.
+    """
+    from cellier.gui.anywidget import AnywidgetDatasetInfo
+
+    widget = AnywidgetDatasetInfo.from_info(_sectioned_info())
+    kinds = [(s["kind"], s["label"]) for s in widget.sections]
+    assert kinds == [
+        ("rows", None),
+        ("rows", "Axes"),
+        ("matrix", "World to data"),
+        ("rows", "Scale levels"),
+    ]
+    # The matrix crosses as pre-formatted text so both toolkits round alike.
+    matrix = widget.sections[2]
+    assert matrix["values"][0] == ["0.5", "0", "-1"]
+    assert matrix["col_labels"] == ["z", "y", "1"]
+    assert widget.sections[3]["collapsed"] is True
+
+
+def test_sections_reach_the_qt_front_end(qtbot):
+    """The Qt twin draws the same four blocks."""
+    from PySide6.QtWidgets import QTableWidget, QWidget
+
+    from cellier.gui.qt import QtDatasetInfo
+
+    widget = QtDatasetInfo.from_info(_sectioned_info())
+    root = widget.widget
+
+    nested = [
+        child._toggle_btn.text()
+        for child in root.findChildren(QWidget)
+        if type(child).__name__ == "QCollapsible" and child is not root
+    ]
+    assert nested == ["Axes", "Scale levels"]
+
+    tables = root.findChildren(QTableWidget)
+    assert len(tables) == 1
+    table = tables[0]
+    assert (table.rowCount(), table.columnCount()) == (3, 3)
+    assert table.item(0, 0).text() == "0.5"
+    assert table.item(0, 2).text() == "-1"
+
+
+def test_both_front_ends_agree_on_matrix_formatting(qtbot):
+    """One ``.4g`` formatting rule, not one per toolkit."""
+    from PySide6.QtWidgets import QTableWidget
+
+    from cellier.gui.anywidget import AnywidgetDatasetInfo
+    from cellier.gui.qt import QtDatasetInfo
+
+    info = _sectioned_info()
+    any_values = AnywidgetDatasetInfo.from_info(info).sections[2]["values"]
+
+    # Bind the wrapper: dropping it collects the Qt tree out from under us.
+    qt_widget = QtDatasetInfo.from_info(info)
+    table = qt_widget.widget.findChildren(QTableWidget)[0]
+    qt_values = [
+        [table.item(row, col).text() for col in range(table.columnCount())]
+        for row in range(table.rowCount())
+    ]
+    assert qt_values == any_values

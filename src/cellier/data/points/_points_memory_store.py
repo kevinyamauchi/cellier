@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    RowSection,
+    array_extent_row,
+    format_bytes,
+)
 from cellier.data.points._points_requests import PointsData, PointsSliceRequest
 
 # Placeholder returned when the proximity filter produces zero points.
@@ -42,6 +48,7 @@ class PointsMemoryStore(BaseDataStore):
     """
 
     store_type: Literal["points_memory"] = "points_memory"
+    DATASET_INFO_LABEL: ClassVar[str] = "in-memory points"
     name: str = "points_memory_store"
     positions: np.ndarray
     colors: np.ndarray | None = None
@@ -121,6 +128,26 @@ class PointsMemoryStore(BaseDataStore):
     def size_mode(self) -> str:
         """``"vertex"`` when per-point sizes are present, else ``"uniform"``."""
         return "vertex" if self.sizes is not None else "uniform"
+
+    # ------------------------------------------------------------------
+    # Self-description
+    # ------------------------------------------------------------------
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the point cloud: count, dimensionality, extent, footprint.
+
+        ``color_mode`` and ``size_mode`` are deliberately absent: they
+        describe how the points are *drawn*, not what the store holds, and
+        the appearance model is where a reader should look for that.
+        """
+        rows = [
+            *self._identity_rows(),
+            ("Points", str(self.n_points)),
+            ("Dimensions", str(self.ndim)),
+            *array_extent_row(self.positions),
+            ("Memory", format_bytes(self.positions.nbytes)),
+        ]
+        return DatasetInfo(sections=[RowSection(None, rows)])
 
     # ------------------------------------------------------------------
     # Async data access — one checkpoint for cancellability
