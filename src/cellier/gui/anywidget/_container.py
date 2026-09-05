@@ -50,6 +50,12 @@ class AnywidgetBox(anywidget.AnyWidget):
         by :class:`~cellier.convenience._hosts.JupyterHost` to keep the
         outermost box from touching the notebook cell / sidecar tab edges;
         nested boxes leave this at ``0`` so only the outer border shows.
+    title : str
+        A heading drawn above the children, naming what the box holds.  Empty
+        (the default) draws nothing.  The anywidget answer to Qt's
+        ``titled_group``: the render dock uses it to say whose settings these
+        are, since "Outline" beside "Outlines" is not a distinction a reader
+        should have to make.
     """
 
     _esm = _STATIC / "container.js"
@@ -63,6 +69,7 @@ class AnywidgetBox(anywidget.AnyWidget):
     min_width = traitlets.Int(0).tag(sync=True)
     gap = traitlets.Int(4).tag(sync=True)
     padding = traitlets.Int(0).tag(sync=True)
+    title = traitlets.Unicode("").tag(sync=True)
 
     def close(self) -> None:
         """Close this box and every widget beneath it.

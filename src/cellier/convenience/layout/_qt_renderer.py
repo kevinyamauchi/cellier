@@ -80,7 +80,13 @@ def render_qt(layout: Layout, viewer: object) -> object:
     from PySide6.QtCore import Qt
 
     window = _make_window(QtWidgets)()
-    window.setCentralWidget(_render_center_qt(layout.center))
+    # The center is closed on teardown exactly as the docks are: a canvas
+    # widget owns a dims control that is subscribed to the bus, and until this
+    # list reached the center that control outlived every window that built it
+    # (``tests/gui/test_backend_parity.py``).
+    window.setCentralWidget(
+        _render_center_qt(layout.center, window._cellier_closeables)
+    )
 
     dock_map = {
         "left": (layout.left_dock, Qt.DockWidgetArea.LeftDockWidgetArea),
@@ -132,8 +138,14 @@ def _wrap_dock_widget(widget: object, position: str) -> object:
     return container
 
 
-def _render_center_qt(node: object) -> object:
-    """Recursively render a center spec node to a Qt widget."""
+def _render_center_qt(node: object, closeables: list | None = None) -> object:
+    """Recursively render a center spec node to a Qt widget.
+
+    *closeables* collects every leaf that owns bus subscriptions, so closing
+    the window releases them.  It mirrors the anywidget renderer's own list;
+    it is optional only so the recursive calls and the tests that render a
+    bare node need not pass one.
+    """
     from PySide6 import QtWidgets
 
     from cellier.convenience.layout._spec import Grid, HStack, VStack
@@ -144,7 +156,7 @@ def _render_center_qt(node: object) -> object:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         for item in node.items:
-            layout.addWidget(_render_center_qt(item))
+            layout.addWidget(_render_center_qt(item, closeables))
         return container
 
     if isinstance(node, VStack):
@@ -153,7 +165,7 @@ def _render_center_qt(node: object) -> object:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         for item in node.items:
-            layout.addWidget(_render_center_qt(item))
+            layout.addWidget(_render_center_qt(item, closeables))
         return container
 
     if isinstance(node, Grid):
@@ -164,11 +176,15 @@ def _render_center_qt(node: object) -> object:
         for row_idx, row in enumerate(node.cells):
             for col_idx, cell in enumerate(row):
                 if cell is not None:
-                    grid.addWidget(_render_center_qt(cell), row_idx, col_idx)
+                    grid.addWidget(
+                        _render_center_qt(cell, closeables), row_idx, col_idx
+                    )
         return container
 
     # Leaf: QtCanvasWidget or OrthoCanvasWidgets -- both expose .widget.
     if hasattr(node, "widget"):
+        if closeables is not None and hasattr(node, "close"):
+            closeables.append(node)
         return node.widget
     raise TypeError(
         f"Cannot render {type(node).__name__!r} as a Qt center widget. "
@@ -351,6 +367,7 @@ def _render_appearance_controls_qt(
     from PySide6.QtWidgets import QSizePolicy
 
     from cellier.convenience.layout._shared import (
+        APPEARANCE_DOCK_GAP_PX,
         STATIC_CONTROL_KINDS,
         _resolve_data_store,
         appearance_specs,
@@ -381,7 +398,7 @@ def _render_appearance_controls_qt(
     container.setMinimumWidth(260)
     layout = QtWidgets.QVBoxLayout(container)
     layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(6)
+    layout.setSpacing(APPEARANCE_DOCK_GAP_PX)
 
     for spec in specs:
         builder = _QT_BUILDERS.get(spec.kind)
@@ -526,6 +543,20 @@ def _render_dock_qt(
     if isinstance(spec, RenderControls):
         return _render_render_controls_qt(spec, viewer, closeables)
     if isinstance(spec, (HStack, VStack)):
+        widgets = [
+            widget
+            for widget in (
+                _render_dock_qt(item, viewer, closeables) for item in spec.items
+            )
+            if widget is not None
+        ]
+        # A stack whose contents all resolved to nothing is an empty dock, and
+        # an empty dock is a titled grey rectangle beside the canvas.  The
+        # anywidget renderer already returned None here; returning a container
+        # unconditionally was what made ``VStack([AppearanceControls()])`` on
+        # an unconfigured viewer look different per toolkit.
+        if not widgets:
+            return None
         container = QtWidgets.QWidget()
         box = (
             QtWidgets.QHBoxLayout(container)
@@ -533,9 +564,10 @@ def _render_dock_qt(
             else QtWidgets.QVBoxLayout(container)
         )
         box.setContentsMargins(4, 4, 4, 4)
-        for item in spec.items:
-            widget = _render_dock_qt(item, viewer, closeables)
-            if widget is not None:
-                box.addWidget(widget)
+        for widget in widgets:
+            box.addWidget(widget)
         return container
-    return None
+
+    from cellier.convenience.layout._shared import unsupported_dock_node
+
+    raise unsupported_dock_node(spec)

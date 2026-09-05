@@ -189,6 +189,17 @@ widget uses.
 """
 
 
+APPEARANCE_DOCK_GAP_PX = 6
+"""Spacing between the stacked controls in an appearance dock, in pixels.
+
+How far apart two controls sit is a property of the panel, not of a toolkit,
+so both renderers read it here.  They used to disagree -- Qt spaced its
+column by 6 and the anywidget composer by 4, under a comment claiming it was
+"mirroring the 6px ``setSpacing`` the Qt dock column uses".  Six is what both
+now use, since that is the value the comment says was intended.
+"""
+
+
 STATIC_CONTROL_KINDS = frozenset({"dataset_info"})
 """Kinds that are pure display, with nothing on the event bus.
 
@@ -617,6 +628,13 @@ def render_panel_kwargs(section: str, controller: object) -> dict:
         Keyword arguments for that section's panel; empty for sections
         with no derived state to show.
     """
+    if section == "outline":
+        # ``{slot: how many visuals use it}``, so a palette editor can show
+        # that slot 2 is three visuals rather than leaving the reader to hold
+        # it in their head.  Both panel bases have accepted this since they
+        # were written and both front ends draw it; nothing ever passed it,
+        # so the readout was dead on arrival on both toolkits.
+        return {"slot_usage": controller.slot_usage}
     if section == "ambient_occlusion":
         return {
             "effective_radius": lambda: controller.ambient_occlusion_effective_radius
@@ -627,6 +645,26 @@ def render_panel_kwargs(section: str, controller: object) -> dict:
             "on_reset": controller.reset_temporal_accumulation,
         }
     return {}
+
+
+def unsupported_dock_node(spec: object) -> TypeError:
+    """The error for a spec node no dock can render.
+
+    Both renderers walked their known dock specs and then ``return``-ed
+    ``None``, so a ``Grid`` in a dock -- or anything else unrecognised --
+    produced no widget, no dock and no complaint, identically and silently on
+    both toolkits.  Silence is the one behaviour that cannot be right here:
+    the caller asked for something and got nothing back.
+
+    ``Grid`` is called out by name because it is the plausible mistake: it is
+    a valid *center* node, so reaching for it in a dock is a reasonable thing
+    to try.
+    """
+    return TypeError(
+        f"Cannot render {type(spec).__name__!r} in a dock. Docks accept "
+        "AppearanceControls, ChannelControls, RenderControls, or an HStack / "
+        "VStack of those. Grid is a center-only node."
+    )
 
 
 def render_panel_sections(spec: object) -> tuple[str, ...]:

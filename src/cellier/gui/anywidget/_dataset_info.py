@@ -120,6 +120,25 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
         """An ``AnyWidget`` is itself the embeddable element."""
         return self
 
+    def section_labels(self) -> list[str]:
+        """The sections drawn, in the order they are drawn.
+
+        The twin of :meth:`cellier.gui.qt.QtDatasetInfo.section_labels`, and
+        it exists for the same reason: one ``DatasetInfo`` must draw the same
+        way on both front ends, and nothing else makes that checkable.
+
+        An unlabelled section is named by its first row's label, matching
+        what a reader actually sees at the top of the block.
+        """
+        labels: list[str] = []
+        for section in self.sections:
+            label = section.get("label")
+            if label is None:
+                rows = section.get("rows") or []
+                label = str(rows[0][0]) if rows else ""
+            labels.append(label)
+        return labels
+
     @classmethod
     def from_info(
         cls, info: DatasetInfo, *, title: str | None = None

@@ -35,6 +35,7 @@ class LayoutHost(Protocol):
         align: str | None = None,
         min_width: int | None = None,
         gap: int | None = None,
+        title: str | None = None,
     ) -> object:
         """Stack *items* vertically (``"v"``) or horizontally (``"h"``).
 
@@ -51,11 +52,22 @@ class LayoutHost(Protocol):
         Pass a small explicit value to tightly group sibling controls that
         used to live inside one widget (see
         :func:`cellier.convenience.gui._appearance_widgets.compose_appearance_leaf`).
+
+        *title* draws a heading above the items, naming what the stack holds;
+        ``None`` draws none.  The anywidget answer to the Qt renderer's
+        ``titled_group``, so a dock can say whose settings it carries on
+        either toolkit.
         """
         ...
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
-        """Arrange *rows* (a list of rows of items) as a grid."""
+        """Arrange *rows* (a list of rows of items) as a grid.
+
+        A ``None`` in a row is an empty cell and must hold its column: the
+        items after it keep their position rather than shifting left.  Both
+        hosts substitute an invisible placeholder, which is the cheapest way
+        to say "nothing here" in a flexbox row.
+        """
         ...
 
     def present(self, root: object) -> object | None:
@@ -99,6 +111,7 @@ class MarimoHost:
         align: str | None = None,
         min_width: int | None = None,
         gap: int | None = None,
+        title: str | None = None,
     ) -> object:
         """Stack with ``marimo.vstack`` / ``marimo.hstack``.
 
@@ -114,11 +127,28 @@ class MarimoHost:
         """
         stacker = self._mo.vstack if direction == "v" else self._mo.hstack
         kwargs = {} if gap is None else {"gap": gap / self._REM_PX}
-        return stacker(list(items), align=align, **kwargs)
+        stacked = stacker(list(items), align=align, **kwargs)
+        if not title:
+            return stacked
+        # marimo has no titled container, so the heading is markdown above the
+        # stack -- the same two elements the Jupyter box draws, composed with
+        # marimo's own primitives.
+        return self._mo.vstack([self._mo.md(f"**{title}**"), stacked])
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
-        """Arrange rows with nested ``vstack`` / ``hstack``."""
-        return self._mo.vstack([self._mo.hstack(list(r)) for r in rows])
+        """Arrange rows with nested ``vstack`` / ``hstack``.
+
+        An empty cell becomes empty markdown, which occupies its column
+        without drawing anything.
+        """
+        return self._mo.vstack(
+            [
+                self._mo.hstack(
+                    [self._mo.md("") if item is None else item for item in row]
+                )
+                for row in rows
+            ]
+        )
 
     def present(self, root: object) -> object | None:
         """Return *root* so ``display()`` yields it as the cell output.
@@ -149,6 +179,7 @@ class JupyterHost:
         align: str | None = None,
         min_width: int | None = None,
         gap: int | None = None,
+        title: str | None = None,
     ) -> object:
         """Compose into an ``AnywidgetBox`` flexbox."""
         from cellier.gui.anywidget import AnywidgetBox
@@ -159,15 +190,28 @@ class JupyterHost:
             direction=direction,
             align=align or "",
             min_width=min_width or 0,
+            title=title or "",
             **kwargs,
         )
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
-        """Compose rows of ``AnywidgetBox`` (horizontal) inside an outer one."""
+        """Compose rows of ``AnywidgetBox`` (horizontal) inside an outer one.
+
+        An empty cell becomes an empty ``AnywidgetBox``: ``children`` only
+        accepts ``DOMWidget``s, so the hole has to be a widget, and an
+        childless box renders as nothing while still taking its place in the
+        row.
+        """
         from cellier.gui.anywidget import AnywidgetBox
 
         return AnywidgetBox(
-            children=[AnywidgetBox(children=list(r), direction="h") for r in rows],
+            children=[
+                AnywidgetBox(
+                    children=[AnywidgetBox() if item is None else item for item in row],
+                    direction="h",
+                )
+                for row in rows
+            ],
             direction="v",
         )
 

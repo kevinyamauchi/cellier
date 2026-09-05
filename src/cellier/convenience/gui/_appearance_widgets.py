@@ -213,14 +213,6 @@ def build_appearance_widgets_anywidget(
     return built
 
 
-_TIGHT_GAP_PX = 4
-"""Spacing between stacked appearance controls, mirroring the 6px
-``setSpacing`` the Qt dock column uses (``_qt_renderer.py``) -- explicit
-rather than relying on the host's macro layout default (tuned for spacing
-unrelated blocks like canvas/dims apart).
-"""
-
-
 def compose_appearance_leaf(widgets: list[object], host: LayoutHost) -> object | None:
     """Compose built widgets into one host leaf, or ``None``.
 
@@ -230,4 +222,11 @@ def compose_appearance_leaf(widgets: list[object], host: LayoutHost) -> object |
         return None
     if len(widgets) == 1:
         return host.leaf(widgets[0])
-    return host.stack([host.leaf(w) for w in widgets], direction="v", gap=_TIGHT_GAP_PX)
+    # Explicit rather than the host's macro layout default, which is tuned for
+    # spacing unrelated blocks (canvas/dims) apart.  The value is shared with
+    # the Qt dock column so the two panels are spaced alike.
+    from cellier.convenience.layout._shared import APPEARANCE_DOCK_GAP_PX
+
+    return host.stack(
+        [host.leaf(w) for w in widgets], direction="v", gap=APPEARANCE_DOCK_GAP_PX
+    )

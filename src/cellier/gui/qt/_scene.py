@@ -51,6 +51,7 @@ from qtpy.QtWidgets import (
 from superqt import QLabeledSlider
 
 from cellier.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
+from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
 
 SLIDER_STYLE = """
 QSlider::groove:horizontal {
@@ -121,7 +122,9 @@ class QtDimsControl:
     Wire to the controller after construction::
 
         control = QtDimsControl(scene_id, axis_ranges=..., axis_labels=...)
-        controller.connect_widget(control, subscription_specs=control.subscription_specs())
+        controller.connect_widget(
+            control, subscription_specs=control.subscription_specs()
+        )
 
     Parameters
     ----------
@@ -158,7 +161,7 @@ class QtDimsControl:
         initial_displayed_axes: tuple[int, ...] = (),
         initial_stacked_axes: tuple[int, ...] = (),
         non_displayed_sliders: set[int] | None = None,
-        debounce_ms: int = 50,
+        debounce_ms: int | None = None,
         axes_2d: tuple[int, ...] | None = None,
         axes_3d: tuple[int, ...] | None = None,
         parent: QWidget | None = None,
@@ -176,7 +179,9 @@ class QtDimsControl:
         # position is always submitted even if it landed between ticks.
         self._rate_limit_timer = QTimer()
         self._rate_limit_timer.setSingleShot(True)
-        self._rate_limit_timer.setInterval(debounce_ms)
+        self._rate_limit_timer.setInterval(
+            DIMS_SLIDER_THROTTLE_MS if debounce_ms is None else debounce_ms
+        )
         self._rate_limit_timer.timeout.connect(self._on_rate_limit_tick)
         self._slider_dirty = False
 

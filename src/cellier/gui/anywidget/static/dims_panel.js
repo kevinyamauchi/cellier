@@ -3,10 +3,17 @@
 // extracted from panel.js so dims can live in a separate widget below the
 // canvas while appearance controls stay on the left.
 
-const THROTTLE_MS = 50;
 
 function render({ model, el }) {
   el.classList.add("cellier-dims-panel");
+
+  // Read off the model rather than declared here, so this and the Qt front
+  // end coalesce slider drags at the same rate (see
+  // cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS).
+  // `?? 50` rather than a bare read: an undefined trait would make
+  // `setTimeout(tick, undefined)` fire at 0 ms, silently removing the
+  // throttle and sending every value of a drag to the slicer.
+  const THROTTLE_MS = model.get("throttle_ms") ?? 50;
 
   let guard = false;
 

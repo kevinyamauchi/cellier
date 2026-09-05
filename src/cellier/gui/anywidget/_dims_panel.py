@@ -15,6 +15,7 @@ from cellier.events import (
     DimsUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
 from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
@@ -52,6 +53,14 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     displayed_axes = traitlets.List().tag(sync=True)
     stacked_axes = traitlets.List().tag(sync=True)
     non_displayed = traitlets.List().tag(sync=True)
+
+    throttle_ms = traitlets.Int(DIMS_SLIDER_THROTTLE_MS).tag(sync=True)
+    """How often a slider drag reaches the bus, in ms.
+
+    Synced rather than hard-coded in ``dims_panel.js`` so this and the Qt
+    front end coalesce drags at the same rate -- see
+    :data:`cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS`.
+    """
 
     has_toggle = traitlets.Bool(False).tag(sync=True)
     label = traitlets.Unicode("").tag(sync=True)

@@ -8,10 +8,19 @@ implementing the ``_build`` / ``_read`` / ``_apply`` seam -- and the layer-3
 classes, which section 10.6 predicted would need only thin tests because the
 behaviour is the base's.
 
-Both toolkits live in one module and are asserted **against each other**: the
-whole point of generating the 44 field classes from one catalog is that a
-field cannot exist on one side and not the other, and that is worth a test
-rather than a convention.
+Both toolkits live in one module and are asserted **against each other**: a
+field must not exist on one side and not the other, and that is worth a test
+rather than a convention.  The 44 classes state their field, label and
+defaults twice, once per toolkit, and
+``plans/gui_backend_unification.md`` section 4 records why that duplication is
+being left alone: these assertions already give the guarantee that collapsing
+it would give by construction, so the remaining cost is maintenance rather
+than risk.
+
+Which makes :data:`CATALOG` the load-bearing part.  It is written by hand, so
+the tests that iterate it are only as complete as it is -- and
+``test_the_catalog_lists_every_field_class`` is what keeps that honest, by
+deriving the same set from the packages and comparing.
 """
 
 from __future__ import annotations
@@ -62,6 +71,13 @@ CATALOG = [
 ]
 
 
+class _Missing:
+    """Sentinel: a class attribute neither toolkit defines."""
+
+
+_MISSING = _Missing()
+
+
 def _qt(stem):
     return getattr(qt_visuals, f"Qt{stem}")
 
@@ -87,6 +103,93 @@ def test_both_toolkits_bind_the_same_field_and_label(stem, field, label):
 def test_both_toolkits_share_the_same_default_value(stem, field, _label):
     """A default differing per toolkit would show as a different initial UI."""
     assert _qt(stem)._default_value == _any(stem)._default_value
+
+
+@pytest.mark.parametrize(("stem", "_field", "_label"), CATALOG)
+@pytest.mark.parametrize("classvar", ["_default_range", "_default_choices", "_shuffle"])
+def test_both_toolkits_share_the_remaining_per_field_defaults(
+    classvar, stem, _field, _label
+):
+    """The rest of layer 3, not only ``_default_value``.
+
+    A range, a choice list or a shuffle button present on one toolkit and not
+    the other is the same class of bug as a differing default -- one front end
+    offering values the other does not -- and until now only the default was
+    compared.  Every one of these already agrees, so this pins the state of
+    the tree rather than changing it.
+
+    ``_default_step`` is deliberately absent: the two toolkits spell slider
+    granularity differently, which
+    ``test_the_two_slider_granularity_spellings_mean_the_same_thing`` covers
+    instead.
+    """
+    qt_value = getattr(_qt(stem), classvar, _MISSING)
+    any_value = getattr(_any(stem), classvar, _MISSING)
+    assert qt_value == any_value
+
+
+def test_the_two_slider_granularity_spellings_mean_the_same_thing():
+    """``QtBoundedSlider`` says ``decimals``; its twin says ``step``.
+
+    Both describe how finely the opacity slider moves, and they agree today
+    (2 decimals is a step of 0.01).  They are two independent constants, so
+    nothing but this keeps them agreeing -- and a slider that steps by 0.01 on
+    one front end and 0.1 on the other is a real difference in what a user can
+    express.
+
+    ``FloatSpin`` needs no equivalent: both toolkits carry ``_default_step``
+    there, so the parametrised test above already compares it.
+    """
+    from cellier.gui.anywidget.visuals._base import AnywidgetBoundedSlider
+    from cellier.gui.qt.visuals._base import QtBoundedSlider
+
+    qt_step = 10.0**-QtBoundedSlider._default_decimals
+    assert qt_step == pytest.approx(AnywidgetBoundedSlider._default_step)
+
+
+def _field_stems(module, prefix: str) -> dict[str, str]:
+    """``{stem: field name}`` for the exported classes that bind one field.
+
+    Read off the classes rather than off :data:`CATALOG`, which is the point:
+    a list maintained by hand cannot report what someone forgot to add to it.
+    The layer-2 bases are excluded automatically -- they declare ``_field`` as
+    an unset annotation, so ``getattr`` finds nothing on them.
+    """
+    stems: dict[str, str] = {}
+    for name in module.__all__:
+        field = getattr(getattr(module, name), "_field", None)
+        if isinstance(field, str) and field:
+            stems[name[len(prefix) :]] = field
+    return stems
+
+
+def test_neither_toolkit_has_a_field_class_the_other_lacks():
+    """The guarantee ``CATALOG`` implies but cannot enforce.
+
+    Every assertion above iterates ``CATALOG``, so a class added to one
+    toolkit and not the other is invisible to all of them unless someone also
+    remembers to extend the list.  This one starts from the packages, so
+    forgetting is what it catches.
+    """
+    qt_stems = _field_stems(qt_visuals, "Qt")
+    anywidget_stems = _field_stems(anywidget_visuals, "Anywidget")
+
+    assert set(qt_stems) == set(anywidget_stems)
+    # Same stems is not enough: two classes could share a name and drive
+    # different fields.
+    assert qt_stems == anywidget_stems
+
+
+def test_the_catalog_lists_every_field_class():
+    """``CATALOG`` is complete, so the tests that iterate it cover everything.
+
+    ``VisibleToggle`` is the one documented omission -- it landed in stage 0
+    and keeps its own module pair (``test_qt_visible_toggle.py`` /
+    ``test_visible_toggle.py``), which covers it more thoroughly than a row
+    here would.
+    """
+    stems = set(_field_stems(qt_visuals, "Qt")) - {"VisibleToggle"}
+    assert stems == {stem for stem, _field, _label in CATALOG}
 
 
 @pytest.mark.parametrize(("stem", "_field", "_label"), CATALOG)

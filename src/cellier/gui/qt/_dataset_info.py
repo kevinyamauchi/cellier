@@ -65,7 +65,6 @@ class QtDatasetInfo:
         title: str | None = None,
         parent=None,
     ) -> None:
-        from qtpy.QtWidgets import QFormLayout, QLabel, QWidget
         from superqt import QCollapsible
 
         self._collapsible = QCollapsible(
@@ -73,13 +72,20 @@ class QtDatasetInfo:
         )
         # collapsed by default
 
-        content = QWidget()
-        self._form = QFormLayout(content)
-        self._form.setContentsMargins(4, 4, 4, 4)
-        self._collapsible.addWidget(content)
+        # Sections are appended to the collapsible in the order the store
+        # declared them, and nothing is hoisted.  There used to be a
+        # standing top-level form here that unlabelled rows and *every*
+        # matrix went into, while labelled row sections became nested
+        # collapsibles appended after it -- so a matrix declared between two
+        # labelled sections jumped above both, and the same DatasetInfo drew
+        # in a different order than it did on the anywidget side
+        # (``tests/gui/test_backend_parity.py``).
+        self._section_labels: list[str] = []
+        self._inline_form = None
+        self._nested_by_label: dict[str, object] = {}
 
-        for label, value in rows:
-            self._form.addRow(str(label), QLabel(str(value)))
+        if rows:
+            self._add_rows(list(rows), label=None)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -91,28 +97,69 @@ class QtDatasetInfo:
         """
         return self._collapsible
 
+    def section_labels(self) -> list[str]:
+        """The sections drawn, in the order they are drawn.
+
+        The twin of reading ``AnywidgetDatasetInfo.sections``.  Both exist so
+        the two front ends can be asserted to draw one ``DatasetInfo`` the
+        same way, which is not otherwise checkable through a widget tree.
+
+        An unlabelled section is named by its first row's label, matching
+        what a reader actually sees at the top of the block.
+        """
+        return list(self._section_labels)
+
     # ── Section renderers ────────────────────────────────────────────────────
 
-    def _add_row_section(self, section: RowSection) -> None:
-        """Draw a :class:`RowSection`, nesting it when it carries a label."""
+    def _form_widget(self, rows: Sequence[tuple[str, str]]):
+        """A ``(label, value)`` block as one widget."""
         from qtpy.QtWidgets import QFormLayout, QLabel, QWidget
-        from superqt import QCollapsible
 
-        if section.label is None:
-            for label, value in section.rows:
-                self._form.addRow(label, QLabel(value))
-            return
-
-        nested = QCollapsible(section.label)
         content = QWidget()
         form = QFormLayout(content)
         form.setContentsMargins(4, 4, 4, 4)
-        for label, value in section.rows:
-            form.addRow(label, QLabel(value))
+        for label, value in rows:
+            form.addRow(str(label), QLabel(str(value)))
+        return content, form
+
+    def _add_rows(self, rows: Sequence[tuple[str, str]], *, label: str | None) -> None:
+        """Append a row block, nested in its own collapsible when labelled.
+
+        Consecutive unlabelled blocks share one form so they read as a single
+        list, which is what a store means by declaring rows with no label.
+        A labelled block always starts a new one.
+        """
+        from qtpy.QtWidgets import QLabel
+
+        if label is None:
+            if self._inline_form is None:
+                content, self._inline_form = self._form_widget(())
+                self._collapsible.addWidget(content)
+            for row_label, value in rows:
+                self._inline_form.addRow(str(row_label), QLabel(str(value)))
+            self._section_labels.append(str(rows[0][0]) if rows else "")
+            return
+
+        # A labelled section ends the run of inline rows: anything unlabelled
+        # after it starts a fresh form below, rather than jumping back up.
+        self._inline_form = None
+        self._section_labels.append(label)
+        self._add_nested(label, rows)
+
+    def _add_nested(self, label: str, rows: Sequence[tuple[str, str]]) -> None:
+        from superqt import QCollapsible
+
+        nested = QCollapsible(label)
+        content, _form = self._form_widget(rows)
         nested.addWidget(content)
-        if not section.collapsed:
-            nested.expand(animate=False)
         self._collapsible.addWidget(nested)
+        self._nested_by_label[label] = nested
+
+    def _add_row_section(self, section: RowSection) -> None:
+        """Draw a :class:`RowSection`, nesting it when it carries a label."""
+        self._add_rows(section.rows, label=section.label)
+        if section.label is not None and not section.collapsed:
+            self._nested_by_label[section.label].expand(animate=False)
 
     def _add_matrix_section(self, section: MatrixSection) -> None:
         """Draw a :class:`MatrixSection` as a non-editable table."""
@@ -140,7 +187,14 @@ class QtDatasetInfo:
                 item = QTableWidgetItem(f"{section.matrix[row, col]:.4g}")
                 table.setItem(row, col, item)
 
-        self._form.addRow(section.label, table)
+        # Appended where it was declared.  It used to go into the top-level
+        # form, which put every matrix above every labelled row section
+        # regardless of the order the store asked for.
+        self._inline_form = None
+        self._section_labels.append(section.label)
+        _content, form = self._form_widget(())
+        form.addRow(section.label, table)
+        self._collapsible.addWidget(_content)
 
     @classmethod
     def from_info(

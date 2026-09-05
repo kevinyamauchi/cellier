@@ -89,8 +89,15 @@ def _render_center(node: object, host: LayoutHost, closeables: list) -> object:
         items = [_render_center(item, host, closeables) for item in node.items]
         return host.stack(items, direction="v")
     if isinstance(node, Grid):
+        # An empty cell stays empty rather than closing the gap: ``Grid.cells``
+        # promises ``None`` leaves a cell empty, and dropping it here shifted
+        # every later cell in that row one column left, so the same spec drew a
+        # different picture per toolkit.  The host places the hole.
         rows = [
-            [_render_center(cell, host, closeables) for cell in row if cell is not None]
+            [
+                None if cell is None else _render_center(cell, host, closeables)
+                for cell in row
+            ]
             for row in node.cells
         ]
         return host.grid(rows)
@@ -116,6 +123,7 @@ def _render_render_controls(
         render_panel_kwargs,
         render_panel_sections,
     )
+    from cellier.gui._render_controls import RENDER_DOCK_TITLE
     from cellier.gui.anywidget.render import (
         AnywidgetAmbientOcclusionControls,
         AnywidgetOutlineControls,
@@ -142,7 +150,13 @@ def _render_render_controls(
         closeables.append(panel)
         panels.append(host.leaf(panel))
 
-    return panels[0] if len(panels) == 1 else host.stack(panels, direction="v")
+    # One heading over the whole dock, naming its scope -- the same thing the
+    # Qt renderer draws with ``titled_group``.  Without it these read as the
+    # same kind of thing as the per-visual groups on the other side of the
+    # canvas: "Outline" beside "Outlines" is not a distinction anyone should
+    # have to notice.  Stacked even for a single panel, because the heading is
+    # what the stack is for.
+    return host.stack(panels, direction="v", title=RENDER_DOCK_TITLE)
 
 
 def _render_dock(
@@ -174,7 +188,10 @@ def _render_dock(
         items = [_render_dock(item, viewer, host, closeables) for item in spec.items]
         items = [i for i in items if i is not None]
         return host.stack(items, direction=direction) if items else None
-    return None
+
+    from cellier.convenience.layout._shared import unsupported_dock_node
+
+    raise unsupported_dock_node(spec)
 
 
 def _render_appearance_controls(

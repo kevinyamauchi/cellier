@@ -35,11 +35,20 @@ class QtOutlineControls(QtRenderConfigPanel):
         ``controller.render_config.outline``.
     parent :
         Optional Qt parent widget.
+    slot_usage :
+        Zero-argument callable returning ``{slot: how many visuals use it}``,
+        annotating the palette swatches.  Derived state -- a visual moving
+        between slots changes it with no config field changing -- so it is a
+        callable rather than a value.  ``None`` draws no annotation.
     """
 
     section: ClassVar[str] = "outline"
     title: ClassVar[str] = RENDER_SECTION_TITLES["outline"]
 
-    def __init__(self, config: OutlineConfig, *, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, config: OutlineConfig, *, parent=None, slot_usage=None) -> None:
+        # Forwarded before ``_build_from_spec``, which is what draws the
+        # palette and reads it.  The anywidget twin takes ``**kwargs`` and so
+        # always forwarded it; this one dropped the keyword on the floor,
+        # which is half of why the annotation never appeared on either side.
+        super().__init__(parent, slot_usage=slot_usage)
         self._build_from_spec(config)
