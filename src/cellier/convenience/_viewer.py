@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
+from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.scene.dims import CoordinateSystem
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from cellier.scene._background import BackgroundAppearance
     from cellier.scene.scene import Scene
     from cellier.transform import AffineTransform
+    from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
         GraphAppearance,
@@ -63,7 +65,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T", bound="BaseDataStore")
 
 
-class Viewer:
+class Viewer(RenderSettingsMixin):
     """Single-scene viewer wrapping a CellierController.
 
     Creates a controller and a single scene pre-wired and ready to receive
@@ -386,6 +388,8 @@ class Viewer:
         appearance: BaseImageAppearance,
         name: str = "image",
         controls: InMemoryImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> ImageVisual:
         """Add an in-memory image visual.
 
@@ -401,6 +405,15 @@ class Viewer:
             Appearance panel configuration. When ``None``
             (default), no appearance panel is created for this visual.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         ImageVisual
@@ -410,6 +423,8 @@ class Viewer:
             self._scene.id,
             appearance,
             name,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -422,6 +437,9 @@ class Viewer:
         name: str = "labels",
         transform: AffineTransform | None = None,
         controls: LabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual.
 
@@ -440,6 +458,19 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
+
         Returns
         -------
         LabelMemoryVisual
@@ -450,6 +481,9 @@ class Viewer:
             appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -462,6 +496,8 @@ class Viewer:
         name: str = "mesh",
         transform: AffineTransform | None = None,
         controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MeshVisual:
         """Add a mesh visual.
 
@@ -479,6 +515,15 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MeshVisual
@@ -489,6 +534,8 @@ class Viewer:
             appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -501,6 +548,8 @@ class Viewer:
         name: str = "points",
         transform: AffineTransform | None = None,
         controls: PointsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> PointsVisual:
         """Add a points visual.
 
@@ -519,6 +568,15 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         PointsVisual
@@ -529,6 +587,8 @@ class Viewer:
             appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -542,6 +602,8 @@ class Viewer:
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
         controls: GraphControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> GraphVisual:
         """Add a spatial-graph visual.
 
@@ -566,6 +628,15 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         GraphVisual
@@ -577,6 +648,8 @@ class Viewer:
             name,
             transform,
             trail,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -589,6 +662,8 @@ class Viewer:
         name: str = "lines",
         transform: AffineTransform | None = None,
         controls: LinesControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> LinesVisual:
         """Add a lines visual.
 
@@ -607,6 +682,15 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         LinesVisual
@@ -617,6 +701,8 @@ class Viewer:
             appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -630,6 +716,8 @@ class Viewer:
         render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
         controls: MultiscaleImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual.
 
@@ -650,6 +738,15 @@ class Viewer:
             Appearance panel configuration. When ``None`` (default), no
             appearance panel is created for this visual.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MultiscaleImageVisual
@@ -661,6 +758,8 @@ class Viewer:
             name,
             render_config,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -674,6 +773,9 @@ class Viewer:
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
         controls: MultiscaleLabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual.
 
@@ -694,6 +796,19 @@ class Viewer:
             Appearance controls configuration.  When ``None`` (default), no
             appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
+
         Returns
         -------
         MultiscaleLabelVisual
@@ -705,6 +820,9 @@ class Viewer:
             name,
             render_config,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -719,6 +837,8 @@ class Viewer:
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelImageVisual:
         """Add an in-memory multichannel image visual.
 
@@ -740,6 +860,15 @@ class Viewer:
             Per-channel controls configuration. When ``None`` (default), no
             channel controls are created for this visual.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MultichannelImageVisual
@@ -752,6 +881,8 @@ class Viewer:
             name,
             max_channels_2d,
             max_channels_3d,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls
@@ -768,6 +899,8 @@ class Viewer:
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelMultiscaleImageVisual:
         """Add a multiscale multichannel image visual.
 
@@ -794,6 +927,15 @@ class Viewer:
             Per-channel controls configuration. When ``None`` (default), no
             channel controls are created for this visual.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MultichannelMultiscaleImageVisual
@@ -808,6 +950,8 @@ class Viewer:
             transform,
             max_channels_2d,
             max_channels_3d,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         if controls is not None:
             self._controls_configs[visual.id] = controls

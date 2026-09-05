@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
 from cellier.convenience.gui._controls_config import ChannelControlsConfig
+from cellier.gui._render_controls import VISUAL_RENDER_TITLES
 
 if TYPE_CHECKING:
     from cellier.visuals._channel_appearance import ChannelAppearance
@@ -170,6 +171,9 @@ _CONTROL_TITLES = {
     "render": "Render mode",
     "lod_bias": "LOD bias",
     "aabb": "Bounding box",
+    # Read rather than restated: the per-visual groups name themselves in
+    # the shared control spec, beside the controls they hold.
+    **VISUAL_RENDER_TITLES,
     "dataset_info": "Dataset info",
 }
 """Titles for the control kinds that need one written out.
@@ -234,7 +238,10 @@ def _resolve_data_store(controller: object, visual: object) -> object | None:
 
 
 def appearance_specs(
-    visual: object, config: object, store: object | None = None
+    visual: object,
+    config: object,
+    store: object | None = None,
+    palette: object = (),
 ) -> AppearanceSpecs:
     """Decide which appearance controls *visual* should get under *config*.
 
@@ -260,6 +267,11 @@ def appearance_specs(
         Passed in rather than looked up so this stays pure: the shared
         decision layer takes no controller and imports no toolkit.  A
         renderer resolves it from ``visual.data_store_id``.
+    palette : sequence of RGBA
+        The outline palette, needed only by the per-visual outline
+        controls, whose slot swatches offer exactly the slots it holds.
+        Passed in for the same reason *store* is: this stays pure, and
+        both front ends then read the slots on offer from one place.
 
     Returns
     -------
@@ -376,6 +388,8 @@ def appearance_specs(
             )
         )
 
+    specs.extend(_visual_render_specs(visual, config, palette))
+
     dataset_info_spec = _dataset_info_spec(
         getattr(config, "dataset_info", False), store
     )
@@ -383,6 +397,73 @@ def appearance_specs(
         specs.append(dataset_info_spec)
 
     return AppearanceSpecs(specs, skipped)
+
+
+def _visual_render_specs(
+    visual: object, config: object, palette: object = ()
+) -> list[ControlSpec]:
+    """The per-visual outline / occlusion / picking controls *config* asks for.
+
+    Opt-in, unlike the bounding box: both passes are off by default, so an
+    always-present group would lengthen every appearance panel for people
+    who never enable either feature.
+
+    Which outline control is emitted depends on the visual type, because
+    ``outline.slot`` means two different things.  On most visuals it chooses
+    the colour, since the selection layer draws the region in
+    ``palette[slot - 1]``.  On a labels visual it only decides whether the
+    volume participates -- the colour comes from ``outline_selected_labels``,
+    per label value -- so that one gets a checkbox and a row editor instead
+    of a swatch picker.
+    """
+    from cellier.controller import _default_placement
+    from cellier.visuals._label_memory import BaseLabelsVisual
+
+    wants_outline = bool(getattr(config, "outline_controls", False))
+    wants_occlusion = bool(getattr(config, "ambient_occlusion_controls", False))
+    if not (wants_outline or wants_occlusion):
+        return []
+
+    outline = getattr(visual, "outline", None)
+    if outline is None:
+        return []
+
+    specs: list[ControlSpec] = []
+    if wants_outline:
+        is_labels = isinstance(visual, BaseLabelsVisual)
+        kind = "labels_outline" if is_labels else "visual_outline"
+        values = {
+            "outline.slot": outline.slot,
+            "outline.placement": outline.placement,
+            "default_placement": _default_placement(visual),
+            # The palette travels in the spec so both front ends read the
+            # slots on offer from one place; each widget then follows it
+            # live through RenderConfigChangedEvent.
+            "palette": [tuple(entry) for entry in palette],
+        }
+        if is_labels:
+            values["outline_selected_labels"] = dict(visual.outline_selected_labels)
+        specs.append(ControlSpec(kind, _CONTROL_TITLES[kind], values))
+
+    if wants_occlusion:
+        specs.append(
+            ControlSpec(
+                "visual_occlusion",
+                _CONTROL_TITLES["visual_occlusion"],
+                {"ambient_occlusion": visual.ambient_occlusion},
+            )
+        )
+
+    # Both features read the pick buffer, so the flag that gates them both
+    # comes along with either.
+    specs.append(
+        ControlSpec(
+            "visual_picking",
+            _CONTROL_TITLES["visual_picking"],
+            {"pick_write": visual.pick_write},
+        )
+    )
+    return specs
 
 
 def _dataset_info_spec(requested: object, store: object) -> ControlSpec | None:
@@ -511,3 +592,52 @@ def select_appearance_target(viewer: object) -> AppearanceTarget | None:
             visual_ids = list(groups.get(visual.id, [visual.id]))
             return AppearanceTarget(visual, config, visual_ids)
     return None
+
+
+def render_panel_kwargs(section: str, controller: object) -> dict:
+    """Extra constructor arguments one render-settings panel needs.
+
+    The two front ends build different classes but hand them the same
+    things, so the wiring lives here rather than twice in the renderers.
+
+    Each is a *callable* rather than a value: the effective occlusion radius
+    and the accumulated frame count are derived state that changes without
+    any config field changing, so a panel has to be able to re-read them.
+
+    Parameters
+    ----------
+    section :
+        ``"outline"``, ``"ambient_occlusion"`` or ``"temporal"``.
+    controller :
+        The viewer's ``CellierController``.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for that section's panel; empty for sections
+        with no derived state to show.
+    """
+    if section == "ambient_occlusion":
+        return {
+            "effective_radius": lambda: controller.ambient_occlusion_effective_radius
+        }
+    if section == "temporal":
+        return {
+            "frame_count": lambda: controller.render_manager.temporal_frame_count,
+            "on_reset": controller.reset_temporal_accumulation,
+        }
+    return {}
+
+
+def render_panel_sections(spec: object) -> tuple[str, ...]:
+    """Validate and return the sections a ``RenderControls`` spec asks for."""
+    from cellier.gui._render_controls import RENDER_CONTROLS
+
+    sections = tuple(getattr(spec, "sections", ()) or ())
+    unknown = [name for name in sections if name not in RENDER_CONTROLS]
+    if unknown:
+        raise ValueError(
+            f"unknown render control section(s): {unknown}; valid sections "
+            f"are {sorted(RENDER_CONTROLS)}."
+        )
+    return sections

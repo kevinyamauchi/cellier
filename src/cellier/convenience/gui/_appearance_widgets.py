@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from cellier.visuals._base_visual import BaseVisual
 
 
-def _any_color_map(spec: ControlSpec, visual_ids):
+def _any_color_map(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetColormapControl
 
     return AnywidgetColormapControl(
@@ -34,7 +34,7 @@ def _any_color_map(spec: ControlSpec, visual_ids):
     )
 
 
-def _any_clim(spec: ControlSpec, visual_ids):
+def _any_clim(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetClimSlider
 
     return AnywidgetClimSlider(
@@ -45,7 +45,7 @@ def _any_clim(spec: ControlSpec, visual_ids):
     )
 
 
-def _any_render(spec: ControlSpec, visual_ids):
+def _any_render(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetVolumeRenderControls
 
     # No ``dtype_max`` here: the anywidget control derives its own slider
@@ -60,7 +60,7 @@ def _any_render(spec: ControlSpec, visual_ids):
     )
 
 
-def _any_lod_bias(spec: ControlSpec, visual_ids):
+def _any_lod_bias(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetLodBiasSlider
 
     return AnywidgetLodBiasSlider(
@@ -70,7 +70,7 @@ def _any_lod_bias(spec: ControlSpec, visual_ids):
     )
 
 
-def _any_aabb(spec: ControlSpec, visual_ids):
+def _any_aabb(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetAABBWidget
 
     return AnywidgetAABBWidget(
@@ -82,7 +82,7 @@ def _any_aabb(spec: ControlSpec, visual_ids):
     )
 
 
-def _any_dataset_info(spec: ControlSpec, visual_ids):
+def _any_dataset_info(spec: ControlSpec, visual_ids, controller=None):
     """Build the read-only dataset-info block.
 
     The spec carries either an ``info`` (a store's sectioned
@@ -96,7 +96,7 @@ def _any_dataset_info(spec: ControlSpec, visual_ids):
     return AnywidgetDatasetInfo(spec.values["rows"], title=spec.title)
 
 
-def _any_field_control(spec: ControlSpec, visual_ids):
+def _any_field_control(spec: ControlSpec, visual_ids, controller=None):
     """Build any of the 23 single-field controls from the shared table.
 
     The anywidget twin of ``_qt_field_control``; see it for why one builder
@@ -111,12 +111,44 @@ def _any_field_control(spec: ControlSpec, visual_ids):
     return widget_class(visual_ids, **kwargs)
 
 
+def _any_visual_outline(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.render import AnywidgetVisualOutlineControls
+
+    return AnywidgetVisualOutlineControls(
+        visual_ids, spec.values, palette=spec.values.get("palette", ())
+    )
+
+
+def _any_labels_outline(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.render import AnywidgetLabelsOutlineControls
+
+    return AnywidgetLabelsOutlineControls(
+        visual_ids, spec.values, palette=spec.values.get("palette", ())
+    )
+
+
+def _any_visual_occlusion(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.render import AnywidgetVisualOcclusionControls
+
+    return AnywidgetVisualOcclusionControls(visual_ids, spec.values)
+
+
+def _any_visual_picking(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.render import AnywidgetVisualPickingControls
+
+    return AnywidgetVisualPickingControls(visual_ids, spec.values)
+
+
 _ANYWIDGET_BUILDERS = {
     "color_map": _any_color_map,
     "clim": _any_clim,
     "render": _any_render,
     "lod_bias": _any_lod_bias,
     "aabb": _any_aabb,
+    "visual_outline": _any_visual_outline,
+    "labels_outline": _any_labels_outline,
+    "visual_occlusion": _any_visual_occlusion,
+    "visual_picking": _any_visual_picking,
     "dataset_info": _any_dataset_info,
 }
 """``ControlSpec.kind`` -> anywidget widget constructor."""
@@ -157,7 +189,10 @@ def build_appearance_widgets_anywidget(
     from cellier.gui._appearance_fields import APPEARANCE_FIELD_WIDGETS
 
     specs, skipped = appearance_specs(
-        visual, controls_config, _resolve_data_store(controller, visual)
+        visual,
+        controls_config,
+        _resolve_data_store(controller, visual),
+        palette=controller.render_config.outline.palette,
     )
     warn_skipped_appearance_fields(skipped, visual, controls_config)
     ids = [visual.id] if visual_ids is None else list(visual_ids)
@@ -169,7 +204,7 @@ def build_appearance_widgets_anywidget(
             builder = _any_field_control
         if builder is None:
             continue
-        widget = builder(spec, ids)
+        widget = builder(spec, ids, controller)
         if spec.kind not in STATIC_CONTROL_KINDS:
             controller.connect_widget(
                 widget, subscription_specs=widget.subscription_specs()

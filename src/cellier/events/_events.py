@@ -211,6 +211,79 @@ class BackgroundChangedEvent(NamedTuple):
     new_value: Any = None
 
 
+class VisualRenderChangedEvent(NamedTuple):
+    """Emitted when one visual's screen-space render settings change.
+
+    Covers the per-visual half of the outline and ambient occlusion
+    features: which palette slot a visual is outlined in, which side of its
+    edge the band sits on, whether it receives occlusion, and -- for labels
+    visuals -- which label values the selection layer draws.
+
+    One event type rather than three, keyed by ``visual_id`` and carrying a
+    dotted ``field_name``, so a per-visual widget needs one subscription
+    rather than one per field.  The *global* half of both features travels
+    on ``RenderConfigChangedEvent`` instead, because it belongs to the
+    renderer rather than to any visual.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    visual_id : UUID
+        Model-layer ID of the visual whose settings changed.
+    field_name : str
+        ``"outline.slot"``, ``"outline.placement"``,
+        ``"ambient_occlusion"`` or ``"outline_selected_labels"``.
+    new_value : Any
+        The new field value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field_name: str
+    new_value: Any
+
+
+class RenderConfigChangedEvent(NamedTuple):
+    """Emitted when one section of the render configuration changes.
+
+    Render configuration belongs to the ``RenderManager`` rather than to a
+    scene, a visual or a canvas, so this event has no entity id and is
+    deliberately absent from ``EventBus._ENTITY_FIELD`` -- every subscriber
+    receives every render-config event and filters on ``section`` itself,
+    the way the appearance widgets filter on ``field_name``.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    section : str
+        Which configuration section changed: ``"outline"``, ``"ambient_occlusion"`` or
+        ``"temporal"``.
+    config : Any
+        The section's complete model *after* the change (an
+        ``OutlineConfig``, an ``AmbientOcclusionConfig`` or a
+        ``TemporalAccumulationConfig``).  Carried whole, not just the
+        delta, for the same reason ``BackgroundChangedEvent`` is: a
+        subscriber holding a snapshot
+        cannot reconstruct the rest of an ``OutlineConfig`` from one field.
+    field_name : str or None
+        Dotted path of the changed field within the section, e.g.
+        ``"power"`` or ``"selection.inward_thickness"``.  ``None`` when the
+        whole section was replaced.
+    new_value : Any
+        The new field value, or ``None`` for whole-section replacement.
+    """
+
+    source_id: UUID
+    section: str
+    config: Any
+    field_name: str | None = None
+    new_value: Any = None
+
+
 class TrailChangedEvent(NamedTuple):
     """Emitted when a graph visual's trail configuration changes.
 
@@ -575,6 +648,8 @@ CellierEventTypes = (
     | TransformChangedEvent
     | SceneAddedEvent
     | BackgroundChangedEvent
+    | RenderConfigChangedEvent
+    | VisualRenderChangedEvent
     | SceneRemovedEvent
     | CanvasMousePress2DEvent
     | CanvasMouseMove2DEvent

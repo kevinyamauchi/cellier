@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
+from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.scene.dims import (
     AxisAlignedSelection,
     CoordinateSystem,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
+    from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
         GraphAppearance,
@@ -176,7 +178,7 @@ def _resolve_spatial_axes(
     return (resolved[0], resolved[1], resolved[2])
 
 
-class OrthoViewer:
+class OrthoViewer(RenderSettingsMixin):
     """Four-panel orthoviewer wrapping a single CellierController.
 
     Creates a controller and four pre-wired scenes that share one world
@@ -499,6 +501,8 @@ class OrthoViewer:
         appearance: BaseImageAppearance,
         name: str = "image",
         controls: InMemoryImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, ImageVisual]:
         """Add an in-memory image to every panel from a single data store.
 
@@ -515,6 +519,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, ImageVisual]
@@ -523,7 +536,12 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_image(
-                store, scene.id, appearance, f"{name}_{key}"
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -536,6 +554,9 @@ class OrthoViewer:
         name: str = "labels",
         transform: AffineTransform | None = None,
         controls: LabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> dict[str, LabelMemoryVisual]:
         """Add an in-memory label image to every panel from one data store.
 
@@ -555,6 +576,19 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
+
         Returns
         -------
         dict[str, LabelMemoryVisual]
@@ -562,7 +596,14 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_labels(
-                store, scene.id, appearance, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
+                outline_selected_labels=outline_selected_labels,
             )
         )
         self._record_controls(visuals, controls)
@@ -575,6 +616,8 @@ class OrthoViewer:
         name: str = "mesh",
         transform: AffineTransform | None = None,
         controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MeshVisual]:
         """Add a mesh to every panel from a single data store.
 
@@ -594,6 +637,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, MeshVisual]
@@ -601,7 +653,13 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_mesh(
-                store, scene.id, appearance, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -614,6 +672,8 @@ class OrthoViewer:
         name: str = "points",
         transform: AffineTransform | None = None,
         controls: PointsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, PointsVisual]:
         """Add a points visual to every panel from a single data store.
 
@@ -633,6 +693,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, PointsVisual]
@@ -640,7 +709,13 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_points(
-                store, scene.id, appearance, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -654,6 +729,8 @@ class OrthoViewer:
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
         controls: GraphControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, GraphVisual]:
         """Add a spatial-graph visual to every panel from a single data store.
 
@@ -676,6 +753,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, GraphVisual]
@@ -683,7 +769,14 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_graph(
-                store, scene.id, appearance, f"{name}_{key}", transform, trail
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                trail,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -696,6 +789,8 @@ class OrthoViewer:
         name: str = "lines",
         transform: AffineTransform | None = None,
         controls: LinesControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, LinesVisual]:
         """Add a lines visual to every panel from a single data store.
 
@@ -715,6 +810,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, LinesVisual]
@@ -722,7 +826,13 @@ class OrthoViewer:
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_lines(
-                store, scene.id, appearance, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -736,6 +846,8 @@ class OrthoViewer:
         render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
         controls: MultiscaleImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultiscaleImageVisual]:
         """Add a multiscale image to every panel from a single data store.
 
@@ -756,6 +868,15 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, MultiscaleImageVisual]
@@ -769,6 +890,8 @@ class OrthoViewer:
                 f"{name}_{key}",
                 render_config,
                 transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -782,6 +905,9 @@ class OrthoViewer:
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
         controls: MultiscaleLabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> dict[str, MultiscaleLabelVisual]:
         """Add a multiscale label image to every panel from one data store.
 
@@ -802,6 +928,19 @@ class OrthoViewer:
             one dock widget drives every panel's visual in lock-step.  When
             ``None`` (default), no appearance controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
+
         Returns
         -------
         dict[str, MultiscaleLabelVisual]
@@ -815,6 +954,9 @@ class OrthoViewer:
                 f"{name}_{key}",
                 render_config,
                 transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
+                outline_selected_labels=outline_selected_labels,
             )
         )
         self._record_controls(visuals, controls)
@@ -829,6 +971,8 @@ class OrthoViewer:
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultichannelImageVisual]:
         """Add an in-memory multichannel image to every panel from one store.
 
@@ -850,6 +994,15 @@ class OrthoViewer:
             Per-channel controls configuration shared across all four
             panels. When ``None`` (default), no channel controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, MultichannelImageVisual]
@@ -864,6 +1017,8 @@ class OrthoViewer:
                 f"{name}_{key}",
                 max_channels_2d,
                 max_channels_3d,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)
@@ -880,6 +1035,8 @@ class OrthoViewer:
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultichannelMultiscaleImageVisual]:
         """Add a multiscale multichannel image to every panel from one store.
 
@@ -905,6 +1062,15 @@ class OrthoViewer:
             Per-channel controls configuration shared across all four
             panels. When ``None`` (default), no channel controls are created.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         dict[str, MultichannelMultiscaleImageVisual]
@@ -921,6 +1087,8 @@ class OrthoViewer:
                 transform,
                 max_channels_2d,
                 max_channels_3d,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
         self._record_controls(visuals, controls)

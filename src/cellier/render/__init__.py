@@ -1,12 +1,12 @@
 """Components for the rendering backend."""
 
 from cellier.render._config import (
+    AmbientOcclusionConfig,
     CameraConfig,
     OutlineConfig,
     OutlineLayerConfig,
     RenderManagerConfig,
     SlicingConfig,
-    SSAOConfig,
     TemporalAccumulationConfig,
 )
 from cellier.render._outline import OutlinePass
@@ -21,6 +21,7 @@ from cellier.render.scene_manager import SceneManager
 from cellier.render.slice_coordinator import SliceCoordinator
 
 __all__ = [
+    "AmbientOcclusionConfig",
     "CameraConfig",
     "CanvasView",
     "DimsState",
@@ -30,7 +31,6 @@ __all__ = [
     "RenderManager",
     "RenderManagerConfig",
     "ReslicingRequest",
-    "SSAOConfig",
     "SSAOPass",
     "SceneManager",
     "SliceCoordinator",

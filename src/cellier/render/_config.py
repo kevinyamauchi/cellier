@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DEFAULT_CAMERA_SETTLE_THRESHOLD_S: float = 0.3
 
@@ -36,16 +36,18 @@ class TemporalAccumulationConfig(BaseModel):
     enabled : bool
         When ``False`` the pass is bypassed entirely and each frame is
         shown raw. Useful for debugging or when jitter is disabled.
-    alpha : float
-        Minimum EMA blend weight for the current frame. During warm-up
+    blend_weight : float
+        Minimum EMA weight given to the current frame. During warm-up
         the weight is ``1 / (frame_count + 1)``; once that falls below
-        ``alpha`` the weight clamps to ``alpha``. Lower values give
+        ``alpha`` the weight clamps to ``blend_weight``. Lower values give
         smoother steady-state but slower convergence after a camera
         move. Must be in ``(0, 1]``.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = True
-    alpha: float = Field(default=0.1, gt=0.0, le=1.0)
+    blend_weight: float = Field(default=0.1, gt=0.0, le=1.0)
 
 
 RGBA = tuple[float, float, float, float]
@@ -98,6 +100,8 @@ class OutlineLayerConfig(BaseModel):
     *its* thickness, which is not known until after the tap.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = True
     inward_thickness: int = Field(default=1, ge=0)
     outward_thickness: int = Field(default=1, ge=0)
@@ -142,6 +146,8 @@ class OutlineConfig(BaseModel):
     True
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     boundaries: OutlineLayerConfig = Field(
         default_factory=lambda: OutlineLayerConfig(
@@ -170,7 +176,7 @@ class OutlineConfig(BaseModel):
         return value
 
 
-class SSAOConfig(BaseModel):
+class AmbientOcclusionConfig(BaseModel):
     """Configuration for the screen-space ambient occlusion pass.
 
     The pass reads the depth buffer (and, where a shader wrote one, the
@@ -219,11 +225,13 @@ class SSAOConfig(BaseModel):
 
     Examples
     --------
-    >>> config = SSAOConfig(enabled=True, n_samples=24, strength=0.8)
-    >>> restored = SSAOConfig.model_validate_json(config.model_dump_json())
+    >>> config = AmbientOcclusionConfig(enabled=True, n_samples=24, strength=0.8)
+    >>> restored = AmbientOcclusionConfig.model_validate_json(config.model_dump_json())
     >>> restored == config
     True
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = False
 
@@ -274,8 +282,10 @@ class RenderManagerConfig(BaseModel):
         Camera-driven reslicing settings.
     outline : OutlineConfig
         Screen-space outline pass settings.  Disabled by default.
-    ssao : SSAOConfig
+    ambient_occlusion : AmbientOcclusionConfig
         Screen-space ambient occlusion settings.  Disabled by default.
+        The pass that implements it is still called SSAO -- that is the
+        algorithm's name -- but the setting is named for what it does.
 
     Examples
     --------
@@ -283,7 +293,7 @@ class RenderManagerConfig(BaseModel):
 
     >>> config = RenderManagerConfig(
     ...     slicing=SlicingConfig(batch_size=32, render_every=4),
-    ...     temporal=TemporalAccumulationConfig(alpha=0.05),
+    ...     temporal=TemporalAccumulationConfig(blend_weight=0.05),
     ...     camera=CameraConfig(settle_threshold_s=0.5),
     ... )
     >>> json_str = config.model_dump_json()
@@ -296,4 +306,6 @@ class RenderManagerConfig(BaseModel):
     )
     camera: CameraConfig = Field(default_factory=CameraConfig)
     outline: OutlineConfig = Field(default_factory=OutlineConfig)
-    ssao: SSAOConfig = Field(default_factory=SSAOConfig)
+    ambient_occlusion: AmbientOcclusionConfig = Field(
+        default_factory=AmbientOcclusionConfig
+    )

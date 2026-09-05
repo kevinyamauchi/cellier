@@ -100,6 +100,51 @@ def _render_center(node: object, host: LayoutHost, closeables: list) -> object:
     return node.compose(host)
 
 
+def _render_render_controls(
+    spec: object,
+    viewer: object,
+    host: LayoutHost,
+    closeables: list,
+) -> object | None:
+    """Build and wire one notebook panel per section the spec names.
+
+    Mirrors ``_render_render_controls_qt``: both read the sections from the
+    same spec and hand the panels the same derived-state callables, so the
+    two front ends cannot drift.
+    """
+    from cellier.convenience.layout._shared import (
+        render_panel_kwargs,
+        render_panel_sections,
+    )
+    from cellier.gui.anywidget.render import (
+        AnywidgetAmbientOcclusionControls,
+        AnywidgetOutlineControls,
+        AnywidgetTemporalControls,
+    )
+
+    panel_types = {
+        "outline": AnywidgetOutlineControls,
+        "ambient_occlusion": AnywidgetAmbientOcclusionControls,
+        "temporal": AnywidgetTemporalControls,
+    }
+    sections = render_panel_sections(spec)
+    if not sections:
+        return None
+
+    controller = viewer.controller
+    panels = []
+    for section in sections:
+        panel = panel_types[section](
+            getattr(controller.render_config, section),
+            **render_panel_kwargs(section, controller),
+        )
+        controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
+        closeables.append(panel)
+        panels.append(host.leaf(panel))
+
+    return panels[0] if len(panels) == 1 else host.stack(panels, direction="v")
+
+
 def _render_dock(
     spec: object,
     viewer: object,
@@ -114,6 +159,7 @@ def _render_dock(
         AppearanceControls,
         ChannelControls,
         HStack,
+        RenderControls,
         VStack,
     )
 
@@ -121,6 +167,8 @@ def _render_dock(
         return _render_appearance_controls(viewer, host, closeables)
     if isinstance(spec, ChannelControls):
         return _render_channel_controls(viewer, host, closeables)
+    if isinstance(spec, RenderControls):
+        return _render_render_controls(spec, viewer, host, closeables)
     if isinstance(spec, (HStack, VStack)):
         direction = "h" if isinstance(spec, HStack) else "v"
         items = [_render_dock(item, viewer, host, closeables) for item in spec.items]

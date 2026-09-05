@@ -117,6 +117,20 @@ class BaseControlsConfig:
 
         Note that the panel's group order follows ``APPEARANCE_CONTROLS``,
         not this list.
+    outline_controls : bool
+        Show this visual's outline controls -- the palette slot it is
+        outlined in, the placement, and for a labels visual the per-label
+        selection.  ``False`` (default) omits them.  Opt-in rather than
+        always-on because the outline pass is itself off by default, so an
+        always-present group would lengthen every panel for everyone.
+    ambient_occlusion_controls : bool
+        Show this visual's ambient-occlusion control.  ``False`` (default)
+        omits it.  Separate from *outline_controls* because the two passes
+        are independent.
+
+        Either flag also brings in the picking checkbox: both features are
+        derived from the pick buffer, so ``pick_write`` decides whether they
+        work, and choosing an outline slot turns it on with a warning.
     dataset_info : bool or DatasetInfo or Sequence[tuple[str, str]]
         The read-only dataset-info block, appended last in the panel.
 
@@ -162,6 +176,8 @@ class BaseControlsConfig:
 
     appearance: list[AppearanceField] | bool = False
     dataset_info: bool | DatasetInfo | Sequence[tuple[str, str]] = False
+    outline_controls: bool = False
+    ambient_occlusion_controls: bool = False
 
     @classmethod
     def default_appearance_fields(cls) -> tuple[str, ...]:

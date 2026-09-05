@@ -29,6 +29,7 @@ from cellier.events._events import (
     MeshPickInfo,
     PickWriteChangedEvent,
     PointsPickInfo,
+    RenderConfigChangedEvent,
     ResliceCancelledEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -40,6 +41,7 @@ from cellier.events._events import (
     VisualAddedEvent,
     VisualPickDetails,
     VisualRemovedEvent,
+    VisualRenderChangedEvent,
     VisualVisibilityChangedEvent,
 )
 from cellier.events._update_events import (
@@ -49,7 +51,9 @@ from cellier.events._update_events import (
     CellierUpdateEventTypes,
     ChannelAppearanceUpdateEvent,
     DimsUpdateEvent,
+    RenderConfigUpdateEvent,
     SubscriptionSpec,
+    VisualRenderUpdateEvent,
 )
 
 __all__ = [
@@ -88,6 +92,8 @@ __all__ = [
     "MeshPickInfo",
     "PickWriteChangedEvent",
     "PointsPickInfo",
+    "RenderConfigChangedEvent",
+    "RenderConfigUpdateEvent",
     "ResliceCancelledEvent",
     "ResliceCompletedEvent",
     "ResliceStartedEvent",
@@ -102,5 +108,7 @@ __all__ = [
     "VisualAddedEvent",
     "VisualPickDetails",
     "VisualRemovedEvent",
+    "VisualRenderChangedEvent",
+    "VisualRenderUpdateEvent",
     "VisualVisibilityChangedEvent",
 ]

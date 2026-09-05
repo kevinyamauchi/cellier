@@ -53,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     import pygfx as gfx
 
-    from cellier.render._config import SSAOConfig
+    from cellier.render._config import AmbientOcclusionConfig
 
 _WGSL_DIR = Path(__file__).parent / "shaders" / "wgsl"
 SSAO_WGSL: str = (_WGSL_DIR / "ssao.wgsl").read_text()
@@ -416,8 +416,8 @@ class SSAOPass(EffectPass):
     # Configuration
     # ------------------------------------------------------------------
 
-    def apply_config(self, config: SSAOConfig) -> None:
-        """Push an ``SSAOConfig`` onto the pass.
+    def apply_config(self, config: AmbientOcclusionConfig) -> None:
+        """Push an ``AmbientOcclusionConfig`` onto the pass.
 
         ``n_samples`` and ``blur_radius`` are template vars, so changing
         them recompiles the inner shaders.  Everything else is a uniform

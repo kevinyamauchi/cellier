@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import difflib
+import warnings
 from contextlib import contextmanager, suppress
-from typing import TYPE_CHECKING, Any, Callable, Generator, Literal
+from typing import TYPE_CHECKING, Any, Callable, Generator, Literal, NamedTuple
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -26,6 +28,8 @@ from cellier.events import (
     EventBus,
     FrameRenderedEvent,
     PickWriteChangedEvent,
+    RenderConfigChangedEvent,
+    RenderConfigUpdateEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
     SceneAddedEvent,
@@ -36,6 +40,8 @@ from cellier.events import (
     TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
+    VisualRenderChangedEvent,
+    VisualRenderUpdateEvent,
     VisualVisibilityChangedEvent,
 )
 from cellier.events._events import (
@@ -52,8 +58,8 @@ from cellier.render._config import RenderManagerConfig
 from cellier.render._scene_config import VisualRenderConfig
 from cellier.render._visual_lut import (
     KIND_LABEL,
+    KIND_LABEL_ALL,
     KIND_WHOLE_OBJECT,
-    PLACEMENT_OUTWARD,
 )
 from cellier.render.render_manager import RenderManager
 from cellier.render.visuals._canvas_overlay import GFXCenteredAxes2D
@@ -86,7 +92,7 @@ from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
 
 if TYPE_CHECKING:
-    from cellier.visuals._base_visual import BaseVisual
+    from cellier.visuals._base_visual import BaseVisual, VisualOutline
 from cellier.visuals._canvas_overlay import CenteredAxes2D
 from cellier.visuals._graph_memory import (
     GraphAppearance,
@@ -104,7 +110,11 @@ from cellier.visuals._image_memory import (
     ImageVisual,
     MultichannelImageVisual,
 )
-from cellier.visuals._label_memory import BaseLabelsAppearance, LabelMemoryVisual
+from cellier.visuals._label_memory import (
+    BaseLabelsAppearance,
+    BaseLabelsVisual,
+    LabelMemoryVisual,
+)
 from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
@@ -162,6 +172,268 @@ _aabb_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.Cont
 _background_source_id_override: contextvars.ContextVar[UUID | None] = (
     contextvars.ContextVar("_background_source_id_override", default=None)
 )
+
+# Parallel context variable for the per-visual render settings (outline slot
+# and placement, the occlusion tri-state, the labels selection).
+_visual_render_source_id_override: contextvars.ContextVar[UUID | None] = (
+    contextvars.ContextVar("_visual_render_source_id_override", default=None)
+)
+
+#: The message both halves of the pick_write conflict carry.  Outlines are a
+#: screen-space post-process and the pick buffer is the only per-pixel
+#: identity channel they have, so a visual that does not write pick resolves
+#: to LUT entry 0 -- permanently inert -- and is silently not outlined.
+_PICK_WRITE_REQUIRED = "outlines require pick_write=True."
+
+#: Same mechanism for an ambient occlusion *exclusion*, which also has to
+#: identify the visual per pixel.  An occlusion *inclusion* does not, which is
+#: why the normal target is deliberately not gated on pick.
+_AO_PICK_WRITE_REQUIRED = "ambient occlusion exclusions require pick_write=True."
+
+
+class _RenderConfigRoute(NamedTuple):
+    """How one render-config field reaches the GPU.
+
+    Attributes
+    ----------
+    apply : Callable
+        Called with ``(controller, new_value)`` after the model has been
+        written.  Either forwards to a live setter on ``RenderManager`` or
+        re-applies the whole section.
+    recompiles : bool
+        Whether changing this field recompiles a shader.  Not used to decide
+        anything -- the apply route already handles it -- but it is the fact
+        a GUI wants in a tooltip, and recording it beside the route is what
+        keeps the two from drifting.
+    """
+
+    apply: Callable[[Any, Any], None]
+    recompiles: bool = False
+
+
+def _manager_setter(name: str) -> Callable[[Any, Any], None]:
+    """Route a field to a live ``RenderManager`` property of *name*."""
+
+    def _apply(controller, value) -> None:
+        setattr(controller._render_manager, name, value)
+
+    return _apply
+
+
+def _reapply_outline(controller, _value) -> None:
+    """Route a field to a whole-section re-apply of the outline config."""
+    controller._render_manager.apply_outline_config()
+
+
+def _apply_palette(controller, value) -> None:
+    """Re-apply the outline config, warning about slots the palette lost.
+
+    A visual outlined in a slot the palette no longer reaches draws a
+    transparent band -- the same failure as asking for a slot past the end,
+    reached from the other direction.  Checked here rather than in a widget
+    so it fires for ``render_config.outline.palette = [...]`` in a notebook
+    just as it does for a button.
+    """
+    orphaned = controller.visuals_outlined_beyond(len(value))
+    if orphaned:
+        named = ", ".join(sorted(f"{name!r} (slot {slot})" for name, slot in orphaned))
+        warnings.warn(
+            f"the palette now holds {len(value)} entries, so these visuals "
+            f"draw a transparent outline: {named}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    controller._render_manager.apply_outline_config()
+
+
+#: Every settable render-config field, and how it reaches the GPU.
+#:
+#: Keys are ``(section, dotted field)``.  A field absent from this table is
+#: not settable through :meth:`CellierController.update_render_config_field`,
+#: which is deliberate for two of them: ``OutlineLayerConfig.color`` exists on
+#: the shared layer model but does nothing on the *selection* layer, whose
+#: colour comes from the palette slot carried in the LUT.  Recording that here
+#: once is what lets every GUI simply not draw a control for it.
+_RENDER_CONFIG_ROUTES: dict[tuple[str, str], _RenderConfigRoute] = {
+    # -- Outlines.  Thicknesses are shader template vars; the rest are
+    # uniforms.  Both go through apply_outline_config, which knows which.
+    ("outline", "enabled"): _RenderConfigRoute(_manager_setter("outline_enabled")),
+    ("outline", "boundaries.enabled"): _RenderConfigRoute(
+        _manager_setter("outline_boundaries_enabled")
+    ),
+    ("outline", "selection.enabled"): _RenderConfigRoute(
+        _manager_setter("outline_selection_enabled")
+    ),
+    ("outline", "boundaries.inward_thickness"): _RenderConfigRoute(
+        _reapply_outline, recompiles=True
+    ),
+    ("outline", "boundaries.outward_thickness"): _RenderConfigRoute(
+        _reapply_outline, recompiles=True
+    ),
+    ("outline", "selection.inward_thickness"): _RenderConfigRoute(
+        _reapply_outline, recompiles=True
+    ),
+    ("outline", "selection.outward_thickness"): _RenderConfigRoute(
+        _reapply_outline, recompiles=True
+    ),
+    ("outline", "inner_thickness"): _RenderConfigRoute(
+        _reapply_outline, recompiles=True
+    ),
+    ("outline", "boundaries.color"): _RenderConfigRoute(_reapply_outline),
+    ("outline", "inner_color"): _RenderConfigRoute(_reapply_outline),
+    ("outline", "palette"): _RenderConfigRoute(_apply_palette),
+    # -- Ambient occlusion.
+    ("ambient_occlusion", "enabled"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_enabled")
+    ),
+    ("ambient_occlusion", "n_samples"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_n_samples"), recompiles=True
+    ),
+    ("ambient_occlusion", "blur_radius"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_blur_radius"), recompiles=True
+    ),
+    ("ambient_occlusion", "radius"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_radius")
+    ),
+    ("ambient_occlusion", "auto_radius_fraction"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_auto_radius_fraction")
+    ),
+    ("ambient_occlusion", "bias"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_bias")
+    ),
+    ("ambient_occlusion", "strength"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_strength")
+    ),
+    ("ambient_occlusion", "power"): _RenderConfigRoute(
+        _manager_setter("ambient_occlusion_power")
+    ),
+    # -- Temporal accumulation.
+    ("temporal", "enabled"): _RenderConfigRoute(_manager_setter("temporal_enabled")),
+    ("temporal", "blend_weight"): _RenderConfigRoute(
+        _manager_setter("temporal_blend_weight")
+    ),
+}
+
+#: The sections ``update_render_config_field`` accepts.
+RENDER_CONFIG_SECTIONS: tuple[str, ...] = ("outline", "ambient_occlusion", "temporal")
+
+#: Every field ``update_render_config_field``'s per-visual twin accepts.
+#:
+#: ``outline_selected_labels`` is only meaningful on a labels visual -- every
+#: other visual type is outlined as one silhouette -- so it is listed here but
+#: rejected per visual at the call.
+VISUAL_RENDER_FIELDS: tuple[str, ...] = (
+    "outline.slot",
+    "outline.placement",
+    "ambient_occlusion",
+    "outline_selected_labels",
+    "outline_mode",
+    "pick_write",
+)
+"""``pick_write`` is here because both features depend on it.
+
+It already has an outgoing event of its own (``PickWriteChangedEvent``), so a
+widget driving it subscribes to that and writes through here -- which is why
+setting it does *not* also emit ``VisualRenderChangedEvent``: one field, one
+outgoing event.
+"""
+
+
+def _resolve_render_config_route(section: str, field: str) -> _RenderConfigRoute:
+    """Return the route for one field, or raise with a suggestion.
+
+    The annotation cannot enforce a closed vocabulary here, so the lookup
+    does -- at the call, rather than as render-time silence.
+    """
+    route = _RENDER_CONFIG_ROUTES.get((section, field))
+    if route is not None:
+        return route
+    if section not in RENDER_CONFIG_SECTIONS:
+        close = difflib.get_close_matches(section, RENDER_CONFIG_SECTIONS, n=1)
+        suggestion = f" Did you mean {close[0]!r}?" if close else ""
+        raise ValueError(
+            f"{section!r} is not a render config section.{suggestion} "
+            f"Valid sections: {list(RENDER_CONFIG_SECTIONS)}."
+        )
+    valid = sorted(f for s, f in _RENDER_CONFIG_ROUTES if s == section)
+    close = difflib.get_close_matches(field, valid, n=1)
+    suggestion = f" Did you mean {close[0]!r}?" if close else ""
+    raise ValueError(
+        f"{field!r} is not a settable field of the {section!r} render config."
+        f"{suggestion} Valid fields: {valid}."
+    )
+
+
+#: ``outline_mode`` -> the LUT ``kind`` that implements it.  Spelled out
+#: rather than tested against one mode, so a mode added to the model without
+#: a kind here fails loudly instead of silently outlining as a silhouette.
+_LABELS_OUTLINE_KINDS: dict[str, int] = {
+    "per_label": KIND_LABEL,
+    "whole_object": KIND_WHOLE_OBJECT,
+    "all_boundaries": KIND_LABEL_ALL,
+}
+
+
+def _outline_kind(visual) -> int:
+    """Return the LUT ``kind`` the outline pass should use for *visual*.
+
+    ``kind`` is the shader's mode selector, and it decides two things at
+    once: what the outline key is, and where the colour comes from.
+    ``KIND_WHOLE_OBJECT`` keys on the pick id, so a region is one object.
+    ``KIND_LABEL`` keys on the per-pixel label, so a region is one label and
+    touching labels keep a band between them, coloured per label.
+    ``KIND_LABEL_ALL`` keys on the label too but colours every one of them
+    from the visual's own slot.
+
+    Only a labels visual has a choice, and it makes it through
+    ``outline_mode``.  Everything else is one object by construction.
+    """
+    from cellier.visuals._label_memory import BaseLabelsVisual
+
+    if isinstance(visual, BaseLabelsVisual):
+        return _LABELS_OUTLINE_KINDS[visual.outline_mode]
+    return KIND_WHOLE_OBJECT
+
+
+def _default_placement(visual) -> str:
+    """Return the default outline placement for one visual.
+
+    ``"outward"`` for anything whose on-screen footprint is a few pixels
+    wide by default -- lines, points, and graphs, whose nodes and edges are
+    both ``"screen"``-spaced -- because an inward band twice the thickness
+    of the thing it outlines consumes it entirely.  ``"inward"`` for
+    everything else, so the region never appears to grow.
+    """
+    from cellier.visuals._graph_memory import GraphVisual
+    from cellier.visuals._lines_memory import LinesVisual
+    from cellier.visuals._points_memory import PointsVisual
+
+    thin = (LinesVisual, PointsVisual, GraphVisual)
+    return "outward" if isinstance(visual, thin) else "inward"
+
+
+def _apply_render_settings(
+    visual_model,
+    *,
+    outline=None,
+    ambient_occlusion: bool | None = None,
+    outline_selected_labels: dict[int, int] | None = None,
+):
+    """Apply the screen-space render settings an ``add_*`` call carried.
+
+    Written onto the model *before* ``add_visual`` registers it, so the
+    values are already in place when ``_seed_visual_render`` pushes them to
+    the render layer.  That ordering is what makes a visual added with an
+    outline outlined on its first frame, and it is also what makes the
+    warnings fire once, from the seed, rather than twice.
+    """
+    if outline is not None:
+        visual_model.outline = outline
+    if ambient_occlusion is not None:
+        visual_model.ambient_occlusion = ambient_occlusion
+    if outline_selected_labels is not None:
+        visual_model.outline_selected_labels = dict(outline_selected_labels)
+    return visual_model
 
 
 class CellierController:
@@ -289,6 +561,16 @@ class CellierController:
         self._incoming_events.subscribe(
             BackgroundUpdateEvent,
             self._on_background_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            RenderConfigUpdateEvent,
+            self._on_render_config_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            VisualRenderUpdateEvent,
+            self._on_visual_render_update,
             owner_id=self._id,
         )
 
@@ -619,6 +901,8 @@ class CellierController:
         scene_id: UUID,
         appearance: BaseImageAppearance,
         name: str = "image",
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> ImageVisual:
         """Add an in-memory image visual to a scene.
 
@@ -633,6 +917,15 @@ class CellierController:
         name : str
             Human-readable label. Default ``"image"``.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         ImageVisual
@@ -641,6 +934,11 @@ class CellierController:
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+        )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
@@ -651,6 +949,9 @@ class CellierController:
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual to a scene.
 
@@ -666,6 +967,19 @@ class CellierController:
             Human-readable label. Default ``"labels"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when None.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer
+            draws it in.  ``None`` (default) selects no label, so an
+            outlined labels visual shows boundaries only.
 
         Returns
         -------
@@ -687,6 +1001,12 @@ class CellierController:
             appearance=appearance,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_mesh(
@@ -696,6 +1016,8 @@ class CellierController:
         appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MeshVisual:
         """Add a mesh visual to a scene.
 
@@ -715,6 +1037,15 @@ class CellierController:
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MeshVisual
@@ -730,6 +1061,11 @@ class CellierController:
             appearance=appearance,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_points(
@@ -739,6 +1075,8 @@ class CellierController:
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> PointsVisual:
         """Add a points visual backed by a PointsMemoryStore.
 
@@ -755,6 +1093,15 @@ class CellierController:
         transform : AffineTransform or None
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
@@ -774,6 +1121,11 @@ class CellierController:
             appearance=appearance,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_lines(
@@ -783,6 +1135,8 @@ class CellierController:
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> LinesVisual:
         """Add a lines visual backed by a LinesMemoryStore.
 
@@ -799,6 +1153,15 @@ class CellierController:
         transform : AffineTransform or None
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
@@ -818,6 +1181,11 @@ class CellierController:
             appearance=appearance,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_graph(
@@ -828,6 +1196,8 @@ class CellierController:
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> GraphVisual:
         """Add a spatial-graph visual backed by a GraphMemoryStore.
 
@@ -851,6 +1221,15 @@ class CellierController:
             Axis index -> window configuration.  Keys are validated against
             the store's ``ndim``; an out-of-range axis raises ``ValueError``
             (D21).
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
@@ -878,6 +1257,11 @@ class CellierController:
             transform=resolved_transform,
             trail=dict(trail or {}),
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_image_multiscale(
@@ -888,6 +1272,8 @@ class CellierController:
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene.
 
@@ -906,6 +1292,15 @@ class CellierController:
             ``MultiscaleImageRenderConfig()`` with all default values if None.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when None.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
@@ -927,6 +1322,11 @@ class CellierController:
             render_config=render_config,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_labels_multiscale(
@@ -937,6 +1337,9 @@ class CellierController:
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual to a scene.
 
@@ -955,6 +1358,19 @@ class CellierController:
             ``MultiscaleLabelRenderConfig()`` with all default values if None.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when None.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer
+            draws it in.  ``None`` (default) selects no label, so an
+            outlined labels visual shows boundaries only.
 
         Returns
         -------
@@ -976,6 +1392,12 @@ class CellierController:
             render_config=render_config,
             transform=resolved_transform,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_multichannel_image(
@@ -987,6 +1409,8 @@ class CellierController:
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelImageVisual:
         """Add an in-memory multichannel image visual to a scene.
 
@@ -1007,6 +1431,15 @@ class CellierController:
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
 
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+
         Returns
         -------
         MultichannelImageVisual
@@ -1024,6 +1457,11 @@ class CellierController:
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
         )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+        )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
     def add_multichannel_image_multiscale(
@@ -1037,6 +1475,8 @@ class CellierController:
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelMultiscaleImageVisual:
         """Add a multiscale multichannel image visual to a scene.
 
@@ -1060,6 +1500,15 @@ class CellierController:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled;
+            see :attr:`outline_enabled`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
@@ -1091,6 +1540,11 @@ class CellierController:
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
             **extra,
+        )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
         return self.add_visual(scene_id, visual_model, data_store=data)
 
@@ -1209,6 +1663,11 @@ class CellierController:
         self._wire_aabb(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._wire_pick_write(visual_model)
+        self._wire_visual_render(visual_model)
+        # Seed the render layer from the model, so a visual constructed with
+        # an outline already set is outlined on its first frame rather than
+        # needing a post-hoc call.
+        self._seed_visual_render(visual_model)
 
         # EventBus subscriptions — only subscribe when the GFX visual implements
         # the handler so new visual types get wired automatically.
@@ -2467,6 +2926,273 @@ class CellierController:
 
         return _on_aabb_psygnal
 
+    def _wire_visual_render(self, visual: BaseVisual) -> None:
+        """Bridge a visual's screen-space render settings to bus and renderer.
+
+        Three sources feed one event: the ``outline`` sub-model, the
+        ``ambient_occlusion`` field, and -- on labels visuals only -- the
+        ``outline_selected_labels`` map.  The sub-model reports which of its
+        fields changed, so it gets the catch-all handler; the two plain
+        fields each know their own name.
+        """
+        handlers = self._visual_psygnal_handlers.setdefault(visual.id, [])
+
+        outline_handler = self._make_visual_outline_handler(visual.id)
+        visual.outline.events.connect(outline_handler)
+        handlers.append((visual.outline.events, outline_handler))
+
+        ao_handler = self._make_visual_render_handler(visual.id, "ambient_occlusion")
+        visual.events.ambient_occlusion.connect(ao_handler)
+        handlers.append((visual.events.ambient_occlusion, ao_handler))
+
+        if isinstance(visual, BaseLabelsVisual):
+            label_handler = self._make_visual_render_handler(
+                visual.id, "outline_selected_labels"
+            )
+            visual.events.outline_selected_labels.connect(label_handler)
+            handlers.append((visual.events.outline_selected_labels, label_handler))
+
+            mode_handler = self._make_visual_render_handler(visual.id, "outline_mode")
+            visual.events.outline_mode.connect(mode_handler)
+            handlers.append((visual.events.outline_mode, mode_handler))
+
+    def _make_visual_outline_handler(self, visual_id: UUID) -> Callable:
+        """Return a catch-all handler for a visual's ``VisualOutline``."""
+
+        def _on_outline(info: EmissionInfo) -> None:
+            self._push_visual_render_change(
+                visual_id, f"outline.{info.signal.name}", info.args[0]
+            )
+
+        return _on_outline
+
+    def _make_visual_render_handler(self, visual_id: UUID, field_name: str) -> Callable:
+        """Return a handler for one named render field on a visual."""
+
+        def _on_change(new_value: Any) -> None:
+            self._push_visual_render_change(visual_id, field_name, new_value)
+
+        return _on_change
+
+    def _push_visual_render_change(
+        self, visual_id: UUID, field_name: str, new_value: Any
+    ) -> None:
+        """Apply one changed render field, then announce it."""
+        visual = self._model_visual_or_none(visual_id)
+        if visual is None:
+            return
+        self._apply_visual_render_field(visual, field_name, new_value)
+        resolved_source_id = _visual_render_source_id_override.get() or self._id
+        _SOURCE_ID_LOGGER.debug(
+            "bridge  handler=_visual_render  visual=%s  field=%s  source=%s",
+            visual_id,
+            field_name,
+            resolved_source_id,
+        )
+        self._outgoing_events.emit(
+            VisualRenderChangedEvent(
+                source_id=resolved_source_id,
+                visual_id=visual_id,
+                field_name=field_name,
+                new_value=new_value,
+            )
+        )
+        self._request_draw_for_visual(visual_id)
+
+    def visuals_outlined_beyond(self, n_slots: int) -> list[tuple[str, int]]:
+        """Return ``(name, slot)`` for visuals outlined past *n_slots*.
+
+        The slots a palette of *n_slots* entries cannot colour.  Useful to a
+        GUI before it shrinks the palette, and to the palette route after.
+        """
+        return [
+            (visual.name, visual.outline.slot)
+            for scene in self._model.scenes.values()
+            for visual in scene.visuals
+            if visual.outline.slot > n_slots
+        ]
+
+    def slot_usage(self) -> dict[int, int]:
+        """Return ``{slot: how many visuals use it}``, for slots 1 and up.
+
+        What lets a palette editor show that slot 2 is three visuals rather
+        than leaving the user to hold it in their head.
+        """
+        usage: dict[int, int] = {}
+        for scene in self._model.scenes.values():
+            for visual in scene.visuals:
+                slot = visual.outline.slot
+                if slot >= 1:
+                    usage[slot] = usage.get(slot, 0) + 1
+        return usage
+
+    def _seed_visual_render(self, visual: BaseVisual) -> None:
+        """Push a newly added visual's render settings to the render layer.
+
+        The render layer's flag map is a *cache* derived from the models, so
+        it has to be primed when a visual joins -- otherwise a visual
+        constructed with ``outline=VisualOutline(slot=1)`` would draw
+        unoutlined until something happened to touch the field.
+        """
+        if visual.outline.slot >= 1:
+            self._push_visual_outline(visual)
+        if visual.ambient_occlusion is not None:
+            self._render_manager.set_visual_ambient_occlusion(
+                visual.id, visual.ambient_occlusion
+            )
+        if isinstance(visual, BaseLabelsVisual) and visual.outline_selected_labels:
+            self._push_label_selection(visual)
+
+    def update_visual_render_field(
+        self,
+        visual_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one screen-space render field on a visual.
+
+        The seam a GUI drives, and the twin of
+        :meth:`update_render_config_field` for the per-visual half.  Writes
+        the model; the psygnal bridge does the rest.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        field :
+            ``"outline.slot"``, ``"outline.placement"``,
+            ``"ambient_occlusion"`` or ``"outline_selected_labels"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``VisualRenderChangedEvent``.  GUI
+            widgets should pass ``source_id=self._id`` so their own
+            subscription can ignore the echo.
+
+        Raises
+        ------
+        ValueError
+            If *field* is not a settable per-visual render field.
+        """
+        if field not in VISUAL_RENDER_FIELDS:
+            close = difflib.get_close_matches(field, VISUAL_RENDER_FIELDS, n=1)
+            suggestion = f" Did you mean {close[0]!r}?" if close else ""
+            raise ValueError(
+                f"{field!r} is not a settable per-visual render field."
+                f"{suggestion} Valid fields: {list(VISUAL_RENDER_FIELDS)}."
+            )
+        visual = self._get_visual_model(visual_id)
+        if field in {"outline_selected_labels", "outline_mode"} and not isinstance(
+            visual, BaseLabelsVisual
+        ):
+            raise ValueError(
+                f"{field} is only available on labels visuals; "
+                f"a {type(visual).__name__} is outlined as one silhouette."
+            )
+        target = visual.outline if field.startswith("outline.") else visual
+        leaf = field.split(".")[-1]
+        token = _visual_render_source_id_override.set(source_id)
+        try:
+            setattr(target, leaf, value)
+        finally:
+            _visual_render_source_id_override.reset(token)
+
+    def _on_visual_render_update(self, event: VisualRenderUpdateEvent) -> None:
+        self.update_visual_render_field(
+            event.visual_id, event.field, event.value, source_id=event.source_id
+        )
+
+    def _model_visual_or_none(self, visual_id: UUID) -> BaseVisual | None:
+        """Return the visual model, or ``None`` if it has been removed."""
+        try:
+            return self._get_visual_model(visual_id)
+        except KeyError:
+            return None
+
+    def _apply_visual_render_field(
+        self, visual: BaseVisual, field_name: str, new_value: Any
+    ) -> None:
+        """Push one changed render field onto the render layer, with warnings."""
+        if field_name in ("outline.slot", "outline.placement"):
+            self._push_visual_outline(visual)
+        elif field_name == "ambient_occlusion":
+            if new_value is False and not visual.pick_write:
+                warnings.warn(
+                    f"{_AO_PICK_WRITE_REQUIRED} pick_write set to True",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                visual.pick_write = True
+            self._render_manager.set_visual_ambient_occlusion(visual.id, new_value)
+        elif field_name == "outline_selected_labels":
+            self._push_label_selection(visual)
+        elif field_name == "outline_mode":
+            # The mode is carried in the LUT entry's ``kind``, so re-pushing
+            # the outline covers the shader side -- no material rebuild.  The
+            # selection goes with it because ``all_boundaries`` suppresses it
+            # on the GPU: entering the mode has to clear it and leaving has to
+            # put it back.
+            self._push_visual_outline(visual)
+            self._push_label_selection(visual)
+
+    def _push_visual_outline(self, visual: BaseVisual) -> None:
+        """Send a visual's outline assignment to the render layer.
+
+        Warns rather than silently doing nothing for the three ways an
+        outline can be configured and still not appear.
+        """
+        slot = int(visual.outline.slot)
+        if slot >= 1:
+            if not visual.pick_write:
+                warnings.warn(
+                    f"{_PICK_WRITE_REQUIRED} pick_write set to True",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                # Set it on the model, not the material: the
+                # PickWriteChangedEvent wiring propagates it for us.
+                visual.pick_write = True
+            if not self.render_config.outline.enabled:
+                warnings.warn(
+                    "the outline pass is off, so this outline will not draw; "
+                    "set controller.outline_enabled = True",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            palette = self.render_config.outline.palette
+            if slot > len(palette):
+                warnings.warn(
+                    f"outline slot {slot} has no palette entry (the palette "
+                    f"holds {len(palette)}), so the outline draws transparent",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        placement = visual.outline.placement or _default_placement(visual)
+        kind = _outline_kind(visual)
+        self._render_manager.set_visual_outline(
+            visual.id, slot=slot, placement=placement, kind=kind
+        )
+
+    def _push_label_selection(self, visual: BaseVisual) -> None:
+        """Send a labels visual's per-label selection to the render layer.
+
+        In ``all_boundaries`` mode the selection is suppressed on the GPU
+        rather than pushed.  It is not only a colour there: a selected
+        label's outline key *is* its slot number, so two touching labels
+        sharing a slot would share a key and lose the boundary between them
+        -- in the one mode whose whole purpose is showing every boundary.
+        The model field is left untouched, so switching back to
+        ``per_label`` restores the selection exactly.
+        """
+        selection = (
+            {}
+            if visual.outline_mode == "all_boundaries"
+            else dict(visual.outline_selected_labels)
+        )
+        self._render_manager.set_label_selection(visual.id, selection)
+
     def _wire_pick_write(self, visual: BaseVisual) -> None:
         """Subscribe to pick_write field changes on a visual model."""
         handler = self._make_pick_write_handler(visual.id)
@@ -2479,6 +3205,15 @@ class CellierController:
         """Return a handler that emits PickWriteChangedEvent on pick_write changes."""
 
         def _on_pick_write(new_value: bool) -> None:
+            visual = self._model_visual_or_none(visual_id)
+            if visual is not None and not new_value:
+                # The other half of the conflict.  The user's decision about
+                # picking stands -- the most recent explicit action wins --
+                # but the feature it silently disables says so.
+                if visual.outline.slot >= 1:
+                    warnings.warn(_PICK_WRITE_REQUIRED, RuntimeWarning, stacklevel=2)
+                if visual.ambient_occlusion is False:
+                    warnings.warn(_AO_PICK_WRITE_REQUIRED, RuntimeWarning, stacklevel=2)
             self._outgoing_events.emit(
                 PickWriteChangedEvent(
                     source_id=self._id,
@@ -3296,12 +4031,88 @@ class CellierController:
     def render_config(self) -> RenderManagerConfig:
         """Live rendering configuration.
 
-        Mutating a field here changes the model but not the GPU state; for
-        the outline pass, follow a mutation with
-        :meth:`apply_outline_config`.  The dedicated properties
-        (``outline_enabled`` and friends) do both in one step.
+        Mutating a field here changes the model but not the GPU state, and
+        notifies no widget.  :meth:`update_render_config_field` and the
+        dedicated properties (``ambient_occlusion_power`` and friends) do all three in
+        one step, and are what a GUI should drive.
         """
         return self._render_manager.config
+
+    @property
+    def render_manager(self) -> RenderManager:
+        """The render manager owning the canvases and the GPU-side state."""
+        return self._render_manager
+
+    def update_render_config_field(
+        self,
+        section: str,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field of the render configuration and apply it.
+
+        The single seam every render-config write goes through: it updates
+        the model, pushes the change to the GPU by whichever route that
+        field needs, and emits a ``RenderConfigChangedEvent`` so subscribed
+        widgets follow along.  Which fields recompile a shader and which are
+        plain uniforms is a property of the field, recorded once in
+        :data:`_RENDER_CONFIG_ROUTES`, so no caller has to know.
+
+        Parameters
+        ----------
+        section :
+            ``"outline"``, ``"ambient_occlusion"`` or ``"temporal"``.
+        field :
+            Dotted attribute path within the section, e.g. ``"power"`` or
+            ``"selection.inward_thickness"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``RenderConfigChangedEvent``.  GUI
+            widgets should pass ``source_id=self._id`` so their own
+            subscription can ignore the echo.  Defaults to the controller's
+            own ID.
+
+        Raises
+        ------
+        ValueError
+            If *section* or *field* is not a settable render-config field.
+        """
+        route = _resolve_render_config_route(section, field)
+        config_section = getattr(self.render_config, section)
+
+        # Write through the section model first so pydantic validates the
+        # value before any of it reaches the GPU.
+        target = config_section
+        *parents, leaf = field.split(".")
+        for name in parents:
+            target = getattr(target, name)
+        setattr(target, leaf, value)
+
+        route.apply(self, getattr(target, leaf))
+
+        resolved_source_id = source_id if source_id is not None else self._id
+        _SOURCE_ID_LOGGER.debug(
+            "set  render_config=%s.%s  source=%s", section, field, resolved_source_id
+        )
+        self._outgoing_events.emit(
+            RenderConfigChangedEvent(
+                source_id=resolved_source_id,
+                section=section,
+                config=config_section,
+                field_name=field,
+                new_value=getattr(target, leaf),
+            )
+        )
+
+    def _on_render_config_update(self, event: RenderConfigUpdateEvent) -> None:
+        self.update_render_config_field(
+            event.section, event.field, event.value, source_id=event.source_id
+        )
+
+    # -- Outlines ------------------------------------------------------
 
     @property
     def outline_enabled(self) -> bool:
@@ -3310,7 +4121,7 @@ class CellierController:
 
     @outline_enabled.setter
     def outline_enabled(self, value: bool) -> None:
-        self._render_manager.outline_enabled = value
+        self.update_render_config_field("outline", "enabled", value)
 
     @property
     def outline_boundaries_enabled(self) -> bool:
@@ -3319,7 +4130,7 @@ class CellierController:
 
     @outline_boundaries_enabled.setter
     def outline_boundaries_enabled(self, value: bool) -> None:
-        self._render_manager.outline_boundaries_enabled = value
+        self.update_render_config_field("outline", "boundaries.enabled", value)
 
     @property
     def outline_selection_enabled(self) -> bool:
@@ -3328,63 +4139,158 @@ class CellierController:
 
     @outline_selection_enabled.setter
     def outline_selection_enabled(self, value: bool) -> None:
-        self._render_manager.outline_selection_enabled = value
+        self.update_render_config_field("outline", "selection.enabled", value)
+
+    # -- Ambient occlusion ---------------------------------------------
 
     @property
-    def ssao_enabled(self) -> bool:
+    def ambient_occlusion_enabled(self) -> bool:
         """Whether the screen-space ambient occlusion pass is active.
 
         Ambient occlusion darkens creases by sampling the depth buffer, and
         is the cheapest shape cue available for cellier's default unlit
         isosurfaces.  It runs in 3D only.
         """
-        return self._render_manager.ssao_enabled
+        return self._render_manager.ambient_occlusion_enabled
 
-    @ssao_enabled.setter
-    def ssao_enabled(self, value: bool) -> None:
-        self._render_manager.ssao_enabled = value
+    @ambient_occlusion_enabled.setter
+    def ambient_occlusion_enabled(self, value: bool) -> None:
+        self.update_render_config_field("ambient_occlusion", "enabled", value)
 
     @property
-    def ssao_radius(self) -> float | None:
+    def ambient_occlusion_radius(self) -> float | None:
         """Occlusion hemisphere radius in scene units, or ``None`` for auto.
 
         ``None`` derives the radius from the scene bounding box diagonal
-        (``render_config.ssao.auto_radius_fraction``, 2 percent by
-        default), which is the only default that means anything across
-        cellier's coordinate systems.
+        (:attr:`ambient_occlusion_auto_radius_fraction`, 2 percent by default), which is
+        the only default that means anything across cellier's coordinate
+        systems.  :attr:`ambient_occlusion_effective_radius` reports what that came to.
         """
-        return self._render_manager.ssao_radius
+        return self._render_manager.ambient_occlusion_radius
 
-    @ssao_radius.setter
-    def ssao_radius(self, value: float | None) -> None:
-        self._render_manager.ssao_radius = value
+    @ambient_occlusion_radius.setter
+    def ambient_occlusion_radius(self, value: float | None) -> None:
+        self.update_render_config_field("ambient_occlusion", "radius", value)
 
     @property
-    def ssao_strength(self) -> float:
+    def ambient_occlusion_auto_radius_fraction(self) -> float:
+        """Fraction of the scene bounding box diagonal used when radius is auto."""
+        return self._render_manager.ambient_occlusion_auto_radius_fraction
+
+    @ambient_occlusion_auto_radius_fraction.setter
+    def ambient_occlusion_auto_radius_fraction(self, value: float) -> None:
+        self.update_render_config_field(
+            "ambient_occlusion", "auto_radius_fraction", value
+        )
+
+    @property
+    def ambient_occlusion_effective_radius(self) -> float | None:
+        """The occlusion radius actually in use, in scene units.
+
+        The explicit :attr:`ambient_occlusion_radius` when one is set, otherwise the
+        auto-derived value.  Read-only, and the number worth showing next to
+        the radius control: a radius means nothing until it can be compared
+        with the scale of the thing being rendered.  ``None`` when there is
+        no canvas to ask.
+        """
+        return self._render_manager.ambient_occlusion_effective_radius
+
+    @property
+    def ambient_occlusion_strength(self) -> float:
         """How far the occlusion is applied, 0 (off) to 1 (full)."""
-        return self._render_manager.ssao_strength
+        return self._render_manager.ambient_occlusion_strength
 
-    @ssao_strength.setter
-    def ssao_strength(self, value: float) -> None:
-        self._render_manager.ssao_strength = value
+    @ambient_occlusion_strength.setter
+    def ambient_occlusion_strength(self, value: float) -> None:
+        self.update_render_config_field("ambient_occlusion", "strength", value)
 
     @property
-    def ssao_power(self) -> float:
+    def ambient_occlusion_power(self) -> float:
         """Contrast exponent applied to the occlusion before the multiply."""
-        return self._render_manager.ssao_power
+        return self._render_manager.ambient_occlusion_power
 
-    @ssao_power.setter
-    def ssao_power(self, value: float) -> None:
-        self._render_manager.ssao_power = value
+    @ambient_occlusion_power.setter
+    def ambient_occlusion_power(self, value: float) -> None:
+        self.update_render_config_field("ambient_occlusion", "power", value)
 
-    def apply_ssao_config(self) -> None:
-        """Push ``render_config.ssao`` onto every canvas's occlusion pass.
+    @property
+    def ambient_occlusion_bias(self) -> float:
+        """Depth-comparison bias, as a fraction of the effective radius.
+
+        Dimensionless on purpose: an absolute bias tuned for one coordinate
+        system self-occludes a flat plane in another.
+        """
+        return self._render_manager.ambient_occlusion_bias
+
+    @ambient_occlusion_bias.setter
+    def ambient_occlusion_bias(self, value: float) -> None:
+        self.update_render_config_field("ambient_occlusion", "bias", value)
+
+    @property
+    def ambient_occlusion_n_samples(self) -> int:
+        """Hemisphere samples per pixel.  Changing this recompiles the shader."""
+        return self._render_manager.ambient_occlusion_n_samples
+
+    @ambient_occlusion_n_samples.setter
+    def ambient_occlusion_n_samples(self, value: int) -> None:
+        self.update_render_config_field("ambient_occlusion", "n_samples", value)
+
+    @property
+    def ambient_occlusion_blur_radius(self) -> int:
+        """Occlusion box-blur half-width in internal pixels.  Recompiles."""
+        return self._render_manager.ambient_occlusion_blur_radius
+
+    @ambient_occlusion_blur_radius.setter
+    def ambient_occlusion_blur_radius(self, value: int) -> None:
+        self.update_render_config_field("ambient_occlusion", "blur_radius", value)
+
+    # -- Temporal accumulation -----------------------------------------
+
+    @property
+    def temporal_enabled(self) -> bool:
+        """Whether the temporal accumulation pass is active.
+
+        The pass averages successive jittered frames, which is what lets the
+        volume raymarcher and the occlusion kernel use few samples per frame
+        and still settle to a clean image when the camera stops.  It is off
+        in 2D whatever this says.
+        """
+        return self._render_manager.temporal_enabled
+
+    @temporal_enabled.setter
+    def temporal_enabled(self, value: bool) -> None:
+        self.update_render_config_field("temporal", "enabled", value)
+
+    @property
+    def temporal_blend_weight(self) -> float:
+        """Minimum EMA blend weight for the current frame, in ``(0, 1]``.
+
+        Lower values give a smoother settled image and take longer to get
+        there after a camera move.
+        """
+        return self._render_manager.temporal_blend_weight
+
+    @temporal_blend_weight.setter
+    def temporal_blend_weight(self, value: float) -> None:
+        self.update_render_config_field("temporal", "blend_weight", value)
+
+    def reset_temporal_accumulation(self) -> None:
+        """Discard the accumulated history on every canvas.
+
+        The next frame is shown raw and accumulation restarts from it.
+        Cellier already does this on every camera and content change; this
+        is for a caller who has changed something cellier cannot see.
+        """
+        self._render_manager.reset_temporal_accumulation()
+
+    def apply_ambient_occlusion_config(self) -> None:
+        """Push ``render_config.ambient_occlusion`` onto every canvas's occlusion pass.
 
         Needed after mutating the config model in place.  ``n_samples`` and
         ``blur_radius`` are shader template vars, so changing them
         recompiles; the rest are uniforms and do not.
         """
-        self._render_manager.apply_ssao_config()
+        self._render_manager.apply_ambient_occlusion_config()
 
     def apply_outline_config(self) -> None:
         """Push ``render_config.outline`` onto every canvas's outline pass.
@@ -4484,43 +5390,33 @@ class CellierController:
         mouse picking for that visual**, which is a side effect worth
         knowing about if you had deliberately turned picking off.
 
-        Labels visuals are outlined *per label* rather than as one
-        silhouette, provided the canvas was built with outlines enabled.
-        **Their selection colour comes from the label, not from** *slot*:
-        a nonzero *slot* makes the visual eligible for the boundaries
-        layer, and :meth:`set_label_selection` is what puts a palette
-        colour on individual labels.  Without a selection a labels visual
-        shows boundaries only.
+        On a labels visual what *slot* means depends on
+        ``outline_mode``, and the default mode is ``"per_label"``: there
+        the visual is outlined per label rather than as one silhouette, and
+        **the colour comes from the label, not from** *slot* -- a nonzero
+        *slot* only makes the visual eligible for the boundaries layer, and
+        :meth:`set_label_selection` is what puts a palette colour on
+        individual labels.  In ``"whole_object"`` and ``"all_boundaries"``
+        mode *slot* is the colour, exactly as on every other visual.  Per
+        label keys need the canvas to have been built with outlines
+        enabled; without that the visual falls back to a silhouette.
         """
-        slot = int(slot)
         visual = self._get_visual_model(visual_id)
-        if placement is None:
-            placement = (
-                "outward"
-                if isinstance(visual, (LinesVisual, PointsVisual))
-                else "inward"
-            )
-        if slot >= 1 and not visual.pick_write:
-            # Set it on the model, not the material: the PickWriteChangedEvent
-            # wiring propagates it to the pygfx material for us.
-            visual.pick_write = True
-        kind = (
-            KIND_LABEL
-            if isinstance(visual, (LabelMemoryVisual, MultiscaleLabelVisual))
-            else KIND_WHOLE_OBJECT
-        )
-        self._render_manager.set_visual_outline(
-            visual_id, slot=slot, placement=placement, kind=kind
-        )
-        self._request_draw_for_visual(visual_id)
+        # Write the model and let the bridge do the rest: the warnings, the
+        # placement default, the push to the render layer and the event all
+        # hang off the field change rather than off this method, so a direct
+        # ``visual.outline.slot = 1`` behaves identically.
+        if placement is not None:
+            visual.outline.placement = placement
+        visual.outline.slot = int(slot)
 
     def set_visual_ambient_occlusion(
         self, visual_id: UUID, enabled: bool | None = None
     ) -> None:
         """Choose whether one visual receives ambient occlusion.
 
-        Requires ``render_config.ssao.enabled`` (or
-        ``controller.ssao_enabled = True``); the occlusion pass is off by
+        Requires ``render_config.ambient_occlusion.enabled`` (or
+        ``controller.ambient_occlusion_enabled = True``); the occlusion pass is off by
         default, and off in 2D always.
 
         Parameters
@@ -4554,13 +5450,7 @@ class CellierController:
         it *casts* it: the occlusion loop reads raw depth, so an excluded
         visual's depth still darkens its neighbours.
         """
-        visual = self._get_visual_model(visual_id)
-        if enabled is False and not visual.pick_write:
-            # Set it on the model, not the material: the PickWriteChangedEvent
-            # wiring propagates it to the pygfx material for us.
-            visual.pick_write = True
-        self._render_manager.set_visual_ambient_occlusion(visual_id, enabled)
-        self._request_draw_for_visual(visual_id)
+        self._get_visual_model(visual_id).ambient_occlusion = enabled
 
     def get_visual_ambient_occlusion(self, visual_id: UUID) -> bool | None:
         """Return the explicit occlusion setting for *visual_id*.
@@ -4576,7 +5466,7 @@ class CellierController:
             ``None`` when the visual is on the automatic rule, which is
             the default.
         """
-        return self._render_manager.get_visual_ambient_occlusion(visual_id)
+        return self._get_visual_model(visual_id).ambient_occlusion
 
     def get_visual_outline(self, visual_id: UUID) -> tuple[int, str] | None:
         """Return ``(slot, placement)`` for *visual_id*, or ``None``.
@@ -4591,11 +5481,11 @@ class CellierController:
         tuple[int, str] or None
             ``None`` when the visual is not outlined.
         """
-        entry = self._render_manager.get_visual_outline(visual_id)
-        if entry is None:
+        visual = self._get_visual_model(visual_id)
+        if visual.outline.slot == 0:
             return None
-        slot, placement, _kind = entry
-        return slot, "outward" if placement == PLACEMENT_OUTWARD else "inward"
+        placement = visual.outline.placement or _default_placement(visual)
+        return visual.outline.slot, placement
 
     def set_label_selection(self, visual_id: UUID, selection: dict[int, int]) -> None:
         """Choose which label values the selection layer outlines.
@@ -4622,8 +5512,17 @@ class CellierController:
         lives in a render target that is only allocated then.  Without it
         the visual still gets a whole-object silhouette.
         """
-        self._render_manager.set_label_selection(visual_id, selection)
-        self._request_draw_for_visual(visual_id)
+        visual = self._get_visual_model(visual_id)
+        if not isinstance(visual, BaseLabelsVisual):
+            raise ValueError(
+                "set_label_selection is only available on labels visuals; "
+                f"a {type(visual).__name__} is outlined as one silhouette."
+            )
+        # The model, not the material: a labels material can be rebuilt
+        # underneath a selection written straight to the GPU, and the
+        # multiscale visual rebuilds its materials whenever the displayed
+        # level shapes change.
+        visual.outline_selected_labels = dict(selection)
 
     def _on_reslice_completed_redraw(self, event: ResliceCompletedEvent) -> None:
         """Redraw once a reslice has committed its data to the GPU.

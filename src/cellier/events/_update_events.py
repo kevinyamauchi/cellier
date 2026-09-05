@@ -137,12 +137,64 @@ class BackgroundUpdateEvent(NamedTuple):
     value: Any
 
 
+class RenderConfigUpdateEvent(NamedTuple):
+    """Request to set one field on a section of the render configuration.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``RenderConfigChangedEvent``
+        so the caller can echo-filter on its own subscription.
+    section :
+        Which configuration section to write: ``"outline"``, ``"ambient_occlusion"`` or
+        ``"temporal"``.
+    field :
+        Dotted attribute path within the section, e.g. ``"power"`` or
+        ``"selection.inward_thickness"``.  The path is dotted because
+        ``OutlineConfig`` nests two layer models; the controller resolves it
+        and decides whether the write is a uniform or a shader recompile, so
+        a widget never has to know which.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    section: str
+    field: str
+    value: Any
+
+
+class VisualRenderUpdateEvent(NamedTuple):
+    """Request to set one screen-space render field on a visual.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``VisualRenderChangedEvent``
+        so the caller can echo-filter on its own subscription.
+    visual_id :
+        Target visual.
+    field :
+        ``"outline.slot"``, ``"outline.placement"``,
+        ``"ambient_occlusion"`` or ``"outline_selected_labels"``.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field: str
+    value: Any
+
+
 CellierUpdateEventTypes = (
     AppearanceUpdateEvent
     | DimsUpdateEvent
     | AABBUpdateEvent
     | ChannelAppearanceUpdateEvent
     | BackgroundUpdateEvent
+    | RenderConfigUpdateEvent
+    | VisualRenderUpdateEvent
 )
 
 

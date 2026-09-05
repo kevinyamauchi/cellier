@@ -101,7 +101,19 @@ class TemporalAccumulationPass(EffectPass):
         self._frame_count = 0
 
     @property
-    def alpha(self) -> float:
+    def frame_count(self) -> int:
+        """Frames accumulated since the last reset.
+
+        The blend weight is ``1 / (frame_count + 1)`` until that falls below
+        ``alpha``, so this is how far through the warm-up the image is: a
+        GUI can turn it into the difference between "settling" and
+        "settled", which is otherwise the one thing about this pass a user
+        cannot see.
+        """
+        return self._frame_count
+
+    @property
+    def blend_weight(self) -> float:
         """Minimum blend weight for the current frame (EMA floor).
 
         Lower values give smoother steady-state at the cost of slower
@@ -109,8 +121,8 @@ class TemporalAccumulationPass(EffectPass):
         """
         return self._alpha
 
-    @alpha.setter
-    def alpha(self, value: float) -> None:
+    @blend_weight.setter
+    def blend_weight(self, value: float) -> None:
         self._alpha = float(value)
 
     # ------------------------------------------------------------------

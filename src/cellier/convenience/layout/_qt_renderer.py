@@ -282,12 +282,50 @@ def _qt_dataset_info(spec, visual_ids, controller, parent):
     return QtDatasetInfo(spec.values["rows"], title=spec.title, parent=parent)
 
 
+def _qt_visual_outline(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.render import QtVisualOutlineControls
+
+    return QtVisualOutlineControls(
+        visual_ids,
+        spec.values,
+        palette=spec.values.get("palette", ()),
+        parent=parent,
+    )
+
+
+def _qt_labels_outline(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.render import QtLabelsOutlineControls
+
+    return QtLabelsOutlineControls(
+        visual_ids,
+        spec.values,
+        palette=spec.values.get("palette", ()),
+        parent=parent,
+    )
+
+
+def _qt_visual_occlusion(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.render import QtVisualOcclusionControls
+
+    return QtVisualOcclusionControls(visual_ids, spec.values, parent=parent)
+
+
+def _qt_visual_picking(spec, visual_ids, controller, parent):
+    from cellier.gui.qt.render import QtVisualPickingControls
+
+    return QtVisualPickingControls(visual_ids, spec.values, parent=parent)
+
+
 _QT_BUILDERS = {
     "color_map": _qt_color_map,
     "clim": _qt_clim,
     "render": _qt_render,
     "lod_bias": _qt_lod_bias,
     "aabb": _qt_aabb,
+    "visual_outline": _qt_visual_outline,
+    "labels_outline": _qt_labels_outline,
+    "visual_occlusion": _qt_visual_occlusion,
+    "visual_picking": _qt_visual_picking,
     "dataset_info": _qt_dataset_info,
 }
 """``ControlSpec.kind`` -> Qt widget constructor."""
@@ -329,6 +367,7 @@ def _render_appearance_controls_qt(
         target.visual,
         target.config,
         _resolve_data_store(getattr(viewer, "controller", None), target.visual),
+        palette=viewer.controller.render_config.outline.palette,
     )
     warn_skipped_appearance_fields(skipped, target.visual, target.config)
     if not specs:
@@ -394,6 +433,75 @@ def _render_channel_controls_qt(
     return widget.widget
 
 
+def _render_render_controls_qt(
+    spec: object, viewer: object, closeables: list | None = None
+) -> object | None:
+    """Build and wire one Qt panel per section the spec names.
+
+    Needs no configured visual: render settings belong to the renderer, so
+    unlike the appearance dock this never returns ``None`` for want of a
+    target.
+    """
+    from PySide6 import QtWidgets
+    from PySide6.QtWidgets import QSizePolicy
+
+    from cellier.convenience.layout._shared import (
+        render_panel_kwargs,
+        render_panel_sections,
+    )
+    from cellier.gui._render_controls import RENDER_DOCK_TITLE
+    from cellier.gui.qt.render import (
+        QtAmbientOcclusionControls,
+        QtOutlineControls,
+        QtTemporalControls,
+    )
+
+    panel_types = {
+        "outline": QtOutlineControls,
+        "ambient_occlusion": QtAmbientOcclusionControls,
+        "temporal": QtTemporalControls,
+    }
+    sections = render_panel_sections(spec)
+    if not sections:
+        return None
+
+    controller = viewer.controller
+    inner = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(inner)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    for section in sections:
+        panel = panel_types[section](
+            getattr(controller.render_config, section),
+            **render_panel_kwargs(section, controller),
+        )
+        controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
+        if closeables is not None:
+            closeables.append(panel)
+        layout.addWidget(_titled(panel, inner))
+
+    layout.addStretch()
+
+    # One heading over the whole dock, naming its scope.  Without it the
+    # per-visual groups on the other side of the canvas and these read as
+    # the same kind of thing -- "Outline" beside "Outlines" is not a
+    # distinction anyone should have to notice.
+    from cellier.gui.qt.visuals._chrome import titled_group
+
+    container = titled_group(RENDER_DOCK_TITLE, inner)
+    container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+    container.setMinimumWidth(260)
+    return container
+
+
+def _titled(panel, parent):
+    """Wrap a render panel in a group box carrying its title."""
+    from cellier.gui.qt.visuals._chrome import titled_group
+
+    return titled_group(panel.title, panel.widget, parent)
+
+
 def _render_dock_qt(
     spec: object, viewer: object, closeables: list | None = None
 ) -> object | None:
@@ -407,6 +515,7 @@ def _render_dock_qt(
         AppearanceControls,
         ChannelControls,
         HStack,
+        RenderControls,
         VStack,
     )
 
@@ -414,6 +523,8 @@ def _render_dock_qt(
         return _render_appearance_controls_qt(viewer, closeables)
     if isinstance(spec, ChannelControls):
         return _render_channel_controls_qt(viewer, closeables)
+    if isinstance(spec, RenderControls):
+        return _render_render_controls_qt(spec, viewer, closeables)
     if isinstance(spec, (HStack, VStack)):
         container = QtWidgets.QWidget()
         box = (

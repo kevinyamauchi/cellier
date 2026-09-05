@@ -26,6 +26,7 @@ from cellier.convenience.layout import (
     Grid,
     HStack,
     Layout,
+    RenderControls,
     VStack,
 )
 
@@ -47,6 +48,7 @@ __all__ = [
     "MultiscaleLabelsControlsConfig",
     "OrthoViewer",
     "PointsControlsConfig",
+    "RenderControls",
     "SidecarOptions",
     "VStack",
     "Viewer",

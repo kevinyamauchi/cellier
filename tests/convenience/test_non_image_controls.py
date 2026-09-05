@@ -485,6 +485,12 @@ def test_composite_default_titles_match_the_shared_vocabulary():
     """
     from cellier.convenience.layout._shared import _CONTROL_TITLES
     from cellier.gui.anywidget import AnywidgetDatasetInfo
+    from cellier.gui.anywidget.render import (
+        AnywidgetLabelsOutlineControls,
+        AnywidgetVisualOcclusionControls,
+        AnywidgetVisualOutlineControls,
+        AnywidgetVisualPickingControls,
+    )
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
         AnywidgetClimSlider,
@@ -493,6 +499,12 @@ def test_composite_default_titles_match_the_shared_vocabulary():
         AnywidgetVolumeRenderControls,
     )
     from cellier.gui.qt import QtDatasetInfo
+    from cellier.gui.qt.render import (
+        QtLabelsOutlineControls,
+        QtVisualOcclusionControls,
+        QtVisualOutlineControls,
+        QtVisualPickingControls,
+    )
     from cellier.gui.qt.visuals import (
         QtAABBWidget,
         QtClimRangeSlider,
@@ -507,6 +519,13 @@ def test_composite_default_titles_match_the_shared_vocabulary():
         "render": (QtVolumeRenderControls, AnywidgetVolumeRenderControls),
         "lod_bias": (QtLodBiasSlider, AnywidgetLodBiasSlider),
         "aabb": (QtAABBWidget, AnywidgetAABBWidget),
+        "visual_outline": (QtVisualOutlineControls, AnywidgetVisualOutlineControls),
+        "labels_outline": (QtLabelsOutlineControls, AnywidgetLabelsOutlineControls),
+        "visual_occlusion": (
+            QtVisualOcclusionControls,
+            AnywidgetVisualOcclusionControls,
+        ),
+        "visual_picking": (QtVisualPickingControls, AnywidgetVisualPickingControls),
         "dataset_info": (QtDatasetInfo, AnywidgetDatasetInfo),
     }
     assert set(composites) == set(_CONTROL_TITLES)

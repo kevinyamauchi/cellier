@@ -34,6 +34,7 @@ from cellier.events._events import (
     TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
+    VisualRenderChangedEvent,
     VisualVisibilityChangedEvent,
 )
 
@@ -46,6 +47,7 @@ _ENTITY_FIELD: dict[type, str] = {
     PickWriteChangedEvent: "visual_id",
     AABBChangedEvent: "visual_id",
     VisualVisibilityChangedEvent: "visual_id",
+    VisualRenderChangedEvent: "visual_id",
     DataStoreMetadataChangedEvent: "data_store_id",
     DataStoreContentsChangedEvent: "data_store_id",
     ResliceStartedEvent: "scene_id",

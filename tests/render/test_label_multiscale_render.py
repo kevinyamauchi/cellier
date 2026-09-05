@@ -311,3 +311,75 @@ async def test_visibility_toggle_hides_render(
     )
     shown = render_scene(controller, scene.id)
     assert np.count_nonzero(shown[..., 3]) > 0
+
+
+# ---------------------------------------------------------------------------
+# The per-label outline selection survives a material rebuild
+# ---------------------------------------------------------------------------
+
+
+def _selection_in_texture(material) -> dict[int, int]:
+    """Read a material's selection texture back as ``{label: slot}``.
+
+    Reads the *texture*, not ``n_outline_entries``: the entry count lives on
+    a ``label_params_buffer`` shared across a visual's materials, so it
+    survives a rebuild even when the per-material texture does not.  Only
+    the texture says whether the selection is really still there.
+    """
+    n = int(material.label_params_buffer.data["n_outline_entries"])
+    data = material.outline_selection_texture.data
+    return {int(data[0, i, 0]): int(data[0, i, 1]) for i in range(n)}
+
+
+def _selections(gfx) -> list[dict[int, int]]:
+    return [
+        _selection_in_texture(material)
+        for material in (gfx.material_3d, gfx.material_2d)
+        if material is not None
+    ]
+
+
+def test_the_label_selection_survives_a_geometry_rebuild(
+    controller, multiscale_labels_store
+):
+    """A rebuild replaces the materials, and with them their selection texture.
+
+    ``rebuild_geometry`` constructs a fresh ``LabelVolumeBrickMaterial``
+    whenever the displayed level shapes change, so a selection written
+    straight to the GPU and stored nowhere was silently lost -- the visual
+    kept its outline but every selected label went back to unselected.  The
+    visual records the selection now and puts it back.
+    """
+    scene = controller.add_scene(dim="3d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+
+    selection = {1: 1, 2: 2}
+    controller.set_label_selection(visual.id, selection)
+    assert _selection_in_texture(gfx.material_3d) == selection
+
+    material_before = gfx.material_3d
+    gfx._rebuild_3d_resources()
+
+    assert gfx.material_3d is not material_before, "the rebuild replaced nothing"
+    assert _selection_in_texture(gfx.material_3d) == selection, "selection was lost"
+
+
+def test_the_selection_is_recorded_on_the_model(controller, multiscale_labels_store):
+    """``set_label_selection`` writes the visual, which is what persists it."""
+    scene = controller.add_scene(dim="3d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    controller.set_label_selection(visual.id, {3: 1})
+
+    assert visual.outline_selected_labels == {3: 1}

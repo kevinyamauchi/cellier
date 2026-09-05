@@ -36,14 +36,15 @@ Entry layout, one byte:
 bits  field
 ===== =========================================================
 0-3   selection slot; 0 = not selected, else palette index v - 1
-4-5   kind; 0 = not outlined, 1 = whole object, 2 = label
+4-5   kind; 0 = not outlined, 1 = whole object, 2 = label,
+      3 = label with a uniform colour
 6     placement; 0 = inward, 1 = outward
 7     excluded from ambient occlusion
 ===== =========================================================
 
-Bit 7 is the last free bit.  If a third per-object flag is ever needed the
-format goes ``r8uint`` -> ``r16uint`` (2 MB) and the index arithmetic is
-unchanged.
+The byte is now full: bit 7 was the last free bit and kind 3 the last free
+kind.  If another per-object flag or mode is ever needed the format goes
+``r8uint`` -> ``r16uint`` (2 MB) and the index arithmetic is unchanged.
 
 Entry 0 is permanently inert: the pick target clears to zero and pygfx's
 ``IdProvider`` seeds ``_ids_in_use = {0}``, so no object is ever given id
@@ -69,6 +70,10 @@ MAX_SLOT: int = 15
 KIND_NONE: int = 0
 KIND_WHOLE_OBJECT: int = 1
 KIND_LABEL: int = 2
+#: Key on the per-pixel label, as ``KIND_LABEL`` does, but take the colour
+#: from the visual's own slot rather than from the key.  Every label in the
+#: volume is then banded in one colour, boundaries between them included.
+KIND_LABEL_ALL: int = 3
 
 PLACEMENT_INWARD: int = 0
 PLACEMENT_OUTWARD: int = 1
@@ -114,7 +119,8 @@ def encode_entry(
         boundaries layer only", not "not outlined" -- ``kind`` decides
         that.
     kind : int
-        ``KIND_NONE``, ``KIND_WHOLE_OBJECT`` or ``KIND_LABEL``.
+        ``KIND_NONE``, ``KIND_WHOLE_OBJECT``, ``KIND_LABEL`` or
+        ``KIND_LABEL_ALL``.
     placement : int
         ``PLACEMENT_INWARD`` or ``PLACEMENT_OUTWARD``.
     ao_excluded : bool
@@ -135,7 +141,7 @@ def encode_entry(
     """
     if not 0 <= slot <= MAX_SLOT:
         raise ValueError(f"slot must be in [0, {MAX_SLOT}], got {slot}")
-    if kind not in (KIND_NONE, KIND_WHOLE_OBJECT, KIND_LABEL):
+    if kind not in (KIND_NONE, KIND_WHOLE_OBJECT, KIND_LABEL, KIND_LABEL_ALL):
         raise ValueError(f"unknown outline kind: {kind}")
     if placement not in (PLACEMENT_INWARD, PLACEMENT_OUTWARD):
         raise ValueError(f"unknown outline placement: {placement}")

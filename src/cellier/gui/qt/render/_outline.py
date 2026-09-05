@@ -1,0 +1,45 @@
+"""Qt panel for the screen-space outline settings."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, ClassVar
+
+from cellier.gui._render_controls import RENDER_SECTION_TITLES
+from cellier.gui.qt.render._base import QtRenderConfigPanel
+
+if TYPE_CHECKING:
+    from cellier.render._config import OutlineConfig
+
+
+class QtOutlineControls(QtRenderConfigPanel):
+    """Screen-space outline settings on the cellier bus.
+
+    Two layers run in the same fragment invocation and can both be active:
+    *boundaries* draws every outlined region, *selection* draws only the
+    regions carrying a palette slot.
+
+    Every control here comes from the shared spec in
+    ``cellier.gui._render_controls``, which is also what the notebook panel
+    reads -- including the absence of a colour control on the selection
+    layer, whose colour comes from the palette slot rather than from its
+    own field.
+
+    Which visuals are outlined, and in which slot, is a per-visual setting
+    rather than a render-config one; see
+    ``CellierController.set_visual_outline`` and ``set_label_selection``.
+
+    Parameters
+    ----------
+    config :
+        The live ``OutlineConfig`` to read initial values from -- typically
+        ``controller.render_config.outline``.
+    parent :
+        Optional Qt parent widget.
+    """
+
+    section: ClassVar[str] = "outline"
+    title: ClassVar[str] = RENDER_SECTION_TITLES["outline"]
+
+    def __init__(self, config: OutlineConfig, *, parent=None) -> None:
+        super().__init__(parent)
+        self._build_from_spec(config)

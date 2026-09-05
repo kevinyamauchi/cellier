@@ -189,21 +189,21 @@ class RenderManager:
     def config(self) -> RenderManagerConfig:
         """Current rendering performance configuration.
 
-        Reflects live state: mutations via ``temporal_alpha`` and
+        Reflects live state: mutations via ``temporal_blend_weight`` and
         ``temporal_enabled`` setters are visible here immediately.
         """
         return self._config
 
     @property
-    def temporal_alpha(self) -> float:
+    def temporal_blend_weight(self) -> float:
         """EMA floor weight for temporal accumulation."""
-        return self._config.temporal.alpha
+        return self._config.temporal.blend_weight
 
-    @temporal_alpha.setter
-    def temporal_alpha(self, value: float) -> None:
-        self._config.temporal.alpha = value
+    @temporal_blend_weight.setter
+    def temporal_blend_weight(self, value: float) -> None:
+        self._config.temporal.blend_weight = value
         for canvas in self._canvases.values():
-            canvas._accum_pass.alpha = value
+            canvas._accum_pass.blend_weight = value
 
     @property
     def temporal_enabled(self) -> bool:
@@ -221,102 +221,148 @@ class RenderManager:
             # frame, with no warm-up, however long the pass was off.
             canvas.invalidate_accumulation()
 
+    @property
+    def temporal_frame_count(self) -> int | None:
+        """Frames accumulated on the least-converged canvas.
+
+        ``None`` when there is no canvas.  The minimum rather than any one
+        canvas's count, so a GUI reading it reports "settled" only once
+        every canvas is.
+        """
+        counts = [c._accum_pass.frame_count for c in self._canvases.values()]
+        return min(counts) if counts else None
+
+    def reset_temporal_accumulation(self) -> None:
+        """Discard the accumulated history on every canvas."""
+        for canvas in self._canvases.values():
+            canvas.invalidate_accumulation()
+
     # ------------------------------------------------------------------
     # Screen-space ambient occlusion
     # ------------------------------------------------------------------
 
     @property
-    def ssao_enabled(self) -> bool:
+    def ambient_occlusion_enabled(self) -> bool:
         """Whether the ambient occlusion pass is active.
 
         A canvas in 2D never runs the pass whatever this says; see
         ``CanvasView.set_ssao_enabled``.
         """
-        return self._config.ssao.enabled
+        return self._config.ambient_occlusion.enabled
 
-    @ssao_enabled.setter
-    def ssao_enabled(self, value: bool) -> None:
+    @ambient_occlusion_enabled.setter
+    def ambient_occlusion_enabled(self, value: bool) -> None:
         value = bool(value)
-        self._config.ssao.enabled = value
+        self._config.ambient_occlusion.enabled = value
         for canvas in self._canvases.values():
+            if value:
+                # Only on the way on, and only where it is missing: a canvas
+                # built without the ``normal`` target would otherwise run the
+                # pass against normals reconstructed from depth, which is
+                # 34 degrees out on a raymarched isosurface.
+                canvas.ensure_render_targets(ssao=True)
             canvas.set_ssao_enabled(value)
 
     @property
-    def ssao_radius(self) -> float | None:
+    def ambient_occlusion_radius(self) -> float | None:
         """Hemisphere radius in scene units, or ``None`` for auto."""
-        return self._config.ssao.radius
+        return self._config.ambient_occlusion.radius
 
-    @ssao_radius.setter
-    def ssao_radius(self, value: float | None) -> None:
+    @ambient_occlusion_radius.setter
+    def ambient_occlusion_radius(self, value: float | None) -> None:
         value = None if value is None else float(value)
-        self._config.ssao.radius = value
+        self._config.ambient_occlusion.radius = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.radius = value
 
     @property
-    def ssao_strength(self) -> float:
+    def ambient_occlusion_strength(self) -> float:
         """How far the occlusion multiply is applied, 0 (off) to 1 (full)."""
-        return self._config.ssao.strength
+        return self._config.ambient_occlusion.strength
 
-    @ssao_strength.setter
-    def ssao_strength(self, value: float) -> None:
+    @ambient_occlusion_strength.setter
+    def ambient_occlusion_strength(self, value: float) -> None:
         value = float(value)
-        self._config.ssao.strength = value
+        self._config.ambient_occlusion.strength = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.strength = value
 
     @property
-    def ssao_power(self) -> float:
+    def ambient_occlusion_power(self) -> float:
         """Contrast exponent applied to the occlusion before the multiply."""
-        return self._config.ssao.power
+        return self._config.ambient_occlusion.power
 
-    @ssao_power.setter
-    def ssao_power(self, value: float) -> None:
+    @ambient_occlusion_power.setter
+    def ambient_occlusion_power(self, value: float) -> None:
         value = float(value)
-        self._config.ssao.power = value
+        self._config.ambient_occlusion.power = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.power = value
 
     @property
-    def ssao_bias(self) -> float:
+    def ambient_occlusion_bias(self) -> float:
         """Depth-comparison bias, as a fraction of the effective radius."""
-        return self._config.ssao.bias
+        return self._config.ambient_occlusion.bias
 
-    @ssao_bias.setter
-    def ssao_bias(self, value: float) -> None:
+    @ambient_occlusion_bias.setter
+    def ambient_occlusion_bias(self, value: float) -> None:
         value = float(value)
-        self._config.ssao.bias = value
+        self._config.ambient_occlusion.bias = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.bias = value
 
     @property
-    def ssao_n_samples(self) -> int:
+    def ambient_occlusion_n_samples(self) -> int:
         """Hemisphere samples per pixel.  Changing this recompiles."""
-        return self._config.ssao.n_samples
+        return self._config.ambient_occlusion.n_samples
 
-    @ssao_n_samples.setter
-    def ssao_n_samples(self, value: int) -> None:
+    @ambient_occlusion_n_samples.setter
+    def ambient_occlusion_n_samples(self, value: int) -> None:
         value = int(value)
-        self._config.ssao.n_samples = value
+        self._config.ambient_occlusion.n_samples = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.n_samples = value
 
     @property
-    def ssao_blur_radius(self) -> int:
+    def ambient_occlusion_blur_radius(self) -> int:
         """Box-blur half-width in internal pixels.  Changing this recompiles."""
-        return self._config.ssao.blur_radius
+        return self._config.ambient_occlusion.blur_radius
 
-    @ssao_blur_radius.setter
-    def ssao_blur_radius(self, value: int) -> None:
+    @ambient_occlusion_blur_radius.setter
+    def ambient_occlusion_blur_radius(self, value: int) -> None:
         value = int(value)
-        self._config.ssao.blur_radius = value
+        self._config.ambient_occlusion.blur_radius = value
         for canvas in self._canvases.values():
             canvas._ssao_pass.blur_radius = value
 
-    def apply_ssao_config(self) -> None:
-        """Push the current ``config.ssao`` onto every canvas's pass."""
+    @property
+    def ambient_occlusion_auto_radius_fraction(self) -> float:
+        """Fraction of the scene bounding box diagonal used when radius is auto."""
+        return self._config.ambient_occlusion.auto_radius_fraction
+
+    @ambient_occlusion_auto_radius_fraction.setter
+    def ambient_occlusion_auto_radius_fraction(self, value: float) -> None:
+        value = float(value)
+        self._config.ambient_occlusion.auto_radius_fraction = value
         for canvas in self._canvases.values():
-            canvas.apply_ssao_config(self._config.ssao)
+            canvas._ssao_pass.auto_radius_fraction = value
+
+    @property
+    def ambient_occlusion_effective_radius(self) -> float | None:
+        """The occlusion radius actually in use, in scene units.
+
+        The explicit ``config.ambient_occlusion.radius`` when one is set, otherwise the
+        value derived from the scene bounding box diagonal.  ``None`` when
+        there is no canvas to ask.  Read-only.
+        """
+        for canvas in self._canvases.values():
+            return canvas._ssao_pass.effective_radius
+        return None
+
+    def apply_ambient_occlusion_config(self) -> None:
+        """Push the current ``config.ambient_occlusion`` onto every canvas's pass."""
+        for canvas in self._canvases.values():
+            canvas.apply_ambient_occlusion_config(self._config.ambient_occlusion)
 
     def update_ssao_radius(self, scene_id: UUID) -> None:
         """Recompute the auto occlusion radius for one scene.
@@ -376,6 +422,11 @@ class RenderManager:
         if value:
             self._warn_if_outline_unavailable()
         for canvas in self._canvases.values():
+            if value:
+                # Only on the way on, and only where it is missing.  Without
+                # the ``outline_id`` target a labels visual is outlined as one
+                # silhouette rather than per label.
+                canvas.ensure_render_targets(outline=True)
             canvas._outline_pass.enabled = value
 
     @property
@@ -437,9 +488,10 @@ class RenderManager:
             ``KIND_WHOLE_OBJECT`` keys the edge test on the pygfx object id,
             giving one silhouette per visual.  ``KIND_LABEL`` keys it on the
             per-pixel label field instead, so boundaries appear *between*
-            labels inside one volume.  Requires the ``outline_id`` target;
-            without it a label visual falls back to a whole-object
-            silhouette.
+            labels inside one volume, coloured per label.  ``KIND_LABEL_ALL``
+            keys on the label too but colours every one of them from *slot*.
+            Both label kinds require the ``outline_id`` target; without it a
+            label visual falls back to a whole-object silhouette.
 
         Raises
         ------
@@ -543,6 +595,15 @@ class RenderManager:
         except KeyError:
             return
 
+        # A visual that can rebuild its materials records the selection and
+        # re-applies it for itself; one whose materials are built once takes
+        # the direct write.  Duck-typed rather than keyed on class, the way
+        # ``_label_materials`` is.
+        recorder = getattr(gfx_visual, "set_outline_selection", None)
+        if recorder is not None:
+            recorder(selection)
+            return
+
         for material in self._label_materials(gfx_visual):
             count = update_outline_selection(
                 material.outline_selection_texture, selection
@@ -607,7 +668,7 @@ class RenderManager:
         wipe every occlusion exclusion.  That is why this walks one
         authoritative map and writes one byte per object.
         """
-        ssao_on = self._config.ssao.enabled
+        ssao_on = self._config.ambient_occlusion.enabled
         if not self._visual_flags and not ssao_on:
             if peek_shared_visual_lut() is None:
                 # Neither feature has ever needed the table on this
@@ -819,16 +880,16 @@ class RenderManager:
             get_scene_fn=self.get_scene,
             parent=parent,
             outline_enabled=self._config.outline.enabled,
-            ssao_enabled=self._config.ssao.enabled,
+            ambient_occlusion_enabled=self._config.ambient_occlusion.enabled,
             **canvas_view_kwargs,
         )
         # Apply temporal config to the canvas's accumulation pass.
-        canvas_view._accum_pass.alpha = self._config.temporal.alpha
+        canvas_view._accum_pass.blend_weight = self._config.temporal.blend_weight
         if not self._config.temporal.enabled:
             canvas_view._accum_pass.enabled = False
         # Apply the ambient occlusion config.  The pass stays off in 2D
         # whatever the config says.
-        canvas_view.apply_ssao_config(self._config.ssao)
+        canvas_view.apply_ambient_occlusion_config(self._config.ambient_occlusion)
         # Apply outline config, and wire the per-frame LUT re-sync.
         canvas_view._outline_pass.apply_config(self._config.outline)
         canvas_view._visual_lut_sync_fn = self._sync_visual_lut
@@ -1159,6 +1220,11 @@ class RenderManager:
         """
         scene_id = self._visual_to_scene.pop(visual_id)
         self._data_stores.pop(visual_id)
+        # Drop the per-visual render flags too.  Leaving them behind leaks,
+        # and -- because the map is keyed by cellier visual id rather than by
+        # anything pygfx hands out -- a visual re-registered under the same
+        # id would silently inherit the old outline.
+        self._visual_flags.pop(visual_id, None)
         self._scenes[scene_id].remove_visual(visual_id)
 
     def remove_scene(self, scene_id: UUID) -> None:
@@ -1177,6 +1243,7 @@ class RenderManager:
         for vid in scene_manager.visual_ids:
             self._visual_to_scene.pop(vid, None)
             self._data_stores.pop(vid, None)
+            self._visual_flags.pop(vid, None)
         # scene_manager goes out of scope here; GC drops gfx.Scene + all nodes.
 
         canvas_ids = [

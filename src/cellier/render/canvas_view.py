@@ -19,6 +19,7 @@ from cellier.logging import _CAMERA_LOGGER
 from cellier.render._cellier_blender import (
     NORMAL_TARGET,
     OUTLINE_ID_TARGET,
+    ensure_extra_targets,
     install_cellier_blender,
 )
 from cellier.render._outline import OutlinePass
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.events._bus import EventBus
-    from cellier.render._config import SSAOConfig
+    from cellier.render._config import AmbientOcclusionConfig
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
 
 
@@ -70,15 +71,16 @@ class CanvasView:
         Near and far clip distances ``(near, far)``.
     outline_enabled : bool
         When ``True``, install a blender carrying the ``outline_id`` render
-        target so label outlines have a per-pixel label key.  Must be
-        decided here: the target list feeds ``Blender.hash``, which keys
-        the pipeline cache.  Costs 4 bytes per pixel.
-    ssao_enabled : bool
+        target so label outlines have a per-pixel label key.  Costs 4 bytes
+        per pixel.  Deciding here is the cheap path, not the only one:
+        :meth:`ensure_render_targets` adds it later for the price of one
+        recompile frame.
+    ambient_occlusion_enabled : bool
         When ``True``, install a blender carrying the ``normal`` render
         target so cellier's volume shaders can hand the ambient occlusion
         pass a real surface normal instead of one reconstructed from
-        depth.  Construction-time for the same reason as *outline_enabled*.
-        Costs 8 bytes per pixel.
+        depth.  Costs 8 bytes per pixel, and is addable later by the same
+        route as *outline_enabled*.
     """
 
     def __init__(
@@ -94,7 +96,7 @@ class CanvasView:
         gui: str = "qt",
         size: tuple[int, int] | None = None,
         outline_enabled: bool = False,
-        ssao_enabled: bool = False,
+        ambient_occlusion_enabled: bool = False,
     ) -> None:
         self._canvas_id = canvas_id
         self._scene_id = scene_id
@@ -127,12 +129,13 @@ class CanvasView:
         # until outlines are switched on would be too late.  A False result
         # leaves the outline pass installed but permanently a passthrough;
         # RenderManager warns if outlines are then requested.
-        # The extra render targets are construction-time only, and only for
-        # canvases that opted in.  The target list feeds ``Blender.hash``,
-        # which keys the pipeline cache, so adding or removing one later
-        # would invalidate every pipeline in the process.  Canvases that
-        # enable neither feature keep the stock blender and pay nothing:
-        # ``outline_id`` costs 4 bytes per pixel and ``normal`` 8.
+        # The extra render targets are installed here for the canvases that
+        # opted in, so a viewer configured up front pays no recompile.  A
+        # canvas that did not opt in can still gain them later through
+        # ``ensure_render_targets``, which costs one recompile frame.
+        # Canvases that never enable either feature keep the stock blender
+        # and pay nothing: ``outline_id`` costs 4 bytes per pixel, and
+        # ``normal`` 8.
         #
         # This runs *before* the pick grant: installing replaces the whole
         # blender, so granting first would throw the grant away.
@@ -141,7 +144,7 @@ class CanvasView:
         extra_targets: list[str] = []
         if outline_enabled:
             extra_targets.append(OUTLINE_ID_TARGET)
-        if ssao_enabled:
+        if ambient_occlusion_enabled:
             extra_targets.append(NORMAL_TARGET)
         installed = (
             install_cellier_blender(self._renderer, extra_targets)
@@ -149,7 +152,7 @@ class CanvasView:
             else False
         )
         self._outline_id_available: bool = installed and outline_enabled
-        self._normal_target_available: bool = installed and ssao_enabled
+        self._normal_target_available: bool = installed and ambient_occlusion_enabled
 
         self._outline_available: bool = enable_pick_texture_binding(self._renderer)
         self._visual_lut_sync_fn: Callable[[], None] | None = None
@@ -692,12 +695,12 @@ class CanvasView:
         first_visit = new_dim not in self._fitted
         return first_visit
 
-    def apply_ssao_config(self, config: SSAOConfig) -> None:
-        """Push an ``SSAOConfig`` onto this canvas's occlusion pass.
+    def apply_ambient_occlusion_config(self, config: AmbientOcclusionConfig) -> None:
+        """Push an ``AmbientOcclusionConfig`` onto this canvas's occlusion pass.
 
         Parameters
         ----------
-        config : SSAOConfig
+        config : AmbientOcclusionConfig
             The configuration to apply.  Its ``enabled`` flag is recorded
             as the *requested* state; the pass itself stays off while the
             canvas is in 2D.
@@ -721,6 +724,52 @@ class CanvasView:
 
     def _apply_ssao_enabled(self) -> None:
         self._ssao_pass.enabled = self._ssao_requested and self._dim != "2d"
+
+    def ensure_render_targets(
+        self, *, outline: bool = False, ssao: bool = False
+    ) -> None:
+        """Add the render targets a feature needs, after construction.
+
+        The targets are chosen at construction from the render config, which
+        is right for a viewer that was configured up front and wrong for one
+        where a user ticks the box later: a feature switched on afterwards
+        would run without its target and quietly degrade -- ambient
+        occlusion to normals reconstructed from depth, outlines to
+        whole-object silhouettes with no per-label boundaries.  This adds
+        the missing target instead, at the cost of one recompile frame.
+
+        Safe to call repeatedly; it does nothing when the targets are
+        already present, which is the common case.  **Not safe to call from
+        inside a draw callback** -- see :func:`ensure_extra_targets`.
+
+        Parameters
+        ----------
+        outline : bool
+            Ensure the ``outline_id`` target, for per-label outlines.
+        ssao : bool
+            Ensure the ``normal`` target, for occlusion on raymarched
+            isosurfaces.
+        """
+        wanted: list[str] = []
+        if outline and not self._outline_id_available:
+            wanted.append(OUTLINE_ID_TARGET)
+        if ssao and not self._normal_target_available:
+            wanted.append(NORMAL_TARGET)
+        if not wanted:
+            return
+
+        if not ensure_extra_targets(self._renderer, wanted):
+            # pygfx is not the expected shape.  The features still run,
+            # against the fallbacks they were designed with.
+            return
+        if OUTLINE_ID_TARGET in wanted:
+            self._outline_id_available = True
+        if NORMAL_TARGET in wanted:
+            self._normal_target_available = True
+        # The new blender's textures do not exist yet, so the accumulated
+        # history is an average with frames drawn against the old one.
+        # ``request_draw`` invalidates it for us.
+        self.request_draw()
 
     def set_scene_extent(self, diagonal: float) -> None:
         """Forward the scene bounding box diagonal to the occlusion pass.

@@ -1,0 +1,224 @@
+.cellier-render-panel {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+}
+
+.cellier-render-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.cellier-render-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cellier-render-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Mirrors the Qt labelled row's shared minimum, so "Blur radius" and
+   "Strength" line up down a panel and the column tracks the user's font. */
+.cellier-render-label {
+  min-width: 5.5em;
+  text-align: right;
+  opacity: 0.85;
+}
+
+.cellier-render-checklabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.cellier-render-numeric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+
+.cellier-render-numeric input[type="range"] {
+  flex: 1 1 auto;
+}
+
+.cellier-render-value {
+  min-width: 3.5em;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.cellier-render-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+
+.cellier-render-alpha {
+  flex: 1 1 auto;
+}
+
+.cellier-render-colorswatch {
+  width: 36px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  background: transparent;
+  cursor: pointer;
+}
+
+.cellier-render-palette {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.cellier-render-swatches {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.cellier-render-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cellier-render-slot-number {
+  font-size: 9px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.cellier-render-palette-buttons {
+  display: flex;
+  gap: 2px;
+}
+
+.cellier-render-palette-buttons button {
+  width: 24px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.cellier-render-palette-buttons button:hover {
+  opacity: 1;
+}
+
+.cellier-render-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  background: transparent;
+  cursor: pointer;
+}
+
+.cellier-render-group {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 4px;
+  margin: 4px 0;
+  padding: 2px 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cellier-render-group legend {
+  padding: 0 4px;
+  opacity: 0.75;
+}
+
+.cellier-render-readouts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  opacity: 0.8;
+}
+
+.cellier-render-readout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-render-action {
+  margin-top: 6px;
+  padding: 3px 12px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  opacity: 0.75;
+  transition: opacity 0.1s, background 0.1s;
+}
+
+.cellier-render-action:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* --- per-visual panels --------------------------------------------- */
+
+.cellier-render-slot-off {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.cellier-render-swatches .cellier-render-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The chosen slot is marked by its border, not by its fill: the fill is
+   the palette colour and must stay readable as itself. */
+.cellier-render-chosen {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.cellier-render-label-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+}
+
+.cellier-render-label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cellier-render-label-row input[type="number"] {
+  width: 5em;
+}
+
+.cellier-render-remove {
+  width: 22px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}

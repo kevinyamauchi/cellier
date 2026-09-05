@@ -5,8 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cellier.transform import AffineTransform
-from cellier.visuals._base_visual import BaseVisual
-from cellier.visuals._label_memory import BaseLabelsAppearance
+from cellier.visuals._label_memory import BaseLabelsAppearance, BaseLabelsVisual
 
 
 class MultiscaleLabelsAppearance(BaseLabelsAppearance):
@@ -64,7 +63,7 @@ class MultiscaleLabelRenderConfig(BaseModel):
     paint_max_tiles: int = 512
 
 
-class MultiscaleLabelVisual(BaseVisual):
+class MultiscaleLabelVisual(BaseLabelsVisual):
     """Model for a multiscale label visual.
 
     Parameters

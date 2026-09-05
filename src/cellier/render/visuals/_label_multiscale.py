@@ -326,6 +326,11 @@ class GFXMultiscaleLabelVisual:
                 volume_geometry._scale_vecs_data
             )
 
+        # Which label values the selection layer outlines.  Held here so a
+        # geometry rebuild -- which replaces both materials, and with them
+        # their selection textures -- can put it back.
+        self._outline_selection: dict[int, int] = {}
+
         # ── 3D node ───────────────────────────────────────────────────────
         self.node_3d: gfx.Group | None = None
         self._inner_node_3d: NormSizedVolume | None = None
@@ -550,6 +555,7 @@ class GFXMultiscaleLabelVisual:
             self.node_3d.add(self._aabb_line_3d)
             if self._last_displayed_axes is not None:
                 self._update_node_matrix(self._last_displayed_axes)
+            self._apply_outline_selection()
         self._pending_slot_map = {}
 
     def _rebuild_2d_resources(self) -> None:
@@ -576,6 +582,7 @@ class GFXMultiscaleLabelVisual:
             self.node_2d.add(self._aabb_line_2d)
             if self._last_displayed_axes is not None:
                 self._update_node_matrix(self._last_displayed_axes)
+            self._apply_outline_selection()
         self._pending_slot_map_2d = {}
 
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
@@ -1444,6 +1451,31 @@ class GFXMultiscaleLabelVisual:
         else:
             positions = _rect_wireframe_positions(np.zeros(2), np.ones(2))
         return _make_aabb_line(positions, self._aabb_color, self._aabb_line_width)
+
+    def set_outline_selection(self, selection: dict[int, int]) -> None:
+        """Record and apply which label values the selection layer outlines.
+
+        Recorded, not just applied, because this visual's materials can be
+        rebuilt underneath it -- and a selection that lived only in the GPU
+        texture would vanish when they were.
+        """
+        self._outline_selection = dict(selection)
+        self._apply_outline_selection()
+
+    def _apply_outline_selection(self) -> None:
+        """Push the recorded selection into whatever materials exist now."""
+        from cellier.render.shaders._label_colormap import update_outline_selection
+
+        for material in (self.material_3d, self.material_2d):
+            if material is None:
+                continue
+            texture = getattr(material, "outline_selection_texture", None)
+            buffer = getattr(material, "label_params_buffer", None)
+            if texture is None or buffer is None:
+                continue
+            count = update_outline_selection(texture, self._outline_selection)
+            buffer.data["n_outline_entries"] = np.uint32(count)
+            buffer.update_full()
 
     def _build_3d_node(
         self,
