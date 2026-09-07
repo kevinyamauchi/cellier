@@ -5,9 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cellier.convenience import OrthoViewer, Viewer
+from cellier.convenience import ChannelControls, OrthoViewer, Viewer
+from cellier.convenience._hosts import QtLayoutHost
 from cellier.convenience.gui._controls_config import ChannelControlsConfig
 from cellier.convenience.layout._shared import _resolve_channel_visual_ids
+from cellier.convenience.layout._walk import render_dock
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.visuals._channel_appearance import ChannelAppearance
 
@@ -40,7 +42,10 @@ def _find_control(widget, channel_index: int, field: str):
 def test_resolver_single_viewer_returns_config_and_visual():
     viewer = Viewer(("z", "c", "y", "x"), dim="2d")
     visual = viewer.add_multichannel_image(
-        _make_store(), channel_axis=1, channels=_channels(2), controls={}
+        _make_store(),
+        channel_axis=1,
+        channels=_channels(2),
+        controls=ChannelControlsConfig(),
     )
 
     resolved = _resolve_channel_visual_ids(viewer)
@@ -64,7 +69,7 @@ def test_resolver_raises_over_cap():
         channel_axis=1,
         channels=_channels(3),
         max_channels_3d=2,  # min(8, 2) = 2 < 3 channels
-        controls={},
+        controls=ChannelControlsConfig(),
     )
     with pytest.raises(ValueError, match="min\\(max_channels_2d"):
         _resolve_channel_visual_ids(viewer)
@@ -77,7 +82,7 @@ def test_resolver_succeeds_at_exactly_cap():
         channel_axis=1,
         channels=_channels(3),
         max_channels_3d=3,  # min(8, 3) = 3 == 3 channels
-        controls={},
+        controls=ChannelControlsConfig(),
     )
     resolved = _resolve_channel_visual_ids(viewer)
     assert resolved is not None
@@ -92,7 +97,7 @@ def test_bumping_cap_makes_failing_case_pass():
         channel_axis=1,
         channels=_channels(3),
         max_channels_3d=4,
-        controls={},
+        controls=ChannelControlsConfig(),
     )
     resolved = _resolve_channel_visual_ids(viewer)
     assert resolved is not None
@@ -107,7 +112,10 @@ def test_bumping_cap_makes_failing_case_pass():
 def test_ortho_resolver_gathers_all_panel_ids():
     ortho = OrthoViewer(("z", "c", "y", "x"), spatial_axes=("z", "y", "x"))
     visuals = ortho.add_multichannel_image(
-        _make_store(2), channel_axis=1, channels=_channels(2), controls={}
+        _make_store(2),
+        channel_axis=1,
+        channels=_channels(2),
+        controls=ChannelControlsConfig(),
     )
 
     resolved = _resolve_channel_visual_ids(ortho)
@@ -122,7 +130,10 @@ def test_ortho_edit_reaches_all_panels(qtbot):
 
     ortho = OrthoViewer(("z", "c", "y", "x"), spatial_axes=("z", "y", "x"))
     visuals = ortho.add_multichannel_image(
-        _make_store(2), channel_axis=1, channels=_channels(2), controls={}
+        _make_store(2),
+        channel_axis=1,
+        channels=_channels(2),
+        controls=ChannelControlsConfig(),
     )
 
     _config, visual_ids, channels = _resolve_channel_visual_ids(ortho)
@@ -144,33 +155,36 @@ def test_ortho_edit_reaches_all_panels(qtbot):
 
 
 def test_render_channel_controls_qt_builds_widget(qtbot):
-    from cellier.convenience.layout._qt_renderer import _render_channel_controls_qt
 
     viewer = Viewer(("z", "c", "y", "x"), dim="2d")
     viewer.add_multichannel_image(
-        _make_store(2), channel_axis=1, channels=_channels(2), controls={}
+        _make_store(2),
+        channel_axis=1,
+        channels=_channels(2),
+        controls=ChannelControlsConfig(),
     )
 
-    rendered = _render_channel_controls_qt(viewer)
+    rendered = render_dock(ChannelControls(), viewer, QtLayoutHost(), [])
     assert rendered is not None
 
 
 def test_render_dock_qt_dispatches_channel_controls(qtbot):
-    from cellier.convenience.layout._qt_renderer import _render_dock_qt
     from cellier.convenience.layout._spec import ChannelControls
 
     viewer = Viewer(("z", "c", "y", "x"), dim="2d")
     viewer.add_multichannel_image(
-        _make_store(2), channel_axis=1, channels=_channels(2), controls={}
+        _make_store(2),
+        channel_axis=1,
+        channels=_channels(2),
+        controls=ChannelControlsConfig(),
     )
 
-    rendered = _render_dock_qt(ChannelControls(), viewer)
+    rendered = render_dock(ChannelControls(), viewer, QtLayoutHost(), [])
     assert rendered is not None
 
 
 def test_render_channel_controls_qt_none_without_config(qtbot):
-    from cellier.convenience.layout._qt_renderer import _render_channel_controls_qt
 
     viewer = Viewer(("z", "c", "y", "x"), dim="2d")
     viewer.add_multichannel_image(_make_store(2), channel_axis=1, channels=_channels(2))
-    assert _render_channel_controls_qt(viewer) is None
+    assert render_dock(ChannelControls(), viewer, QtLayoutHost(), []) is None

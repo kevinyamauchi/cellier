@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from cellier._state import CameraState, DimsState
+    from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
 
 
@@ -130,6 +131,34 @@ class FrameRenderedEvent(NamedTuple):
     frame_time_ms: float
 
 
+class CanvasConnectedEvent(NamedTuple):
+    """Emitted once a canvas's front end is live and able to draw.
+
+    Distinct from :class:`FrameRenderedEvent`, which says a frame *has* been
+    drawn.  On Qt the two nearly coincide -- the widget is shown and the
+    continuous scheduler draws immediately -- but on the anywidget backend
+    they can be far apart, or the frame may never arrive at all: the canvas
+    exists in Python long before the browser mounts it, and nothing can be
+    rendered until it does.
+
+    Anything that must wait for a *usable* canvas rather than a *painted* one
+    should watch this.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the ``CanvasView`` reporting the connection.
+    canvas_id : UUID
+        Model-layer canvas identifier.
+    gui : str
+        Which front end connected, for diagnostics.
+    """
+
+    source_id: UUID
+    canvas_id: UUID
+    gui: str
+
+
 class CanvasSizeChangedEvent(NamedTuple):
     """Emitted when the physical pixel size of a canvas changes.
 
@@ -171,6 +200,116 @@ class VisualRemovedEvent(NamedTuple):
 class SceneAddedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
+
+
+class BackgroundChangedEvent(NamedTuple):
+    """Emitted when a scene's ``BackgroundAppearance`` changes.
+
+    Routed from the psygnal bridge in
+    ``CellierController._wire_scene_background`` -- both from a field change
+    on the background model and from wholesale replacement
+    (``scene.background = BackgroundAppearance(...)``).  The background is a
+    property of the scene rather than of any visual, so it travels on its own
+    event keyed by ``scene_id`` rather than riding on
+    ``AppearanceChangedEvent``.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    scene_id : UUID
+        Model-layer ID of the scene whose background changed.
+    background : BackgroundAppearance
+        The scene's complete background model *after* the change.  Carried
+        whole, not just the delta, because which fields are meaningful
+        depends on ``mode`` -- a subscriber holding a snapshot cannot
+        reconstruct the rest from one field.
+    field_name : str or None
+        Name of the changed field (e.g. ``"top_color"``, ``"mode"``), or
+        ``None`` when the whole model was replaced.
+    new_value : Any
+        The new field value, or ``None`` for whole-model replacement.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    background: BackgroundAppearance
+    field_name: str | None = None
+    new_value: Any = None
+
+
+class VisualRenderChangedEvent(NamedTuple):
+    """Emitted when one visual's screen-space render settings change.
+
+    Covers the per-visual half of the outline and ambient occlusion
+    features: which palette slot a visual is outlined in, which side of its
+    edge the band sits on, whether it receives occlusion, and -- for labels
+    visuals -- which label values the selection layer draws.
+
+    One event type rather than three, keyed by ``visual_id`` and carrying a
+    dotted ``field_name``, so a per-visual widget needs one subscription
+    rather than one per field.  The *global* half of both features travels
+    on ``RenderConfigChangedEvent`` instead, because it belongs to the
+    renderer rather than to any visual.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    visual_id : UUID
+        Model-layer ID of the visual whose settings changed.
+    field_name : str
+        ``"outline.slot"``, ``"outline.placement"``,
+        ``"ambient_occlusion"`` or ``"outline_selected_labels"``.
+    new_value : Any
+        The new field value.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field_name: str
+    new_value: Any
+
+
+class RenderConfigChangedEvent(NamedTuple):
+    """Emitted when one section of the render configuration changes.
+
+    Render configuration belongs to the ``RenderManager`` rather than to a
+    scene, a visual or a canvas, so this event has no entity id and is
+    deliberately absent from ``EventBus._ENTITY_FIELD`` -- every subscriber
+    receives every render-config event and filters on ``section`` itself,
+    the way the appearance widgets filter on ``field_name``.
+
+    Attributes
+    ----------
+    source_id : UUID
+        ID of the event emitter (the controller, or the widget that
+        requested the change).
+    section : str
+        Which configuration section changed: ``"outline"``, ``"ambient_occlusion"`` or
+        ``"temporal"``.
+    config : Any
+        The section's complete model *after* the change (an
+        ``OutlineConfig``, an ``AmbientOcclusionConfig`` or a
+        ``TemporalAccumulationConfig``).  Carried whole, not just the
+        delta, for the same reason ``BackgroundChangedEvent`` is: a
+        subscriber holding a snapshot
+        cannot reconstruct the rest of an ``OutlineConfig`` from one field.
+    field_name : str or None
+        Dotted path of the changed field within the section, e.g.
+        ``"power"`` or ``"selection.inward_thickness"``.  ``None`` when the
+        whole section was replaced.
+    new_value : Any
+        The new field value, or ``None`` for whole-section replacement.
+    """
+
+    source_id: UUID
+    section: str
+    config: Any
+    field_name: str | None = None
+    new_value: Any = None
 
 
 class TrailChangedEvent(NamedTuple):
@@ -536,6 +675,9 @@ CellierEventTypes = (
     | TrailChangedEvent
     | TransformChangedEvent
     | SceneAddedEvent
+    | BackgroundChangedEvent
+    | RenderConfigChangedEvent
+    | VisualRenderChangedEvent
     | SceneRemovedEvent
     | CanvasMousePress2DEvent
     | CanvasMouseMove2DEvent

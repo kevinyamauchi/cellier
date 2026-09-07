@@ -11,11 +11,21 @@ from cellier.gui.anywidget._dataset_info import (
     dataset_info_from_path,
 )
 from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
+from cellier.gui.anywidget.render import (
+    AnywidgetAmbientOcclusionControls,
+    AnywidgetOutlineControls,
+    AnywidgetRenderConfigPanel,
+    AnywidgetTemporalControls,
+)
 
 __all__ = [
+    "AnywidgetAmbientOcclusionControls",
     "AnywidgetBox",
     "AnywidgetDatasetInfo",
     "AnywidgetDimsPanel",
+    "AnywidgetOutlineControls",
+    "AnywidgetRenderConfigPanel",
+    "AnywidgetTemporalControls",
     "DatasetInfo",
     "dataset_info_from_path",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 import numpy as np
@@ -48,6 +49,77 @@ def test_rejects_bad_dtypes(dtype):
     data = np.ones((4, 4, 4), dtype=dtype)
     with pytest.raises(ValueError, match="int8, int16, or int32"):
         LabelMemoryStore(data=data)
+
+
+# ── Serialisation round trip ────────────────────────────────────────────────
+#
+# This store validates its dtype where every sibling coerces, which makes the
+# dtype load-bearing on the way back in.  A bare ``tolist()`` payload dropped
+# it, and numpy infers int64 from a list of Python ints, so a label store
+# could be serialised but never deserialised -- for any dtype it accepts.
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.int16, np.int32])
+def test_round_trip_preserves_dtype(dtype):
+    """Every accepted dtype survives, at its original width."""
+    store = LabelMemoryStore(data=np.arange(6, dtype=dtype).reshape(2, 3))
+    restored = LabelMemoryStore.model_validate(store.model_dump())
+    assert restored.data.dtype == dtype
+    np.testing.assert_array_equal(restored.data, store.data)
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.int16, np.int32])
+def test_round_trip_through_json(dtype):
+    """JSON is the form that actually crosses a wire."""
+    store = LabelMemoryStore(data=np.arange(6, dtype=dtype).reshape(2, 3), name="seg")
+    restored = LabelMemoryStore.model_validate_json(store.model_dump_json())
+    assert restored.data.dtype == dtype
+    assert restored.name == "seg"
+    np.testing.assert_array_equal(restored.data, store.data)
+
+
+def test_serialised_payload_names_its_dtype():
+    """The payload is self-describing; nothing has to be inferred from it."""
+    store = LabelMemoryStore(data=np.zeros((2, 2), dtype=np.int16))
+    payload = store.model_dump()["data"]
+    assert payload == {"dtype": "int16", "values": [[0, 0], [0, 0]]}
+
+
+def test_a_payload_declaring_a_rejected_dtype_is_still_rejected():
+    """One dtype rule, applied to a payload's claim as to a live array.
+
+    Otherwise the serialised form would be a way around the validation that
+    the in-memory constructor enforces.
+    """
+    with pytest.raises(ValueError, match="int8, int16, or int32"):
+        LabelMemoryStore.model_validate(
+            {"data": {"dtype": "int64", "values": [[0, 0]]}}
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        ({"values": [[0, 0]]}, "missing"),
+        ({"dtype": "int16"}, "missing"),
+        ({"dtype": "banana", "values": [[0, 0]]}, "Unknown dtype"),
+    ],
+)
+def test_malformed_payloads_raise_a_clear_error(payload, match):
+    """A malformed payload should not surface as a numpy TypeError."""
+    with pytest.raises(ValueError, match=match):
+        LabelMemoryStore.model_validate({"data": payload})
+
+
+def test_an_int64_array_is_still_rejected_not_narrowed():
+    """The deliberate rejection is the point, and the fix must not soften it.
+
+    Coercing like the sibling stores would have made the round trip work by
+    silently truncating a caller's int64 labels; the message tells them to
+    narrow it themselves instead.
+    """
+    with pytest.raises(ValueError, match=re.escape("Cast your data to np.int32 first")):
+        LabelMemoryStore(data=np.zeros((2, 2), dtype=np.int64))
 
 
 # ── Properties ──────────────────────────────────────────────────────────────

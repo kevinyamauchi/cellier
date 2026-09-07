@@ -13,7 +13,14 @@ function render({ model, el }) {
 
   const label = document.createElement("label");
   label.className = "cellier-app-label";
-  label.textContent = "Contrast";
+  // The control names itself from the `title` trait -- one string, set
+  // by whoever built the control, rather than one hard-coded here and
+  // another in the layout that used to draw a group title around it.
+  label.textContent = model.get("title") || "Contrast limits";
+
+  model.on("change:title", () => {
+    label.textContent = model.get("title") || "Contrast limits";
+  });
 
   const climRange = model.get("clim_range") || [0, 1];
   const initClim = model.get("clim") || [0, 1];

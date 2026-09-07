@@ -15,6 +15,9 @@ from cellier.events import (
     DimsUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
+from cellier.gui._dims import initial_slice_indices
+from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -51,6 +54,14 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     displayed_axes = traitlets.List().tag(sync=True)
     stacked_axes = traitlets.List().tag(sync=True)
     non_displayed = traitlets.List().tag(sync=True)
+
+    throttle_ms = traitlets.Int(DIMS_SLIDER_THROTTLE_MS).tag(sync=True)
+    """How often a slider drag reaches the bus, in ms.
+
+    Synced rather than hard-coded in ``dims_panel.js`` so this and the Qt
+    front end coalesce drags at the same rate -- see
+    :data:`cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS`.
+    """
 
     has_toggle = traitlets.Bool(False).tag(sync=True)
     label = traitlets.Unicode("").tag(sync=True)
@@ -105,8 +116,11 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     ) -> AnywidgetDimsPanel:
         """Build a dims panel from a live scene.
 
-        Includes the 2D/3D toggle automatically when the scene has 3 or more
-        axes: 3D displays the last three axis indices, 2D the last two.
+        Includes the 2D/3D toggle when the scene has 3 or more axes *and*
+        declares both render modes: 3D displays the last three axis indices,
+        2D the last two.  A scene that renders only one way -- each panel of
+        an ``OrthoViewer`` -- gets no toggle, because there is nothing to
+        switch to.
         """
         axis_labels_list = scene.dims.coordinate_system.axis_labels
         axis_labels = dict(enumerate(axis_labels_list))
@@ -114,7 +128,15 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
         axes_2d: tuple[int, ...] | None = None
         axes_3d: tuple[int, ...] | None = None
-        if len(axis_labels_list) >= 3:
+        # The toggle is offered only when the *scene* says it can render both
+        # ways.  An OrthoViewer panel declares exactly one mode -- three slice
+        # views and one volume -- so offering to switch it put the scene into a
+        # mode it was never configured for: the reslice produced no geometry,
+        # the scene had no bounds, and the panel went blank
+        # (``plans/gui_backend_seam.md`` D18).  A plain ``Viewer`` declares
+        # both, so its toggle is unaffected.
+        modes = {str(mode) for mode in getattr(scene, "render_modes", ())}
+        if len(axis_labels_list) >= 3 and {"2d", "3d"} <= modes:
             ndim = len(axis_labels_list)
             axes_3d = tuple(range(ndim - 3, ndim))
             axes_2d = tuple(range(ndim - 2, ndim))
@@ -123,7 +145,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
             scene_id=scene.id,
             axis_ranges=axis_ranges,
             axis_labels=axis_labels,
-            slice_indices=dict(getattr(selection, "slice_indices", {})),
+            slice_indices=initial_slice_indices(selection, axis_ranges),
             displayed_axes=getattr(selection, "displayed_axes", ()),
             stacked_axes=getattr(selection, "stacked_axes", ()),
             non_displayed=non_displayed,
@@ -145,7 +167,17 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         ]
 
     def close(self) -> None:
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     # ------------------------------------------------------------------
     # model -> widget
@@ -217,6 +249,18 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
             for axis, value in self.slice_indices.items()
             if int(axis) not in target_set and int(axis) not in set(self.stacked_axes)
         }
+        # Applied *before* the emit, not after.  The controller echoes this
+        # change back stamped with our own source_id, so _on_dims_changed's
+        # filter ignores it -- the widget has to move itself either way.
+        # Doing it first is what keeps the button honest when something
+        # downstream of the emit fails: afterwards, one raising handler left
+        # the scene in 2D while this panel still showed 3D, with no slider
+        # for the axis it had just hidden (``plans/gui_backend_seam.md`` D17).
+        # slice_indices already holds a value for every axis regardless of
+        # display state (see ``initial_slice_indices``), so it needs no update.
+        self._set_field("displayed_axes", [int(a) for a in target_displayed])
+        self.label = "Switch to 2D" if not is_3d else "Switch to 3D"
+
         self.changed.emit(
             DimsUpdateEvent(
                 source_id=self._id,
@@ -225,12 +269,3 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
                 displayed_axes=target_displayed,
             )
         )
-
-        # The controller echoes this change back stamped with our own
-        # source_id, so _on_dims_changed's echo filter will ignore it --
-        # same as the JS slider's own value already reflecting the drag
-        # before any bus round trip. Apply the visible state directly here.
-        # slice_indices already holds a value for every axis regardless of
-        # display state (see _on_dims_changed), so it needs no update.
-        self._set_field("displayed_axes", [int(a) for a in target_displayed])
-        self.label = "Switch to 2D" if not is_3d else "Switch to 3D"

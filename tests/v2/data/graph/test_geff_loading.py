@@ -8,10 +8,6 @@ readable at the point of use.
 
 from __future__ import annotations
 
-import asyncio
-import gc
-import warnings
-
 import numpy as np
 import pytest
 
@@ -25,36 +21,6 @@ except ImportError:  # pragma: no cover
     _nx = None
 
 requires_geff = pytest.mark.skipif(_geff is None, reason="geff not installed")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _close_zarr_leftover_loop():
-    """Close the stray asyncio loop reading a geff store leaves behind.
-
-    ``geff`` reads through zarr, whose sync layer installs an event loop on
-    the calling thread via the deprecated implicit ``get_event_loop`` path
-    and never closes it.  Nothing collects it until some later test calls
-    ``gc.collect()``; its ``__del__`` then emits ``ResourceWarning`` for the
-    loop and its selector self-pipe sockets, and under the suite's
-    ``filterwarnings = error`` that surfaces as a
-    ``PytestUnraisableExceptionWarning`` attributed to whichever innocent
-    test did the collecting -- ``tests/v2/events`` was the one it landed on.
-
-    Closing it here keeps the garbage inside the module that produced it.
-    zarr's own long-lived background loop (the *running* one) is left alone;
-    only a non-running, non-closed loop on this thread is touched, and zarr
-    recreates one on demand if a later test needs it.
-    """
-    yield
-    try:
-        loop = asyncio.get_event_loop_policy().get_event_loop()
-    except (RuntimeError, DeprecationWarning):
-        loop = None
-    if loop is not None and not loop.is_running() and not loop.is_closed():
-        loop.close()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ResourceWarning)
-        gc.collect()
 
 
 def _write_lineage(

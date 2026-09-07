@@ -8,6 +8,17 @@ function render({ model, el }) {
   let isoRow = null;
   let attenuationRow = null;
 
+  // ── group heading ────────────────────────────────────────────────────────
+  // Mode/Threshold/Attenuation are one control between them; see aabb.js.
+  const title = document.createElement("div");
+  title.className = "cellier-group-title";
+  title.textContent = model.get("title") || "Render mode";
+  el.appendChild(title);
+
+  model.on("change:title", () => {
+    title.textContent = model.get("title") || "Render mode";
+  });
+
   const initMode = model.get("render_mode") || "mip";
 
   const modeRow = document.createElement("div");

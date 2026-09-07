@@ -97,7 +97,7 @@ def test_encode_decode_entry_round_trips():
     outline fields, and the two features must stay independent inside it.
     """
     for slot in range(MAX_OUTLINE_SLOT + 1):
-        for kind in (0, 1, 2):
+        for kind in (0, 1, 2, 3):
             for placement in (PLACEMENT_INWARD, PLACEMENT_OUTWARD):
                 for ao_excluded in (False, True):
                     value = encode_entry(slot, kind, placement, ao_excluded=ao_excluded)
@@ -115,7 +115,8 @@ def test_encode_entry_rejects_out_of_range():
     with pytest.raises(ValueError):
         encode_entry(MAX_OUTLINE_SLOT + 1)
     with pytest.raises(ValueError):
-        encode_entry(1, kind=3)
+        # 3 is KIND_LABEL_ALL and valid; 4 overflows the 2-bit field.
+        encode_entry(1, kind=4)
     with pytest.raises(ValueError):
         encode_entry(1, placement=2)
 
@@ -570,11 +571,16 @@ def test_set_visual_outline_slot_zero_clears(outline_controller):
 
 
 def test_set_visual_outline_forces_pick_write(outline_controller):
-    """Outlines come from the pick buffer, so picking is turned back on."""
+    """Outlines come from the pick buffer, so picking is turned back on.
+
+    Forcing it silently would leave a user who deliberately turned picking
+    off wondering when it came back, so the change announces itself.
+    """
     controller, _scene, visual = outline_controller
     visual.pick_write = False
 
-    controller.set_visual_outline(visual.id, slot=1)
+    with pytest.warns(RuntimeWarning, match="pick_write set to True"):
+        controller.set_visual_outline(visual.id, slot=1)
 
     assert visual.pick_write is True
 

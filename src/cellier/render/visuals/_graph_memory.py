@@ -13,6 +13,10 @@ from cellier.render.shaders._alpha_modulated import (
     AlphaLineSegmentMaterial,
     AlphaPointsMaterial,
 )
+from cellier.render.visuals._aabb import (
+    make_aabb_line,
+    refresh_aabb_line,
+)
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -187,7 +191,13 @@ class GFXGraphMemoryVisual:
         self._aabb_enabled: bool = visual_model.aabb.enabled
         self._aabb_color: str = visual_model.aabb.color
         self._aabb_line_width: float = visual_model.aabb.line_width
-        self._aabb_line: gfx.Line | None = None
+        # False until a commit gives the box a real extent; enabling
+        # it before then stays pending rather than drawing a
+        # zero-sized box at the origin.
+        self._aabb_has_bounds: bool = False
+        self._aabb_line: gfx.Line | None = make_aabb_line(
+            self._aabb_color, self._aabb_line_width
+        )
 
         appearance = visual_model.appearance
         self._node_material = _build_node_material(appearance)
@@ -251,6 +261,10 @@ class GFXGraphMemoryVisual:
         self.node.add(self.node_points)
         self.node.render_order = appearance.render_order
         self.node.visible = appearance.visible
+        # A child of the data node, so it inherits that node's transform
+        # and is hidden with it.  Sized on first commit -- a geometry
+        # visual's extent is its vertices, not a known shape.
+        self.node.add(self._aabb_line)
 
         # Both attributes point to the same node; swap_node's identity guard
         # makes dim-toggling a no-op for this visual.
@@ -562,6 +576,7 @@ class GFXGraphMemoryVisual:
             geom_kwargs["sizes"] = np.ascontiguousarray(sizes)
 
         self.node_points.geometry = gfx.Geometry(**geom_kwargs)
+        self._refresh_aabb()
 
         target = (
             self._empty_node_material if graph_data.nodes_empty else self._node_material
@@ -596,6 +611,7 @@ class GFXGraphMemoryVisual:
             geom_kwargs["colors"] = np.ascontiguousarray(colors)
 
         self.node_edges.geometry = gfx.Geometry(**geom_kwargs)
+        self._refresh_aabb()
 
         target = (
             self._empty_edge_material if graph_data.edges_empty else self._edge_material
@@ -728,12 +744,28 @@ class GFXGraphMemoryVisual:
         self._node_material.pick_write = event.pick_write
         self._edge_material.pick_write = event.pick_write
 
+    def _refresh_aabb(self) -> None:
+        """Resize the bounding box to the data that just committed.
+
+        Unlike an image, a geometry visual's extent is whatever
+        vertices arrived, so the box is rebuilt on every commit
+        rather than once on first data.
+        """
+        self._aabb_has_bounds = refresh_aabb_line(
+            self._aabb_line,
+            (
+                self.node_points,
+                self.node_edges,
+            ),
+            enabled=self._aabb_enabled,
+        )
+
     def on_aabb_changed(self, event: AABBChangedEvent) -> None:
         """Store AABB param changes; apply to the line node if it exists."""
         if event.field_name == "enabled":
             self._aabb_enabled = event.new_value
             if self._aabb_line is not None:
-                self._aabb_line.visible = event.new_value
+                self._aabb_line.visible = event.new_value and self._aabb_has_bounds
         elif event.field_name == "color":
             self._aabb_color = event.new_value
             if self._aabb_line is not None:

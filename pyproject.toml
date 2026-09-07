@@ -68,20 +68,17 @@ anywidget = ["anywidget", "simplejpeg", "sidecar"]
 graph = ["geff", "spatial-graph"]
 test = [
     "pytest",
-    "pytest-asyncio",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov",
     "pytest-qt",
-    # so CI exercises the geff loader and the "roi" slice strategy; without
-    # it those tests would silently skip and only "mask" would ever run.
-    "cellier[graph]",
 ]
 # add anything else you like to have in your dev environment here
 dev = [
     "ipython",
     "marimo",
-    "pdbpp",  # https://github.com/pdbpp/pdbpp
+    "pdbpp",
     "pre-commit",
-    "rich",  # https://github.com/Textualize/rich
+    "rich",
     "ruff",
     "zensical>=0.0.40",
     "mkdocstrings-python",
@@ -95,7 +92,7 @@ logging = ["rich>=13.0"]
 examples = ["scikit-image", "pyvista"]
 
 # get all dependencies for development
-dev-all = ["cellier[dev,test,pyside,examples,logging,remote,anywidget]"]
+dev-all = ["cellier[dev,test,pyside,examples,logging,remote,anywidget,graph]"]
 
 [project.urls]
 homepage = "https://github.com/kevinyamauchi/cellier"

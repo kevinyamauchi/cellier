@@ -5,6 +5,19 @@ function render({ model, el }) {
 
   let guard = false;
 
+  // ── group heading ────────────────────────────────────────────────────────
+  // Show/Width/Color are three anonymous rows until something says what they
+  // belong to.  Qt frames them in a QGroupBox; this is the same job in the
+  // idiom of this front end.
+  const title = document.createElement("div");
+  title.className = "cellier-group-title";
+  title.textContent = model.get("title") || "Bounding box";
+  el.appendChild(title);
+
+  model.on("change:title", () => {
+    title.textContent = model.get("title") || "Bounding box";
+  });
+
   // ── enabled checkbox ─────────────────────────────────────────────────────
   const enabledRow = document.createElement("div");
   enabledRow.className = "cellier-app-row";

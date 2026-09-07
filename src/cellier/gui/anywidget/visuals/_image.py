@@ -7,7 +7,7 @@ the latter two are mode-dependent (mirrors ``QtVolumeRenderControls``).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 import anywidget
@@ -19,8 +19,15 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
+from cellier.gui.anywidget._teardown import close_aux_widgets
+from cellier.gui.anywidget.visuals._base import (
+    AnywidgetBoundedSlider,
+    AnywidgetChoice,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 _STATIC = Path(__file__).parent / "static"
@@ -28,7 +35,7 @@ _STATIC = Path(__file__).parent / "static"
 _FIELDS = ("render_mode", "iso_threshold", "attenuation")
 
 
-class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
+class AnywidgetVolumeRenderControls(VisualIdGroup, anywidget.AnyWidget):
     """Combined render-mode, ISO-threshold, and attenuation widget.
 
     Mirrors ``QtVolumeRenderControls``: a mode select plus two mode-dependent
@@ -46,6 +53,8 @@ class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
     visual_id :
         UUID of the visual whose ``render_mode``, ``iso_threshold``, and
         ``attenuation`` fields this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_render_mode :
         Starting render mode. Default ``"mip"``.
     initial_threshold :
@@ -60,13 +69,30 @@ class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
     changed: Signal = Signal(object)
     closed: Signal = Signal()
 
+    DEFAULT_TITLE = "Render mode"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this is
+    what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the two
+    together.
+    """
+
+    title = traitlets.Unicode(DEFAULT_TITLE).tag(sync=True)
+    """What this control calls itself, drawn by its own front end.
+
+    A control names itself rather than being named by whatever lays it out
+    (``plans/label_ownership_unification.md``), which is what lets the dock
+    stack controls and stop.
+    """
+
     render_mode = traitlets.Unicode("mip").tag(sync=True)
     iso_threshold = traitlets.Float(0.2).tag(sync=True)
     attenuation = traitlets.Float(1.0).tag(sync=True)
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_render_mode: str = "mip",
         initial_threshold: float = 0.2,
@@ -80,7 +106,7 @@ class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
             **kwargs,
         )
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._applying = False
         self.observe(self._on_trait_change, names=list(_FIELDS))
 
@@ -92,18 +118,21 @@ class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
         return self
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Unsubscribe from the bus and release the widget.
+
+        ``closed`` tells the controller to drop this widget's subscriptions;
+        the rest actually releases the widget.  See
+        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
+        process-global table that only ``close()`` clears.
+        """
         self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
         """Return the inbound subscription this widget requires."""
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_appearance_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_appearance_changed)
 
     # ── model -> widget ──────────────────────────────────────────────────────
 
@@ -126,11 +155,30 @@ class AnywidgetVolumeRenderControls(anywidget.AnyWidget):
     def _on_trait_change(self, change) -> None:
         if self._applying:
             return
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field=change["name"],
-                value=change["new"],
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, change["name"], change["new"])
+
+
+class AnywidgetRenderModeCombo(AnywidgetChoice):
+    """Render mode for an image visual (anywidget).
+
+    The twin of ``QtRenderModeCombo``; see it for why the options come from
+    the model rather than from a list here.
+    """
+
+    _field: ClassVar[str] = "render_mode"
+    _label: ClassVar[str] = "Render mode"
+    _default_value: ClassVar[str] = "mip"
+    _default_choices: ClassVar[tuple[str, ...]] = ("mip", "iso", "minip")
+
+
+class AnywidgetIsoThresholdSlider(AnywidgetBoundedSlider):
+    """ISO surface threshold for an image visual (anywidget).
+
+    The twin of ``QtIsoThresholdSlider``; see it for why this bounded slider's
+    range is a convention rather than a model constraint.
+    """
+
+    _field: ClassVar[str] = "iso_threshold"
+    _label: ClassVar[str] = "Iso threshold"
+    _default_value: ClassVar[float] = 0.2
+    _default_range: ClassVar[tuple[float, float]] = (0.0, 1.0)

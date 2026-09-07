@@ -11,7 +11,9 @@ from uuid import UUID, uuid4
 from cellier.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
+    BackgroundChangedEvent,
     CameraChangedEvent,
+    CanvasConnectedEvent,
     CanvasMouseMove2DEvent,
     CanvasMouseMove3DEvent,
     CanvasMousePress2DEvent,
@@ -33,6 +35,7 @@ from cellier.events._events import (
     TransformChangedEvent,
     VisualAddedEvent,
     VisualRemovedEvent,
+    VisualRenderChangedEvent,
     VisualVisibilityChangedEvent,
 )
 
@@ -45,17 +48,20 @@ _ENTITY_FIELD: dict[type, str] = {
     PickWriteChangedEvent: "visual_id",
     AABBChangedEvent: "visual_id",
     VisualVisibilityChangedEvent: "visual_id",
+    VisualRenderChangedEvent: "visual_id",
     DataStoreMetadataChangedEvent: "data_store_id",
     DataStoreContentsChangedEvent: "data_store_id",
     ResliceStartedEvent: "scene_id",
     ResliceCompletedEvent: "visual_id",
     ResliceCancelledEvent: "visual_id",
     FrameRenderedEvent: "canvas_id",
+    CanvasConnectedEvent: "canvas_id",
     VisualAddedEvent: "scene_id",
     VisualRemovedEvent: "scene_id",
     TrailChangedEvent: "visual_id",
     TransformChangedEvent: "visual_id",
     SceneAddedEvent: "scene_id",
+    BackgroundChangedEvent: "scene_id",
     SceneRemovedEvent: "scene_id",
     CanvasMousePress2DEvent: "source_id",
     CanvasMouseMove2DEvent: "source_id",
@@ -351,6 +357,19 @@ class EventBus:
         except ValueError:
             pass
 
+    def clear(self) -> None:
+        """Drop every subscription.
+
+        For teardown only.  Subscriptions hold **strong** references to their
+        callbacks by default, and those callbacks are typically bound methods
+        of the controller, its render visuals and its widgets -- so a bus that
+        outlives its owner keeps that whole graph reachable.  Unsubscribing by
+        owner requires knowing every owner id; this is the catch-all for
+        ``CellierController.close``.
+        """
+        self._subs.clear()
+        self._handle_index.clear()
+
     def unsubscribe_all(self, owner_id: UUID) -> None:
         """Remove all subscriptions whose ``owner_id`` matches *owner_id*."""
         for subs in self._subs.values():
@@ -441,7 +460,8 @@ class EventBus:
               ``VisualVisibilityChangedEvent``,
               ``TransformChangedEvent``, ``ResliceCompletedEvent``,
               ``ResliceCancelledEvent``
-            - Canvas (keyed by ``canvas_id``) — ``FrameRenderedEvent``
+            - Canvas (keyed by ``canvas_id``) — ``FrameRenderedEvent``,
+              ``CanvasConnectedEvent``
             - Data store (keyed by ``data_store_id``) —
               ``DataStoreMetadataChangedEvent``,
               ``DataStoreContentsChangedEvent``

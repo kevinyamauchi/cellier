@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator, model_validator
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    RowSection,
+    array_extent_row,
+    format_bytes,
+)
 from cellier.data.mesh._mesh_requests import MeshData, MeshSliceRequest
 
 # Single degenerate triangle used when the slab contains no surviving faces.
@@ -79,6 +85,7 @@ class MeshMemoryStore(BaseDataStore):
     """
 
     store_type: Literal["mesh_memory"] = "mesh_memory"
+    DATASET_INFO_LABEL: ClassVar[str] = "in-memory mesh"
     name: str = "mesh_memory_store"
     positions: np.ndarray
     indices: np.ndarray
@@ -169,6 +176,16 @@ class MeshMemoryStore(BaseDataStore):
     # ------------------------------------------------------------------
 
     @property
+    def ndim(self) -> int:
+        """Number of spatial dimensions per vertex.
+
+        Present for parity with the points and lines stores, which the mesh
+        store previously lacked -- every caller had to reach into
+        ``positions.shape[1]`` itself.
+        """
+        return self.positions.shape[1]
+
+    @property
     def n_vertices(self) -> int:
         return self.positions.shape[0]
 
@@ -187,6 +204,26 @@ class MeshMemoryStore(BaseDataStore):
         if self.colors is None:
             return "none"
         return self.colors_layout
+
+    # ------------------------------------------------------------------
+    # Self-description
+    # ------------------------------------------------------------------
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the mesh: vertex and face counts, extent, footprint.
+
+        ``colors_mode`` is deliberately absent: it describes how the mesh is
+        drawn, not what the store holds.
+        """
+        rows = [
+            *self._identity_rows(),
+            ("Vertices", str(self.n_vertices)),
+            ("Faces", str(self.n_faces)),
+            ("Dimensions", str(self.ndim)),
+            *array_extent_row(self.positions),
+            ("Memory", format_bytes(self.positions.nbytes + self.indices.nbytes)),
+        ]
+        return DatasetInfo(sections=[RowSection(None, rows)])
 
     # ------------------------------------------------------------------
     # Async data access — three checkpoints for cancellability

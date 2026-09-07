@@ -35,6 +35,7 @@ from cellier.convenience import (
 )
 from cellier.convenience.gui import build_canvas_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.visuals import InMemoryImageAppearance
 
 # ---------------------------------------------------------------------------
 # Data
@@ -53,12 +54,12 @@ viewer.controller.add_data_store(store)
 
 viewer.add_image(
     store,
-    appearance={
-        "color_map": "viridis",
-        "clim": (0.0, 1.0),
-        "render_mode": "iso",
-        "iso_threshold": 0.5,
-    },
+    appearance=InMemoryImageAppearance(
+        color_map="viridis",
+        clim=(0.0, 1.0),
+        render_mode="iso",
+        iso_threshold=0.5,
+    ),
     name="blobs",
 )
 

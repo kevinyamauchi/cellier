@@ -123,6 +123,12 @@ class SliceCoordinator:
 
             brick_count = len(chunk_requests)
 
+            # Filled in from submit() below, so the completion closure can tell
+            # whether the entry it is about to drop is still its own.  Safe to
+            # assign after the fact: submit only schedules the task, so nothing
+            # can run it -- and reach _on_complete -- before submit returns.
+            own_slice_id: list[UUID] = []
+
             # Closure fired once all bricks/tiles for this visual have committed.
             # Bind the loop variables as defaults so each visual gets its own.
             def _on_complete(
@@ -130,7 +136,16 @@ class SliceCoordinator:
                 sid: UUID = request.scene_id,
                 cid: UUID = request.canvas_id,
                 n: int = brick_count,
+                own: list[UUID] = own_slice_id,
             ) -> None:
+                # Stop tracking the request that just finished, but only while
+                # the entry still names *this* task.  A non-cancellable visual
+                # is left running when a newer reslice supersedes it, so the
+                # older task can finish after the newer one was recorded here;
+                # popping blindly would untrack work that is still in flight.
+                key = (sid, cid, vid)
+                if own and self._active_slice_ids.get(key) == own[0]:
+                    del self._active_slice_ids[key]
                 self._emit_reslice_completed(sid, cid, vid, n)
 
             slice_id = self._slicer.submit(
@@ -141,6 +156,7 @@ class SliceCoordinator:
                 on_complete=_on_complete,
             )
             if slice_id is not None:
+                own_slice_id.append(slice_id)
                 self._active_slice_ids[
                     (request.scene_id, request.canvas_id, visual_id)
                 ] = slice_id
@@ -182,6 +198,21 @@ class SliceCoordinator:
                 brick_count=brick_count,
             )
         )
+
+    def cancel_all(self) -> None:
+        """Cancel every in-flight slice task, across every scene.
+
+        ``cancel_scene`` can only reach what ``_active_slice_ids`` still names,
+        which at teardown is not everything: ``submit`` deliberately lets a
+        non-cancellable visual finish rather than cancelling it, then
+        overwrites that key, so the predecessor task becomes unreachable from
+        here.  Cancelling the tracked requests first keeps the per-visual GPU
+        slot release running for them; the sweep afterwards catches the rest.
+        """
+        for scene_id, canvas_id, visual_id in list(self._active_slice_ids):
+            # Pops its own key, so the loop drains _active_slice_ids.
+            self.cancel_visual(scene_id, canvas_id, visual_id)
+        self._slicer.cancel_all()
 
     def cancel_scene(self, scene_id: UUID) -> None:
         """Cancel all in-flight tasks for a scene.

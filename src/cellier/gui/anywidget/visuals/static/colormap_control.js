@@ -10,7 +10,14 @@ function render({ model, el }) {
 
   const label = document.createElement("label");
   label.className = "cellier-app-label";
-  label.textContent = "Colormap";
+  // The control names itself from the `title` trait -- one string, set
+  // by whoever built the control, rather than one hard-coded here and
+  // another in the layout that used to draw a group title around it.
+  label.textContent = model.get("title") || "Colormap";
+
+  model.on("change:title", () => {
+    label.textContent = model.get("title") || "Colormap";
+  });
 
   let cmNames = (model.get("colormap_names") || []).slice();
   const initCm = model.get("color_map") || "grays";

@@ -32,7 +32,7 @@ from cellier.render._cellier_blender import (
     OUTLINE_ID_TARGET,
     install_cellier_blender,
 )
-from cellier.render._config import RenderManagerConfig, SSAOConfig
+from cellier.render._config import AmbientOcclusionConfig, RenderManagerConfig
 from cellier.render._ssao import MAX_KERNEL_SAMPLES, SSAOPass, make_kernel
 from cellier.render._visual_lut import (
     AO_EXCLUDED_BIT,
@@ -746,18 +746,20 @@ def test_applying_an_outline_state_does_not_clobber_the_ao_bit():
 
 
 def test_the_config_round_trips():
-    """``SSAOConfig`` survives ``model_dump_json`` inside the parent."""
+    """``AmbientOcclusionConfig`` survives ``model_dump_json`` inside the parent."""
     config = RenderManagerConfig(
-        ssao=SSAOConfig(enabled=True, n_samples=24, blur_radius=1, strength=0.8)
+        ambient_occlusion=AmbientOcclusionConfig(
+            enabled=True, n_samples=24, blur_radius=1, strength=0.8
+        )
     )
     restored = RenderManagerConfig.model_validate_json(config.model_dump_json())
     assert restored == config
-    assert restored.ssao.radius is None
+    assert restored.ambient_occlusion.radius is None
 
 
 def test_the_config_defaults_to_off():
     """Nothing in this feature may change a scene that has not opted in."""
-    assert RenderManagerConfig().ssao.enabled is False
+    assert RenderManagerConfig().ambient_occlusion.enabled is False
 
 
 def test_apply_config_pushes_every_field(offscreen_renderer):
@@ -768,7 +770,7 @@ def test_apply_config_pushes_every_field(offscreen_renderer):
     renderer = gfx.WgpuRenderer(canvas)
     ssao = SSAOPass(renderer, lambda: gfx.PerspectiveCamera())
     ssao.apply_config(
-        SSAOConfig(
+        AmbientOcclusionConfig(
             enabled=True,
             n_samples=24,
             blur_radius=1,
@@ -823,7 +825,9 @@ def ssao_controller(qtbot, offscreen_renderer):
     data[4:12, 6:18, 8:24] = 1.0
 
     controller = CellierController(
-        render_config=RenderManagerConfig(ssao=SSAOConfig(enabled=True))
+        render_config=RenderManagerConfig(
+            ambient_occlusion=AmbientOcclusionConfig(enabled=True)
+        )
     )
     controller.camera_reslice_enabled = False
     scene = controller.add_scene(dim="3d", name="scene")
@@ -870,7 +874,9 @@ def test_a_2d_canvas_never_runs_the_pass(qtbot, offscreen_renderer):
     from cellier.controller import CellierController
 
     controller = CellierController(
-        render_config=RenderManagerConfig(ssao=SSAOConfig(enabled=True))
+        render_config=RenderManagerConfig(
+            ambient_occlusion=AmbientOcclusionConfig(enabled=True)
+        )
     )
     controller.camera_reslice_enabled = False
     scene = controller.add_scene(dim="2d", name="scene")
@@ -892,19 +898,19 @@ def test_live_setters_reach_every_canvas(ssao_controller):
     controller, _scene, _visual = ssao_controller
     canvas = next(iter(controller._render_manager._canvases.values()))
 
-    controller.ssao_strength = 0.4
-    assert controller.render_config.ssao.strength == pytest.approx(0.4)
+    controller.ambient_occlusion_strength = 0.4
+    assert controller.render_config.ambient_occlusion.strength == pytest.approx(0.4)
     assert canvas._ssao_pass.strength == pytest.approx(0.4)
 
-    controller.ssao_power = 2.0
+    controller.ambient_occlusion_power = 2.0
     assert canvas._ssao_pass.power == pytest.approx(2.0)
 
-    controller.ssao_radius = 4.0
+    controller.ambient_occlusion_radius = 4.0
     assert canvas._ssao_pass.effective_radius == pytest.approx(4.0)
 
-    controller.ssao_enabled = False
+    controller.ambient_occlusion_enabled = False
     assert canvas._ssao_pass.enabled is False
-    controller.ssao_enabled = True
+    controller.ambient_occlusion_enabled = True
     assert canvas._ssao_pass.enabled is True
 
 

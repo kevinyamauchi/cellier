@@ -10,3 +10,13 @@
 .cellier-anywidget-box > * {
   margin: 0 !important;
 }
+
+/* Heading over a titled box (the render dock).  Sized and weighted to read as
+   a section caption rather than as another control's label -- the Qt side
+   draws the same thing as a QGroupBox title. */
+.cellier-anywidget-box-title {
+  font-weight: 600;
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin-bottom: 4px;
+}

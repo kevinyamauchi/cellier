@@ -14,10 +14,16 @@ Run::
 
 Controls
 --------
+Visible : checkbox in the appearance dock.  Known issue: the canvas does not
+          fully update until you drag it -- temporal accumulation blends each
+          frame into a history discarded only on camera movement, so the image
+          lingers as a ghost.  See plans/visibility_debugging.md.
 3D mode : orbit (left-drag), zoom (scroll), pan (right-drag)
 2D mode : pan (left-drag), zoom (scroll)
 Toggle  : "Switch to 2D / 3D" button in the bottom dock
 Z slice : dims slider (2D mode only)
+Dataset info : collapsible block at the bottom of the appearance dock,
+          built by the store from its own metadata (``dataset_info=True``)
 """
 
 from __future__ import annotations
@@ -35,9 +41,10 @@ from cellier.convenience import (
     axis_ranges_from_viewer,
     run,
 )
-from cellier.convenience.gui import build_canvas_widget
+from cellier.convenience.gui import MultiscaleImageControlsConfig, build_canvas_widget
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.transform import AffineTransform
+from cellier.visuals import MultiscaleImageAppearance
 
 # ---------------------------------------------------------------------------
 # Data helpers
@@ -119,16 +126,19 @@ viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d")
 
 viewer.add_image_multiscale(
     store,
-    appearance={
-        "color_map": "viridis",
-        "clim": (0.0, 1.0),
-        "render_mode": "iso",
-        "iso_threshold": 0.45,
-        "lod_bias": 1.0,
-        "attenuation": 1.0,
-    },
-    controls={
-        "appearance": [
+    appearance=MultiscaleImageAppearance(
+        color_map="viridis",
+        clim=(0.0, 1.0),
+        render_mode="iso",
+        iso_threshold=0.45,
+        lod_bias=1.0,
+        attenuation=1.0,
+    ),
+    controls=MultiscaleImageControlsConfig(
+        appearance=[
+            # First in the panel: the group order follows the config class's
+            # control map, not this list.
+            "visible",
             "color_map",
             "clim",
             "render_mode",
@@ -136,7 +146,7 @@ viewer.add_image_multiscale(
             "attenuation",
             "lod_bias",
         ],
-        "colormap_names": [
+        colormap_names=[
             "grays",
             "viridis",
             "plasma",
@@ -148,8 +158,11 @@ viewer.add_image_multiscale(
             "bwr",
             "RdYlBu",
         ],
-        "clim_range": (0.0, 1.0),
-    },
+        clim_range=(0.0, 1.0),
+        # The store describes itself: path, dtype, axes, and the per-level
+        # shapes and scales read off its own level_transforms.
+        dataset_info=True,
+    ),
 )
 
 # ---------------------------------------------------------------------------

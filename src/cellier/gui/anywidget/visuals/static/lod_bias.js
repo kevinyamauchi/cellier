@@ -12,7 +12,14 @@ function render({ model, el }) {
 
   const label = document.createElement("label");
   label.className = "cellier-app-label";
-  label.textContent = "LOD bias";
+  // The control names itself from the `title` trait -- one string, set
+  // by whoever built the control, rather than one hard-coded here and
+  // another in the layout that used to draw a group title around it.
+  label.textContent = model.get("title") || "LOD bias";
+
+  model.on("change:title", () => {
+    label.textContent = model.get("title") || "LOD bias";
+  });
 
   const initVal = model.get("lod_bias") ?? 1.0;
   const inp = document.createElement("input");

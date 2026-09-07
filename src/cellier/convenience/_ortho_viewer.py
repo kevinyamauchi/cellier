@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
+from cellier.convenience._render_settings import RenderSettingsMixin
+from cellier.convenience._startup import StartupState
+from cellier.render._capture import write_png
 from cellier.scene.dims import (
     AxisAlignedSelection,
     CoordinateSystem,
@@ -23,24 +26,19 @@ from cellier.scene.scene import Scene
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cellier.convenience._kwarg_dicts import (
-        ChannelAppearanceKwargs,
-        ChannelControlsKwargs,
-        GraphAppearanceKwargs,
-        InMemoryImageAppearanceKwargs,
-        InMemoryLabelsAppearanceKwargs,
-        LinesMemoryAppearanceKwargs,
-        MeshFlatAppearanceKwargs,
-        MeshPhongAppearanceKwargs,
-        MultiscaleImageAppearanceKwargs,
-        MultiscaleImageRenderConfigKwargs,
-        MultiscaleLabelRenderConfigKwargs,
-        MultiscaleLabelsAppearanceKwargs,
-        PointsMarkerAppearanceKwargs,
-    )
+    import numpy as np
+
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         ChannelControlsConfig,
+        GraphControlsConfig,
+        InMemoryImageControlsConfig,
+        LabelsControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
+        MultiscaleImageControlsConfig,
+        MultiscaleLabelsControlsConfig,
+        PointsControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.graph._graph_memory_store import GraphMemoryStore
@@ -51,7 +49,9 @@ if TYPE_CHECKING:
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.events import DimsChangedEvent
     from cellier.render._config import RenderManagerConfig
+    from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
+    from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
         GraphAppearance,
@@ -182,7 +182,7 @@ def _resolve_spatial_axes(
     return (resolved[0], resolved[1], resolved[2])
 
 
-class OrthoViewer:
+class OrthoViewer(RenderSettingsMixin):
     """Four-panel orthoviewer wrapping a single CellierController.
 
     Creates a controller and four pre-wired scenes that share one world
@@ -209,10 +209,13 @@ class OrthoViewer:
         kept synchronized across all four panels.
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
-    gui : "qt" or "anywidget"
+    gui : "qt", "anywidget", or "offscreen"
         Which GUI toolkit the canvases should target. ``"qt"`` (default)
         renders into Qt widgets; ``"anywidget"`` renders into notebook canvases
-        for Jupyter / marimo. Fixed at construction.
+        for Jupyter / marimo; ``"offscreen"`` renders with no window at all,
+        for headless capture via :meth:`screenshot`. Fixed at construction.
+        ``"offscreen"`` orthoviewers have no embeddable widgets, so the grid
+        builders reject them.
     """
 
     def __init__(
@@ -222,7 +225,7 @@ class OrthoViewer:
         spatial_axes: tuple[str, ...] | tuple[int, ...] | None = None,
         link_extra_axes: bool = True,
         render_config: RenderManagerConfig | None = None,
-        gui: Literal["qt", "anywidget"] = "qt",
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> None:
         self._controller = CellierController(render_config=render_config, gui=gui)
         self._spatial_axes = _resolve_spatial_axes(axis_labels, spatial_axes)
@@ -232,10 +235,11 @@ class OrthoViewer:
         self._scenes = self._build_scenes(coordinate_system)
         self._syncer: _ExtraAxisSyncer | None = None
         # Per-visual controls configs, keyed by a representative (first-panel)
-        # visual id; _channel_visual_groups maps that id to every panel's
-        # sibling visual id so one channel widget can drive them all.
+        # visual id; _visual_groups maps that id to every panel's sibling
+        # visual id so one widget can drive them all.  Not channel-specific:
+        # any fanned-out add_* records its group here (design section 8.3).
         self._controls_configs: dict[UUID, BaseControlsConfig] = {}
-        self._channel_visual_groups: dict[UUID, list[UUID]] = {}
+        self._visual_groups: dict[UUID, list[UUID]] = {}
         # Callbacks fired once all panel scenes' startup data is on the GPU;
         # consumed by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
@@ -303,6 +307,268 @@ class OrthoViewer:
     def scenes(self) -> dict[str, Scene]:
         """The four panel scenes keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``."""
         return self._scenes
+
+    def set_background(self, background: BackgroundAppearance) -> None:
+        """Apply one background appearance to all four panels.
+
+        Each panel is its own ``Scene`` and so owns its own background; use
+        ``viewer.scenes["xy"].background`` to change just one.  A copy is
+        given to each panel so that later edits to one panel's background do
+        not leak into the others.
+
+        Parameters
+        ----------
+        background : BackgroundAppearance
+            The background appearance to apply to every panel.
+        """
+        for scene in self._scenes.values():
+            scene.background = background.model_copy(deep=True)
+
+    @property
+    def startup_state(self) -> StartupState:
+        """How far this viewer has got through starting up.
+
+        Readable at any moment, with no callback, no event loop and no front
+        end -- which is the point.  A blank viewer used to be undiagnosable
+        from Python; now it can say whether it is waiting for the canvas to
+        reach the browser, waiting for a first frame, loading data, or done.
+
+        ``StartupState.IDLE`` until ``display``/``launch``/``show`` runs.
+        """
+        tracker = getattr(self, "_startup", None)
+        return StartupState.IDLE if tracker is None else tracker.state
+
+    @property
+    def scene_startup_states(self) -> dict[str, StartupState]:
+        """Each scene's startup state, keyed as this viewer keys its scenes.
+
+        An aggregate hides which panel is stuck; this does not.
+        """
+        tracker = getattr(self, "_startup", None)
+        return {} if tracker is None else tracker.scene_states
+
+    def startup_report(self) -> str:
+        """A one-line summary of startup progress, for a cell or a log line."""
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            return "idle (not started)"
+        return tracker.describe()
+
+    def on_scene_ready(self, key: str, callback: Callable[[], None]) -> None:
+        """Fire *callback* when one scene's data is on the GPU.
+
+        The per-scene counterpart of :meth:`on_ready`, which waits for *all*
+        of them.  Fires immediately if that scene is already ready.
+
+        Must be called after ``display``/``launch``, which is when the
+        startup tracker exists.
+
+        Parameters
+        ----------
+        key : str
+            The scene key -- ``"scene"`` for a single-scene viewer, or the
+            panel key (``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``) for an
+            ``OrthoViewer``.
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_scene_ready requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_scene_ready(key, callback)
+
+    def on_startup_progress(self, callback: Callable[[int, int], None]) -> None:
+        """Fire ``callback(scenes_ready, scenes_total)`` as scenes load.
+
+        For a progress bar over a slow or remote dataset, where the gap
+        between "shown" and "loaded" is long enough to need reporting.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_startup_progress requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_progress(callback)
+
+    def on_startup_stalled(self, callback: Callable[[dict], None]) -> None:
+        """Fire ``callback({scene key: state})`` if startup does not finish.
+
+        The signal that was missing entirely: startup could only ever report
+        success, so a viewer that never finished looked exactly like one still
+        working.  The payload names each unfinished scene and the state it
+        stopped in, so the report can say *what* it was waiting for.
+
+        Stalling is not an error -- slow remote data legitimately takes a
+        while -- it is the cue that something is worth looking at.  Tune the
+        window with ``display(..., stall_timeout=)``.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_startup_stalled requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_stalled(callback)
+
+    # ------------------------------------------------------------------
+    # Capture
+    # ------------------------------------------------------------------
+
+    def screenshot(
+        self,
+        *,
+        panel: str | None = None,
+        size: tuple[int, int] | None = None,
+        scale: float = 1.0,
+        frames: int | Literal["converged"] = 1,
+        save: str | Path | None = None,
+        **capture_kwargs,
+    ) -> np.ndarray:
+        """Capture one panel, or all four as a 2x2 grid, as RGBA uint8.
+
+        Each panel is rendered offscreen, so the result is reproducible and
+        does not need a window.
+
+        The capture shows the data **currently resident on the GPU** -- it does
+        not reslice.  Capture from :meth:`on_ready` when a load may still be
+        running.  A panel with **no canvas** renders empty, because slice
+        requests are planned per canvas: give every panel a canvas (the grid
+        builder does, and so does ``scripts/capture.py``) and let the reslice
+        finish before capturing.
+
+        Parameters
+        ----------
+        panel : str or None
+            Which panel to capture: ``"xy"``, ``"xz"``, ``"yz"`` or ``"vol"``.
+            With ``None`` (default) all four are captured and composited into
+            a 2x2 grid laid out the way ``build_ortho_grid_widget`` arranges
+            them -- XY and XZ on the top row, YZ and the 3D volume below.
+        size : tuple[int, int] or None
+            ``(width, height)`` **per panel**, before *scale*, so a grid
+            capture comes back at twice this in each direction.  Defaults to
+            each panel canvas's physical size, or ``(600, 600)`` when a panel
+            has no canvas.  A grid capture requires one size for all four, so
+            it falls back to ``(600, 600)`` unless the panels agree.
+        scale : float
+            Multiplier applied to *size*.
+        frames : int or "converged"
+            ``1`` (default) draws a single frame with temporal accumulation
+            off.  ``"converged"`` draws the number of frames the accumulator
+            needs to settle.  This matters more here than elsewhere: the
+            ``vol`` panel has accumulation enabled while the three slice
+            panels do not, so a fixed ``frames=N`` is right for one panel and
+            wrong for three.
+        save : str, Path, or None
+            When given, also write the frame to this path as a PNG.
+        **capture_kwargs
+            Forwarded to the capture helper.
+
+        Returns
+        -------
+        np.ndarray
+            RGBA uint8 array: ``(height, width, 4)`` for one panel, or
+            ``(2 * height, 2 * width, 4)`` for the grid.
+
+        Raises
+        ------
+        ValueError
+            If *panel* is not one of the four panel keys.
+
+        Notes
+        -----
+        The grid composite is **canvases only**.  The Qt grid carries ``XY`` /
+        ``XZ`` / ``YZ`` / ``3D`` labels above the panels; those are chrome and
+        do not appear here.  Use
+        :func:`~cellier.convenience.screenshot_window` for a picture with the
+        labels and docks in it.
+        """
+        if panel is not None:
+            if panel not in _PANEL_KEYS:
+                raise ValueError(
+                    f"Unknown panel {panel!r}. Expected one of {list(_PANEL_KEYS)}."
+                )
+            frame = self._screenshot_panel(
+                panel, size=size, scale=scale, frames=frames, **capture_kwargs
+            )
+        else:
+            frame = self._screenshot_grid(
+                size=size, scale=scale, frames=frames, **capture_kwargs
+            )
+        if save is not None:
+            write_png(save, frame)
+        return frame
+
+    def _screenshot_panel(
+        self,
+        panel: str,
+        *,
+        size: tuple[int, int] | None,
+        scale: float,
+        frames: int | Literal["converged"],
+        **capture_kwargs,
+    ) -> np.ndarray:
+        """Capture a single panel through its canvas, or by fitting its scene."""
+        scene_id = self._scenes[panel].id
+        canvas_ids = self._controller.get_canvas_ids(scene_id)
+        if canvas_ids:
+            return self._controller.screenshot(
+                canvas_ids[0], size=size, scale=scale, frames=frames, **capture_kwargs
+            )
+        return self._controller.screenshot_scene(
+            scene_id, size=size, scale=scale, frames=frames, **capture_kwargs
+        )
+
+    def _screenshot_grid(
+        self,
+        *,
+        size: tuple[int, int] | None,
+        scale: float,
+        frames: int | Literal["converged"],
+        **capture_kwargs,
+    ) -> np.ndarray:
+        """Capture all four panels and tile them into the on-screen arrangement."""
+        import numpy as np
+
+        panel_size = size if size is not None else self._common_panel_size()
+        frames_by_panel = {
+            key: self._screenshot_panel(
+                key,
+                size=panel_size,
+                scale=scale,
+                frames=frames,
+                **capture_kwargs,
+            )
+            for key in _PANEL_KEYS
+        }
+        # The arrangement ``build_ortho_grid_widget`` uses, so the composite
+        # reads like the window rather than like an arbitrary tiling.
+        top = np.hstack([frames_by_panel["xy"], frames_by_panel["xz"]])
+        bottom = np.hstack([frames_by_panel["yz"], frames_by_panel["vol"]])
+        return np.vstack([top, bottom])
+
+    def _common_panel_size(self) -> tuple[int, int]:
+        """Return one ``(width, height)`` all four panels can be captured at.
+
+        A grid needs equal tiles, and the four canvases need not be the same
+        size (a user can resize one Qt dock).  When they disagree -- or when
+        some panel has no canvas at all -- there is no honest "current" size,
+        so the capture default is used rather than silently stretching one
+        panel to match another.
+        """
+        sizes = set()
+        for key in _PANEL_KEYS:
+            canvas_ids = self._controller.get_canvas_ids(self._scenes[key].id)
+            if not canvas_ids:
+                return (600, 600)
+            view = self._controller.get_canvas_view(canvas_ids[0])
+            sizes.add(tuple(int(v) for v in view.widget.get_physical_size()))
+        if len(sizes) != 1:
+            return (600, 600)
+        return sizes.pop()
 
     # ------------------------------------------------------------------
     # Readiness
@@ -429,7 +695,7 @@ class OrthoViewer:
         obj._extra_axes = {i for i in range(ndim) if i not in vol_displayed}
         obj._syncer = None
         obj._controls_configs = {}
-        obj._channel_visual_groups = {}
+        obj._visual_groups = {}
         if link_extra_axes and obj._extra_axes:
             obj._wire_extra_axis_sync()
         return obj
@@ -485,8 +751,11 @@ class OrthoViewer:
     def add_image(
         self,
         data: ImageMemoryStore | UUID,
-        appearance: BaseImageAppearance | InMemoryImageAppearanceKwargs,
+        appearance: BaseImageAppearance,
         name: str = "image",
+        controls: InMemoryImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, ImageVisual]:
         """Add an in-memory image to every panel from a single data store.
 
@@ -494,38 +763,53 @@ class OrthoViewer:
         ----------
         data : ImageMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseImageAppearance or dict
-            Appearance parameters.  Accepts an ``InMemoryImageAppearance``
-            instance or a plain dict with the same keys (see
-            ``InMemoryImageAppearanceKwargs``).
+        appearance : BaseImageAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
+        controls : InMemoryImageControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, ImageVisual]
             The per-panel visuals keyed ``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``.
         """
-        from cellier.visuals._image_memory import InMemoryImageAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            InMemoryImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_image(
-                store, scene.id, resolved, f"{name}_{key}"
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_labels(
         self,
         data: LabelMemoryStore | UUID,
-        appearance: BaseLabelsAppearance | InMemoryLabelsAppearanceKwargs | None = None,
+        appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
+        controls: LabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> dict[str, LabelMemoryVisual]:
         """Add an in-memory label image to every panel from one data store.
 
@@ -533,41 +817,60 @@ class OrthoViewer:
         ----------
         data : LabelMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseLabelsAppearance, dict, or None
-            Appearance parameters.  Accepts an ``InMemoryLabelsAppearance``
-            instance or a plain dict (see ``InMemoryLabelsAppearanceKwargs``).
+        appearance : BaseLabelsAppearance or None
+            Appearance parameters.
             Defaults to ``InMemoryLabelsAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : LabelsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
 
         Returns
         -------
         dict[str, LabelMemoryVisual]
         """
-        from cellier.visuals._label_memory import InMemoryLabelsAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            InMemoryLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_labels(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
+                outline_selected_labels=outline_selected_labels,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_mesh(
         self,
         data: MeshMemoryStore | UUID,
-        appearance: MeshAppearance
-        | MeshFlatAppearanceKwargs
-        | MeshPhongAppearanceKwargs,
+        appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
+        controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MeshVisual]:
         """Add a mesh to every panel from a single data store.
 
@@ -575,40 +878,55 @@ class OrthoViewer:
         ----------
         data : MeshMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : MeshFlatAppearance, MeshPhongAppearance, or dict
+        appearance : MeshFlatAppearance, MeshPhongAppearance,
             Appearance parameters.  When passing a dict, include the
             ``appearance_type`` key (``"flat"`` or ``"phong"``).
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, MeshVisual]
         """
-        from pydantic import TypeAdapter
-
-        from cellier.visuals._mesh_memory import MeshAppearance as _MeshAppearance
-
         store = self._resolve_data_store(data)
-        resolved = (
-            TypeAdapter(_MeshAppearance).validate_python(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_mesh(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_points(
         self,
         data: PointsMemoryStore | UUID,
-        appearance: PointsMarkerAppearance | PointsMarkerAppearanceKwargs | None = None,
+        appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
+        controls: PointsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, PointsVisual]:
         """Add a points visual to every panel from a single data store.
 
@@ -616,41 +934,56 @@ class OrthoViewer:
         ----------
         data : PointsMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : PointsMarkerAppearance, dict, or None
-            Appearance parameters (see ``PointsMarkerAppearanceKwargs``).
+        appearance : PointsMarkerAppearance or None
+            Appearance parameters.
             Defaults to ``PointsMarkerAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : PointsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, PointsVisual]
         """
-        from cellier.visuals._points_memory import (
-            PointsMarkerAppearance as _PointsMarkerAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _PointsMarkerAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_points(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_graph(
         self,
         data: GraphMemoryStore | UUID,
-        appearance: GraphAppearance | GraphAppearanceKwargs | None = None,
+        appearance: GraphAppearance | None = None,
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
+        controls: GraphControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, GraphVisual]:
         """Add a spatial-graph visual to every panel from a single data store.
 
@@ -658,8 +991,8 @@ class OrthoViewer:
         ----------
         data : GraphMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : GraphAppearance, dict, or None
-            Appearance parameters (see ``GraphAppearanceKwargs``). Defaults
+        appearance : GraphAppearance or None
+            Appearance parameters. Defaults
             to ``GraphAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -668,33 +1001,49 @@ class OrthoViewer:
             then to identity.
         trail : dict[int, TrailConfig] or None
             Axis index -> window configuration, applied to every panel.
+        controls : GraphControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, GraphVisual]
         """
-        from cellier.visuals._graph_memory import (
-            GraphAppearance as _GraphAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _GraphAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_graph(
-                store, scene.id, resolved, f"{name}_{key}", transform, trail
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                trail,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_lines(
         self,
         data: LinesMemoryStore | UUID,
-        appearance: LinesMemoryAppearance | LinesMemoryAppearanceKwargs | None = None,
+        appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
+        controls: LinesControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, LinesVisual]:
         """Add a lines visual to every panel from a single data store.
 
@@ -702,43 +1051,56 @@ class OrthoViewer:
         ----------
         data : LinesMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : LinesMemoryAppearance, dict, or None
-            Appearance parameters (see ``LinesMemoryAppearanceKwargs``).
+        appearance : LinesMemoryAppearance or None
+            Appearance parameters.
             Defaults to ``LinesMemoryAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : LinesControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, LinesVisual]
         """
-        from cellier.visuals._lines_memory import (
-            LinesMemoryAppearance as _LinesMemoryAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved = (
-            _LinesMemoryAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_lines(
-                store, scene.id, resolved, f"{name}_{key}", transform
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_image_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleImageAppearance | MultiscaleImageAppearanceKwargs,
+        appearance: MultiscaleImageAppearance,
         name: str = "image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultiscaleImageVisual]:
         """Add a multiscale image to every panel from a single data store.
 
@@ -746,58 +1108,59 @@ class OrthoViewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale store or UUID of an already-registered store.
-        appearance : MultiscaleImageAppearance or dict
-            Appearance parameters (see ``MultiscaleImageAppearanceKwargs``).
+        appearance : MultiscaleImageAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleImageRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MultiscaleImageControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, MultiscaleImageVisual]
         """
-        from cellier.visuals._image import (
-            MultiscaleImageAppearance as _MultiscaleImageAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_appearance = (
-            _MultiscaleImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_image_multiscale(
                 store,
                 scene.id,
-                resolved_appearance,
+                appearance,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_labels_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleLabelsAppearance | MultiscaleLabelsAppearanceKwargs,
+        appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
-        render_config: MultiscaleLabelRenderConfig
-        | MultiscaleLabelRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleLabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> dict[str, MultiscaleLabelVisual]:
         """Add a multiscale label image to every panel from one data store.
 
@@ -805,58 +1168,64 @@ class OrthoViewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale label store or UUID of an already-registered store.
-        appearance : MultiscaleLabelsAppearance or dict
-            Appearance parameters (see ``MultiscaleLabelsAppearanceKwargs``).
+        appearance : MultiscaleLabelsAppearance
+            Appearance parameters.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleLabelRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleLabelRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleLabelRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MultiscaleLabelsControlsConfig or None
+            Appearance controls configuration shared across all four panels:
+            one dock widget drives every panel's visual in lock-step.  When
+            ``None`` (default), no appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
 
         Returns
         -------
         dict[str, MultiscaleLabelVisual]
         """
-        from cellier.visuals._labels import (
-            MultiscaleLabelRenderConfig as _MultiscaleLabelRenderConfig,
-        )
-        from cellier.visuals._labels import (
-            MultiscaleLabelsAppearance as _MultiscaleLabelsAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_appearance = (
-            _MultiscaleLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleLabelRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
-        return self._fan_out(
+        visuals = self._fan_out(
             lambda key, scene: self._controller.add_labels_multiscale(
                 store,
                 scene.id,
-                resolved_appearance,
+                appearance,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
+                outline_selected_labels=outline_selected_labels,
             )
         )
+        self._record_controls(visuals, controls)
+        return visuals
 
     def add_multichannel_image(
         self,
         data: ImageMemoryStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultichannelImageVisual]:
         """Add an in-memory multichannel image to every panel from one store.
 
@@ -866,61 +1235,61 @@ class OrthoViewer:
             Backing data store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index (see
-            ``ChannelAppearanceKwargs``).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration shared across all four panels.
-            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
-            ``ChannelControlsKwargs``). When ``None`` (default), no channel
-            controls are created.
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration shared across all four
+            panels. When ``None`` (default), no channel controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, MultichannelImageVisual]
         """
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image(
                 store,
                 scene.id,
                 channel_axis,
-                resolved_channels,
+                channels,
                 f"{name}_{key}",
                 max_channels_2d,
                 max_channels_3d,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_channel_controls(visuals, controls)
+        self._record_controls(visuals, controls)
         return visuals
 
     def add_multichannel_image_multiscale(
         self,
         data: BaseDataStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> dict[str, MultichannelMultiscaleImageVisual]:
         """Add a multiscale multichannel image to every panel from one store.
 
@@ -930,80 +1299,74 @@ class OrthoViewer:
             Backing multiscale store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index (see
-            ``ChannelAppearanceKwargs``).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration (see
-            ``MultiscaleImageRenderConfigKwargs``).  Uses defaults when ``None``.
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration.  Uses defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration shared across all four panels.
-            Accepts a ``ChannelControlsConfig`` instance or a plain dict (see
-            ``ChannelControlsKwargs``). When ``None`` (default), no channel
-            controls are created.
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration shared across all four
+            panels. When ``None`` (default), no channel controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         dict[str, MultichannelMultiscaleImageVisual]
         """
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
         store = self._resolve_data_store(data)
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image_multiscale(
                 store,
                 scene.id,
                 channel_axis,
-                resolved_channels,
+                channels,
                 f"{name}_{key}",
-                resolved_render_config,
+                render_config,
                 transform,
                 max_channels_2d,
                 max_channels_3d,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_channel_controls(visuals, controls)
+        self._record_controls(visuals, controls)
         return visuals
 
-    def _record_channel_controls(
+    def _record_controls(
         self,
         visuals: dict[str, object],
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None,
+        controls: BaseControlsConfig | None,
     ) -> None:
-        """Record a channel controls config for a fanned-out multichannel add.
+        """Record a controls config for a fanned-out add.
 
-        Stores the resolved config keyed by a representative (first-panel)
-        visual id, and maps that id to every panel's sibling visual id so one
-        channel widget can drive all four panels (design section 7.4).
+        Stores the config keyed by a representative (first-panel) visual id,
+        and maps that id to every panel's sibling visual id so one widget can
+        drive all four panels (design section 7.4).
+
+        Channel-agnostic: the appearance path resolves the same record through
+        ``select_appearance_target`` that the channel path resolves through
+        ``_resolve_channel_visual_ids``, which is what makes
+        ``AppearanceControls()`` work on an ``OrthoViewer`` at all (section
+        4.1).
         """
-        from cellier.convenience.gui._controls_config import resolve_channel_controls
-
-        resolved = resolve_channel_controls(controls)
-        if resolved is None or not visuals:
+        if controls is None or not visuals:
             return
         panel_ids = [v.id for v in visuals.values()]
         rep_id = panel_ids[0]
-        self._controls_configs[rep_id] = resolved
-        self._channel_visual_groups[rep_id] = panel_ids
+        self._controls_configs[rep_id] = controls
+        self._visual_groups[rep_id] = panel_ids

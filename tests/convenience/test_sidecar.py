@@ -27,7 +27,7 @@ def test_ref_as_sidecar_options_raises_type_error():
 
 def test_ref_handle_without_sidecar_raises_value_error():
     handle = DisplayHandle(object(), object())  # _sidecar is None
-    with pytest.raises(ValueError, match="not\\s+itself displayed with sidecar"):
+    with pytest.raises(ValueError, match=r"not\s+itself displayed with sidecar"):
         resolve_sidecar(SidecarOptions(ref=handle))
 
 
@@ -54,12 +54,6 @@ def test_true_uses_defaults():
     s = resolve_sidecar(True)
     assert s.title == "Cellier"
     assert s.anchor == "right"
-
-
-def test_dict_is_coerced():
-    s = resolve_sidecar({"title": "X", "anchor": "split-right"})
-    assert s.title == "X"
-    assert s.anchor == "split-right"
 
 
 def test_options_instance_passes_through():

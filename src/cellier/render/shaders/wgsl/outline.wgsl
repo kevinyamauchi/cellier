@@ -6,6 +6,17 @@
 // coloured outline over the rendered image.  One pass, no intermediate
 // textures.
 //
+// The LUT entry's `kind` decides two independent things: what the key is,
+// and where the colour comes from.
+//
+//     kind             key            colour
+//     WHOLE_OBJECT     pick id        the visual's own slot
+//     LABEL            label field    the key's own selection range
+//     LABEL_ALL        label field    the visual's own slot
+//
+// LABEL_ALL is the fourth cell: every label in one volume banded in a
+// single colour, boundaries between touching labels included.
+//
 // Bindings are declared by the Python side (_outline.py); this file
 // assumes:
 //     0 u_outline   uniform
@@ -20,6 +31,7 @@
 
 const KIND_NONE: u32 = 0u;
 const KIND_LABEL: u32 = 2u;
+const KIND_LABEL_ALL: u32 = 3u;
 const PLACEMENT_INWARD: u32 = 0u;
 const PLACEMENT_OUTWARD: u32 = 1u;
 
@@ -41,6 +53,12 @@ struct OutlineEntry {
 
 fn none_entry() -> OutlineEntry {
     return OutlineEntry(0u, KIND_NONE, PLACEMENT_INWARD);
+}
+
+// Both label kinds key on the per-pixel label rather than on the object
+// id.  They differ only in where the colour comes from.
+fn is_label_kind(kind: u32) -> bool {
+    return kind == KIND_LABEL || kind == KIND_LABEL_ALL;
 }
 
 // Clamp taps to the framebuffer.  A tap that runs off the edge then reads
@@ -76,7 +94,7 @@ $$ endif
 // gives boundaries *between* labels inside one volume.
 fn outline_key(texel: vec2<i32>) -> u32 {
 $$ if has_outline_id
-    if (lut_entry(pick_id(texel)).kind == KIND_LABEL) {
+    if (is_label_kind(lut_entry(pick_id(texel)).kind)) {
         return LABEL_KEY_TAG | label_key(texel);
     }
 $$ endif
@@ -84,8 +102,10 @@ $$ endif
 }
 
 // The style for a pixel.  Identical to a plain LUT fetch for whole-object
-// visuals; for labels the *slot* comes from the key's own range instead,
-// because selection is per label, not per visual.
+// visuals; for KIND_LABEL the *slot* comes from the key's own range
+// instead, because selection is per label, not per visual.  KIND_LABEL_ALL
+// keeps the visual's own slot, exactly as a whole-object visual does, which
+// is what makes every label in it one colour.
 fn resolved_entry(texel: vec2<i32>) -> OutlineEntry {
     var entry = lut_entry(pick_id(texel));
 $$ if has_outline_id
@@ -96,6 +116,12 @@ $$ if has_outline_id
         if (key >= 1u && key <= MAX_LABEL_SLOT) {
             entry.slot = key;
         } else {
+            entry.slot = 0u;
+        }
+    } else if (entry.kind == KIND_LABEL_ALL) {
+        // Only background is forced off.  A labels shader discards there,
+        // so this is belt and braces rather than a path normally reached.
+        if (label_key(texel) == 0u) {
             entry.slot = 0u;
         }
     }

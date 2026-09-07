@@ -15,35 +15,46 @@ import pytest
 pytest.importorskip("qtpy")
 pytest.importorskip("superqt")
 
-from cellier.convenience import Viewer  # noqa: E402
-from cellier.convenience.layout._qt_renderer import (  # noqa: E402
-    _render_appearance_controls_qt,
-    _render_center_qt,
-    _render_dock_qt,
+from cellier.convenience import Viewer
+from cellier.convenience._hosts import QtLayoutHost
+from cellier.convenience.gui import (
+    InMemoryImageControlsConfig,
+    MultiscaleImageControlsConfig,
+)
+from cellier.convenience.layout._qt_renderer import (
     _wrap_dock_widget,
     render_qt,
 )
-from cellier.convenience.layout._spec import (  # noqa: E402
+from cellier.convenience.layout._spec import (
     AppearanceControls,
     Grid,
     HStack,
     Layout,
     VStack,
 )
-from cellier.visuals._image import MultiscaleImageAppearance  # noqa: E402
-from cellier.visuals._image_memory import InMemoryImageAppearance  # noqa: E402
+from cellier.convenience.layout._walk import render_center, render_dock
+from cellier.visuals._image import MultiscaleImageAppearance
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 def _leaf():
+    """A center leaf: ``compose(host)`` plus the ``.widget`` the host unwraps."""
     from PySide6 import QtWidgets
 
-    return SimpleNamespace(widget=QtWidgets.QLabel())
+    leaf = SimpleNamespace(widget=QtWidgets.QLabel())
+    leaf.compose = lambda host, _leaf=leaf: host.leaf(_leaf)
+    return leaf
 
 
-def _group_titles(container):
-    from PySide6 import QtWidgets
+def _control_names(container):
+    """What the panel calls each control it holds.
 
-    return {g.title() for g in container.findChildren(QtWidgets.QGroupBox)}
+    A set, because these tests assert presence rather than order (that is
+    ``test_qt_appearance_acceptance``'s job).
+    """
+    from tests.convenience._qt_acceptance import control_labels
+
+    return set(control_labels(container))
 
 
 # ---------------------------------------------------------------------------
@@ -56,13 +67,13 @@ def test_appearance_controls_builds_colormap_and_clim_groups(qtbot, image_store)
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
-    container = _render_appearance_controls_qt(viewer)
+    container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
     assert container is not None
-    assert {"Colormap", "Contrast limits"} <= _group_titles(container)
+    assert {"Colormap", "Contrast limits"} <= _control_names(container)
 
 
 def test_appearance_controls_explicit_clim_range(qtbot, image_store):
@@ -70,13 +81,15 @@ def test_appearance_controls_explicit_clim_range(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["clim"], "clim_range": (0.0, 5.0)},
+        controls=InMemoryImageControlsConfig(
+            appearance=["clim"], clim_range=(0.0, 5.0)
+        ),
     )
 
-    container = _render_appearance_controls_qt(viewer)
+    container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
     assert container is not None
-    assert "Contrast limits" in _group_titles(container)
+    assert "Contrast limits" in _control_names(container)
 
 
 def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_store):
@@ -84,13 +97,13 @@ def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_s
     viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
-        controls={"appearance": ["render_mode", "lod_bias"]},
+        controls=MultiscaleImageControlsConfig(appearance=["render_mode", "lod_bias"]),
     )
 
-    container = _render_appearance_controls_qt(viewer)
+    container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
     assert container is not None
-    assert {"Render mode", "LOD bias"} <= _group_titles(container)
+    assert {"Render mode", "LOD bias"} <= _control_names(container)
 
 
 def test_appearance_controls_none_without_configs(qtbot, image_store):
@@ -99,43 +112,43 @@ def test_appearance_controls_none_without_configs(qtbot, image_store):
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
-    assert _render_appearance_controls_qt(viewer) is None
+    assert render_dock(AppearanceControls(), viewer, QtLayoutHost(), []) is None
 
 
 # ---------------------------------------------------------------------------
-# _render_center_qt
+# render_center, driven through QtLayoutHost
 # ---------------------------------------------------------------------------
 
 
 def test_render_center_leaf_returns_inner_widget(qtbot):
     leaf = _leaf()
-    assert _render_center_qt(leaf) is leaf.widget
+    assert render_center(leaf, QtLayoutHost(), []) is leaf.widget
 
 
 def test_render_center_hstack(qtbot):
     from PySide6 import QtWidgets
 
-    container = _render_center_qt(HStack(items=[_leaf()]))
+    container = render_center(HStack(items=[_leaf()]), QtLayoutHost(), [])
     assert isinstance(container.layout(), QtWidgets.QHBoxLayout)
 
 
 def test_render_center_vstack(qtbot):
     from PySide6 import QtWidgets
 
-    container = _render_center_qt(VStack(items=[_leaf()]))
+    container = render_center(VStack(items=[_leaf()]), QtLayoutHost(), [])
     assert isinstance(container.layout(), QtWidgets.QVBoxLayout)
 
 
 def test_render_center_grid(qtbot):
     from PySide6 import QtWidgets
 
-    container = _render_center_qt(Grid(cells=[[_leaf(), None]]))
+    container = render_center(Grid(cells=[[_leaf(), None]]), QtLayoutHost(), [])
     assert isinstance(container.layout(), QtWidgets.QGridLayout)
 
 
 def test_render_center_unrenderable_raises(qtbot):
     with pytest.raises(TypeError, match="Cannot render"):
-        _render_center_qt(object())
+        render_center(object(), QtLayoutHost(), [])
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +174,7 @@ def test_wrap_dock_widget_orientation(qtbot, position, layout_cls):
 
 def test_render_dock_none_returns_none(qtbot, image_store):
     viewer = Viewer(("z", "y", "x"), gui="qt")
-    assert _render_dock_qt(None, viewer) is None
+    assert render_dock(None, viewer, QtLayoutHost(), []) is None
 
 
 def test_render_dock_stack_of_appearance(qtbot, image_store):
@@ -169,10 +182,12 @@ def test_render_dock_stack_of_appearance(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map"]),
     )
 
-    rendered = _render_dock_qt(VStack(items=[AppearanceControls()]), viewer)
+    rendered = render_dock(
+        VStack(items=[AppearanceControls()]), viewer, QtLayoutHost(), []
+    )
 
     assert rendered is not None
 
@@ -189,7 +204,7 @@ def test_render_qt_builds_window_with_dock(qtbot, image_store):
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
     leaf = _leaf()
     layout = Layout(center=leaf, right_dock=AppearanceControls())

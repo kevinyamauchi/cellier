@@ -1,63 +1,42 @@
-"""Toolkit-neutral OME-Zarr dataset metadata extraction shared by Qt and anywidget."""
+"""Dataset metadata for display, shared by the Qt and anywidget front ends.
+
+The section vocabulary a widget draws -- :class:`DatasetInfo`,
+:class:`RowSection`, :class:`MatrixSection` -- is defined in
+``cellier.data._dataset_info`` and re-exported here: a data store has to be
+able to describe itself without importing a GUI, so the types live beside the
+stores and the widgets import them from this module.
+
+What remains here is :func:`dataset_info_from_path`, which builds the same
+description for an OME-Zarr URI when there is no store object to ask.  A
+store you already hold is better asked directly -- ``store.dataset_info()``
+reads metadata it has parsed already, where this re-opens the group.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 from urllib.parse import urlparse
 
-import numpy as np
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    MatrixSection,
+    RowSection,
+    Section,
+    axis_rows,
+    format_scale,
+    format_shape,
+    source_label,
+    uri_file_name,
+    world_to_data_matrix,
+)
 
-# ---------------------------------------------------------------------------
-# Data extraction helpers
-# ---------------------------------------------------------------------------
-
-
-def _source_label(zarr_path: str) -> str:
-    """Map a URI scheme to a human-readable source label."""
-    scheme = urlparse(zarr_path).scheme
-    return {
-        "file": "local file",
-        "s3": "S3",
-        "gs": "Google Cloud Storage",
-        "gcs": "Google Cloud Storage",
-        "https": "HTTP",
-        "http": "HTTP",
-    }.get(scheme, scheme)
-
-
-def _file_name(zarr_path: str) -> str:
-    """Extract the final path component from a URI."""
-    path = urlparse(zarr_path).path
-    return path.rstrip("/").rsplit("/", 1)[-1]
-
-
-@dataclass
-class DatasetInfo:
-    """All display-relevant metadata for one OME-Zarr dataset.
-
-    Parameters
-    ----------
-    file_name :
-        Basename of the zarr store path.
-    zarr_type :
-        OME metadata type string, e.g. ``"Image"`` or ``"Bf2Raw/Image"``.
-    source :
-        Human-readable storage source, e.g. ``"local file"``, ``"S3"``.
-    world_to_data_matrix :
-        ``(n+1, n+1)`` homogeneous affine matrix mapping physical world
-        coordinates to level-0 voxel coordinates.
-    axis_names :
-        Axis labels in data order.
-    scale_shapes :
-        Shape tuple for each resolution level, finest first.
-    """
-
-    file_name: str
-    zarr_type: str
-    source: str
-    world_to_data_matrix: np.ndarray
-    axis_names: list[str]
-    scale_shapes: list[tuple[int, ...]]
+__all__ = [
+    "DatasetInfo",
+    "MatrixSection",
+    "RowSection",
+    "Section",
+    "dataset_info_from_path",
+]
 
 
 def _read_level_shapes(zarr_path: str, scale_paths: list[str]) -> list[tuple[int, ...]]:
@@ -70,8 +49,6 @@ def _read_level_shapes(zarr_path: str, scale_paths: list[str]) -> list[tuple[int
     Supports ``file://`` URIs (reads from disk) and remote URIs (reads via
     fsspec, which yaozarrs[io] already requires).
     """
-    import json
-
     parsed = urlparse(zarr_path)
     shapes: list[tuple[int, ...]] = []
 
@@ -118,10 +95,13 @@ def dataset_info_from_path(
     multiscale_index: int = 0,
     series_index: int = 0,
 ) -> DatasetInfo:
-    """Extract display metadata from an OME-Zarr store.
+    """Extract display metadata from an OME-Zarr store by URI.
 
-    Uses ``yaozarrs`` to validate and read OME metadata and ``zarr`` to
-    query per-level array shapes.
+    Uses ``yaozarrs`` to validate and read OME metadata, and direct JSON
+    reads for the per-level array shapes.
+
+    Prefer ``store.dataset_info()`` when you have a store: this opens the
+    group, which for a remote URI is a network round trip.
 
     Parameters
     ----------
@@ -131,6 +111,11 @@ def dataset_info_from_path(
         Which ``multiscales[]`` entry to read. Defaults to 0.
     series_index :
         For Bf2Raw containers, which child image series to inspect.
+
+    Returns
+    -------
+    DatasetInfo
+        The same sectioned description a store's ``dataset_info`` returns.
     """
     import yaozarrs
     from yaozarrs import v05 as ome_v05
@@ -158,8 +143,10 @@ def dataset_info_from_path(
 
     ms = metadata.multiscales[multiscale_index]
 
-    # ── Axis names ──────────────────────────────────────────────────────────
+    # ── Axis metadata ───────────────────────────────────────────────────────
     axis_names = [ax.name for ax in ms.axes]
+    axis_units = [getattr(ax, "unit", None) for ax in ms.axes]
+    axis_types = [ax.type or "" for ax in ms.axes]
     n = len(axis_names)
 
     # ── Global coordinate transforms ────────────────────────────────────────
@@ -173,22 +160,9 @@ def dataset_info_from_path(
             elif isinstance(ct, TranslationTransformation):
                 global_translation = list(ct.translation)
 
-    # Level-0 dataset scale.
-    ds0 = ms.datasets[0]
-    ds0_scale = list(ds0.scale_transform.scale)
-
     # Physical scale per axis at level 0: global_scale * dataset0_scale.
+    ds0_scale = list(ms.datasets[0].scale_transform.scale)
     phys_scale = [global_scale[i] * ds0_scale[i] for i in range(n)]
-
-    # ── World-to-data matrix (homogeneous, (n+1) x (n+1)) ──────────────────
-    # data-to-world: world[i] = phys_scale[i] * voxel[i] + global_translation[i]
-    # world-to-data: voxel[i] = (world[i] - global_translation[i]) / phys_scale[i]
-    mat = np.zeros((n + 1, n + 1), dtype=float)
-    for i in range(n):
-        s = phys_scale[i] if phys_scale[i] != 0.0 else 1.0
-        mat[i, i] = 1.0 / s
-        mat[i, n] = -global_translation[i] / s
-    mat[n, n] = 1.0
 
     # ── Per-level shapes via direct JSON reads ──────────────────────────────
     # Avoid zarr.open_group: zarr v3 tries to start an asyncio event loop,
@@ -196,11 +170,35 @@ def dataset_info_from_path(
     scale_paths = [ds.path for ds in ms.datasets]
     scale_shapes = _read_level_shapes(zarr_path, scale_paths)
 
-    return DatasetInfo(
-        file_name=_file_name(zarr_path),
-        zarr_type=zarr_type,
-        source=_source_label(zarr_path),
-        world_to_data_matrix=mat,
-        axis_names=axis_names,
-        scale_shapes=scale_shapes,
-    )
+    # ── Per-level scale, relative to level 0 ────────────────────────────────
+    level_rows: list[tuple[str, str]] = []
+    for path, shape, ds in zip(scale_paths, scale_shapes, ms.datasets):
+        relative = [
+            (global_scale[i] * ds.scale_transform.scale[i]) / phys_scale[i]
+            if phys_scale[i]
+            else 1.0
+            for i in range(n)
+        ]
+        level_rows.append((path, f"{format_shape(shape)}  ({format_scale(relative)})"))
+
+    headers = [*axis_names, "1"]
+    sections: list[Section] = [
+        RowSection(
+            None,
+            [
+                ("File name", uri_file_name(zarr_path)),
+                ("Type", zarr_type),
+                ("Source", source_label(zarr_path)),
+                ("Scale levels", str(len(scale_shapes))),
+            ],
+        ),
+        RowSection("Axes", axis_rows(axis_names, axis_units, axis_types)),
+        MatrixSection(
+            "World to data",
+            world_to_data_matrix(phys_scale, global_translation),
+            row_labels=headers,
+            col_labels=headers,
+        ),
+        RowSection("Scale levels", level_rows, collapsed=True),
+    ]
+    return DatasetInfo(sections=sections)

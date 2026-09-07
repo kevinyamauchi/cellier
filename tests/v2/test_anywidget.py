@@ -12,9 +12,15 @@ from uuid import uuid4
 import pygfx as gfx
 import pytest
 
+from cellier.convenience._backend import ANYWIDGET_BACKEND
+from cellier.convenience._hosts import _AnywidgetDockPanel
+from cellier.convenience.layout._shared import APPEARANCE_DOCK_GAP_PX
+from cellier.convenience.layout._walk import build_appearance_widgets
+
 rendercanvas_anywidget = pytest.importorskip("rendercanvas.anywidget")
 
 from cellier.controller import CellierController  # noqa: E402
+from cellier.convenience.gui import InMemoryImageControlsConfig  # noqa: E402
 from cellier.render.canvas_view import CanvasView  # noqa: E402
 from cellier.scene.dims import (  # noqa: E402
     AxisAlignedSelection,
@@ -389,7 +395,7 @@ def _image_viewer_with_controls():
     viewer.add_image(
         store,
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
     return viewer, axis_ranges_from_viewer(viewer)
 
@@ -404,11 +410,10 @@ def test_build_canvas_widget_anywidget_returns_view():
 
     assert isinstance(view, AnywidgetCanvasView)
     assert isinstance(view.canvas, rendercanvas_anywidget.RenderCanvas)
-    # No controls config was registered, so no appearance sub-widgets exist.
-    assert view.controls == []
+    # The view is canvas + dims only; appearance controls live in a dock.
+    assert not hasattr(view, "controls")
     assert callable(view.compose)
 
-    # Without controls, compose() returns only the right column (no h-stack).
     composed = view.compose(JupyterHost())
     from cellier.gui.anywidget import AnywidgetBox
 
@@ -417,7 +422,12 @@ def test_build_canvas_widget_anywidget_returns_view():
 
 
 def test_build_canvas_widget_anywidget_with_controls():
-    """build_canvas_widget always returns view.controls=[]; the renderer builds it."""
+    """A registered controls config does not change the canvas view.
+
+    Panel building belongs to the renderer, from a dock spec.  The canvas
+    view composes identically whether or not a config is registered, which is
+    what makes the removed in-canvas path (section 7.2) purely dead weight.
+    """
     from cellier.convenience._hosts import JupyterHost
     from cellier.convenience.gui import AnywidgetCanvasView, build_canvas_widget
 
@@ -425,14 +435,13 @@ def test_build_canvas_widget_anywidget_with_controls():
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
 
     assert isinstance(view, AnywidgetCanvasView)
-    # Panel building is deferred to the renderer; the canvas view never holds it.
-    assert view.controls == []
+    assert not hasattr(view, "controls")
 
     composed = view.compose(JupyterHost())
     from cellier.gui.anywidget import AnywidgetBox
 
     assert isinstance(composed, AnywidgetBox)
-    # No controls in the canvas view, so compose returns only the right column.
+    # One column: canvas above dims.
     assert composed.direction == "v"
 
 
@@ -491,16 +500,35 @@ class _Node:
         self.payload = payload
 
 
-class _FakeHost:
-    """An imperative LayoutHost (Jupyter-like): renders in present, returns None."""
+class _FakeHost(_AnywidgetDockPanel):
+    """An imperative LayoutHost (Jupyter-like): renders in present, returns None.
+
+    Inherits the real ``dock_panel`` rather than restating it: a double that
+    reimplements the thing under test drifts from it silently, which is how an
+    earlier version of this class ended up spacing dock columns differently
+    from every real host.
+    """
 
     def __init__(self):
+        from cellier.convenience._backend import ANYWIDGET_BACKEND
+
         self.presented = None
+        # The walk reads widget classes off the host's backend.
+        self.backend = ANYWIDGET_BACKEND
 
     def leaf(self, widget):
         return _Node("leaf", widget)
 
-    def stack(self, items, *, direction="v", align=None, min_width=None, gap=None):
+    def stack(
+        self,
+        items,
+        *,
+        direction="v",
+        align=None,
+        min_width=None,
+        gap=None,
+        title=None,
+    ):
         return _Node("stack", (direction, list(items), align, min_width, gap))
 
     def grid(self, rows):
@@ -597,9 +625,11 @@ def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
     assert panel_direction == "v"
     assert len(panel_leaves) == 3
     assert all(leaf.kind == "leaf" for leaf in panel_leaves)
-    # A tight, explicit gap groups the split sub-widgets, distinct from the
-    # host's default macro-layout spacing (see compose_appearance_leaf).
-    assert panel_gap == 4
+    # An explicit gap groups the split sub-widgets, distinct from the host's
+    # default macro-layout spacing (see compose_appearance_leaf).  Read from
+    # the shared constant rather than restated: it is the same number the Qt
+    # dock column spaces by, which is the point of it living there.
+    assert panel_gap == APPEARANCE_DOCK_GAP_PX
     assert center_node.kind == "stack"  # canvas+dims v-stack
 
 
@@ -689,19 +719,19 @@ def test_layout_single_preset_with_docks():
 
 
 def _make_colormap_control(**kwargs):
-    from cellier.gui.anywidget.visuals import AnywidgetColormapControl
+    from cellier.gui.anywidget.visuals import AnywidgetColormapCombo
 
     defaults = {"initial_colormap": "grays"}
     defaults.update(kwargs)
-    return AnywidgetColormapControl(uuid4(), **defaults)
+    return AnywidgetColormapCombo(uuid4(), **defaults)
 
 
 def _make_clim_slider(**kwargs):
-    from cellier.gui.anywidget.visuals import AnywidgetClimSlider
+    from cellier.gui.anywidget.visuals import AnywidgetClimRangeSlider
 
     defaults = {"clim_range": (0.0, 1.0), "initial_clim": (0.0, 1.0)}
     defaults.update(kwargs)
-    return AnywidgetClimSlider(uuid4(), **defaults)
+    return AnywidgetClimRangeSlider(uuid4(), **defaults)
 
 
 def _make_volume_render_controls(**kwargs):
@@ -948,19 +978,22 @@ def test_aabb_widget_user_color_change_emits_aabb_update():
 
 
 def test_build_appearance_widgets_anywidget_from_visual():
-    """Builds one widget per requested field, plus the always-on AABB widget."""
+    """Builds one widget per spec, plus the always-on AABB.
+
+    Names come from the shared ``appearance_specs`` layer so the two front
+    ends name the same control the same way (stage 1, section 7.3), and each
+    widget carries its own -- ``label`` on a single-field control, ``title``
+    on a multi-row one (``plans/label_ownership_unification.md``).
+    """
     import numpy as np
 
     from cellier.convenience import Viewer
-    from cellier.convenience.gui._appearance_widgets import (
-        build_appearance_widgets_anywidget,
-    )
     from cellier.convenience.gui._controls_config import InMemoryImageControlsConfig
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
-        AnywidgetClimSlider,
-        AnywidgetColormapControl,
+        AnywidgetClimRangeSlider,
+        AnywidgetColormapCombo,
     )
 
     viewer = Viewer(("z", "y", "x"), gui="anywidget")
@@ -971,19 +1004,26 @@ def test_build_appearance_widgets_anywidget_from_visual():
     visual = viewer.scene.visuals[0]
     controls_config = InMemoryImageControlsConfig(appearance=["color_map", "clim"])
 
-    widgets = build_appearance_widgets_anywidget(
-        visual, controls_config, viewer.controller
+    widgets = build_appearance_widgets(
+        visual, controls_config, viewer.controller, None, backend=ANYWIDGET_BACKEND
     )
 
+    assert [w.title for w in widgets] == [
+        "Colormap",
+        "Contrast limits",
+        "Bounding box",
+    ]
+
+    built = widgets
     # anywidget dynamically subclasses each widget at construction time (the
     # same mechanism AnywidgetChannelList's add_traits relies on), so compare
     # via isinstance rather than exact type equality.
-    assert any(isinstance(w, AnywidgetColormapControl) for w in widgets)
-    assert any(isinstance(w, AnywidgetClimSlider) for w in widgets)
+    assert isinstance(built[0], AnywidgetColormapCombo)
+    assert isinstance(built[1], AnywidgetClimRangeSlider)
     # AABB is always wired alongside whenever the visual has one, regardless
     # of whether "aabb" was requested in the appearance field list -- this
     # mirrors ControlPanel's previous (pre-split) behaviour.
-    assert any(isinstance(w, AnywidgetAABBWidget) for w in widgets)
+    assert isinstance(built[2], AnywidgetAABBWidget)
 
 
 def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
@@ -997,8 +1037,8 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     from cellier.events import AABBChangedEvent, AppearanceChangedEvent
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
-        AnywidgetClimSlider,
-        AnywidgetColormapControl,
+        AnywidgetClimRangeSlider,
+        AnywidgetColormapCombo,
     )
 
     viewer = Viewer(("z", "y", "x"), gui="anywidget")
@@ -1007,13 +1047,14 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     viewer.add_image(
         store,
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
-        controls={"appearance": ["color_map", "clim"]},
+        controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
     ranges = axis_ranges_from_viewer(viewer)
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
-    # build_canvas_widget no longer builds the appearance widgets.
-    assert view.controls == []
+    # The canvas view is canvas + dims only: the in-canvas controls column was
+    # unreachable through the public API and is gone (section 7.2).
+    assert not hasattr(view, "controls")
 
     fake = _FakeHost()
     monkeypatch.setattr(_hosts, "resolve_host", lambda host=None: fake)
@@ -1035,10 +1076,10 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
         _panel_min_width,
         panel_gap,
     ) = panel_node.payload
-    assert panel_gap == 4  # tight grouping, distinct from the host's default
+    assert panel_gap == APPEARANCE_DOCK_GAP_PX  # shared with the Qt dock column
     widgets = [leaf.payload for leaf in panel_leaves]
-    assert any(isinstance(w, AnywidgetColormapControl) for w in widgets)
-    assert any(isinstance(w, AnywidgetClimSlider) for w in widgets)
+    assert any(isinstance(w, AnywidgetColormapCombo) for w in widgets)
+    assert any(isinstance(w, AnywidgetClimRangeSlider) for w in widgets)
     assert any(isinstance(w, AnywidgetAABBWidget) for w in widgets)
 
     event_types = set()

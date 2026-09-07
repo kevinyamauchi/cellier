@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from sidecar import Sidecar
 
-    from cellier.convenience._kwarg_dicts import SidecarKwargs
     from cellier.convenience._launch import DisplayHandle
 
 SidecarAnchor = Literal[
@@ -56,14 +55,13 @@ class SidecarOptions:
     ref: SidecarOptions | DisplayHandle | None = None
 
 
-def resolve_sidecar(sidecar: bool | SidecarOptions | SidecarKwargs) -> Sidecar:
+def resolve_sidecar(sidecar: bool | SidecarOptions) -> Sidecar:
     """Build a live ``sidecar.Sidecar`` from *sidecar*.
 
     Parameters
     ----------
-    sidecar : True, SidecarOptions, or dict
-        ``True`` uses :class:`SidecarOptions` defaults; a dict is coerced via
-        ``SidecarOptions(**sidecar)``.
+    sidecar : True or SidecarOptions
+        ``True`` uses :class:`SidecarOptions` defaults.
 
     Raises
     ------
@@ -79,11 +77,7 @@ def resolve_sidecar(sidecar: bool | SidecarOptions | SidecarKwargs) -> Sidecar:
             "Install it with `pip install sidecar`."
         ) from e
 
-    options = (
-        sidecar
-        if isinstance(sidecar, SidecarOptions)
-        else SidecarOptions(**(sidecar if isinstance(sidecar, dict) else {}))
-    )
+    options = sidecar if isinstance(sidecar, SidecarOptions) else SidecarOptions()
 
     ref = options.ref
     if isinstance(ref, SidecarOptions):

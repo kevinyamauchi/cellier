@@ -6,35 +6,28 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
+from cellier.convenience._render_settings import RenderSettingsMixin
+from cellier.convenience._startup import StartupState
+from cellier.render._capture import write_png
 from cellier.scene.dims import CoordinateSystem
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import numpy as np
     from PySide6.QtWidgets import QWidget
 
-    from cellier.convenience._kwarg_dicts import (
-        ChannelAppearanceKwargs,
-        ChannelControlsKwargs,
-        GraphAppearanceKwargs,
-        InMemoryImageAppearanceKwargs,
-        InMemoryImageControlsKwargs,
-        InMemoryLabelsAppearanceKwargs,
-        LinesMemoryAppearanceKwargs,
-        MeshFlatAppearanceKwargs,
-        MeshPhongAppearanceKwargs,
-        MultiscaleImageAppearanceKwargs,
-        MultiscaleImageControlsKwargs,
-        MultiscaleImageRenderConfigKwargs,
-        MultiscaleLabelRenderConfigKwargs,
-        MultiscaleLabelsAppearanceKwargs,
-        PointsMarkerAppearanceKwargs,
-    )
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         ChannelControlsConfig,
+        GraphControlsConfig,
         InMemoryImageControlsConfig,
+        LabelsControlsConfig,
+        LinesControlsConfig,
+        MeshControlsConfig,
         MultiscaleImageControlsConfig,
+        MultiscaleLabelsControlsConfig,
+        PointsControlsConfig,
     )
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data.graph._graph_memory_store import GraphMemoryStore
@@ -44,8 +37,10 @@ if TYPE_CHECKING:
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.render._config import RenderManagerConfig
+    from cellier.scene._background import BackgroundAppearance
     from cellier.scene.scene import Scene
     from cellier.transform import AffineTransform
+    from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
         GraphAppearance,
@@ -73,7 +68,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T", bound="BaseDataStore")
 
 
-class Viewer:
+class Viewer(RenderSettingsMixin):
     """Single-scene viewer wrapping a CellierController.
 
     Creates a controller and a single scene pre-wired and ready to receive
@@ -93,10 +88,14 @@ class Viewer:
     render_config : RenderManagerConfig or None
         Render pipeline configuration passed through to the controller.
         Uses controller defaults when ``None``.
-    gui : "qt" or "anywidget"
+    gui : "qt", "anywidget", or "offscreen"
         Which GUI toolkit the canvas should target. ``"qt"`` (default) renders
         into a Qt widget; ``"anywidget"`` renders into a notebook canvas for
-        Jupyter / marimo. Fixed at construction.
+        Jupyter / marimo; ``"offscreen"`` renders with no window at all, for
+        headless capture via :meth:`screenshot`. Fixed at construction.
+        ``"offscreen"`` viewers have no embeddable widget, so the layout
+        builders (``build_canvas_widget``, ``launch``, ``show``, ``display``)
+        reject them.
     """
 
     def __init__(
@@ -106,7 +105,7 @@ class Viewer:
         dim: Literal["2d", "3d"] = "2d",
         render_modes: set[str] | None = None,
         render_config: RenderManagerConfig | None = None,
-        gui: Literal["qt", "anywidget"] = "qt",
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> None:
         resolved_render_modes = (
             render_modes if render_modes is not None else {"2d", "3d"}
@@ -147,6 +146,23 @@ class Viewer:
         """The single scene managed by this viewer."""
         return self._scene
 
+    @property
+    def background(self) -> BackgroundAppearance:
+        """Appearance of the background drawn behind the scene's visuals.
+
+        Mutate its fields to update the canvas at runtime::
+
+            viewer.background.mode = "uniform"
+            viewer.background.color = (0.0, 0.0, 0.0, 1.0)
+
+        Assigning a whole new ``BackgroundAppearance`` works too.
+        """
+        return self._scene.background
+
+    @background.setter
+    def background(self, value: BackgroundAppearance) -> None:
+        self._scene.background = value
+
     # ------------------------------------------------------------------
     # Readiness
     # ------------------------------------------------------------------
@@ -170,6 +186,220 @@ class Viewer:
             Zero-argument callback.
         """
         self._ready_callbacks.append(callback)
+
+    @property
+    def startup_state(self) -> StartupState:
+        """How far this viewer has got through starting up.
+
+        Readable at any moment, with no callback, no event loop and no front
+        end -- which is the point.  A blank viewer used to be undiagnosable
+        from Python; now it can say whether it is waiting for the canvas to
+        reach the browser, waiting for a first frame, loading data, or done.
+
+        ``StartupState.IDLE`` until ``display``/``launch``/``show`` runs.
+        """
+        tracker = getattr(self, "_startup", None)
+        return StartupState.IDLE if tracker is None else tracker.state
+
+    @property
+    def scene_startup_states(self) -> dict[str, StartupState]:
+        """Each scene's startup state, keyed as this viewer keys its scenes.
+
+        An aggregate hides which panel is stuck; this does not.
+        """
+        tracker = getattr(self, "_startup", None)
+        return {} if tracker is None else tracker.scene_states
+
+    def startup_report(self) -> str:
+        """A one-line summary of startup progress, for a cell or a log line."""
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            return "idle (not started)"
+        return tracker.describe()
+
+    def on_scene_ready(self, key: str, callback: Callable[[], None]) -> None:
+        """Fire *callback* when one scene's data is on the GPU.
+
+        The per-scene counterpart of :meth:`on_ready`, which waits for *all*
+        of them.  Fires immediately if that scene is already ready.
+
+        Must be called after ``display``/``launch``, which is when the
+        startup tracker exists.
+
+        Parameters
+        ----------
+        key : str
+            The scene key -- ``"scene"`` for a single-scene viewer, or the
+            panel key (``"xy"``, ``"xz"``, ``"yz"``, ``"vol"``) for an
+            ``OrthoViewer``.
+        callback : Callable[[], None]
+            Zero-argument callback.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_scene_ready requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_scene_ready(key, callback)
+
+    def on_startup_progress(self, callback: Callable[[int, int], None]) -> None:
+        """Fire ``callback(scenes_ready, scenes_total)`` as scenes load.
+
+        For a progress bar over a slow or remote dataset, where the gap
+        between "shown" and "loaded" is long enough to need reporting.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_startup_progress requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_progress(callback)
+
+    def on_startup_stalled(self, callback: Callable[[dict], None]) -> None:
+        """Fire ``callback({scene key: state})`` if startup does not finish.
+
+        The signal that was missing entirely: startup could only ever report
+        success, so a viewer that never finished looked exactly like one still
+        working.  The payload names each unfinished scene and the state it
+        stopped in, so the report can say *what* it was waiting for.
+
+        Stalling is not an error -- slow remote data legitimately takes a
+        while -- it is the cue that something is worth looking at.  Tune the
+        window with ``display(..., stall_timeout=)``.
+        """
+        tracker = getattr(self, "_startup", None)
+        if tracker is None:
+            raise RuntimeError(
+                "on_startup_stalled requires a started viewer; call it after "
+                "display()/launch()/show()."
+            )
+        tracker.on_stalled(callback)
+
+    # ------------------------------------------------------------------
+    # Capture
+    # ------------------------------------------------------------------
+
+    @property
+    def canvases(self) -> tuple[UUID, ...]:
+        """IDs of the canvases attached to this viewer's scene, in creation order.
+
+        Empty until :meth:`add_canvas` (or a layout builder) has run.  A viewer
+        with no canvas is still capturable -- see :meth:`screenshot`.
+        """
+        return tuple(self._controller.get_canvas_ids(self._scene.id))
+
+    def screenshot(
+        self,
+        *,
+        canvas: UUID | None = None,
+        size: tuple[int, int] | None = None,
+        scale: float = 1.0,
+        frames: int | Literal["converged"] = 1,
+        save: str | Path | None = None,
+        **capture_kwargs,
+    ) -> np.ndarray:
+        """Capture a reproducible screenshot as an RGBA uint8 array.
+
+        The frame is rendered offscreen, so two captures of the same viewer
+        state produce byte-identical arrays and the result does not depend on
+        a window being open, on the display's pixel ratio, or on which GUI
+        toolkit the viewer targets.
+
+        The capture shows the data **currently resident on the GPU** -- it does
+        not reslice.  Capture from :meth:`on_ready` (or after ``launch`` /
+        ``show`` / ``display`` have fired it) when a load may still be running.
+
+        A viewer with **no canvas** still renders, fitting the camera to the
+        scene, but it will have no data to show: slice requests are planned
+        per canvas, so a viewer that never called :meth:`add_canvas` has never
+        loaded anything.  Add a canvas and let the reslice finish first --
+        ``scripts/capture.py`` does this for you.
+
+        Parameters
+        ----------
+        canvas : UUID or None
+            Which canvas's viewpoint to reproduce, from :attr:`canvases`.
+            This selects a **viewpoint, not a surface**: the pixels always
+            come from a fresh offscreen canvas.  With ``None`` (default) the
+            viewer's single canvas is used, the scene is fitted if there is no
+            canvas, and an ambiguous choice raises rather than guessing.
+        size : tuple[int, int] or None
+            ``(width, height)`` in pixels before *scale*.  Defaults to the
+            selected canvas's physical size (so the on-screen framing is
+            reproduced), or ``(600, 600)`` when there is no canvas.
+        scale : float
+            Multiplier applied to *size*.  ``scale=2`` doubles the resolution.
+        frames : int or "converged"
+            ``1`` (default) draws a single frame with temporal accumulation
+            off.  ``"converged"`` draws the number of frames the accumulator
+            needs to settle (44 at the default blend weight), which is what
+            you want whenever ambient occlusion is enabled.  ``N`` draws
+            exactly N accumulated frames.
+        save : str, Path, or None
+            When given, also write the frame to this path as a PNG.
+        **capture_kwargs
+            Forwarded to the capture helper (``max_frames``, ``residual``).
+
+        Returns
+        -------
+        np.ndarray
+            RGBA uint8 array of shape ``(height, width, 4)``.
+
+        Raises
+        ------
+        ValueError
+            If *canvas* is not one of this viewer's canvases, or if it is
+            omitted while the viewer has more than one canvas.
+        """
+        frame = self._controller_screenshot(
+            canvas=canvas, size=size, scale=scale, frames=frames, **capture_kwargs
+        )
+        if save is not None:
+            write_png(save, frame)
+        return frame
+
+    def _controller_screenshot(
+        self,
+        *,
+        canvas: UUID | None,
+        size: tuple[int, int] | None,
+        scale: float,
+        frames: int | Literal["converged"],
+        **capture_kwargs,
+    ) -> np.ndarray:
+        """Resolve which canvas to reproduce, then capture through it."""
+        canvas_ids = self.canvases
+        if canvas is not None:
+            if canvas not in canvas_ids:
+                raise ValueError(
+                    f"canvas {canvas} is not one of this viewer's canvases "
+                    f"{list(canvas_ids)}"
+                )
+            target = canvas
+        elif len(canvas_ids) == 1:
+            target = canvas_ids[0]
+        elif not canvas_ids:
+            # No canvas to copy a viewpoint from: fit the scene instead.
+            return self._controller.screenshot_scene(
+                self._scene.id,
+                size=size,
+                scale=scale,
+                frames=frames,
+                **capture_kwargs,
+            )
+        else:
+            # Silently taking canvases[0] is how a screenshot of the wrong
+            # view goes unnoticed.
+            raise ValueError(
+                f"this viewer has {len(canvas_ids)} canvases, so screenshot() "
+                "cannot choose one for you. Pass canvas=<id> from "
+                f"viewer.canvases: {list(canvas_ids)}"
+            )
+        return self._controller.screenshot(
+            target, size=size, scale=scale, frames=frames, **capture_kwargs
+        )
 
     # ------------------------------------------------------------------
     # Serialization
@@ -376,11 +606,11 @@ class Viewer:
     def add_image(
         self,
         data: ImageMemoryStore | UUID,
-        appearance: BaseImageAppearance | InMemoryImageAppearanceKwargs,
+        appearance: BaseImageAppearance,
         name: str = "image",
-        controls: InMemoryImageControlsConfig
-        | InMemoryImageControlsKwargs
-        | None = None,
+        controls: InMemoryImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> ImageVisual:
         """Add an in-memory image visual.
 
@@ -388,50 +618,49 @@ class Viewer:
         ----------
         data : ImageMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseImageAppearance or dict
-            Appearance parameters. Accepts an ``InMemoryImageAppearance``
-            instance or a plain dict with the same keys (see
-            ``InMemoryImageAppearanceKwargs`` for the full set of accepted
-            keys and their types).
+        appearance : BaseImageAppearance
+            Appearance parameters.
         name : str
             Human-readable label. Default ``"image"``.
-        controls : InMemoryImageControlsConfig, dict, or None
-            Appearance panel configuration. Accepts an
-            ``InMemoryImageControlsConfig`` instance or a plain dict with the
-            same keys (see ``InMemoryImageControlsKwargs``). When ``None``
+        controls : InMemoryImageControlsConfig or None
+            Appearance panel configuration. When ``None``
             (default), no appearance panel is created for this visual.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         ImageVisual
         """
-        from cellier.convenience.gui._controls_config import (
-            resolve_inmemory_image_controls,
-        )
-        from cellier.visuals._image_memory import InMemoryImageAppearance
-
-        resolved_appearance = (
-            InMemoryImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
         visual = self._controller.add_image(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
-        resolved_controls = resolve_inmemory_image_controls(controls)
-        if resolved_controls is not None:
-            self._controls_configs[visual.id] = resolved_controls
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
         return visual
 
     def add_labels(
         self,
         data: LabelMemoryStore | UUID,
-        appearance: BaseLabelsAppearance | InMemoryLabelsAppearanceKwargs | None = None,
+        appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
         transform: AffineTransform | None = None,
+        controls: LabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual.
 
@@ -439,44 +668,57 @@ class Viewer:
         ----------
         data : LabelMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseLabelsAppearance, dict, or None
-            Appearance parameters. Accepts an ``InMemoryLabelsAppearance``
-            instance or a plain dict with the same keys (see
-            ``InMemoryLabelsAppearanceKwargs`` for the full set of accepted
-            keys and their types). Defaults to ``InMemoryLabelsAppearance()``
+        appearance : BaseLabelsAppearance or None
+            Appearance parameters. Defaults to ``InMemoryLabelsAppearance()``
             when ``None``.
         name : str
             Human-readable label. Default ``"labels"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : LabelsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
 
         Returns
         -------
         LabelMemoryVisual
         """
-        from cellier.visuals._label_memory import InMemoryLabelsAppearance
-
-        resolved_appearance = (
-            InMemoryLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._controller.add_labels(
+        visual = self._controller.add_labels(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_mesh(
         self,
         data: MeshMemoryStore | UUID,
-        appearance: MeshAppearance
-        | MeshFlatAppearanceKwargs
-        | MeshPhongAppearanceKwargs,
+        appearance: MeshAppearance,
         name: str = "mesh",
         transform: AffineTransform | None = None,
+        controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MeshVisual:
         """Add a mesh visual.
 
@@ -484,45 +726,51 @@ class Viewer:
         ----------
         data : MeshMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : MeshFlatAppearance, MeshPhongAppearance, or dict
-            Appearance parameters. Accepts a ``MeshFlatAppearance`` or
-            ``MeshPhongAppearance`` instance, or a plain dict with the same
-            keys (see ``MeshFlatAppearanceKwargs`` and
-            ``MeshPhongAppearanceKwargs``). When passing a dict, include the
-            ``appearance_type`` key (``"flat"`` or ``"phong"``) so Pydantic
-            can select the correct variant.
+        appearance : MeshFlatAppearance, MeshPhongAppearance,
+            Appearance parameters.
         name : str
             Human-readable label. Default ``"mesh"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         MeshVisual
         """
-        from pydantic import TypeAdapter
-
-        from cellier.visuals._mesh_memory import MeshAppearance as _MeshAppearance
-
-        resolved_appearance = (
-            TypeAdapter(_MeshAppearance).validate_python(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._controller.add_mesh(
+        visual = self._controller.add_mesh(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_points(
         self,
         data: PointsMemoryStore | UUID,
-        appearance: PointsMarkerAppearance | PointsMarkerAppearanceKwargs | None = None,
+        appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
         transform: AffineTransform | None = None,
+        controls: PointsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> PointsVisual:
         """Add a points visual.
 
@@ -530,45 +778,53 @@ class Viewer:
         ----------
         data : PointsMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : PointsMarkerAppearance, dict, or None
-            Appearance parameters. Accepts a ``PointsMarkerAppearance``
-            instance or a plain dict with the same keys (see
-            ``PointsMarkerAppearanceKwargs`` for the full set of accepted
-            keys and their types). Defaults to ``PointsMarkerAppearance()``
+        appearance : PointsMarkerAppearance or None
+            Appearance parameters. Defaults to ``PointsMarkerAppearance()``
             when ``None``.
         name : str
             Human-readable label. Default ``"points"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : PointsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         PointsVisual
         """
-        from cellier.visuals._points_memory import (
-            PointsMarkerAppearance as _PointsMarkerAppearance,
-        )
-
-        resolved_appearance = (
-            _PointsMarkerAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._controller.add_points(
+        visual = self._controller.add_points(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_graph(
         self,
         data: GraphMemoryStore | UUID,
-        appearance: GraphAppearance | GraphAppearanceKwargs | None = None,
+        appearance: GraphAppearance | None = None,
         name: str = "graph",
         transform: AffineTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
+        controls: GraphControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> GraphVisual:
         """Add a spatial-graph visual.
 
@@ -576,11 +832,9 @@ class Viewer:
         ----------
         data : GraphMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : GraphAppearance, dict, or None
-            Appearance parameters. Accepts a ``GraphAppearance`` instance or
-            a plain dict with the same keys (see ``GraphAppearanceKwargs``
-            for the full set of accepted keys and their types). Defaults to
-            ``GraphAppearance()`` when ``None``.
+        appearance : GraphAppearance or None
+            Appearance parameters. Defaults to ``GraphAppearance()`` when
+            ``None``.
         name : str
             Human-readable label. Default ``"graph"``.
         trail : dict[int, TrailConfig] or None
@@ -591,35 +845,46 @@ class Viewer:
             Data-to-world transform. When ``None`` the store's own transform
             is used if it has one (a geff file's per-axis scale and offset),
             and identity otherwise.
+        controls : GraphControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         GraphVisual
         """
-        from cellier.visuals._graph_memory import (
-            GraphAppearance as _GraphAppearance,
-        )
-
-        resolved_appearance = (
-            _GraphAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._controller.add_graph(
+        visual = self._controller.add_graph(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
             transform,
             trail,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_lines(
         self,
         data: LinesMemoryStore | UUID,
-        appearance: LinesMemoryAppearance | LinesMemoryAppearanceKwargs | None = None,
+        appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
         transform: AffineTransform | None = None,
+        controls: LinesControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> LinesVisual:
         """Add a lines visual.
 
@@ -627,50 +892,53 @@ class Viewer:
         ----------
         data : LinesMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : LinesMemoryAppearance, dict, or None
-            Appearance parameters. Accepts a ``LinesMemoryAppearance``
-            instance or a plain dict with the same keys (see
-            ``LinesMemoryAppearanceKwargs`` for the full set of accepted
-            keys and their types). Defaults to ``LinesMemoryAppearance()``
+        appearance : LinesMemoryAppearance or None
+            Appearance parameters. Defaults to ``LinesMemoryAppearance()``
             when ``None``.
         name : str
             Human-readable label. Default ``"lines"``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : LinesControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         LinesVisual
         """
-        from cellier.visuals._lines_memory import (
-            LinesMemoryAppearance as _LinesMemoryAppearance,
-        )
-
-        resolved_appearance = (
-            _LinesMemoryAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        return self._controller.add_lines(
+        visual = self._controller.add_lines(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_image_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleImageAppearance | MultiscaleImageAppearanceKwargs,
+        appearance: MultiscaleImageAppearance,
         name: str = "image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
-        controls: MultiscaleImageControlsConfig
-        | MultiscaleImageControlsKwargs
-        | None = None,
+        controls: MultiscaleImageControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual.
 
@@ -678,73 +946,57 @@ class Viewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale data store or UUID of an already-registered store.
-        appearance : MultiscaleImageAppearance or dict
-            Visual appearance parameters. Accepts a
-            ``MultiscaleImageAppearance`` instance or a plain dict with the
-            same keys (see ``MultiscaleImageAppearanceKwargs`` for the full
-            set of accepted keys and their types).
+        appearance : MultiscaleImageAppearance
+            Visual appearance parameters.
         name : str
             Human-readable label. Default ``"image"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration. Accepts a
-            ``MultiscaleImageRenderConfig`` instance or a plain dict with the
-            same keys (see ``MultiscaleImageRenderConfigKwargs``). Uses
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration. Uses
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
-        controls : MultiscaleImageControlsConfig, dict, or None
-            Appearance panel configuration. Accepts a
-            ``MultiscaleImageControlsConfig`` instance or a plain dict with
-            the same keys (see ``MultiscaleImageControlsKwargs``). When
-            ``None`` (default), no appearance panel is created for this
-            visual.
+        controls : MultiscaleImageControlsConfig or None
+            Appearance panel configuration. When ``None`` (default), no
+            appearance panel is created for this visual.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         MultiscaleImageVisual
         """
-        from cellier.convenience.gui._controls_config import (
-            resolve_multiscale_image_controls,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageAppearance as _MultiscaleImageAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
-        resolved_appearance = (
-            _MultiscaleImageAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         visual = self._controller.add_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
-            resolved_render_config,
+            render_config,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
-        resolved_controls = resolve_multiscale_image_controls(controls)
-        if resolved_controls is not None:
-            self._controls_configs[visual.id] = resolved_controls
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
         return visual
 
     def add_labels_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleLabelsAppearance | MultiscaleLabelsAppearanceKwargs,
+        appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
-        render_config: MultiscaleLabelRenderConfig
-        | MultiscaleLabelRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
+        controls: MultiscaleLabelsControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        outline_selected_labels: dict[int, int] | None = None,
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual.
 
@@ -752,60 +1004,62 @@ class Viewer:
         ----------
         data : BaseDataStore or UUID
             Backing multiscale label store or UUID of an already-registered store.
-        appearance : MultiscaleLabelsAppearance or dict
-            Visual appearance parameters. Accepts a
-            ``MultiscaleLabelsAppearance`` instance or a plain dict with the
-            same keys (see ``MultiscaleLabelsAppearanceKwargs`` for the full
-            set of accepted keys and their types).
+        appearance : MultiscaleLabelsAppearance
+            Visual appearance parameters.
         name : str
             Human-readable label. Default ``"labels"``.
-        render_config : MultiscaleLabelRenderConfig, dict, or None
-            LOD and rendering configuration. Accepts a
-            ``MultiscaleLabelRenderConfig`` instance or a plain dict with the
-            same keys (see ``MultiscaleLabelRenderConfigKwargs``). Uses
+        render_config : MultiscaleLabelRenderConfig or None
+            LOD and rendering configuration. Uses
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
+        controls : MultiscaleLabelsControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
+        outline_selected_labels : dict[int, int] or None
+            Maps a label value to the palette slot the selection layer draws
+            it in.  ``None`` (default) selects no label, so an outlined
+            labels visual shows boundaries only.
 
         Returns
         -------
         MultiscaleLabelVisual
         """
-        from cellier.visuals._labels import (
-            MultiscaleLabelRenderConfig as _MultiscaleLabelRenderConfig,
-        )
-        from cellier.visuals._labels import (
-            MultiscaleLabelsAppearance as _MultiscaleLabelsAppearance,
-        )
-
-        resolved_appearance = (
-            _MultiscaleLabelsAppearance.model_validate(appearance)
-            if isinstance(appearance, dict)
-            else appearance
-        )
-        resolved_render_config = (
-            _MultiscaleLabelRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
-        return self._controller.add_labels_multiscale(
+        visual = self._controller.add_labels_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
-            resolved_appearance,
+            appearance,
             name,
-            resolved_render_config,
+            render_config,
             transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            outline_selected_labels=outline_selected_labels,
         )
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
+        return visual
 
     def add_multichannel_image(
         self,
         data: ImageMemoryStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelImageVisual:
         """Add an in-memory multichannel image visual.
 
@@ -815,63 +1069,59 @@ class Viewer:
             Backing data store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index. Each value may be
-            a ``ChannelAppearance`` instance or a plain dict with the same
-            keys (see ``ChannelAppearanceKwargs`` for the full set of
-            accepted keys and their types).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Display name. Default ``"multichannel_image"``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration. Accepts a
-            ``ChannelControlsConfig`` instance or a plain dict with the same
-            keys (see ``ChannelControlsKwargs``). When ``None`` (default), no
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration. When ``None`` (default), no
             channel controls are created for this visual.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         MultichannelImageVisual
         """
-        from cellier.convenience.gui._controls_config import resolve_channel_controls
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
         visual = self._controller.add_multichannel_image(
             self._resolve_data_store(data),
             self._scene.id,
             channel_axis,
-            resolved_channels,
+            channels,
             name,
             max_channels_2d,
             max_channels_3d,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
-        resolved_controls = resolve_channel_controls(controls)
-        if resolved_controls is not None:
-            self._controls_configs[visual.id] = resolved_controls
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
         return visual
 
     def add_multichannel_image_multiscale(
         self,
         data: BaseDataStore | UUID,
         channel_axis: int,
-        channels: dict[int, ChannelAppearance | ChannelAppearanceKwargs],
+        channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
-        render_config: MultiscaleImageRenderConfig
-        | MultiscaleImageRenderConfigKwargs
-        | None = None,
+        render_config: MultiscaleImageRenderConfig | None = None,
         transform: AffineTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | ChannelControlsKwargs | None = None,
+        controls: ChannelControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
     ) -> MultichannelMultiscaleImageVisual:
         """Add a multiscale multichannel image visual.
 
@@ -881,17 +1131,12 @@ class Viewer:
             Backing multiscale store or UUID of an already-registered store.
         channel_axis : int
             Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance or dict]
-            Per-channel appearance keyed by channel index. Each value may be
-            a ``ChannelAppearance`` instance or a plain dict with the same
-            keys (see ``ChannelAppearanceKwargs`` for the full set of
-            accepted keys and their types).
+        channels : dict[int, ChannelAppearance]
+            Per-channel appearance keyed by channel index.
         name : str
             Display name. Default ``"multichannel_image"``.
-        render_config : MultiscaleImageRenderConfig, dict, or None
-            LOD and rendering configuration. Accepts a
-            ``MultiscaleImageRenderConfig`` instance or a plain dict with the
-            same keys (see ``MultiscaleImageRenderConfigKwargs``). Uses
+        render_config : MultiscaleImageRenderConfig or None
+            LOD and rendering configuration. Uses
             defaults when ``None``.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
@@ -899,45 +1144,36 @@ class Viewer:
             Maximum simultaneous 2D channel nodes.
         max_channels_3d : int
             Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig, dict, or None
-            Per-channel controls configuration. Accepts a
-            ``ChannelControlsConfig`` instance or a plain dict with the same
-            keys (see ``ChannelControlsKwargs``). When ``None`` (default), no
+        controls : ChannelControlsConfig or None
+            Per-channel controls configuration. When ``None`` (default), no
             channel controls are created for this visual.
+
+        outline : VisualOutline or None
+            Screen-space outline assignment.  ``None`` (default) leaves the
+            visual unoutlined.  Requires the outline pass to be enabled; see
+            ``outline_enabled``.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion.  ``None``
+            (default) is automatic: excluded while it renders in a
+            MIP-family mode, included otherwise.
 
         Returns
         -------
         MultichannelMultiscaleImageVisual
         """
-        from cellier.convenience.gui._controls_config import resolve_channel_controls
-        from cellier.visuals._channel_appearance import (
-            ChannelAppearance as _ChannelAppearance,
-        )
-        from cellier.visuals._image import (
-            MultiscaleImageRenderConfig as _MultiscaleImageRenderConfig,
-        )
-
-        resolved_channels = {
-            k: (_ChannelAppearance.model_validate(v) if isinstance(v, dict) else v)
-            for k, v in channels.items()
-        }
-        resolved_render_config = (
-            _MultiscaleImageRenderConfig.model_validate(render_config)
-            if isinstance(render_config, dict)
-            else render_config
-        )
         visual = self._controller.add_multichannel_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
             channel_axis,
-            resolved_channels,
+            channels,
             name,
-            resolved_render_config,
+            render_config,
             transform,
             max_channels_2d,
             max_channels_3d,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
         )
-        resolved_controls = resolve_channel_controls(controls)
-        if resolved_controls is not None:
-            self._controls_configs[visual.id] = resolved_controls
+        if controls is not None:
+            self._controls_configs[visual.id] = controls
         return visual

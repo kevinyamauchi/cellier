@@ -14,13 +14,6 @@
   opacity: 0.65;
 }
 
-.cellier-dataset-info-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: 4px;
-}
-
 .cellier-dataset-info table {
   border-collapse: collapse;
   margin-top: 4px;
@@ -30,4 +23,17 @@
 .cellier-dataset-info th {
   padding: 1px 6px;
   border: 1px solid #ccc;
+  text-align: left;
+}
+
+/* Nested section blocks (axes, scale levels, geff properties). */
+.cellier-dataset-info details details {
+  margin: 4px 0 4px 8px;
+}
+
+/* A right-aligned column of ".4g" values is easier to compare down than
+   a left-aligned one; tabular figures keep the digits in line. */
+.cellier-dataset-info table.cellier-matrix td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

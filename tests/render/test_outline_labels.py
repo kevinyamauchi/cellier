@@ -32,7 +32,12 @@ from cellier.render._config import (
 )
 from cellier.render._outline import OutlinePass
 from cellier.render._pick_buffer import enable_pick_texture_binding, get_pick_view
-from cellier.render._visual_lut import KIND_LABEL, get_shared_visual_lut
+from cellier.render._visual_lut import (
+    KIND_LABEL,
+    KIND_LABEL_ALL,
+    KIND_WHOLE_OBJECT,
+    get_shared_visual_lut,
+)
 from cellier.render.shaders._label_colormap import (
     OUTLINE_SELECTION_CAPACITY,
     build_outline_selection_texture,
@@ -198,6 +203,21 @@ def test_labels_visual_is_registered_as_a_label_kind(label_scene):
     assert entry[2] == KIND_LABEL
 
 
+def test_every_outline_mode_maps_to_its_own_kind(label_scene):
+    """The mode is carried as ``kind``, so each one must reach the LUT."""
+    controller, _scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+
+    for mode, kind in (
+        ("per_label", KIND_LABEL),
+        ("whole_object", KIND_WHOLE_OBJECT),
+        ("all_boundaries", KIND_LABEL_ALL),
+    ):
+        visual.outline_mode = mode
+        entry = controller._render_manager.get_visual_outline(visual.id)
+        assert entry is not None and entry[2] == kind, mode
+
+
 # ---------------------------------------------------------------------------
 # Checklist item 13 -- boundaries between touching labels
 # ---------------------------------------------------------------------------
@@ -301,6 +321,104 @@ def test_selection_takes_precedence_over_boundaries(label_scene):
 
 
 # ---------------------------------------------------------------------------
+# "All boundaries" -- every label banded in one colour
+# ---------------------------------------------------------------------------
+
+
+def test_all_boundaries_colours_every_label_with_the_visual_slot(label_scene):
+    """Whole-volume's colour behaviour, applied to every label.
+
+    In per-label mode an unselected label draws no selection colour at all
+    (``test_selecting_one_label_outlines_exactly_that_label`` asserts that
+    from the other side).  Here every label takes the visual's own slot
+    with nothing selected.
+    """
+    controller, scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+    assert _count(_render(controller, scene)[0], _SLOT1) == 0
+
+    visual.outline_mode = "all_boundaries"
+    frame, _r = _render(controller, scene)
+
+    assert _count(frame, _SLOT1) > 0
+
+
+def test_all_boundaries_draws_between_touching_labels(label_scene):
+    """The mode's reason to exist.
+
+    Whole volume and all boundaries paint the same outer silhouette in the
+    same colour; only the second finds the boundary between labels 1 and 2,
+    so it must paint strictly more.
+    """
+    controller, scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+
+    visual.outline_mode = "whole_object"
+    whole = _count(_render(controller, scene)[0], _SLOT1)
+
+    visual.outline_mode = "all_boundaries"
+    every = _count(_render(controller, scene)[0], _SLOT1)
+
+    assert every > whole > 0
+
+
+def test_all_boundaries_ignores_a_stale_selection(label_scene):
+    """A leftover selection must not eat a boundary.
+
+    A selected label's outline key *is* its slot number, so two touching
+    labels sharing a slot would share a key.  Labels 1 and 2 touch; putting
+    both in slot 2 while in per-label mode and then switching modes is
+    exactly how a user reaches that state.
+    """
+    controller, scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+    visual.outline_mode = "all_boundaries"
+    clean = _count(_render(controller, scene)[0], _SLOT1)
+
+    visual.outline_mode = "per_label"
+    controller.set_label_selection(visual.id, {1: 2, 2: 2})
+    visual.outline_mode = "all_boundaries"
+
+    frame, renderer = _render(controller, scene)
+    # The keys are what the boundary test compares, so assert on them
+    # directly as well as on the pixels they produce.
+    keys = np.unique(_read_outline_id(renderer))
+    non_background = keys[keys != 0]
+    assert len(non_background) == 3
+    assert np.all(non_background >= 16), "a selection key survived the mode"
+
+    assert _count(frame, _SLOT2) == 0, "the selection colour survived the mode"
+    assert _count(frame, _SLOT1) == clean, "a boundary was lost to the selection"
+
+
+def test_leaving_all_boundaries_restores_the_selection(label_scene):
+    """The suppression is on the GPU only; the model keeps the selection."""
+    controller, scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+    controller.set_label_selection(visual.id, {2: 2})
+
+    visual.outline_mode = "all_boundaries"
+    assert _count(_render(controller, scene)[0], _SLOT2) == 0
+    assert visual.outline_selected_labels == {2: 2}
+
+    visual.outline_mode = "per_label"
+
+    assert _count(_render(controller, scene)[0], _SLOT2) > 0
+
+
+def test_all_boundaries_without_the_target_falls_back_to_a_silhouette(label_scene):
+    """No key target means whole-volume, which is this mode's own colour."""
+    controller, scene, visual = label_scene
+    controller.set_visual_outline(visual.id, slot=1)
+    visual.outline_mode = "all_boundaries"
+
+    frame, renderer = _render(controller, scene, with_target=False)
+
+    assert renderer._blender.get_texture(OUTLINE_ID_TARGET) is None
+    assert _count(frame, _SLOT1) > 0
+
+
+# ---------------------------------------------------------------------------
 # The selection texture
 # ---------------------------------------------------------------------------
 
@@ -393,9 +511,9 @@ def test_installing_the_blender_preserves_the_pick_grant(offscreen_renderer):
 
         canvas.request_draw(lambda r=renderer: r.render(scene, camera))
         canvas.draw()
-        assert (
-            get_pick_view(renderer) is not None
-        ), f"pick binding lost when grant_first={grant_first}"
+        assert get_pick_view(renderer) is not None, (
+            f"pick binding lost when grant_first={grant_first}"
+        )
 
 
 def test_canvas_view_keeps_both_couplings_when_outlines_are_enabled(

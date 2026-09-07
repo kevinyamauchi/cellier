@@ -12,6 +12,7 @@ import pygfx as gfx
 from cellier._state import CameraState
 from cellier.events._events import (
     CameraChangedEvent,
+    CanvasConnectedEvent,
     CanvasSizeChangedEvent,
     FrameRenderedEvent,
 )
@@ -19,6 +20,7 @@ from cellier.logging import _CAMERA_LOGGER
 from cellier.render._cellier_blender import (
     NORMAL_TARGET,
     OUTLINE_ID_TARGET,
+    ensure_extra_targets,
     install_cellier_blender,
 )
 from cellier.render._outline import OutlinePass
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.events._bus import EventBus
-    from cellier.render._config import SSAOConfig
+    from cellier.render._config import AmbientOcclusionConfig
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
 
 
@@ -70,15 +72,16 @@ class CanvasView:
         Near and far clip distances ``(near, far)``.
     outline_enabled : bool
         When ``True``, install a blender carrying the ``outline_id`` render
-        target so label outlines have a per-pixel label key.  Must be
-        decided here: the target list feeds ``Blender.hash``, which keys
-        the pipeline cache.  Costs 4 bytes per pixel.
-    ssao_enabled : bool
+        target so label outlines have a per-pixel label key.  Costs 4 bytes
+        per pixel.  Deciding here is the cheap path, not the only one:
+        :meth:`ensure_render_targets` adds it later for the price of one
+        recompile frame.
+    ambient_occlusion_enabled : bool
         When ``True``, install a blender carrying the ``normal`` render
         target so cellier's volume shaders can hand the ambient occlusion
         pass a real surface normal instead of one reconstructed from
-        depth.  Construction-time for the same reason as *outline_enabled*.
-        Costs 8 bytes per pixel.
+        depth.  Costs 8 bytes per pixel, and is addable later by the same
+        route as *outline_enabled*.
     """
 
     def __init__(
@@ -94,7 +97,7 @@ class CanvasView:
         gui: str = "qt",
         size: tuple[int, int] | None = None,
         outline_enabled: bool = False,
-        ssao_enabled: bool = False,
+        ambient_occlusion_enabled: bool = False,
     ) -> None:
         self._canvas_id = canvas_id
         self._scene_id = scene_id
@@ -104,6 +107,11 @@ class CanvasView:
         self._dim = dim
         self._event_bus: EventBus | None = event_bus
         self._camera_dirty: bool = False
+        # Set by ``invalidate_accumulation``; consumed at the top of
+        # ``_draw_frame``.  A flag rather than a direct ``reset()`` so the
+        # discard is guaranteed to land *before* the next render rather
+        # than racing a frame the backend has already queued.
+        self._accum_dirty: bool = False
         self._tick_visuals_fn: Callable[[], None] | None = None
         self._closed: bool = False
         self._resize_filter: object | None = None
@@ -111,6 +119,9 @@ class CanvasView:
         self._fov = fov
         self._depth_range = depth_range
         self._gui = gui
+        # Set by ``_on_canvas_connected`` on the first sign of a live
+        # front end; see ``CanvasConnectedEvent``.
+        self._connected = False
         self._size = size
 
         self._canvas = self._create_canvas(parent, gui=gui, size=size)
@@ -122,12 +133,13 @@ class CanvasView:
         # until outlines are switched on would be too late.  A False result
         # leaves the outline pass installed but permanently a passthrough;
         # RenderManager warns if outlines are then requested.
-        # The extra render targets are construction-time only, and only for
-        # canvases that opted in.  The target list feeds ``Blender.hash``,
-        # which keys the pipeline cache, so adding or removing one later
-        # would invalidate every pipeline in the process.  Canvases that
-        # enable neither feature keep the stock blender and pay nothing:
-        # ``outline_id`` costs 4 bytes per pixel and ``normal`` 8.
+        # The extra render targets are installed here for the canvases that
+        # opted in, so a viewer configured up front pays no recompile.  A
+        # canvas that did not opt in can still gain them later through
+        # ``ensure_render_targets``, which costs one recompile frame.
+        # Canvases that never enable either feature keep the stock blender
+        # and pay nothing: ``outline_id`` costs 4 bytes per pixel, and
+        # ``normal`` 8.
         #
         # This runs *before* the pick grant: installing replaces the whole
         # blender, so granting first would throw the grant away.
@@ -136,7 +148,7 @@ class CanvasView:
         extra_targets: list[str] = []
         if outline_enabled:
             extra_targets.append(OUTLINE_ID_TARGET)
-        if ssao_enabled:
+        if ambient_occlusion_enabled:
             extra_targets.append(NORMAL_TARGET)
         installed = (
             install_cellier_blender(self._renderer, extra_targets)
@@ -144,7 +156,7 @@ class CanvasView:
             else False
         )
         self._outline_id_available: bool = installed and outline_enabled
-        self._normal_target_available: bool = installed and ssao_enabled
+        self._normal_target_available: bool = installed and ambient_occlusion_enabled
 
         self._outline_available: bool = enable_pick_texture_binding(self._renderer)
         self._visual_lut_sync_fn: Callable[[], None] | None = None
@@ -237,23 +249,38 @@ class CanvasView:
             the anywidget backend (notebook canvases are not laid out by a
             Qt parent).
         gui : str
-            Which GUI toolkit to target: ``"qt"`` or ``"anywidget"``.
+            Which GUI toolkit to target: ``"qt"``, ``"anywidget"`` or
+            ``"offscreen"``.
         size : tuple[int, int] or None
-            Initial CSS pixel size for the anywidget canvas.  Defaults to
+            Initial CSS pixel size for the anywidget canvas, or the exact
+            framebuffer size for the offscreen canvas.  Defaults to
             ``(600, 600)`` when ``None``.  Ignored for the Qt backend, which
             is sized by its parent layout.
 
         Returns
         -------
         object
-            The render canvas widget (a ``QRenderWidget`` for ``"qt"`` or an
-            ``AnywidgetRenderCanvas`` for ``"anywidget"``).
+            The render canvas widget (a ``QRenderWidget`` for ``"qt"``, an
+            ``AnywidgetRenderCanvas`` for ``"anywidget"``, or an
+            ``OffscreenRenderCanvas`` for ``"offscreen"``).
 
         Raises
         ------
         ValueError
-            If *gui* is not ``"qt"`` or ``"anywidget"``.
+            If *gui* is not ``"qt"``, ``"anywidget"`` or ``"offscreen"``.
         """
+        if gui == "offscreen":
+            # No window, no scheduler, no event loop: ``canvas.draw()`` runs
+            # the draw callback synchronously and returns the presented
+            # frame.  That is what makes a capture reproducible -- see
+            # ``cellier.render._capture``.
+            #
+            # ``pixel_ratio=1`` so logical size == physical size == the shape
+            # of the returned array.  Any other value would silently make the
+            # output depend on a display the canvas does not have.
+            from rendercanvas.offscreen import RenderCanvas as OffscreenRenderCanvas
+
+            return OffscreenRenderCanvas(size=size or (600, 600), pixel_ratio=1)
         if gui == "qt":
             from rendercanvas.qt import QRenderWidget
 
@@ -287,6 +314,12 @@ class CanvasView:
 
                 def _rfb_handle_msg(self, widget, content, buffers) -> None:
                     super()._rfb_handle_msg(widget, content, buffers)
+                    # Any inbound message means the browser has mounted this
+                    # canvas and can draw -- which is the one thing Python
+                    # cannot otherwise know, and which it may wait forever for.
+                    cb = getattr(self, "_cellier_on_connected", None)
+                    if cb is not None:
+                        cb()
                     if content.get("type") == "resize":
                         cb = getattr(self, "_cellier_on_resize", None)
                         if cb is not None:
@@ -303,13 +336,22 @@ class CanvasView:
                         return
                     self._cellier_closing = True
                     super()._rc_close()
+                    # The canvas is an ipywidgets widget, so it owns a
+                    # ``Layout`` widget registered in the same process-global
+                    # table and not released with its owner -- see
+                    # ``cellier.gui.anywidget._teardown``.
+                    from cellier.gui.anywidget._teardown import close_aux_widgets
+
+                    close_aux_widgets(self)
 
             canvas = _CellierAnywidgetCanvas(
                 size=size or (600, 600), update_mode="continuous"
             )
             canvas.set_css_width("100%")
             return canvas
-        raise ValueError(f"Unknown gui {gui!r}. Expected 'qt' or 'anywidget'.")
+        raise ValueError(
+            f"Unknown gui {gui!r}. Expected 'qt', 'anywidget' or 'offscreen'."
+        )
 
     def _wire_resize_event(self, gui: str) -> None:
         """Hook the backend resize notification to emit CanvasSizeChangedEvent.
@@ -318,8 +360,13 @@ class CanvasView:
         event filter on a QObject proxy so we don't need to subclass the
         widget.  anywidget: the canvas is a ``_CellierAnywidgetCanvas``
         (see ``_create_canvas``), which calls ``_cellier_on_resize`` on every
-        real browser resize.
+        real browser resize.  offscreen: nothing to hook -- the canvas has no
+        window and never resizes organically, so every size change is a
+        deliberate ``set_logical_size`` by the caller who already knows about
+        it.
         """
+        if gui == "offscreen":
+            return
         if gui == "qt":
             from PySide6.QtCore import QEvent, QObject
 
@@ -334,6 +381,8 @@ class CanvasView:
                     if event.type() == QEvent.Type.Resize:
                         s = event.size()
                         self_f._view._on_canvas_resize(s.width(), s.height())
+                    elif event.type() == QEvent.Type.Show:
+                        self_f._view._on_canvas_connected()
                     return False
 
             self._resize_filter = _ResizeFilter(self)
@@ -341,6 +390,31 @@ class CanvasView:
 
         elif gui == "anywidget":
             self._canvas._cellier_on_resize = self._on_canvas_resize
+            self._canvas._cellier_on_connected = self._on_canvas_connected
+
+    def _on_canvas_connected(self) -> None:
+        """Emit ``CanvasConnectedEvent`` once, on the first sign of a front end.
+
+        Called from each backend's own liveness signal: a Qt ``Show`` event,
+        or the first message the anywidget canvas receives from the browser.
+        Both can fire repeatedly, so this reports only the first.
+        """
+        if self._connected:
+            return
+        self._connected = True
+        if self._event_bus is not None:
+            self._event_bus.emit(
+                CanvasConnectedEvent(
+                    source_id=self._canvas_id,
+                    canvas_id=self._canvas_id,
+                    gui=self._gui,
+                )
+            )
+
+    @property
+    def connected(self) -> bool:
+        """Whether this canvas's front end has reported itself live."""
+        return self._connected
 
     def _on_canvas_resize(self, width: int, height: int) -> None:
         """Emit CanvasSizeChangedEvent; called by both backend resize hooks."""
@@ -535,19 +609,35 @@ class CanvasView:
         camera = self._camera_2d if dim == "2d" else self._camera_3d
         camera.depth_range = depth_range
 
-    def show_object(self, scene: gfx.Scene) -> None:
-        """Fit the camera to the scene bounding box and mark this dim as fitted.
+    def show_object(self, scene: gfx.Scene) -> bool:
+        """Fit the camera to the scene bounding box, if there is one.
+
+        A scene with nothing in it has no bounding sphere, and pygfx raises
+        rather than guessing.  That happens for real: switching a scene's
+        displayed axes rebuilds its visuals' geometry and fits the camera
+        *before* the reslice that fills them has committed, so for one moment
+        the scene is empty.  Refusing to fit -- and, crucially, not marking
+        the dim as fitted -- lets the caller try again once data arrives.
 
         Parameters
         ----------
         scene : gfx.Scene
             The scene to fit the camera to.
+
+        Returns
+        -------
+        bool
+            ``True`` if the camera was fitted.  ``False`` if the scene had no
+            bounds yet, in which case nothing was changed.
         """
+        if scene.get_world_bounding_sphere() is None:
+            return False
         if self._dim == "2d":
             self._camera.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
         else:
             self._camera.show_object(scene, view_dir=(-1, -1, -1), up=(0, 0, 1))
         self._fitted.add(self._dim)
+        return True
 
     @property
     def camera(self) -> gfx.Camera:
@@ -568,8 +658,31 @@ class CanvasView:
         """
         self._overlays.append(overlay)
 
+    def invalidate_accumulation(self) -> None:
+        """Discard the temporal accumulation history before the next frame.
+
+        Call whenever the image that *should* be drawn changes, so the
+        next frame is not an average with a picture that no longer
+        applies.  Cheap and idempotent: it sets a flag that
+        ``_draw_frame`` consumes, and the pass itself only zeroes a
+        counter.
+
+        Every content change needs this, not just the conspicuous ones.
+        Hiding a visual is merely the case where the stale average is
+        obvious; a colormap, clim, opacity, transform or data commit
+        leaves the same residue and reads as sluggishness instead.
+        """
+        self._accum_dirty = True
+
     def request_draw(self) -> None:
-        """Request a redraw of the canvas."""
+        """Request a redraw of the canvas.
+
+        Cellier calls this for content changes, so it also invalidates
+        the accumulation history.  Idle and continuous redraws come from
+        the backend's own scheduler and never reach here, which is what
+        lets them keep accumulating.
+        """
+        self.invalidate_accumulation()
         self._canvas.request_draw(self._draw_frame)
 
     def apply_camera_state(self, request: ReslicingRequest) -> None:
@@ -590,7 +703,11 @@ class CanvasView:
             self._camera.world.position = tuple(request.camera_pos)
         finally:
             self._applying_model_state = False
+        # Caching the new state suppresses the diff in ``_draw_frame``, which
+        # is what stops the feedback loop -- but the camera really did move,
+        # so the history has to be discarded here instead.
         self._last_camera_state = self.capture_camera_state()
+        self.invalidate_accumulation()
 
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
@@ -644,16 +761,21 @@ class CanvasView:
         self._controller.enabled = True
         self._dim = new_dim
         self._apply_ssao_enabled()
+        # Caching the state of the camera we just swapped *to* means the diff
+        # in ``_draw_frame`` sees no change, even though the whole view did.
+        # And on the way back to 3D the pass has been skipped for the entire
+        # 2D excursion, so its history still holds the pre-excursion image.
         self._last_camera_state = self.capture_camera_state()
+        self.invalidate_accumulation()
         first_visit = new_dim not in self._fitted
         return first_visit
 
-    def apply_ssao_config(self, config: SSAOConfig) -> None:
-        """Push an ``SSAOConfig`` onto this canvas's occlusion pass.
+    def apply_ambient_occlusion_config(self, config: AmbientOcclusionConfig) -> None:
+        """Push an ``AmbientOcclusionConfig`` onto this canvas's occlusion pass.
 
         Parameters
         ----------
-        config : SSAOConfig
+        config : AmbientOcclusionConfig
             The configuration to apply.  Its ``enabled`` flag is recorded
             as the *requested* state; the pass itself stays off while the
             canvas is in 2D.
@@ -677,6 +799,52 @@ class CanvasView:
 
     def _apply_ssao_enabled(self) -> None:
         self._ssao_pass.enabled = self._ssao_requested and self._dim != "2d"
+
+    def ensure_render_targets(
+        self, *, outline: bool = False, ssao: bool = False
+    ) -> None:
+        """Add the render targets a feature needs, after construction.
+
+        The targets are chosen at construction from the render config, which
+        is right for a viewer that was configured up front and wrong for one
+        where a user ticks the box later: a feature switched on afterwards
+        would run without its target and quietly degrade -- ambient
+        occlusion to normals reconstructed from depth, outlines to
+        whole-object silhouettes with no per-label boundaries.  This adds
+        the missing target instead, at the cost of one recompile frame.
+
+        Safe to call repeatedly; it does nothing when the targets are
+        already present, which is the common case.  **Not safe to call from
+        inside a draw callback** -- see :func:`ensure_extra_targets`.
+
+        Parameters
+        ----------
+        outline : bool
+            Ensure the ``outline_id`` target, for per-label outlines.
+        ssao : bool
+            Ensure the ``normal`` target, for occlusion on raymarched
+            isosurfaces.
+        """
+        wanted: list[str] = []
+        if outline and not self._outline_id_available:
+            wanted.append(OUTLINE_ID_TARGET)
+        if ssao and not self._normal_target_available:
+            wanted.append(NORMAL_TARGET)
+        if not wanted:
+            return
+
+        if not ensure_extra_targets(self._renderer, wanted):
+            # pygfx is not the expected shape.  The features still run,
+            # against the fallbacks they were designed with.
+            return
+        if OUTLINE_ID_TARGET in wanted:
+            self._outline_id_available = True
+        if NORMAL_TARGET in wanted:
+            self._normal_target_available = True
+        # The new blender's textures do not exist yet, so the accumulated
+        # history is an average with frames drawn against the old one.
+        # ``request_draw`` invalidates it for us.
+        self.request_draw()
 
     def set_scene_extent(self, diagonal: float) -> None:
         """Forward the scene bounding box diagonal to the occlusion pass.
@@ -725,6 +893,13 @@ class CanvasView:
         # rendering it would touch a released surface.
         if self._closed:
             return
+
+        # Content changed since the last frame: the history is of a picture
+        # that no longer applies.  Ahead of the render, so the stale blend
+        # never lands even once.
+        if self._accum_dirty:
+            self._accum_dirty = False
+            self._accum_pass.reset()
 
         # Detect camera changes by comparing against the cached state.
         current_state = self.capture_camera_state()

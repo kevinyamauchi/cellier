@@ -2,7 +2,9 @@
 
 Blends successive jittered frames via exponential moving average (EMA).
 When the camera is still, noise decreases by ~sqrt(N) after N frames.
-When the camera moves, call ``reset()`` to discard history and restart.
+When the content or the camera changes, the history is stale: call
+``reset()`` to discard it and restart.  ``CanvasView`` owns both triggers
+(see ``CanvasView.invalidate_accumulation``).
 """
 
 from __future__ import annotations
@@ -34,6 +36,19 @@ class TemporalAccumulationPass(EffectPass):
 
     Insert as the first entry in ``renderer.effect_passes`` so it
     operates on the raw raymarched output before anti-aliasing.
+
+    The history is kept in ``rgba16float`` rather than in the format of
+    the incoming color texture.  pygfx renders effect passes into
+    ``rgba8unorm_srgb`` (see its ``blender.py``, which carries a
+    ``TODO: use half-floats`` of its own), and an EMA in 8 bits does not
+    converge: one blend step moves a stored value by roughly
+    ``alpha * (current - history)`` code values, so any difference under
+    ``0.5 / alpha`` code values rounds away to nothing and the history
+    freezes there permanently.  At the default ``alpha`` of 0.1 that
+    floor is 4/255 -- a plainly visible ghost that no number of further
+    frames can clear.  A float history removes the floor, so a stale
+    image decays continuously to zero at every ``alpha``.  It also puts
+    the average in linear space, which is where it belongs.
 
     Parameters
     ----------
@@ -74,11 +89,31 @@ class TemporalAccumulationPass(EffectPass):
 
         The next frame's blend weight becomes 1.0, so history is
         immediately overwritten.  No GPU memory is freed or cleared.
+
+        Call this whenever the rendered image should no longer be an
+        average with what came before: a camera move, any content
+        change, and re-enabling the pass after a spell switched off
+        (while disabled the pass is skipped entirely, so both the
+        textures and ``_frame_count`` freeze -- without a reset the
+        first frame back blends ``alpha`` of a picture of arbitrary
+        age, with no warm-up).
         """
         self._frame_count = 0
 
     @property
-    def alpha(self) -> float:
+    def frame_count(self) -> int:
+        """Frames accumulated since the last reset.
+
+        The blend weight is ``1 / (frame_count + 1)`` until that falls below
+        ``alpha``, so this is how far through the warm-up the image is: a
+        GUI can turn it into the difference between "settling" and
+        "settled", which is otherwise the one thing about this pass a user
+        cannot see.
+        """
+        return self._frame_count
+
+    @property
+    def blend_weight(self) -> float:
         """Minimum blend weight for the current frame (EMA floor).
 
         Lower values give smoother steady-state at the cost of slower
@@ -86,8 +121,8 @@ class TemporalAccumulationPass(EffectPass):
         """
         return self._alpha
 
-    @alpha.setter
-    def alpha(self, value: float) -> None:
+    @blend_weight.setter
+    def blend_weight(self, value: float) -> None:
         self._alpha = float(value)
 
     # ------------------------------------------------------------------
@@ -104,7 +139,7 @@ class TemporalAccumulationPass(EffectPass):
         # --- Lazy (re)allocation on size change ---
         w, h = color_tex.texture.size[:2]
         if (w, h) != self._current_size:
-            self._reallocate_history(w, h, color_tex.texture.format)
+            self._reallocate_history(w, h)
             self._current_size = (w, h)
             self.reset()
 
@@ -138,8 +173,15 @@ class TemporalAccumulationPass(EffectPass):
     # Internals
     # ------------------------------------------------------------------
 
-    def _reallocate_history(self, width: int, height: int, fmt: str) -> None:
-        """Create (or recreate) the two ping-pong history textures."""
+    def _reallocate_history(self, width: int, height: int) -> None:
+        """Create (or recreate) the two ping-pong history textures.
+
+        Always ``rgba16float``, never the incoming color texture's own
+        format -- see the class docstring for why 8 bits cannot hold an
+        EMA.  The format is filterable, and the blend pass keys its
+        pipeline on the target format, so the only cost is 8 bytes per
+        pixel per texture instead of 4.
+        """
         device = get_shared().device
         usage = wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.RENDER_ATTACHMENT
 
@@ -148,7 +190,7 @@ class TemporalAccumulationPass(EffectPass):
         for _ in range(2):
             tex = device.create_texture(
                 size=(width, height, 1),
-                format=fmt,
+                format=wgpu.TextureFormat.rgba16float,
                 usage=usage,
                 dimension="2d",
             )

@@ -5,7 +5,9 @@ from cellier.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.events._events import (
     AABBChangedEvent,
     AppearanceChangedEvent,
+    BackgroundChangedEvent,
     CameraChangedEvent,
+    CanvasConnectedEvent,
     CanvasMouseMove2DEvent,
     CanvasMouseMove3DEvent,
     CanvasMousePress2DEvent,
@@ -28,6 +30,7 @@ from cellier.events._events import (
     MeshPickInfo,
     PickWriteChangedEvent,
     PointsPickInfo,
+    RenderConfigChangedEvent,
     ResliceCancelledEvent,
     ResliceCompletedEvent,
     ResliceStartedEvent,
@@ -39,15 +42,19 @@ from cellier.events._events import (
     VisualAddedEvent,
     VisualPickDetails,
     VisualRemovedEvent,
+    VisualRenderChangedEvent,
     VisualVisibilityChangedEvent,
 )
 from cellier.events._update_events import (
     AABBUpdateEvent,
     AppearanceUpdateEvent,
+    BackgroundUpdateEvent,
     CellierUpdateEventTypes,
     ChannelAppearanceUpdateEvent,
     DimsUpdateEvent,
+    RenderConfigUpdateEvent,
     SubscriptionSpec,
+    VisualRenderUpdateEvent,
 )
 
 __all__ = [
@@ -55,8 +62,11 @@ __all__ = [
     "AABBUpdateEvent",
     "AppearanceChangedEvent",
     "AppearanceUpdateEvent",
+    "BackgroundChangedEvent",
+    "BackgroundUpdateEvent",
     "CameraChangedEvent",
     "CameraState",
+    "CanvasConnectedEvent",
     "CanvasMouseMove2DEvent",
     "CanvasMouseMove3DEvent",
     "CanvasMousePress2DEvent",
@@ -84,6 +94,8 @@ __all__ = [
     "MeshPickInfo",
     "PickWriteChangedEvent",
     "PointsPickInfo",
+    "RenderConfigChangedEvent",
+    "RenderConfigUpdateEvent",
     "ResliceCancelledEvent",
     "ResliceCompletedEvent",
     "ResliceStartedEvent",
@@ -98,5 +110,7 @@ __all__ = [
     "VisualAddedEvent",
     "VisualPickDetails",
     "VisualRemovedEvent",
+    "VisualRenderChangedEvent",
+    "VisualRenderUpdateEvent",
     "VisualVisibilityChangedEvent",
 ]

@@ -307,17 +307,38 @@ class CellierBlender(Blender):
 def install_cellier_blender(
     renderer: gfx.WgpuRenderer, extra_targets: Iterable[str]
 ) -> bool:
-    """Swap in a blender carrying *extra_targets*.
+    """Install a blender carrying *extra_targets*, if one is not already there.
 
-    Must be called before the renderer's first draw, and only for the
-    targets a feature actually needs: the target list feeds
-    ``Blender.hash``, which keys the pipeline cache, so adding or removing
-    one mid-session would invalidate every pipeline in the process.
+    Thin wrapper over :func:`ensure_extra_targets` kept for callers that
+    install once at construction and never revisit the decision.  Both do
+    the same thing; this name reads better at a construction site.
 
-    Calling this twice on the same renderer is a no-op only if the second
-    call asks for a subset of what is already installed; asking for more
-    returns ``False`` rather than silently replacing a blender whose
-    pipelines are already in the cache.
+    Parameters
+    ----------
+    renderer : gfx.WgpuRenderer
+        The renderer whose blender should be replaced.
+    extra_targets : Iterable[str]
+        Names from :data:`EXTRA_TARGETS`.  An empty iterable installs
+        nothing and returns ``False``.
+
+    Returns
+    -------
+    bool
+        ``True`` if a blender carrying every requested target is in place.
+    """
+    return ensure_extra_targets(renderer, extra_targets)
+
+
+def ensure_extra_targets(
+    renderer: gfx.WgpuRenderer, extra_targets: Iterable[str]
+) -> bool:
+    """Make sure *renderer* has a blender carrying every name in *extra_targets*.
+
+    Replaces the renderer's blender when the requested set is not already
+    covered, **including after the renderer has drawn**.  Targets are only
+    ever added: a name already installed is never dropped, because removing
+    one would buy back its memory at the price of a second recompile, for a
+    feature the user may switch straight back on.
 
     Parameters
     ----------
@@ -332,18 +353,59 @@ def install_cellier_blender(
     bool
         ``True`` if a blender carrying every requested target is in place.
         ``False`` if nothing was requested, or the pygfx internals are not
-        the expected shape, in which case the stock blender is left alone
+        the expected shape, in which case the existing blender is left alone
         and the dependent features degrade rather than break.
+
+    Notes
+    -----
+    **Why this may run after the first draw, when
+    ``enable_pick_texture_binding`` may not.**  That function raises usage
+    bits on the blender it is given, and a texture's usage is fixed once the
+    texture exists -- so it must run before anything is drawn.  This
+    function does not touch an existing texture: it installs a *new*
+    blender, whose ``_textures`` dict is empty and whose textures are
+    therefore created, at the right size and with the right usage, on the
+    next draw.  The pick grant survives the swap because the usage bits of
+    the blender being replaced are copied across below.
+
+    Two further things make a late swap safe.  pygfx keys its pipeline
+    containers on ``(wobject, renderstate, material)`` where the renderstate
+    derives from ``Blender.hash``, so a new blender *branches* the pipeline
+    cache rather than corrupting it -- the same mechanism that already lets
+    two canvases render one visual.  And ``ensure_target_size`` runs on
+    every draw, so a blender that starts at size ``(0, 0)`` sizes itself
+    immediately.
+
+    The cost is one recompile frame for this renderer, which grows with the
+    number of distinct materials in the scene.
+
+    Two invariants callers must respect:
+
+    * **No blender texture view may be cached across frames.**  Both cellier
+      effect passes re-resolve theirs every frame (and fold presence into
+      their pipeline hash, so they recompile themselves when a target
+      appears), which is what makes a swap invisible to them.  A pass that
+      cached a view would keep drawing into the abandoned blender.
+    * **Never call this from inside a draw callback.**  Swap between frames.
     """
     wanted = set(extra_targets)
     if not wanted:
         return False
+    unknown = wanted - set(EXTRA_TARGETS)
+    if unknown:
+        raise ValueError(
+            f"unknown extra render target(s): {sorted(unknown)}; "
+            f"known targets are {sorted(EXTRA_TARGETS)}"
+        )
     existing = getattr(renderer, "_blender", None)
     if existing is None:
         return False
     if isinstance(existing, CellierBlender):
         have = {target.name for target in existing.extra_targets}
-        return wanted <= have
+        if wanted <= have:
+            return True
+        # Growing the set: keep what is there and add what is missing.
+        wanted |= have
     try:
         existing_info = existing.texture_info
         replacement = CellierBlender(
@@ -356,7 +418,8 @@ def install_cellier_blender(
         # ``enable_pick_texture_binding`` may have added.  Without this the
         # grant is silently discarded and the dependent feature degrades to
         # a passthrough, which is the sort of failure that shows up as "it
-        # just does nothing".  Copying makes the two calls order-independent.
+        # just does nothing".  Copying makes the two calls order-independent,
+        # and is what lets a swap happen after the grant.
         for name, info in existing_info.items():
             if name in replacement.texture_info:
                 replacement.texture_info[name]["usage"] |= info["usage"]

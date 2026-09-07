@@ -43,6 +43,10 @@ jobs:
       # Empty elsewhere, which wgpu treats as unset.
       WGPU_BACKEND_TYPE: ${{ matrix.platform == 'windows-latest' && 'Vulkan' || '' }}
 
+      # spatial-graph >=0.1.0 ships prebuilt rtree wheels,
+      # but I was getting incompatible CPython errors.
+      SPATIAL_GRAPH_NO_PREBUILT: "1"
+
     steps:
       - uses: actions/checkout@v7
 

@@ -92,17 +92,3 @@ def test_add_multichannel_image_multiscale_fans_out(multichannel_multiscale_stor
     _assert_fanned_out(ortho, visuals, "mc")
     for visual in visuals.values():
         assert set(visual.channels) == {0, 1}
-
-
-def test_add_labels_accepts_dict_appearance(labels_store):
-    ortho = OrthoViewer(("z", "y", "x"))
-    visuals = ortho.add_labels(labels_store, appearance={})
-    for visual in visuals.values():
-        assert isinstance(visual.appearance, InMemoryLabelsAppearance)
-
-
-def test_add_mesh_accepts_dict_appearance(mesh_store):
-    ortho = OrthoViewer(("z", "y", "x"))
-    visuals = ortho.add_mesh(mesh_store, appearance={"appearance_type": "flat"})
-    for visual in visuals.values():
-        assert isinstance(visual.appearance, MeshFlatAppearance)

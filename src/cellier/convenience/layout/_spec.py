@@ -55,6 +55,26 @@ class ChannelControls:
 
 
 @dataclass
+class RenderControls:
+    """Dock spec: one panel per renderer post-processing feature.
+
+    Renders the Qt (``cellier.gui.qt.render``) or anywidget
+    (``cellier.gui.anywidget.render``) panel for each named section, wired
+    to the viewer's controller.  Unlike :class:`AppearanceControls` this
+    needs no configured visual: render settings belong to the renderer, so
+    the dock is available on any viewer.
+
+    Parameters
+    ----------
+    sections : tuple[str, ...]
+        Which panels to show, in order.  Any of ``"outline"``, ``"ambient_occlusion"``
+        and ``"temporal"``.  Defaults to all three.
+    """
+
+    sections: tuple[str, ...] = ("ambient_occlusion", "outline", "temporal")
+
+
+@dataclass
 class Layout:
     """Full layout specification (the model).
 
@@ -72,8 +92,8 @@ class Layout:
         view, so it does not need a dock of its own.
     left_dock, right_dock, top_dock, bottom_dock :
         Content for each dock region.  Accepts :class:`AppearanceControls`,
-        :class:`ChannelControls`, or a stack of those.  ``None`` hides the
-        dock.
+        :class:`ChannelControls`, :class:`RenderControls`, or a stack of
+        those.  ``None`` hides the dock.
     """
 
     center: object
@@ -89,6 +109,7 @@ class Layout:
         *,
         appearance: Literal["left", "right", "top", "bottom"] | bool = False,
         channels: Literal["left", "right", "top", "bottom"] | bool = False,
+        render: Literal["left", "right", "top", "bottom"] | bool = False,
     ) -> Layout:
         """Single-canvas preset.
 
@@ -101,10 +122,20 @@ class Layout:
         channels : dock name or False
             Where to place per-channel controls.  ``False`` (default) omits
             them.
+        render : dock name or False
+            Where to place the renderer settings panels (outlines, ambient
+            occlusion, temporal accumulation).  ``False`` (default) omits
+            them.
         """
         docks: dict[str, object] = {}
         if appearance:
             docks[f"{appearance}_dock"] = AppearanceControls()
         if channels:
             docks[f"{channels}_dock"] = ChannelControls()
+        if render:
+            existing = docks.get(f"{render}_dock")
+            panel = RenderControls()
+            docks[f"{render}_dock"] = (
+                VStack(items=[existing, panel]) if existing is not None else panel
+            )
         return cls(center=canvas, **docks)

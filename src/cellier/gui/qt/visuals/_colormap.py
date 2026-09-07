@@ -12,12 +12,14 @@ from cellier.events import (
     AppearanceUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtColormapComboBox:
+class QtColormapCombo(VisualIdGroup):
     """Bidirectional colormap selector wired to the cellier v2 bus.
 
     Wraps a ``superqt.QColormapComboBox`` and keeps it in sync with
@@ -27,17 +29,31 @@ class QtColormapComboBox:
 
     Wire to the controller after construction::
 
-        combo = QtColormapComboBox(visual_id, initial_colormap="grays")
+        combo = QtColormapCombo(visual_id, initial_colormap="grays")
         controller.connect_widget(combo, subscription_specs=combo.subscription_specs())
 
     Parameters
     ----------
     visual_id :
         UUID of the visual whose ``color_map`` field this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_colormap :
         Starting colormap — typically ``visual_model.appearance.color_map``.
+    title :
+        The name shown beside the control.  Defaults to
+        :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
+    """
+
+    DEFAULT_TITLE = "Colormap"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this
+    is what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
+    two together.
     """
 
     changed: Signal = Signal(object)
@@ -45,30 +61,43 @@ class QtColormapComboBox:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_colormap,
+        title: str | None = None,
         parent=None,
     ) -> None:
         from superqt import QColormapComboBox
 
+        from cellier.gui.qt.visuals._chrome import labelled_row
+
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
 
         # ── Qt seam 1: widget creation and signal wiring ─────────────────────
         self._combo = QColormapComboBox(parent)
         self._combo.setCurrentColormap(initial_colormap)
         self._combo.currentColormapChanged.connect(self._on_combo_changed)
 
+        self._row = labelled_row(
+            self.DEFAULT_TITLE if title is None else title, self._combo, parent
+        )
+
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout.
+        """The labelled row to insert into a layout.
 
-        Qt seam 1: replace with the backend element for other toolkits.
+        The control names itself (``plans/label_ownership_unification.md``);
+        reach for :attr:`control` to drive the input directly.
         """
+        return self._row
+
+    @property
+    def control(self):
+        """The bare input inside the row."""
         return self._combo
 
     def close(self) -> None:
@@ -92,13 +121,7 @@ class QtColormapComboBox:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AppearanceChangedEvent,
-                handler=self._on_visual_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AppearanceChangedEvent, self._on_visual_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -112,14 +135,7 @@ class QtColormapComboBox:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_combo_changed(self, colormap) -> None:
-        self.changed.emit(
-            AppearanceUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="color_map",
-                value=colormap,
-            )
-        )
+        self._emit_group(AppearanceUpdateEvent, "color_map", colormap)
 
     # ── Qt seam 2: push value without re-firing currentColormapChanged ────────
 

@@ -8,12 +8,14 @@ from uuid import uuid4
 from psygnal import Signal
 
 from cellier.events import AABBChangedEvent, AABBUpdateEvent, SubscriptionSpec
+from cellier.gui._appearance_fields import VisualIdGroup
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
 
-class QtAABBWidget:
+class QtAABBWidget(VisualIdGroup):
     """Bidirectional AABB parameter controls wired to the cellier v2 bus.
 
     Wraps three Qt sub-controls — a ``QCheckBox`` for *enabled*, a
@@ -32,14 +34,28 @@ class QtAABBWidget:
     ----------
     visual_id :
         UUID of the visual whose ``aabb`` params this widget controls.
+        A sequence drives every listed visual in lock-step -- the
+        ``OrthoViewer``'s four panel siblings (design section 8.1).
     initial_enabled :
         Starting value for the *enabled* checkbox.
     initial_line_width :
         Starting value for the *line_width* spinbox.
     initial_color :
         Starting CSS color string for the color swatch (e.g. ``"#ff00ff"``).
+    title :
+        The name shown on the group frame.  Defaults to
+        :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
+    """
+
+    DEFAULT_TITLE = "Bounding box"
+    """Name shown when no ``title=`` is given.
+
+    The renderer passes the title from the shared control vocabulary; this
+    is what a directly-constructed widget calls itself, and
+    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
+    two together.
     """
 
     changed: Signal = Signal(object)
@@ -47,11 +63,12 @@ class QtAABBWidget:
 
     def __init__(
         self,
-        visual_id: UUID,
+        visual_id: UUID | Sequence[UUID],
         *,
         initial_enabled: bool = False,
         initial_line_width: float = 2.0,
         initial_color: str = "#ffffff",
+        title: str | None = None,
         parent=None,
     ) -> None:
         from qtpy.QtWidgets import (
@@ -64,9 +81,11 @@ class QtAABBWidget:
             QWidget,
         )
 
+        from cellier.gui.qt.visuals._chrome import titled_group
+
         # ── Cellier layer ────────────────────────────────────────────────────
         self._id = uuid4()
-        self._visual_id = visual_id
+        self._init_visual_ids(visual_id)
         self._current_color = initial_color
 
         # ── Qt seam 1: container ─────────────────────────────────────────────
@@ -75,7 +94,7 @@ class QtAABBWidget:
         layout.setContentsMargins(0, 0, 0, 0)
 
         # enabled checkbox
-        self._enabled_check = QCheckBox("Show bounding box")
+        self._enabled_check = QCheckBox("Show")
         self._enabled_check.setChecked(initial_enabled)
         self._enabled_check.toggled.connect(self._on_enabled_changed)
         layout.addWidget(self._enabled_check)
@@ -112,14 +131,25 @@ class QtAABBWidget:
         # apply initial swatch color (no signal to block)
         self._apply_swatch(initial_color)
 
+        self._group = titled_group(
+            self.DEFAULT_TITLE if title is None else title, self._container, parent
+        )
+
     # ── Public interface ─────────────────────────────────────────────────────
 
     @property
     def widget(self):
-        """The Qt widget to insert into a layout.
+        """The titled group to insert into a layout.
 
-        Qt seam 1: replace with the backend element for other toolkits.
+        The rows inside only mean something together, so the group names them
+        (``plans/label_ownership_unification.md``); reach for :attr:`control`
+        for the bare rows.
         """
+        return self._group
+
+    @property
+    def control(self):
+        """The bare row container inside the group."""
         return self._container
 
     def close(self) -> None:
@@ -131,13 +161,7 @@ class QtAABBWidget:
 
         Pass the result to ``CellierController.connect_widget``.
         """
-        return [
-            SubscriptionSpec(
-                event_type=AABBChangedEvent,
-                handler=self._on_aabb_changed,
-                entity_id=self._visual_id,
-            )
-        ]
+        return self._group_specs(AABBChangedEvent, self._on_aabb_changed)
 
     # ── Cellier layer: model → widget ────────────────────────────────────────
 
@@ -154,24 +178,10 @@ class QtAABBWidget:
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
     def _on_enabled_changed(self, value: bool) -> None:
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="enabled",
-                value=value,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "enabled", value)
 
     def _on_line_width_changed(self, value: float) -> None:
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="line_width",
-                value=value,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "line_width", value)
 
     def _on_color_btn_clicked(self) -> None:
         from qtpy.QtGui import QColor
@@ -182,14 +192,7 @@ class QtAABBWidget:
         if not color.isValid():
             return  # user cancelled
         css = color.name()  # e.g. "#ff00ff"
-        self.changed.emit(
-            AABBUpdateEvent(
-                source_id=self._id,
-                visual_id=self._visual_id,
-                field="color",
-                value=css,
-            )
-        )
+        self._emit_group(AABBUpdateEvent, "color", css)
         # Update local cache and swatch immediately — echo filtering will
         # suppress the round-tripped AABBChangedEvent.
         self._current_color = css

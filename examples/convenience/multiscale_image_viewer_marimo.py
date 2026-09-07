@@ -20,6 +20,8 @@ def _(mo):
 
     A multiscale image viewer demonstrating all appearance widgets:
 
+    - **Visible** -- show or hide the image.  *Known issue: the canvas does
+      not fully update until you drag it; see `plans/visibility_debugging.md`.*
     - **Colormap** -- choose from ten scientific colormaps
     - **Contrast limits** -- drag the lo and hi handles independently
     - **Render mode** -- ISO surface / MIP / attenuated MIP
@@ -27,7 +29,8 @@ def _(mo):
     - **Attenuation** -- visible in attenuated MIP mode; controls depth darkening
     - **LOD bias** -- coarsen or refine level-of-detail (most visible when zoomed out)
     - **Bounding box** -- enable, line width, and color
-    - **Dataset info** -- expand the detail block for array metadata
+    - **Dataset info** -- expand the detail block for array metadata, built
+      by the data store from its own metadata (`dataset_info=True`)
 
     **Interaction (3D):** orbit (left-drag), zoom (scroll), pan (right-drag)
 
@@ -57,14 +60,20 @@ def _():
         axis_ranges_from_viewer,
         display,
     )
-    from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.gui import (
+        MultiscaleImageControlsConfig,
+        build_canvas_widget,
+    )
     from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
     from cellier.transform import AffineTransform
+    from cellier.visuals import MultiscaleImageAppearance
 
     return (
         AffineTransform,
         AppearanceControls,
         Layout,
+        MultiscaleImageAppearance,
+        MultiscaleImageControlsConfig,
         MultiscaleZarrDataStore,
         Path,
         Viewer,
@@ -124,28 +133,9 @@ def _(np, ts):
         ts_store = ts.open(spec).result()
         ts_store[...].write(data).result()
 
-    def make_dataset_info(store, volume):
-        """Return an HTML table summarising the multiscale dataset."""
-        rows = [
-            ("Shape (level 0)", " x ".join(str(s) for s in volume.shape)),
-            ("Data type", str(volume.dtype)),
-            ("Value range", f"[{volume.min():.3f}, {volume.max():.3f}]"),
-            ("Scale levels", str(len(store.scale_names))),
-            ("Level names", ", ".join(store.scale_names)),
-            ("Level 1 scale", "2x isotropic"),
-            ("Level 2 scale", "4x isotropic"),
-        ]
-        html = ["<table>"]
-        html.append("<tr><th>Property</th><th>Value</th></tr>")
-        for k, v in rows:
-            html.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
-        html.append("</table>")
-        return "".join(html)
-
     return (
         block_average,
         concentric_shells,
-        make_dataset_info,
         write_zarr3,
     )
 
@@ -169,7 +159,12 @@ def _(Path, block_average, concentric_shells, tempfile, write_zarr3):
 
 @app.cell
 def _(
-    AffineTransform, MultiscaleZarrDataStore, Viewer, make_dataset_info, tmpdir, volume
+    AffineTransform,
+    MultiscaleImageAppearance,
+    MultiscaleImageControlsConfig,
+    MultiscaleZarrDataStore,
+    Viewer,
+    tmpdir,
 ):
     store = MultiscaleZarrDataStore(
         zarr_path=str(tmpdir),
@@ -189,16 +184,19 @@ def _(
 
     viewer.add_image_multiscale(
         store,
-        appearance={
-            "color_map": "viridis",
-            "clim": (0.0, 1.0),
-            "render_mode": "iso",
-            "iso_threshold": 0.45,
-            "lod_bias": 1.0,
-            "attenuation": 1.0,
-        },
-        controls={
-            "appearance": [
+        appearance=MultiscaleImageAppearance(
+            color_map="viridis",
+            clim=(0.0, 1.0),
+            render_mode="iso",
+            iso_threshold=0.45,
+            lod_bias=1.0,
+            attenuation=1.0,
+        ),
+        controls=MultiscaleImageControlsConfig(
+            appearance=[
+                # First in the panel: the group order follows the config
+                # class's control map, not this list.
+                "visible",
                 "color_map",
                 "clim",
                 "render_mode",
@@ -206,7 +204,7 @@ def _(
                 "attenuation",
                 "lod_bias",
             ],
-            "colormap_names": [
+            colormap_names=[
                 "grays",
                 "viridis",
                 "plasma",
@@ -218,9 +216,11 @@ def _(
                 "bwr",
                 "RdYlBu",
             ],
-            "clim_range": (0.0, 1.0),
-            "dataset_info": make_dataset_info(store, volume),
-        },
+            clim_range=(0.0, 1.0),
+            # The store describes itself: path, dtype, and the per-level
+            # shapes and scales read off its own level_transforms.
+            dataset_info=True,
+        ),
     )
     return store, viewer
 

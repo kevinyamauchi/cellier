@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import (
@@ -14,6 +14,13 @@ from pydantic import (
 )
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import (
+    DatasetInfo,
+    MatrixSection,
+    RowSection,
+    Section,
+    array_extent_row,
+)
 from cellier.data.graph._graph_requests import GraphData, GraphSliceRequest
 from cellier.transform import AffineTransform
 
@@ -122,6 +129,7 @@ class GraphMemoryStore(BaseDataStore):
     """
 
     store_type: Literal["graph_memory"] = "graph_memory"
+    DATASET_INFO_LABEL: ClassVar[str] = "in-memory graph"
     name: str = "graph_memory_store"
 
     positions: np.ndarray
@@ -379,6 +387,85 @@ class GraphMemoryStore(BaseDataStore):
     def edge_color_mode(self) -> str:
         """``"vertex"`` when per-edge colours are present, else ``"uniform"``."""
         return "vertex" if self.edge_colors is not None else "uniform"
+
+    # ------------------------------------------------------------------
+    # Self-description
+    # ------------------------------------------------------------------
+
+    def dataset_info(self) -> DatasetInfo:
+        """Describe the graph: structure, world placement, geff provenance.
+
+        Never touches ``self.graph``: reading it would build the spatial
+        index, and opening an appearance panel is not a reason to pay for
+        one.  Only the arrays already held are measured.
+
+        The geff section is the first consumer of ``axes`` / ``node_props``
+        / ``edge_props``, which until now were, in the words of their own
+        comment, "retained for downstream display" with nothing reading
+        them.  It is absent for a store built from raw arrays.
+
+        The three ``*_color_mode`` / ``*_size_mode`` properties are
+        deliberately absent: they describe how the graph is drawn, not what
+        the store holds.
+        """
+        structure = [
+            *self._identity_rows(),
+            ("Nodes", str(self.n_nodes)),
+            ("Edges", str(self.n_edges)),
+            ("Directed", "yes" if self.directed else "no"),
+            ("Dimensions", str(self.ndim)),
+            ("Node ids", "explicit" if self.node_ids is not None else "row index"),
+            ("Slice strategy", self.slice_strategy),
+            *array_extent_row(self.positions),
+        ]
+
+        sections: list[Section] = [RowSection(None, structure)]
+
+        if self.transform is not None:
+            axis_labels = [str(index) for index in range(self.ndim)]
+            sections.append(
+                MatrixSection(
+                    "Transform",
+                    np.asarray(self.transform.matrix),
+                    row_labels=[*axis_labels, "1"],
+                    col_labels=[*axis_labels, "1"],
+                )
+            )
+
+        if self._axes:
+            axis_detail = [
+                (
+                    str(getattr(axis, "name", index)),
+                    ", ".join(
+                        str(part)
+                        for part in (
+                            getattr(axis, "unit", None),
+                            f"scale {getattr(axis, 'scale', None)}",
+                            f"offset {getattr(axis, 'offset', None)}",
+                        )
+                        if part is not None
+                    ),
+                )
+                for index, axis in enumerate(self._axes)
+            ]
+            sections.append(RowSection("geff axes", axis_detail, collapsed=True))
+
+        property_rows = [
+            *(
+                ("node: " + name, str(len(values)))
+                for name, values in self._node_props.items()
+            ),
+            *(
+                ("edge: " + name, str(len(values)))
+                for name, values in self._edge_props.items()
+            ),
+        ]
+        if property_rows:
+            sections.append(
+                RowSection("geff properties", property_rows, collapsed=True)
+            )
+
+        return DatasetInfo(sections=sections)
 
     @property
     def graph(self) -> Any:

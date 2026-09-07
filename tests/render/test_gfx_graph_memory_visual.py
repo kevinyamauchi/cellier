@@ -74,11 +74,19 @@ def _commit(visual, store, displayed=(0, 1, 2), sliced=None, extents=None, fades
 
 
 def test_group_structure():
-    """Two children, and the node material wins coplanar ties (D22)."""
+    """The two data children, and the node material wins coplanar ties (D22).
+
+    The group also holds the AABB wireframe, which is why this asserts a
+    superset of the two data nodes rather than an exact pair: the box is a
+    child of the node it measures so that it inherits that node's transform
+    and hides with it.
+    """
     visual = _visual(_store())
 
     assert isinstance(visual.node, gfx.Group)
-    assert set(visual.node.children) == {visual.node_points, visual.node_edges}
+    assert {visual.node_points, visual.node_edges} <= set(visual.node.children)
+    assert visual._aabb_line in visual.node.children
+    assert len(visual.node.children) == 3
     assert isinstance(visual.node_points, gfx.Points)
     assert isinstance(visual.node_edges, gfx.Line)
     assert isinstance(visual._node_material, AlphaPointsMaterial)

@@ -2,30 +2,46 @@
 
 from cellier.convenience.gui._canvas import (
     AnywidgetCanvasView,
-    anywidget_canvas_view_for_scene,
+    build_canvas_view,
     build_canvas_widget,
-    canvas_widget_for_scene,
 )
 from cellier.convenience.gui._controls_config import (
     BaseControlsConfig,
+    ChannelControlsConfig,
+    GraphControlsConfig,
     InMemoryImageControlsConfig,
+    LabelsControlsConfig,
+    LinesControlsConfig,
+    MeshControlsConfig,
     MultiscaleImageControlsConfig,
+    MultiscaleLabelsControlsConfig,
+    PointsControlsConfig,
 )
 from cellier.convenience.gui._ortho import (
+    PANEL_LAYOUT,
     OrthoAnywidgetCanvases,
+    OrthoCanvasGrid,
     OrthoCanvasWidgets,
     build_ortho_grid_widget,
 )
 
 __all__ = [
+    "PANEL_LAYOUT",
     "AnywidgetCanvasView",
     "BaseControlsConfig",
+    "ChannelControlsConfig",
+    "GraphControlsConfig",
     "InMemoryImageControlsConfig",
+    "LabelsControlsConfig",
+    "LinesControlsConfig",
+    "MeshControlsConfig",
     "MultiscaleImageControlsConfig",
+    "MultiscaleLabelsControlsConfig",
     "OrthoAnywidgetCanvases",
+    "OrthoCanvasGrid",
     "OrthoCanvasWidgets",
-    "anywidget_canvas_view_for_scene",
+    "PointsControlsConfig",
+    "build_canvas_view",
     "build_canvas_widget",
     "build_ortho_grid_widget",
-    "canvas_widget_for_scene",
 ]

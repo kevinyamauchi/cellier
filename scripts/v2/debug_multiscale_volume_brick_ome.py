@@ -58,11 +58,11 @@ class OmeBrickViewer:
     ):
         from PySide6 import QtCore, QtWidgets
 
-        from cellier.gui.qt import QtOmeZarrMetadataWidget
+        from cellier.gui.qt import QtDatasetInfo
         from cellier.gui.qt.visuals import (
             QtAABBWidget,
             QtClimRangeSlider,
-            QtColormapComboBox,
+            QtColormapCombo,
             QtLodBiasSlider,
             QtVolumeRenderControls,
         )
@@ -85,7 +85,7 @@ class OmeBrickViewer:
         controller.connect_widget(
             self._clim_slider, subscription_specs=self._clim_slider.subscription_specs()
         )
-        self._colormap_combo = QtColormapComboBox(
+        self._colormap_combo = QtColormapCombo(
             visual_model.id,
             initial_colormap=visual_model.appearance.color_map,
         )
@@ -114,7 +114,7 @@ class OmeBrickViewer:
             self._render_controls,
             subscription_specs=self._render_controls.subscription_specs(),
         )
-        self._metadata_widget = QtOmeZarrMetadataWidget.from_path(zarr_uri)
+        self._metadata_widget = QtDatasetInfo.from_path(zarr_uri)
 
         self._window = QtWidgets.QMainWindow()
         self._window.setWindowTitle("MultiscaleVolumeBrick — OME-Zarr viewer")

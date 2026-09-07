@@ -39,6 +39,18 @@ async function render({ model, el }) {
     box.style.flex = `1 1 ${minWidth}px`;
     box.style.minWidth = `${minWidth}px`;
   }
+  // A heading, when the box was given one.  Appended to `el` rather than into
+  // `box`: inside the flex container it would be a flex *child*, so a
+  // horizontal box would draw its title beside the panels instead of above
+  // them.  Only the flex layout must stay off `el` (see the note above);
+  // adding a child to it is fine.
+  const title = model.get("title");
+  if (title) {
+    const heading = document.createElement("div");
+    heading.className = "cellier-anywidget-box-title";
+    heading.textContent = title;
+    el.appendChild(heading);
+  }
   el.appendChild(box);
   try {
     for (const ref of model.get("children") || []) {

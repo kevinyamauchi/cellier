@@ -2,69 +2,84 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from cellier.gui._colormap_util import colormap_to_str as _colormap_to_str
+from cellier.convenience._hosts import QtLayoutHost
+from cellier.convenience.layout._walk import render_layout
 
 if TYPE_CHECKING:
     from cellier.convenience.layout._spec import Layout
 
-# render_mode, iso_threshold, and attenuation are handled by one shared widget.
-_RENDER_FIELDS = frozenset({"render_mode", "iso_threshold", "attenuation"})
+
+class _CellierMainWindow:
+    """Mixin giving a ``QMainWindow`` the teardown ``_RenderView`` provides.
+
+    The anywidget path hands the caller a ``DisplayHandle`` whose ``close()``
+    unsubscribes every control it built.  The Qt path hands back a window and
+    nothing else, so its controls stayed subscribed to the bus for as long as
+    the controller lived -- **and kept being delivered events** -- even after
+    the window was closed.  Measured: building and dropping a Qt viewer left
+    ~30 widgets and its controller alive per cycle, growing linearly.
+
+    Closing the window now closes those controls, which is what makes them
+    emit ``closed`` and the controller drop their subscriptions.  It
+    deliberately does not close the *controller*: a window is a view, and the
+    viewer may outlive it.  Releasing the canvases and the controller is
+    ``CellierController.close()``, exactly as on the anywidget side.
+    """
+
+    def _cellier_init(self) -> None:
+        self._cellier_closeables: list = []
+        self._cellier_torn_down = False
+
+    def _cellier_teardown(self) -> None:
+        if self._cellier_torn_down:
+            return
+        self._cellier_torn_down = True
+        for obj in self._cellier_closeables:
+            close = getattr(obj, "close", None)
+            if close is None:
+                continue
+            with suppress(Exception):
+                close()
+        self._cellier_closeables.clear()
+
+
+def make_window(QMainWindow):
+    """Build the ``QMainWindow`` subclass, at call time so Qt stays optional."""
+
+    class CellierMainWindow(_CellierMainWindow, QMainWindow):
+        def __init__(self) -> None:
+            super().__init__()
+            self._cellier_init()
+
+        def closeEvent(self, event) -> None:
+            self._cellier_teardown()
+            super().closeEvent(event)
+
+    return CellierMainWindow
 
 
 def render_qt(layout: Layout, viewer: object) -> object:
     """Render a Layout spec to a ``QMainWindow``.
 
-    Builds the center widget from *layout.center* using Qt layout primitives,
-    sets it as the central widget, and wraps each non-None dock spec in a
-    ``QDockWidget``.
+    A wrapper: the walk is shared with every other backend
+    (``convenience.layout._walk.render_layout``) and everything Qt-specific
+    about it lives in :class:`~cellier.convenience._hosts.QtLayoutHost`.
 
     Parameters
     ----------
     layout : Layout
         The layout spec to render.
     viewer :
-        The viewer, reserved for future scene-level control building.
+        The viewer whose recorded controls configs the docks are built from.
 
     Returns
     -------
     QMainWindow
     """
-    from PySide6 import QtWidgets
-    from PySide6.QtCore import Qt
-
-    window = QtWidgets.QMainWindow()
-    window.setCentralWidget(_render_center_qt(layout.center))
-
-    dock_map = {
-        "left": (layout.left_dock, Qt.DockWidgetArea.LeftDockWidgetArea),
-        "right": (layout.right_dock, Qt.DockWidgetArea.RightDockWidgetArea),
-        "top": (layout.top_dock, Qt.DockWidgetArea.TopDockWidgetArea),
-        "bottom": (layout.bottom_dock, Qt.DockWidgetArea.BottomDockWidgetArea),
-    }
-    for name, (spec, area) in dock_map.items():
-        widget = _render_dock_qt(spec, viewer)
-        if widget is not None:
-            widget = _wrap_dock_widget(widget, name)
-            dock = QtWidgets.QDockWidget(name.capitalize(), window)
-            dock.setWidget(widget)
-            dock.setFeatures(
-                QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable
-                | QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            )
-            window.addDockWidget(area, dock)
-
-    from PySide6.QtWidgets import QApplication
-
-    screen = QApplication.primaryScreen()
-    if screen is not None:
-        available = screen.availableGeometry()
-        w = min(int(available.width() * 2 / 3), 1600)
-        h = min(int(available.height() * 2 / 3), 1000)
-        window.resize(w, h)
-
-    return window
+    return render_layout(layout, viewer, QtLayoutHost()).root
 
 
 def _wrap_dock_widget(widget: object, position: str) -> object:
@@ -85,237 +100,3 @@ def _wrap_dock_widget(widget: object, position: str) -> object:
     box.addWidget(widget)
     box.addStretch()
     return container
-
-
-def _render_center_qt(node: object) -> object:
-    """Recursively render a center spec node to a Qt widget."""
-    from PySide6 import QtWidgets
-
-    from cellier.convenience.layout._spec import Grid, HStack, VStack
-
-    if isinstance(node, HStack):
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        for item in node.items:
-            layout.addWidget(_render_center_qt(item))
-        return container
-
-    if isinstance(node, VStack):
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        for item in node.items:
-            layout.addWidget(_render_center_qt(item))
-        return container
-
-    if isinstance(node, Grid):
-        container = QtWidgets.QWidget()
-        grid = QtWidgets.QGridLayout(container)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(4)
-        for row_idx, row in enumerate(node.cells):
-            for col_idx, cell in enumerate(row):
-                if cell is not None:
-                    grid.addWidget(_render_center_qt(cell), row_idx, col_idx)
-        return container
-
-    # Leaf: QtCanvasWidget or OrthoCanvasWidgets -- both expose .widget.
-    if hasattr(node, "widget"):
-        return node.widget
-    raise TypeError(
-        f"Cannot render {type(node).__name__!r} as a Qt center widget. "
-        "Expected a QtCanvasWidget, HStack, VStack, or Grid."
-    )
-
-
-def _render_appearance_controls_qt(viewer: object) -> object | None:
-    """Build and wire Qt appearance sub-widgets for the first configured visual.
-
-    Mirrors _render_appearance_controls in _anywidget_renderer.py: reads
-    viewer._controls_configs, finds the visual, instantiates each requested
-    sub-widget from cellier.gui.qt.visuals, wires each to the controller,
-    and returns a QWidget container.
-    """
-    from PySide6 import QtWidgets
-    from PySide6.QtWidgets import QSizePolicy
-
-    from cellier.convenience.gui._controls_config import (
-        ChannelControlsConfig,
-        InMemoryImageControlsConfig,
-    )
-    from cellier.gui.qt.visuals import (
-        QtClimRangeSlider,
-        QtColormapComboBox,
-        QtLodBiasSlider,
-        QtVolumeRenderControls,
-    )
-
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    scene = getattr(viewer, "scene", None)
-    if scene is None or not controls_configs:
-        return None
-
-    controls_config = None
-    visual = None
-    for v in scene.visuals:
-        cfg = controls_configs.get(v.id)
-        if cfg is not None and not isinstance(cfg, ChannelControlsConfig):
-            visual = v
-            controls_config = cfg
-            break
-
-    if controls_config is None:
-        return None
-
-    field_list = (
-        controls_config.appearance
-        if isinstance(controls_config.appearance, list) and controls_config.appearance
-        else None
-    )
-    if not field_list or not hasattr(visual, "appearance"):
-        return None
-
-    fields = set(field_list)
-    app = visual.appearance
-
-    raw_clim = tuple(getattr(app, "clim", (0.0, 1.0)))
-    if (
-        isinstance(controls_config, InMemoryImageControlsConfig)
-        and controls_config.clim_range is not None
-    ):
-        clim_range: tuple[float, float] = controls_config.clim_range
-    else:
-        clim_range = (min(0.0, float(raw_clim[0])), max(1.0, float(raw_clim[1])))
-
-    colormap_names = (
-        controls_config.colormap_names
-        if isinstance(controls_config, InMemoryImageControlsConfig)
-        else None
-    )
-
-    container = QtWidgets.QWidget()
-    container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-    container.setMinimumWidth(260)
-    layout = QtWidgets.QVBoxLayout(container)
-    layout.setContentsMargins(4, 4, 4, 4)
-    layout.setSpacing(6)
-
-    def _group(title: str, widget: object) -> None:
-        grp = QtWidgets.QGroupBox(title)
-        box = QtWidgets.QVBoxLayout(grp)
-        box.setContentsMargins(12, 4, 12, 4)
-        box.addWidget(widget)
-        layout.addWidget(grp)
-
-    if "color_map" in fields and hasattr(app, "color_map"):
-        combo = QtColormapComboBox(
-            visual.id,
-            initial_colormap=_colormap_to_str(getattr(app, "color_map", "grays")),
-        )
-        if colormap_names is not None:
-            combo.add_colormaps(colormap_names)
-        viewer.controller.connect_widget(
-            combo, subscription_specs=combo.subscription_specs()
-        )
-        _group("Colormap", combo.widget)
-
-    if "clim" in fields and hasattr(app, "clim"):
-        clim_w = QtClimRangeSlider(
-            visual.id,
-            clim_range=clim_range,
-            initial_clim=raw_clim,
-        )
-        viewer.controller.connect_widget(
-            clim_w, subscription_specs=clim_w.subscription_specs()
-        )
-        _group("Contrast limits", clim_w.widget)
-
-    if fields & _RENDER_FIELDS and any(hasattr(app, f) for f in _RENDER_FIELDS):
-        render_w = QtVolumeRenderControls(
-            visual.id,
-            dtype_max=float(clim_range[1]),
-            initial_render_mode=getattr(app, "render_mode", "mip"),
-            initial_threshold=getattr(app, "iso_threshold", 0.2),
-            initial_attenuation=getattr(app, "attenuation", 1.0),
-        )
-        viewer.controller.connect_widget(
-            render_w, subscription_specs=render_w.subscription_specs()
-        )
-        _group("Render mode", render_w.widget)
-
-    if "lod_bias" in fields and hasattr(app, "lod_bias"):
-        lod_w = QtLodBiasSlider(
-            visual.id,
-            initial_lod_bias=float(getattr(app, "lod_bias", 1.0)),
-        )
-        viewer.controller.connect_widget(
-            lod_w, subscription_specs=lod_w.subscription_specs()
-        )
-        _group("LOD bias", lod_w.widget)
-
-    layout.addStretch()
-    return container
-
-
-def _render_channel_controls_qt(viewer: object) -> object | None:
-    """Build and wire a ``QtChannelList`` for the configured channel visual(s).
-
-    Multi-scene aware: for an ``OrthoViewer`` the single widget drives every
-    panel's sibling visual via the fan-out ``visual_ids``.  Returns ``None``
-    when no channel controls are configured.
-    """
-    from cellier.convenience.layout._shared import (
-        _resolve_channel_visual_ids,
-        channel_widget_kwargs,
-    )
-    from cellier.gui.qt.visuals import QtChannelList
-
-    resolved = _resolve_channel_visual_ids(viewer)
-    if resolved is None:
-        return None
-    config, visual_ids, channels = resolved
-
-    widget = QtChannelList(
-        visual_ids, channels, **channel_widget_kwargs(config, channels)
-    )
-    viewer.controller.connect_widget(
-        widget, subscription_specs=widget.subscription_specs()
-    )
-    return widget.widget
-
-
-def _render_dock_qt(spec: object, viewer: object) -> object | None:
-    """Render one dock spec to a Qt widget, or return None."""
-    if spec is None:
-        return None
-
-    from PySide6 import QtWidgets
-
-    from cellier.convenience.layout._spec import (
-        AppearanceControls,
-        ChannelControls,
-        HStack,
-        VStack,
-    )
-
-    if isinstance(spec, AppearanceControls):
-        return _render_appearance_controls_qt(viewer)
-    if isinstance(spec, ChannelControls):
-        return _render_channel_controls_qt(viewer)
-    if isinstance(spec, (HStack, VStack)):
-        container = QtWidgets.QWidget()
-        box = (
-            QtWidgets.QHBoxLayout(container)
-            if isinstance(spec, HStack)
-            else QtWidgets.QVBoxLayout(container)
-        )
-        box.setContentsMargins(4, 4, 4, 4)
-        for item in spec.items:
-            widget = _render_dock_qt(item, viewer)
-            if widget is not None:
-                box.addWidget(widget)
-        return container
-    return None

@@ -1,0 +1,24 @@
+.cellier-float-spin {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  min-width: 260px;
+}
+
+.cellier-float-spin .cellier-app-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-float-spin .cellier-app-label {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.cellier-float-spin .cellier-spin-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 8em;
+}
