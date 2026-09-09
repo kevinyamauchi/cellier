@@ -15,6 +15,7 @@ from cellier.transform_v2 import (
     Axis,
     AxisAlignedBoundingBox,
     ConvexRegion,
+    DataCoordinateSystem,
     DegenerateNormalError,
     Plane,
     RegionSelection,
@@ -271,3 +272,67 @@ def test_a_world_selection_pulls_back_into_data_space():
     assert box.min_coordinate[1] == pytest.approx(2.0)
     assert box.max_coordinate[1] == pytest.approx(6.0)
     assert box.min_coordinate[2] == -np.inf
+
+
+def test_bounding_the_displayed_axes_culls_to_the_viewport_r3():
+    """R3, and the reason it matters: "only fetch what is on screen".
+
+    A region may bound **any** axis, displayed ones included.  Bounding
+    the displayed axes is how a selection expresses a viewport crop, and
+    it is the same argument D41 makes about not collapsing a region
+    early -- on a different axis and with a much bigger number.
+    """
+    volume = 1000.0  # the datastore is 1000^3 voxels at 0.1 um/voxel
+    world = tczyx()
+    data = DataCoordinateSystem(
+        name="volume",
+        datastore_id=uuid4(),
+        axes=(
+            Axis(name="t", axis_type="time", unit="second"),
+            space("z"),
+            space("y"),
+            space("x"),
+        ),
+    )
+    data_to_world = AffineTransform.from_axis_map(
+        data,
+        world,
+        axis_map={"t": "T", "z": "Z", "y": "Y", "x": "X"},
+        scale={"z": 0.1, "y": 0.1, "x": 0.1},
+        broadcast_output_axes=["C"],
+    )
+
+    def voxels(region):
+        box = data_to_world.imap_region(region).simplify().bounding_box()
+        lower = np.where(np.isneginf(box.min_coordinate), 0.0, box.min_coordinate)
+        upper = np.where(np.isposinf(box.max_coordinate), volume, box.max_coordinate)
+        return float(np.prod((upper - lower)[1:]))
+
+    slice_only = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5), "C": (0.0, 0.5)})
+    # the camera shows a 20x20 um window through a 4 um slab
+    with_viewport = ConvexRegion.from_axis_slabs(
+        world,
+        {
+            "T": (7.0, 0.5),
+            "C": (0.0, 0.5),
+            "Z": (50.0, 2.0),
+            "Y": (50.0, 10.0),
+            "X": (50.0, 10.0),
+        },
+    )
+
+    assert voxels(slice_only) == 1_000_000_000
+    assert voxels(with_viewport) == 40 * 200 * 200
+    assert voxels(slice_only) / voxels(with_viewport) == pytest.approx(625.0)
+
+    # and the selection that carries it validates (D43 vs R3)
+    rendered = RenderedCoordinateSystem.from_world(world, ("Z", "Y", "X"), uuid4())
+    assert RegionSelection(
+        transform=AffineTransform.from_axis_map(
+            rendered,
+            world,
+            axis_map={"Z": "Z", "Y": "Y", "X": "X"},
+            constant_output_axes={"T": 7.0, "C": 0.0},
+        ),
+        region=with_viewport,
+    )
