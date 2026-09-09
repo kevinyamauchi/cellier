@@ -19,7 +19,7 @@ name = "cellier"
 dynamic = ["version"]
 description = "A workshop for rendering cellular models."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Kevin Yamauchi", email = "kevin.yamauchi@gmail.com" }]
 # https://pypi.org/classifiers/
@@ -27,8 +27,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
 ]
@@ -46,6 +44,7 @@ dependencies = [
     "scipy>=1.15.2",
     "superqt>=0.7.2",
     "tensorstore>=0.1.74",
+    "transformnd>=0.9.0",
     "yaozarrs>=0.2",
     "zarr",
 ]
@@ -110,6 +109,9 @@ repository = "https://github.com/kevinyamauchi/cellier"
 # https://docs.astral.sh/ruff
 [tool.ruff]
 line-length = 88
+# Deliberately left at py38 although the project floor is 3.12: raising this to
+# py312 adds ~84 new UP-rule errors across files unrelated to the transform_v2
+# work, so it is deferred to its own pass rather than overlooked.
 target-version = "py38"
 src = ["src"]
 

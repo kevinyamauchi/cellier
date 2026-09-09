@@ -1,0 +1,305 @@
+"""Coordinate systems: ordered sets of axes, addressed by id."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated, Literal, Union
+from uuid import UUID, uuid4
+
+from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
+from typing_extensions import Self
+
+from cellier.transform_v2._axis import Axis, AxisRef
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+class CoordinateSystem(BaseModel):
+    """An ordered set of axes.
+
+    Coordinate systems are frozen (D7).  Changing the axes of a system
+    means constructing a replacement, so that a transform already
+    validated against a system cannot silently face a different one.
+
+    Parameters
+    ----------
+    coordinate_system_type : Literal["coordinate_system"]
+        Discriminator field.
+    name : str
+        Human-readable name.
+    axes : tuple[Axis, ...]
+        The axes, in order.  At least one is required and their ids must
+        be unique.
+    id : UUID4
+        Unique identifier.  Auto-generated.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    coordinate_system_type: Literal["coordinate_system"] = "coordinate_system"
+    name: str
+    axes: tuple[Axis, ...]
+    id: UUID4 = Field(default_factory=uuid4, frozen=True)
+
+    @model_validator(mode="after")
+    def _validate_axes(self) -> Self:
+        """Require at least one axis and unique axis ids (D6)."""
+        if not self.axes:
+            raise ValueError("A coordinate system must have at least one axis.")
+        ids = [axis.id for axis in self.axes]
+        if len(set(ids)) != len(ids):
+            raise ValueError(
+                "Axis ids must be unique within a coordinate system; "
+                f"got {len(ids)} axes with {len(set(ids))} distinct ids."
+            )
+        return self
+
+    @property
+    def ndim(self) -> int:
+        """Number of axes."""
+        return len(self.axes)
+
+    def axis_names(self) -> tuple[str, ...]:
+        """Return the axis names, in order."""
+        return tuple(axis.name for axis in self.axes)
+
+    def index_of(self, axis_id: UUID4) -> int:
+        """Return the index of the axis with the given id.
+
+        Parameters
+        ----------
+        axis_id : UUID4
+            The id to look up.
+
+        Returns
+        -------
+        int
+            The index of the axis in ``axes``.
+
+        Raises
+        ------
+        KeyError
+            If no axis in this system has that id.
+        """
+        for index, axis in enumerate(self.axes):
+            if axis.id == axis_id:
+                return index
+        raise KeyError(
+            f"No axis with id {axis_id} in coordinate system '{self.name}' "
+            f"(axes: {self.axis_names()})."
+        )
+
+    def axis_by_name(self, name: str) -> Axis:
+        """Return the single axis with the given name.
+
+        Axis names are not required to be unique (Q6), so ambiguity is a
+        property of the query rather than of the model: this raises
+        instead of returning the first match.
+
+        Parameters
+        ----------
+        name : str
+            The axis name to look up.
+
+        Returns
+        -------
+        Axis
+            The matching axis.
+
+        Raises
+        ------
+        KeyError
+            If no axis has that name.
+        ValueError
+            If more than one axis has that name.
+        """
+        matches = [axis for axis in self.axes if axis.name == name]
+        if not matches:
+            raise KeyError(
+                f"No axis named '{name}' in coordinate system '{self.name}' "
+                f"(axes: {self.axis_names()})."
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"Axis name '{name}' is ambiguous in coordinate system "
+                f"'{self.name}': {len(matches)} axes share it.  Refer to the "
+                f"axis by id instead."
+            )
+        return matches[0]
+
+    def resolve(self, axis: AxisRef) -> int:
+        """Resolve an axis reference to an axis index in this system.
+
+        Parameters
+        ----------
+        axis : AxisRef
+            An axis name or an axis id.
+
+        Returns
+        -------
+        int
+            The index of the referenced axis.
+
+        Raises
+        ------
+        KeyError
+            If the reference does not name an axis of this system.
+        ValueError
+            If a name is ambiguous within this system.
+        """
+        if isinstance(axis, UUID):
+            return self.index_of(axis)
+        return self.index_of(self.axis_by_name(axis).id)
+
+    def resolve_axis(self, axis: AxisRef) -> Axis:
+        """Resolve an axis reference to the :class:`Axis` itself.
+
+        Parameters
+        ----------
+        axis : AxisRef
+            An axis name or an axis id.
+
+        Returns
+        -------
+        Axis
+            The referenced axis.
+        """
+        return self.axes[self.resolve(axis)]
+
+
+class DataCoordinateSystem(CoordinateSystem):
+    """The intrinsic coordinate system of a datastore (e.g. voxel indices).
+
+    Parameters
+    ----------
+    coordinate_system_type : Literal["data"]
+        Discriminator field.
+    datastore_id : UUID4
+        The id of the datastore this system belongs to.  ``name`` is the
+        datastore's name by convention (Q7), but the model has no access
+        to the datastore and does not validate that.
+    """
+
+    coordinate_system_type: Literal["data"] = "data"
+    datastore_id: UUID4
+
+
+class WorldCoordinateSystem(CoordinateSystem):
+    """A coordinate system that data can be transformed into for rendering.
+
+    Parameters
+    ----------
+    coordinate_system_type : Literal["world"]
+        Discriminator field.
+    name : str
+        Human-readable name.  Defaults to ``"world"``.
+    """
+
+    coordinate_system_type: Literal["world"] = "world"
+    name: str = "world"
+
+
+class RenderedCoordinateSystem(CoordinateSystem):
+    """The 2D or 3D scene drawn on one canvas.
+
+    This is scene space in world units (R1); the camera transform from
+    scene space to normalized device coordinates is a separate concern
+    and is not modelled here.
+
+    There is deliberately no ``world_coordinate_system`` backref: the link
+    to the world system is carried by the transform between them, which
+    already stores both ids (D33).
+
+    Parameters
+    ----------
+    coordinate_system_type : Literal["rendered"]
+        Discriminator field.
+    name : str
+        Human-readable name.  Defaults to ``"rendered"``.
+    canvas_id : UUID4
+        The id of the canvas this system is drawn on.  One system per
+        canvas (R2).
+    """
+
+    coordinate_system_type: Literal["rendered"] = "rendered"
+    name: str = "rendered"
+    canvas_id: UUID4
+
+    @model_validator(mode="after")
+    def _validate_rank(self) -> Self:
+        """Require a rank of 2 or 3, which is what a camera can draw (D33)."""
+        if self.ndim not in (2, 3):
+            raise ValueError(
+                f"A rendered coordinate system must have 2 or 3 axes, got "
+                f"{self.ndim} ({self.axis_names()})."
+            )
+        return self
+
+    @classmethod
+    def from_world(
+        cls,
+        world_coordinate_system: WorldCoordinateSystem,
+        displayed_axes: Sequence[AxisRef],
+        canvas_id: UUID4,
+        name: str = "rendered",
+    ) -> Self:
+        """Build a rendered system from the world axes it displays.
+
+        Each rendered axis corresponds to exactly one world axis, so
+        ``name``, ``axis_type`` and ``unit`` are inherited from that world
+        axis rather than re-specified (R5).  The axis ids are **fresh**:
+        these are distinct axes of a distinct coordinate system, and
+        reusing the world ids would make ``index_of`` ambiguous across
+        systems.
+
+        Parameters
+        ----------
+        world_coordinate_system : WorldCoordinateSystem
+            The world system being displayed.
+        displayed_axes : Sequence[AxisRef]
+            The world axes to display, **in rendered axis order**.  The
+            order is the point: it is where the renderer's axis
+            convention stops being an unwritten rule.
+        canvas_id : UUID4
+            The id of the canvas this system is drawn on.
+        name : str
+            Human-readable name for the new system.
+
+        Returns
+        -------
+        RenderedCoordinateSystem
+            A system of the same rank as ``displayed_axes``.
+
+        Raises
+        ------
+        ValueError
+            If ``displayed_axes`` names the same world axis twice, or has
+            a rank other than 2 or 3.
+        """
+        indices = [world_coordinate_system.resolve(ref) for ref in displayed_axes]
+        if len(set(indices)) != len(indices):
+            raise ValueError(
+                f"displayed_axes must name distinct world axes, got "
+                f"{list(displayed_axes)}."
+            )
+        axes = tuple(
+            Axis(
+                name=world_coordinate_system.axes[index].name,
+                axis_type=world_coordinate_system.axes[index].axis_type,
+                unit=world_coordinate_system.axes[index].unit,
+            )
+            for index in indices
+        )
+        return cls(name=name, axes=axes, canvas_id=canvas_id)
+
+
+CoordinateSystemType = Annotated[
+    Union[
+        CoordinateSystem,
+        DataCoordinateSystem,
+        WorldCoordinateSystem,
+        RenderedCoordinateSystem,
+    ],
+    Field(discriminator="coordinate_system_type"),
+]
+"""Discriminated union over every coordinate system kind (D8)."""
