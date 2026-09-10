@@ -8,11 +8,18 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.data.points._points_requests import PointsSliceRequest
+from cellier.render._spaces import (
+    RenderSpaces,
+    data_slice_positions,
+    geometry_data_region,
+    node_matrix,
+)
 from cellier.render.shaders._alpha_modulated import AlphaPointsMaterial
 from cellier.render.visuals._aabb import (
     make_aabb_line,
     refresh_aabb_line,
 )
+from cellier.scene.dims import DEFAULT_HALF_THICKNESS
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -24,30 +31,12 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
+    from cellier.transform_v2 import AffineTransform, RegionSelection
     from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 # Placeholder geometry — one invisible point so pygfx never sees an empty
 # geometry buffer.
 _PLACEHOLDER_POSITIONS = np.zeros((1, 3), dtype=np.float32)
-
-
-def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
-    """Embed a 2-D or 3-D AffineTransform into a 4x4 pygfx matrix.
-
-    Reverses data axis order (z, y, x) → pygfx (x, y, z).
-    Identical to the helper in _mesh_memory.py — keep in sync or
-    extract to a shared utility.
-    """
-    nd = transform.ndim
-    src = transform.matrix
-    swap = list(reversed(range(nd)))
-    m = np.eye(4, dtype=np.float32)
-    for dst_i, src_i in enumerate(swap):
-        for dst_j, src_j in enumerate(swap):
-            m[dst_i, dst_j] = src[src_i, src_j]
-        m[dst_i, 3] = src[src_i, nd]
-    return m
 
 
 def _build_material(appearance: PointsMarkerAppearance) -> AlphaPointsMaterial:
@@ -129,7 +118,13 @@ class GFXPointsMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._transform: AffineTransform = transform
+        self._transform: AffineTransform | None = transform
+        # The systems this visual's geometry is placed with, pushed by
+        # the controller.  ``None`` until the scene has a canvas.
+        self._spaces: RenderSpaces | None = None
+        # Where the collapsed axes sit in **data** units, from the last
+        # planned request.  The node matrix reads it (design 3.9).
+        self._last_data_positions: dict[int, float] = {}
         self._last_displayed_axes: tuple[int, ...] | None = None
 
         self._aabb_enabled: bool = visual_model.aabb.enabled
@@ -264,16 +259,79 @@ class GFXPointsMemoryVisual:
     # Node matrix
     # ------------------------------------------------------------------
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with.
+
+        Pushed by the controller when ``displayed_axes`` changes -- a pure
+        reorder included -- and when the first canvas gives the scene a
+        rendered system.
+        """
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Place the node with the composition of design 3.9.
+
+        ``visual -> data -> world -> rendered``, replacing the
+        ``select_axes`` sub-block.  The two agree exactly for a
+        block-diagonal transform and differ only where ``select_axes`` was
+        silently wrong.  A no-op until the controller supplies the systems.
+        """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-        self.node.local.matrix = _pygfx_matrix(sub)
+        if self._spaces is None or self._transform is None:
+            return
+        self.node.local.matrix = node_matrix(
+            self._spaces, self._transform, self._collapsed_origin()
+        )
+
+    def _data_region(self, selection):
+        """The selection in this visual's data coordinates (design 3.12).
+
+        ``None`` when the visual has not been placed, in which case the
+        request falls back to the world-value comparison that D4 exists to
+        replace.
+        """
+        if selection is None or self._spaces is None or self._transform is None:
+            return None
+        return geometry_data_region(
+            selection, self._transform, self._spaces.world, DEFAULT_HALF_THICKNESS
+        )
+
+    def _collapsed_origin(self) -> dict[int, float]:
+        """Where the dropped data axes sit, for the node matrix (design 3.9).
+
+        Taken from the selection where there is one -- the plane's depth
+        matters to a 3-D rendered system -- and the origin otherwise.  For a
+        transform without a cross-term it reaches no displayed row either way.
+        """
+        if self._last_data_positions:
+            return {
+                axis: float(self._last_data_positions.get(axis, 0.0))
+                for axis in self._spaces.collapsed_axes
+            }
+        return dict.fromkeys(self._spaces.collapsed_axes, 0.0)
 
     # ------------------------------------------------------------------
     # Slice request building
     # ------------------------------------------------------------------
 
-    def _build_request(self, dims_state: DimsState) -> PointsSliceRequest:
+    def _build_request(
+        self, dims_state: DimsState, selection=None
+    ) -> PointsSliceRequest:
+        """One request.
+
+        The region carries the whole selection when the controller has placed
+        this visual.  ``slice_indices`` and ``thickness`` ride along for the
+        headless fallback, and their hardcoded ``0.5`` -- documented as
+        data-space voxel units on a family that has no voxels -- is now the
+        world-unit default of D4, applied to the region before the pull-back.
+        """
+        region = self._data_region(selection)
+        if region is not None:
+            self._last_data_positions = data_slice_positions(
+                selection.region, self._transform, self._spaces.world
+            )
         shared_id = uuid4()
         return PointsSliceRequest(
             slice_request_id=shared_id,
@@ -281,7 +339,8 @@ class GFXPointsMemoryVisual:
             scale_index=0,
             displayed_axes=dims_state.selection.displayed_axes,
             slice_indices=dict(dims_state.selection.slice_indices),
-            thickness=0.5,
+            thickness=DEFAULT_HALF_THICKNESS,
+            region=region,
         )
 
     def build_slice_request(
@@ -293,12 +352,13 @@ class GFXPointsMemoryVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[PointsSliceRequest]:
         """3-D planning path — returns one PointsSliceRequest."""
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-        return [self._build_request(dims_state)]
+        return [self._build_request(dims_state, selection)]
 
     def build_slice_request_2d(
         self,
@@ -311,12 +371,13 @@ class GFXPointsMemoryVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[PointsSliceRequest]:
         """2-D planning path — returns one PointsSliceRequest."""
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-        return [self._build_request(dims_state)]
+        return [self._build_request(dims_state, selection)]
 
     # ------------------------------------------------------------------
     # Commit — shared logic for both callbacks

@@ -69,7 +69,9 @@ def _(binary_blobs, np):
 
 @app.cell
 def _(ImageMemoryStore, InMemoryImageAppearance, Viewer, blobs_3d):
-    viewer = Viewer(axis_labels=("z", "y", "x"), dim="2d", gui="anywidget")
+    from cellier.scene.dims import spatial_axes
+
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
 
     store = ImageMemoryStore(data=blobs_3d, name="blobs")
     viewer.controller.add_data_store(store)

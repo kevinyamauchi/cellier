@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from cellier.events._bus import EventBus
     from cellier.render._config import AmbientOcclusionConfig
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
+    from cellier.transform_v2 import RegionSelection
 
 
 class CanvasView:
@@ -478,6 +479,7 @@ class CanvasView:
     def capture_reslicing_request(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None = None,
         target_visual_ids: frozenset[UUID] | None = None,
     ) -> ReslicingRequest:
         """Snapshot the current camera state into a ReslicingRequest.
@@ -489,6 +491,9 @@ class CanvasView:
         ----------
         dims_state : DimsState
             Current dimension display state.
+        selection : RegionSelection or None
+            The region this canvas is showing, built by the controller from
+            the scene's dims and this canvas's rendered system.
         target_visual_ids : frozenset[UUID] or None
             ``None`` reslices all visuals in the scene.
 
@@ -501,15 +506,16 @@ class CanvasView:
 
         if self._dim == "2d":
             return self._capture_orthographic(
-                dims_state, target_visual_ids, screen_w, screen_h
+                dims_state, selection, target_visual_ids, screen_w, screen_h
             )
         return self._capture_perspective(
-            dims_state, target_visual_ids, screen_w, screen_h
+            dims_state, selection, target_visual_ids, screen_w, screen_h
         )
 
     def _capture_perspective(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None,
         target_visual_ids: frozenset[UUID] | None,
         screen_w: float,
         screen_h: float,
@@ -524,6 +530,7 @@ class CanvasView:
             screen_size_px=(float(screen_w), float(screen_h)),
             world_extent=(0.0, 0.0),
             dims_state=dims_state,
+            selection=selection,
             request_id=uuid4(),
             scene_id=self._scene_id,
             canvas_id=self._canvas_id,
@@ -533,6 +540,7 @@ class CanvasView:
     def _capture_orthographic(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None,
         target_visual_ids: frozenset[UUID] | None,
         screen_w: float,
         screen_h: float,
@@ -570,6 +578,7 @@ class CanvasView:
             screen_size_px=(float(vw), float(vh)),
             world_extent=(float(world_width), float(world_height)),
             dims_state=dims_state,
+            selection=selection,
             request_id=uuid4(),
             scene_id=self._scene_id,
             canvas_id=self._canvas_id,

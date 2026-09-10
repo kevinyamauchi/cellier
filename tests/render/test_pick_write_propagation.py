@@ -17,13 +17,13 @@ from cellier.data.label._label_memory_store import LabelMemoryStore
 from cellier.data.lines._lines_memory_store import LinesMemoryStore
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals import MeshFlatAppearance
 from cellier.visuals._channel_appearance import ChannelAppearance
 
 
 def _scene(controller, axis_labels=("z", "y", "x")):
-    cs = CoordinateSystem(name="world", axis_labels=axis_labels)
+    cs = world_coordinate_system(spatial_axes(*axis_labels), name="world")
     return controller.add_scene(
         dim="3d", coordinate_system=cs, name="s", render_modes={"2d", "3d"}
     )

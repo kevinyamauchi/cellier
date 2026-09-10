@@ -26,6 +26,7 @@ from cellier.gui.anywidget.visuals import (
     AnywidgetToggle,
     AnywidgetVisibleToggle,
 )
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -48,7 +49,7 @@ def _appearance_event(visual_id, field_name, new_value, source_id=None):
 
 
 def _two_image_viewer():
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     visuals = [
         viewer.add_image(
             ImageMemoryStore(data=np.zeros((8, 16, 24), dtype=np.float32)),

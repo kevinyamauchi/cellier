@@ -5,7 +5,12 @@ from cellier.scene._background import (
     DEFAULT_TOP_COLOR,
     BackgroundAppearance,
 )
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 
 
@@ -13,8 +18,8 @@ def _make_scene() -> Scene:
     return Scene(
         name="main",
         dims=DimsManager(
-            coordinate_system=CoordinateSystem(
-                name="world", axis_labels=("z", "y", "x")
+            world_coordinate_system=world_coordinate_system(
+                spatial_axes("z", "y", "x"), name="world"
             ),
             selection=AxisAlignedSelection(displayed_axes=(1, 2), slice_indices={0: 0}),
         ),

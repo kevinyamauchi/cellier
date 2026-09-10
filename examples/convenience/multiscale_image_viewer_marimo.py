@@ -180,7 +180,9 @@ def _(
         ],
     )
 
-    viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d", gui="anywidget")
+    from cellier.scene.dims import spatial_axes
+
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
 
     viewer.add_image_multiscale(
         store,

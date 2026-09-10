@@ -12,13 +12,13 @@ pytest.importorskip("superqt")
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.gui.qt.visuals._colormap import QtColormapCombo
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
 def _make_controller_with_visual(color_map="viridis"):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("y", "x"))
+    cs = world_coordinate_system(spatial_axes("y", "x"), name="world")
     scene = controller.add_scene(
         dim="2d", coordinate_system=cs, name="main", render_modes={"2d"}
     )

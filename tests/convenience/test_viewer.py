@@ -6,6 +6,7 @@ import pytest
 from cellier.convenience import Viewer
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.render._config import RenderManagerConfig, SlicingConfig
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -18,7 +19,7 @@ def image_store() -> ImageMemoryStore:
 def test_serialization_roundtrip(tmp_path, image_store):
     """Viewer serializes and deserializes with equivalent ViewerModels."""
     viewer = Viewer(
-        axis_labels=("z", "y", "x"),
+        spatial_axes("z", "y", "x"),
         dim="2d",
         render_config=RenderManagerConfig(slicing=SlicingConfig(batch_size=16)),
     )

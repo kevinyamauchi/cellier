@@ -9,6 +9,12 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.data.graph._graph_requests import GraphSliceRequest
+from cellier.render._spaces import (
+    RenderSpaces,
+    axis_scales,
+    data_slice_positions,
+    node_matrix,
+)
 from cellier.render.shaders._alpha_modulated import (
     AlphaLineSegmentMaterial,
     AlphaPointsMaterial,
@@ -17,6 +23,7 @@ from cellier.render.visuals._aabb import (
     make_aabb_line,
     refresh_aabb_line,
 )
+from cellier.scene.dims import DEFAULT_HALF_THICKNESS
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -29,7 +36,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
+    from cellier.transform_v2 import AffineTransform, RegionSelection
     from cellier.visuals._graph_memory import GraphAppearance, GraphVisual
 
 # Placeholder geometry -- pygfx forbids empty geometry buffers.  One
@@ -42,24 +49,6 @@ _PLACEHOLDER_EDGE_POSITIONS = np.zeros((2, 3), dtype=np.float32)
 #: hardcoded thickness in the points and lines request builders, so a graph
 #: with no trail slices identically to them.
 _DEFAULT_EXTENT = (0.5, 0.5)
-
-
-def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
-    """Embed a 2-D or 3-D AffineTransform into a 4x4 pygfx matrix.
-
-    Reverses data axis order (z, y, x) -> pygfx (x, y, z).
-    Identical to the helpers in _points_memory.py and _lines_memory.py --
-    keep in sync or extract to a shared utility.
-    """
-    nd = transform.ndim
-    src = transform.matrix
-    swap = list(reversed(range(nd)))
-    m = np.eye(4, dtype=np.float32)
-    for dst_i, src_i in enumerate(swap):
-        for dst_j, src_j in enumerate(swap):
-            m[dst_i, dst_j] = src[src_i, src_j]
-        m[dst_i, 3] = src[src_i, nd]
-    return m
 
 
 def _node_id_for_row(data_store, row: int):
@@ -185,7 +174,13 @@ class GFXGraphMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._transform: AffineTransform = transform
+        self._transform: AffineTransform | None = transform
+        # The systems this visual's geometry is placed with, pushed by
+        # the controller.  ``None`` until the scene has a canvas.
+        self._spaces: RenderSpaces | None = None
+        # Where the collapsed axes sit in **data** units, from the last
+        # planned request.  The node matrix reads it (design 3.9).
+        self._last_data_positions: dict[int, float] = {}
         self._last_displayed_axes: tuple[int, ...] | None = None
 
         self._aabb_enabled: bool = visual_model.aabb.enabled
@@ -315,10 +310,44 @@ class GFXGraphMemoryVisual:
     # Node matrix
     # ------------------------------------------------------------------
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with.
+
+        Pushed by the controller when ``displayed_axes`` changes -- a pure
+        reorder included -- and when the first canvas gives the scene a
+        rendered system.
+        """
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Place the node with the composition of design 3.9.
+
+        ``visual -> data -> world -> rendered``, replacing the
+        ``select_axes`` sub-block.  The two agree exactly for a
+        block-diagonal transform and differ only where ``select_axes`` was
+        silently wrong.  A no-op until the controller supplies the systems.
+        """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-        self.node.local.matrix = _pygfx_matrix(sub)
+        if self._spaces is None or self._transform is None:
+            return
+        self.node.local.matrix = node_matrix(
+            self._spaces, self._transform, self._collapsed_origin()
+        )
+
+    def _collapsed_origin(self) -> dict[int, float]:
+        """Where the dropped data axes sit, for the node matrix (design 3.9).
+
+        Taken from the selection where there is one -- the plane's depth
+        matters to a 3-D rendered system -- and the origin otherwise.
+        """
+        if self._last_data_positions:
+            return {
+                axis: float(self._last_data_positions.get(axis, 0.0))
+                for axis in self._spaces.collapsed_axes
+            }
+        return dict.fromkeys(self._spaces.collapsed_axes, 0.0)
 
     # ------------------------------------------------------------------
     # Pick index translation
@@ -423,7 +452,9 @@ class GFXGraphMemoryVisual:
     # Slice request building
     # ------------------------------------------------------------------
 
-    def _build_request(self, dims_state: DimsState) -> GraphSliceRequest:
+    def _build_request(
+        self, dims_state: DimsState, selection=None
+    ) -> GraphSliceRequest:
         """Assemble one request, resolving the trail into extents and fades.
 
         A ``TrailConfig`` on a *displayed* axis produces no extent: a window
@@ -431,23 +462,53 @@ class GFXGraphMemoryVisual:
         becomes live again the moment the view changes back.  That is
         legitimate, but indistinguishable at slice time from a typo, so it
         warns once per (visual, axis) -- see ``_warned_displayed_axes``.
+
+        The graph is design 3.12's "per-family policy on top of the region":
+        its window is **asymmetric** and its fade is measured from the slice,
+        so ``contains`` alone cannot express it.  What changes is the space
+        the numbers are in.  The slice position now comes from the region,
+        pulled back through the visual's transform, and the extents are
+        divided by the world-units-per-data-unit of their axis -- so the
+        store's own slab arithmetic compares data against data.  Before this
+        it compared a **world** position against **data** coordinates, which
+        is the latent bug D4 exists to fix.
         """
         sliced = dims_state.selection.slice_indices
+        positions: dict[int, float] = {}
+        scales: dict[int, float] = {}
+        if selection is not None and self._spaces is not None and self._transform:
+            positions = data_slice_positions(
+                selection.region, self._transform, self._spaces.world
+            )
+            scales = axis_scales(self._transform)
+            self._last_data_positions = positions
         displayed = set(dims_state.selection.displayed_axes)
 
         extents: dict[int, tuple[float, float]] = {}
         fades: dict[int, tuple[float, float, float]] = {}
 
+        # World units per data unit on each axis, 1.0 when the visual has not
+        # been placed -- which is the pre-migration reading, extents in
+        # whatever units the caller meant.
+        def _to_data(axis: int, value: float) -> float:
+            return float(value) / scales.get(axis, 1.0)
+
         for axis in sliced:
             config = self._trail.get(axis)
             if config is None:
-                extents[axis] = _DEFAULT_EXTENT
+                extents[axis] = (
+                    _to_data(axis, DEFAULT_HALF_THICKNESS),
+                    _to_data(axis, DEFAULT_HALF_THICKNESS),
+                )
                 continue
-            extents[axis] = (config.before, config.after)
+            extents[axis] = (
+                _to_data(axis, config.before),
+                _to_data(axis, config.after),
+            )
             if config.fade:
                 fades[axis] = (
-                    config.resolved_fade_before,
-                    config.resolved_fade_after,
+                    _to_data(axis, config.resolved_fade_before),
+                    _to_data(axis, config.resolved_fade_after),
                     config.min_alpha,
                 )
 
@@ -469,7 +530,10 @@ class GFXGraphMemoryVisual:
             chunk_request_id=shared_id,
             scale_index=0,
             displayed_axes=dims_state.selection.displayed_axes,
-            slice_indices=dict(sliced),
+            slice_indices={
+                axis: positions.get(axis, float(position))
+                for axis, position in sliced.items()
+            },
             extents=extents,
             fades=fades,
         )
@@ -483,12 +547,13 @@ class GFXGraphMemoryVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[GraphSliceRequest]:
         """3-D planning path -- returns one GraphSliceRequest."""
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-        return [self._build_request(dims_state)]
+        return [self._build_request(dims_state, selection)]
 
     def build_slice_request_2d(
         self,
@@ -501,12 +566,13 @@ class GFXGraphMemoryVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[GraphSliceRequest]:
         """2-D planning path -- returns one GraphSliceRequest."""
         displayed = dims_state.selection.displayed_axes
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-        return [self._build_request(dims_state)]
+        return [self._build_request(dims_state, selection)]
 
     # ------------------------------------------------------------------
     # Commit

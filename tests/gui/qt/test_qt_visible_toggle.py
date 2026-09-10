@@ -22,6 +22,7 @@ from cellier.events import (
     VisualVisibilityChangedEvent,
 )
 from cellier.gui.qt.visuals import QtToggle, QtVisibleToggle
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -57,7 +58,7 @@ def _appearance_event(visual_id, field_name, new_value, source_id=None):
 
 
 def _two_image_viewer():
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visuals = [
         viewer.add_image(
             ImageMemoryStore(data=np.zeros((8, 16, 24), dtype=np.float32)),

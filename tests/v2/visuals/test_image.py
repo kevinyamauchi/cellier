@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
 from cellier.visuals._base_visual import BaseAppearance, BaseVisual
+from tests._v2 import scale_and_translation
 
 
 def _make_level_transforms_3d(factors):
@@ -136,11 +137,17 @@ def test_requires_camera_reslice_is_frozen():
 # ---------------------------------------------------------------------------
 
 
-def test_transform_defaults_to_identity():
+def test_transform_defaults_to_unplaced():
+    """D18 forbids a coordinate-system-less identity.
+
+    A transform names its endpoints by id, and a visual built before it is
+    added to a scene does not yet know which world it is going into -- so the
+    default is "not decided", and ``add_visual`` decides it.
+    """
     v = _MinimalVisual(
         name="test", data_store_id="00000000-0000-0000-0000-000000000000"
     )
-    np.testing.assert_array_equal(v.transform.matrix, np.eye(4, dtype=np.float32))
+    assert v.transform is None
 
 
 def test_transform_field_fires_psygnal():
@@ -149,14 +156,14 @@ def test_transform_field_fires_psygnal():
     )
     received = []
     v.events.transform.connect(lambda t: received.append(t))
-    new_t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    new_t = scale_and_translation((2.0, 2.0, 2.0))
     v.transform = new_t
     assert len(received) == 1
     np.testing.assert_array_equal(received[0].matrix, new_t.matrix)
 
 
 def test_visual_roundtrip_with_non_identity_transform():
-    t = AffineTransform.from_scale_and_translation((2.0, 3.0, 4.0), (10.0, 20.0, 30.0))
+    t = scale_and_translation((2.0, 3.0, 4.0), (10.0, 20.0, 30.0))
     v = MultiscaleImageVisual(
         name="vol",
         data_store_id="00000000-0000-0000-0000-000000000000",

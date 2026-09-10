@@ -48,7 +48,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from superqt import QLabeledSlider
+from superqt import QLabeledDoubleSlider
 
 from cellier.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
 from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
@@ -104,7 +104,7 @@ class QtDimsControl:
     """Bidirectional dims slider panel + 2D/3D toggle wired to the cellier v2 bus.
 
     Composes a ``QWidget`` container (with a ``QFormLayout``) holding one
-    ``QLabeledSlider`` per axis, plus (when *axes_2d*/*axes_3d* are given) a
+    ``QLabeledDoubleSlider`` per axis, plus (when *axes_2d*/*axes_3d* are given) a
     toggle button that switches the scene between its 2D and 3D axis sets.
     Sliders for displayed axes are hidden; only sliced (non-displayed) axes
     are shown.
@@ -132,7 +132,9 @@ class QtDimsControl:
     scene_id :
         UUID of the scene whose slice indices this widget controls.
     axis_ranges :
-        Mapping of axis index to ``(min, max)`` for each slider.
+        Mapping of axis index to ``(min, max)`` for each slider, in world
+        units.  A slice position is a world position, not a voxel index, so
+        the sliders are double-valued (D3).
     axis_labels :
         Mapping of axis index to display label, e.g. ``{0: "z", 1: "y", 2: "x"}``.
     initial_slice_indices :
@@ -155,10 +157,10 @@ class QtDimsControl:
     def __init__(
         self,
         scene_id,
-        axis_ranges: dict[int, tuple[int, int]],
+        axis_ranges: dict[int, tuple[float, float]],
         axis_labels: dict[int, str],
         *,
-        initial_slice_indices: dict[int, int] | None = None,
+        initial_slice_indices: dict[int, float] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
         initial_stacked_axes: tuple[int, ...] = (),
         non_displayed_sliders: set[int] | None = None,
@@ -195,12 +197,12 @@ class QtDimsControl:
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._sliders: dict[int, QLabeledSlider] = {}
+        self._sliders: dict[int, QLabeledDoubleSlider] = {}
         self._displayed_axes: tuple[int, ...] = initial_displayed_axes
         _initial = initial_slice_indices or {}
 
         for axis, (min_val, max_val) in axis_ranges.items():
-            sld = QLabeledSlider(Qt.Orientation.Horizontal)
+            sld = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
             sld.setRange(min_val, max_val)
             sld.setValue(_initial.get(axis, min_val))
             # Capture `axis` by value in the default-argument closure.
@@ -250,7 +252,7 @@ class QtDimsControl:
         self._non_displayed_sliders = axes
         self._update_visibility(self._displayed_axes)
 
-    def current_index(self) -> dict[int, int]:
+    def current_index(self) -> dict[int, float]:
         """Return the current value of every slider regardless of visibility."""
         return {axis: sld.value() for axis, sld in self._sliders.items()}
 
@@ -298,7 +300,7 @@ class QtDimsControl:
 
     # ── Cellier layer: widget → model ────────────────────────────────────────
 
-    def _on_slider_changed(self, axis: int, value: int) -> None:
+    def _on_slider_changed(self, axis: int, value: float) -> None:
         self._slider_dirty = True
         if not self._rate_limit_timer.isActive():
             self._submit_slider_values()
@@ -363,7 +365,7 @@ class QtDimsControl:
 
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
 
-    def _set_value(self, axis: int, value: int) -> None:
+    def _set_value(self, axis: int, value: float) -> None:
         sld = self._sliders[axis]
         sld.blockSignals(True)
         sld.setValue(value)
@@ -440,7 +442,7 @@ class QtCanvasWidget:
         cls,
         scene,
         canvas_view,
-        axis_ranges: dict[int, tuple[int, int]],
+        axis_ranges: dict[int, tuple[float, float]],
         *,
         parent: QWidget | None = None,
     ) -> QtCanvasWidget:
@@ -467,7 +469,7 @@ class QtCanvasWidget:
         parent :
             Optional Qt parent widget.
         """
-        axis_labels_list = scene.dims.coordinate_system.axis_labels
+        axis_labels_list = scene.dims.axis_labels
         axis_labels = dict(enumerate(axis_labels_list))
 
         selection = scene.dims.selection

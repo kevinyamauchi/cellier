@@ -11,8 +11,9 @@ import pygfx as gfx
 
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.visuals._image_memory import (
-    _pygfx_matrix,
+    _plan_from_region,
     _transform_slice_indices,
 )
 from cellier.render.visuals._multichannel_utils import (
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
+    from cellier.transform_v2 import AffineTransform, RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image_memory import MultichannelImageVisual
 
@@ -80,13 +81,16 @@ class GFXMultichannelImageMemoryVisual:
         self._visual_model = visual_model
         self._channel_axis = visual_model.channel_axis
 
-        if transform is None:
-            from cellier.transform import AffineTransform as _AT
-
-            transform = _AT.identity(ndim=data_store.ndim)
-        elif transform.ndim < data_store.ndim:
-            transform = transform.expand_dims(data_store.ndim)
-        self._transform: AffineTransform = transform
+        # The data -> world transform.  There is no coordinate-system-less
+        # identity to fall back on (D18); the controller supplies one.
+        self._transform: AffineTransform | None = transform
+        # The systems this visual's geometry is placed with, pushed by the
+        # controller.  ``None`` until the scene has a canvas.
+        self._spaces: RenderSpaces | None = None
+        # The collapsed voxel index per dropped data axis, refreshed on every
+        # planned request (design 3.9).  The channel axis is among them: a
+        # channel request pins it to one index and numpy drops it.
+        self._collapsed_indices: dict[int, float] = {}
 
         self._last_displayed_axes: tuple[int, ...] | None = None
         self._current_slice_request_id_3d: UUID | None = None
@@ -232,10 +236,30 @@ class GFXMultichannelImageMemoryVisual:
     # Node matrix
     # ------------------------------------------------------------------
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with."""
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Place the channel groups with the composition of design 3.9.
+
+        One matrix for every channel: the pool nodes differ in which slice of
+        the channel axis they carry, not in where they sit, and the channel
+        axis contributes to the displayed rows only through a cross-term.
+        """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-        m = _pygfx_matrix(sub)
+        if self._spaces is None or self._transform is None:
+            return
+        m = node_matrix(
+            self._spaces,
+            self._transform,
+            {
+                axis: float(self._collapsed_indices.get(axis, 0.0))
+                for axis in self._spaces.collapsed_axes
+            },
+        )
         if self._group_3d is not None:
             self._group_3d.local.matrix = m
         if self._group_2d is not None:
@@ -321,30 +345,55 @@ class GFXMultichannelImageMemoryVisual:
     # Planning
     # ------------------------------------------------------------------
 
-    def _make_channel_requests(
-        self, dims_state: DimsState, slice_request_id
-    ) -> list[ChunkRequest]:
+    def _base_axis_selections(
+        self, dims_state: DimsState, selection: RegionSelection | None
+    ) -> tuple[int | tuple[int, int], ...]:
+        """The per-axis selection every channel request starts from.
+
+        Prefers the ``RegionSelection`` the controller built (design 3.7),
+        falling back to ``dims_state`` for a headlessly driven visual.  The
+        channel axis's entry is whatever the region says and is replaced per
+        request: which channel to read is this family's own concern, not the
+        selection's.
+        """
+        shape = self._data_store.shape
+        if selection is not None and self._spaces is not None:
+            axis_selections, collapsed = _plan_from_region(
+                selection, self._transform, self._spaces.world, shape
+            )
+            self._collapsed_indices = collapsed
+            return axis_selections
         transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices,
-            self._transform,
-            self._data_store.shape,
+            dims_state.selection.slice_indices, self._transform, shape
         )
-        transformed_state = DimsState(
-            axis_labels=dims_state.axis_labels,
-            selection=AxisAlignedSelectionState(
-                displayed_axes=dims_state.selection.displayed_axes,
-                slice_indices=transformed_indices,
+        self._collapsed_indices = dict(transformed_indices)
+        return build_axis_selections_for_channel(
+            DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
             ),
+            shape,
+            self._channel_axis,
+            0,
         )
+
+    def _make_channel_requests(
+        self,
+        dims_state: DimsState,
+        slice_request_id,
+        selection: RegionSelection | None = None,
+    ) -> list[ChunkRequest]:
+        base = self._base_axis_selections(dims_state, selection)
         requests: list[ChunkRequest] = []
         for ch_idx, appearance in self._visual_model.channels.items():
             if not appearance.visible:
                 continue
-            axis_selections = build_axis_selections_for_channel(
-                transformed_state,
-                self._data_store.shape,
-                self._channel_axis,
-                ch_idx,
+            axis_selections = tuple(
+                ch_idx if axis == self._channel_axis else value
+                for axis, value in enumerate(base)
             )
             requests.append(
                 ChunkRequest(
@@ -367,6 +416,7 @@ class GFXMultichannelImageMemoryVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Return one ChunkRequest per visible channel for the 2D slice."""
         displayed = dims_state.selection.displayed_axes
@@ -374,7 +424,7 @@ class GFXMultichannelImageMemoryVisual:
             self._update_node_matrix(displayed)
         sid = uuid4()
         self._current_slice_request_id_2d = sid
-        return self._make_channel_requests(dims_state, sid)
+        return self._make_channel_requests(dims_state, sid, selection)
 
     def build_slice_request(
         self,
@@ -385,6 +435,7 @@ class GFXMultichannelImageMemoryVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Return one ChunkRequest per visible channel for the 3D sub-volume."""
         if dims_state is None:
@@ -416,7 +467,7 @@ class GFXMultichannelImageMemoryVisual:
             self._update_node_matrix(displayed)
         sid = uuid4()
         self._current_slice_request_id_3d = sid
-        return self._make_channel_requests(dims_state, sid)
+        return self._make_channel_requests(dims_state, sid, selection)
 
     # ------------------------------------------------------------------
     # Commit

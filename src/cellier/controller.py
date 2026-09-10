@@ -12,6 +12,14 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
+from cellier.data._axes import (
+    data_axes_from_world,
+    default_data_to_world,
+    identity_transform,
+    level_coordinate_systems,
+    store_level_transforms,
+    transform_from_v1,
+)
 from cellier.events import (
     AABBChangedEvent,
     AABBUpdateEvent,
@@ -58,6 +66,7 @@ from cellier.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.render._capture import capture_scene
 from cellier.render._config import RenderManagerConfig
 from cellier.render._scene_config import VisualRenderConfig
+from cellier.render._spaces import RenderSpaces, build_render_spaces
 from cellier.render._visual_lut import (
     KIND_LABEL,
     KIND_LABEL_ALL,
@@ -88,9 +97,22 @@ from cellier.scene.cameras import (
     PerspectiveCamera,
 )
 from cellier.scene.canvas import Canvas
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    WorldAxesLike,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 from cellier.transform import AffineTransform
+from cellier.transform_v2 import AffineTransform as TransformV2
+from cellier.transform_v2 import (
+    CoordinateSystemType,
+    RegionSelection,
+    RenderedCoordinateSystem,
+    VisualCoordinateSystem,
+)
 from cellier.viewer_model import DataManager, ViewerModel
 
 if TYPE_CHECKING:
@@ -132,6 +154,7 @@ from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
 
     from psygnal import EmissionInfo
     from PySide6.QtWidgets import QWidget
@@ -376,6 +399,11 @@ _LABELS_OUTLINE_KINDS: dict[str, int] = {
 }
 
 
+def _render_mode_for(displayed_axes: Sequence[int]) -> str:
+    """The render mode a displayed-axes tuple selects: 3 axes is 3D, 2 is 2D."""
+    return "3d" if len(displayed_axes) == 3 else "2d"
+
+
 def _outline_kind(visual) -> int:
     """Return the LUT ``kind`` the outline pass should use for *visual*.
 
@@ -474,6 +502,27 @@ class CellierController:
         self._incoming_events: EventBus = EventBus()
         # Cache of last-known displayed_axes per scene for change detection
         self._dims_cache: dict[UUID, tuple[int, ...]] = {}
+        # Cache of last-known slice positions and thicknesses per scene.  A
+        # move here rebuilds only the rendered -> world embedding, whose
+        # constant column carries the slice position; the rendered system
+        # itself is unchanged, which is what keeps axis ids stable across a
+        # slider drag.
+        self._slice_cache: dict[UUID, tuple] = {}
+        # id -> coordinate system, for every system this session knows about:
+        # the stored ones (world, per-level data) and the runtime ones
+        # (rendered, visual).  Three v2 methods -- map_bounding_box, then and
+        # validate_against -- take system *objects* while a transform stores
+        # only ids, so a lookup is required.  Deliberately a plain dict: no
+        # edges, no path finding, no automatic composition (D15).
+        self._coordinate_systems: dict[UUID, CoordinateSystemType] = {}
+        # canvas_id -> (rendered system, rendered -> world embedding).
+        # Rebuilt when displayed_axes changes, including a pure reorder; only
+        # the embedding is rebuilt when slice_indices or thickness moves.
+        self._rendered: dict[UUID, tuple[RenderedCoordinateSystem, TransformV2]] = {}
+        # (visual_id, render_mode) -> the space that visual's GPU geometry is
+        # indexed in (D45).  One per mode: a multiscale visual's 3D node is in
+        # normalized proxy-box space and its 2D node in level-0 pixels.
+        self._visual_spaces: dict[tuple[UUID, str], VisualCoordinateSystem] = {}
         # Canvases whose camera could not be fitted when their displayed
         # axes changed, because the scene was momentarily empty.  Drained
         # by ``_request_draw_for_scene`` once a reslice commits.
@@ -745,7 +794,7 @@ class CellierController:
         *,
         name: str = "scene",
         dim: Literal["2d", "3d"] = "3d",
-        coordinate_system: CoordinateSystem | None = None,
+        coordinate_system: WorldAxesLike | None = None,
         render_modes: set[Literal["2d", "3d"]] | None = None,
         lighting: Literal["none", "default"] = "none",
         background: BackgroundAppearance | None = None,
@@ -760,9 +809,12 @@ class CellierController:
             Initial display dimensionality.  ``"3d"`` sets
             ``displayed_axes`` to the last three axes of the coordinate
             system; ``"2d"`` sets it to the last two.
-        coordinate_system : CoordinateSystem or None
-            World coordinate system.  Defaults to a 3-axis ``("z", "y", "x")``
-            system when ``None``.
+        coordinate_system : WorldAxesLike or None
+            The scene's world axes: a ``WorldCoordinateSystem``, or a sequence
+            of ``Axis`` objects and/or ``(name, axis_type)`` pairs.  Axis
+            types are stated, never inferred -- ``spatial_axes("z", "y", "x")``
+            is the shorthand for an all-spatial world.  Defaults to a 3-axis
+            spatial ``("z", "y", "x")`` world when ``None``.
         render_modes : set or None
             Which rendering modes visuals should support.  Defaults to
             ``{"2d", "3d"}``.
@@ -778,11 +830,12 @@ class CellierController:
         Scene
             The newly created and registered Scene.
         """
-        if coordinate_system is None:
-            coordinate_system = CoordinateSystem(
-                name="world", axis_labels=("z", "y", "x")
-            )
-        ndim = len(coordinate_system.axis_labels)
+        world = (
+            world_coordinate_system(spatial_axes("z", "y", "x"))
+            if coordinate_system is None
+            else world_coordinate_system(coordinate_system)
+        )
+        ndim = world.ndim
         n_displayed = 3 if dim == "3d" else 2
         if ndim < n_displayed:
             raise ValueError(
@@ -792,7 +845,7 @@ class CellierController:
         displayed_axes = tuple(range(ndim - n_displayed, ndim))
         slice_indices = {i: 0 for i in range(ndim) if i not in displayed_axes}
         dims = DimsManager(
-            coordinate_system=coordinate_system,
+            world_coordinate_system=world,
             selection=AxisAlignedSelection(
                 displayed_axes=displayed_axes,
                 slice_indices=slice_indices,
@@ -825,6 +878,7 @@ class CellierController:
             The same object passed in.
         """
         self._model.data.stores[data_store.id] = data_store
+        self._register_coordinate_systems(*data_store.data_coordinate_systems)
         return data_store
 
     # ------------------------------------------------------------------
@@ -873,6 +927,27 @@ class CellierController:
         if data_store is not None:
             if data_store.id not in self._model.data.stores:
                 self._model.data.stores[data_store.id] = data_store
+        else:
+            data_store = self._model.data.stores[UUID(visual_model.data_store_id)]
+
+        # Before any GFX object is built: the store must be able to say what
+        # its axes are, because everything downstream -- the data -> world
+        # transform, the visual space, the region pull-back -- is addressed
+        # by axis id.
+        self._ensure_data_coordinate_systems(scene_id, data_store, visual_model)
+        world = self._model.scenes[scene_id].dims.world_coordinate_system
+        supplied = getattr(visual_model, "transform", None)
+        if supplied is None:
+            visual_model.transform = default_data_to_world(
+                data_store.data_coordinate_system, world
+            )
+        elif isinstance(supplied, AffineTransform):
+            # A v1 transform states the numbers but not the spaces; the
+            # controller knows both, so it names them.  Migration affordance
+            # only -- it goes away with v1.
+            visual_model.transform = transform_from_v1(
+                supplied.matrix, data_store.data_coordinate_system, world
+            )
 
         if isinstance(visual_model, MultiscaleImageVisual):
             return self._add_multiscale_image_visual(scene_id, visual_model)
@@ -908,6 +983,7 @@ class CellierController:
         scene_id: UUID,
         appearance: BaseImageAppearance,
         name: str = "image",
+        transform: TransformV2 | AffineTransform | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
     ) -> ImageVisual:
@@ -923,7 +999,12 @@ class CellierController:
             Appearance parameters.
         name : str
             Human-readable label. Default ``"image"``.
-
+        transform : AffineTransform or None
+            The ``data -> world`` transform, from the store's level-0
+            coordinate system to the scene's world.  ``None`` (default) is the
+            identity between them.  A v1
+            ``cellier.transform.AffineTransform`` is accepted and has its
+            endpoints named here; that affordance goes away with v1.
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
@@ -941,6 +1022,7 @@ class CellierController:
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
+            transform=self._prepare_transform(scene_id, data, transform),
         )
         _apply_render_settings(
             visual_model,
@@ -997,11 +1079,7 @@ class CellierController:
 
             appearance = InMemoryLabelsAppearance()
 
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=data.ndim)
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = LabelMemoryVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1057,11 +1135,7 @@ class CellierController:
         -------
         MeshVisual
         """
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=data.positions.shape[1])
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MeshVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1117,11 +1191,7 @@ class CellierController:
         if appearance is None:
             appearance = PointsMarkerAppearance()
 
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=data.ndim)
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = PointsVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1177,11 +1247,7 @@ class CellierController:
         if appearance is None:
             appearance = LinesMemoryAppearance()
 
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=data.ndim)
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = LinesVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1250,12 +1316,12 @@ class CellierController:
         if appearance is None:
             appearance = GraphAppearance()
 
-        if transform is not None:
-            resolved_transform = transform
-        elif data.transform is not None:
-            resolved_transform = data.transform
-        else:
-            resolved_transform = AffineTransform.identity(ndim=data.ndim)
+        # A geff file states its own per-axis scale and offset (D23), which
+        # stands in for an explicit transform; either arrives as a bare v1
+        # matrix and is named here against the store's and scene's systems.
+        resolved_transform = self._prepare_transform(
+            scene_id, data, transform if transform is not None else data.transform
+        )
 
         visual_model = GraphVisual(
             name=name,
@@ -1316,11 +1382,7 @@ class CellierController:
         if render_config is None:
             render_config = MultiscaleImageRenderConfig()
 
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=len(data.level_shapes[0]))
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1386,11 +1448,7 @@ class CellierController:
         if render_config is None:
             render_config = MultiscaleLabelRenderConfig()
 
-        resolved_transform = (
-            transform
-            if transform is not None
-            else AffineTransform.identity(ndim=len(data.level_shapes[0]))
-        )
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MultiscaleLabelVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1463,6 +1521,9 @@ class CellierController:
             channels=channels,
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
+            transform=self._prepare_transform(
+                scene_id, data, None, channel_axis=channel_axis
+            ),
         )
         _apply_render_settings(
             visual_model,
@@ -1528,15 +1589,10 @@ class CellierController:
                 f"len(channels)={len(channels)} exceeds "
                 f"max_channels_2d={max_channels_2d}."
             )
-        # Extract the spatial-only submatrix so the GFX layer can expand_dims
-        # it back to full data ndim (it prepends identity axes for non-spatial dims).
-        if transform is not None:
-            spatial_axes = tuple(i for i in range(transform.ndim) if i != channel_axis)
-            spatial_transform = transform.select_axes(spatial_axes)
-        else:
-            spatial_transform = None
-
-        extra = {} if spatial_transform is None else {"transform": spatial_transform}
+        # The transform is full-rank ``data -> world`` and stays that way.
+        # It used to be stripped of its channel axis here so the GFX layer
+        # could ``expand_dims`` it back; a v2 transform names its own axes and
+        # the slots take it whole.
         visual_model = MultichannelMultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1546,7 +1602,9 @@ class CellierController:
             render_config=render_config,
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
-            **extra,
+            transform=self._prepare_transform(
+                scene_id, data, transform, channel_axis=channel_axis
+            ),
         )
         _apply_render_settings(
             visual_model,
@@ -1659,6 +1717,12 @@ class CellierController:
             scene_id, gfx_visual, data_store, displayed_axes
         )
         self._visual_to_scene[visual_model.id] = scene_id
+        self._rebuild_visual_space(
+            visual_model.id, _render_mode_for(displayed_axes), data_store
+        )
+        setter = getattr(gfx_visual, "set_render_spaces", None)
+        if setter is not None:
+            setter(self.render_spaces(visual_model.id))
 
         # psygnal bridges
         if hasattr(visual_model, "appearance"):
@@ -2299,6 +2363,15 @@ class CellierController:
 
         self._canvas_to_scene[canvas_model.id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_model.id)
+        # The rendered system is derived from (world, displayed_axes,
+        # canvas_id) rather than stored on the Canvas: storing it would be a
+        # second source of truth for displayed_axes (design 3.1, D9).
+        rendered, embedding = self._build_rendered(scene_id, canvas_model.id)
+        self._rendered[canvas_model.id] = (rendered, embedding)
+        self._register_coordinate_systems(rendered)
+        # The first canvas is what makes a rendered system exist, so visuals
+        # added before it could not be placed.  They can be now.
+        self._push_render_spaces(scene_id)
 
         return canvas_view.widget
 
@@ -2690,6 +2763,395 @@ class CellierController:
                 configs[visual.id] = VisualRenderConfig()
         return configs
 
+    # ------------------------------------------------------------------
+    # Coordinate systems: the registry, and the runtime systems
+    # ------------------------------------------------------------------
+
+    def coordinate_system(self, system_id: UUID) -> CoordinateSystemType:
+        """Return the coordinate system with *system_id*.
+
+        Three ``transform_v2`` methods -- ``map_bounding_box``, ``then`` and
+        ``validate_against`` -- take coordinate system **objects** while a
+        transform stores only their ids, so composing anything needs this
+        lookup.  It is a plain dict: no edges, no path finding and no
+        automatic composition (D15).
+
+        Parameters
+        ----------
+        system_id : UUID
+            The system's id.
+
+        Returns
+        -------
+        CoordinateSystemType
+            The registered system.
+
+        Raises
+        ------
+        KeyError
+            If no system with that id is registered.  A stored transform
+            naming an unregistered system usually means it outlived the scene
+            or store that owned its endpoint.
+        """
+        try:
+            return self._coordinate_systems[system_id]
+        except KeyError:
+            raise KeyError(
+                f"No coordinate system {system_id} is registered.  It belongs "
+                f"to a scene, data store, canvas or visual that is not in "
+                f"this viewer."
+            ) from None
+
+    def _register_coordinate_systems(self, *systems: CoordinateSystemType) -> None:
+        """Add systems to the registry, keyed by id."""
+        for system in systems:
+            self._coordinate_systems[system.id] = system
+
+    def _forget_coordinate_systems(self, *systems: CoordinateSystemType) -> None:
+        """Drop systems from the registry."""
+        for system in systems:
+            self._coordinate_systems.pop(system.id, None)
+
+    def _ensure_data_coordinate_systems(
+        self,
+        scene_id: UUID,
+        data_store: Any,
+        visual_model: Any = None,
+        channel_axis: int | None = None,
+    ) -> None:
+        """Give *data_store* coordinate systems if it does not have its own.
+
+        A store that can say what its axes are -- an OME-Zarr reader, or any
+        store built with ``axis_names=`` -- already carries them, and this is
+        a no-op.  A bare ``ImageMemoryStore(data=arr)`` cannot say, so it
+        takes the trailing axes of the scene's world: their names, types and
+        units, with fresh ids.
+
+        That is not the silent default D3 forbids.  The world was declared
+        explicitly by the caller, axis types included; inheriting from it is
+        what makes the ``data -> world`` transform typecheck by construction
+        rather than by luck.
+        """
+        if data_store.data_coordinate_systems:
+            self._register_coordinate_systems(*data_store.data_coordinate_systems)
+            return
+        ndim = getattr(data_store, "ndim", None)
+        if ndim is None:
+            return
+        world = self._model.scenes[scene_id].dims.world_coordinate_system
+        # A store wider than its world has axes the world does not model at
+        # all, and for a multichannel visual the widest one is the channel
+        # axis -- which the visual is the only object to know about.  When the
+        # world does have room for every data axis, it says what they are and
+        # nothing is declared: a world that already carries a channel axis
+        # must be the one the store's channel axis maps to.
+        declared: dict[int, tuple[str, str]] = {}
+        if channel_axis is None:
+            channel_axis = getattr(visual_model, "channel_axis", None)
+        if channel_axis is not None and int(ndim) > world.ndim:
+            declared[int(channel_axis)] = ("c", "channel")
+        systems = level_coordinate_systems(
+            data_store.id,
+            data_axes_from_world(world, int(ndim), declared),
+            int(getattr(data_store, "n_levels", 1)),
+            data_store.name,
+        )
+        data_store.data_coordinate_systems = systems
+        if len(systems) == 1 and not data_store.level_transforms:
+            data_store.level_transforms = [identity_transform(systems[0], systems[0])]
+        self._register_coordinate_systems(*systems)
+
+    def _prepare_transform(
+        self,
+        scene_id: UUID,
+        data_store: Any,
+        transform: Any,
+        channel_axis: int | None = None,
+    ) -> TransformV2 | None:
+        """Resolve what a visual's ``data -> world`` transform should be.
+
+        Called by every ``add_*`` before the visual model is built, because
+        the model's field is typed v2 and a caller holding a v1 transform --
+        or a geff file's own per-axis scale -- has stated the numbers without
+        naming the spaces.  Both systems are known here, so this is where they
+        get attached.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene the visual is going into.
+        data_store : Any
+            The store it reads from.
+        transform : Any
+            A v2 transform (passed through), a v1 one (named), or ``None``
+            (the identity between the two systems).
+        channel_axis : int or None
+            For a multichannel visual, the data axis it composites.
+
+        Returns
+        -------
+        AffineTransform or None
+            ``None`` only when the store cannot say what its axes are, in
+            which case nothing downstream can place it either.
+        """
+        self._ensure_data_coordinate_systems(
+            scene_id, data_store, channel_axis=channel_axis
+        )
+        if not data_store.data_coordinate_systems:
+            return transform
+        world = self._model.scenes[scene_id].dims.world_coordinate_system
+        level_zero = data_store.data_coordinate_systems[0]
+        if transform is None:
+            return default_data_to_world(level_zero, world)
+        if isinstance(transform, AffineTransform):
+            return transform_from_v1(transform.matrix, level_zero, world)
+        if transform.input_coordinate_system != level_zero.id:
+            raise ValueError(
+                f"This transform maps out of coordinate system "
+                f"{transform.input_coordinate_system}, but the store's level-0 "
+                f"system is {level_zero.id} ('{level_zero.name}').  Build it "
+                f"against the store's own system -- a v2 transform names its "
+                f"endpoints, so one built elsewhere describes a different space."
+            )
+        if transform.output_coordinate_system != world.id:
+            raise ValueError(
+                f"This transform maps into coordinate system "
+                f"{transform.output_coordinate_system}, but the scene's world "
+                f"is {world.id} ('{world.name}').  Build it against the "
+                f"scene's own world."
+            )
+        return transform
+
+    def _build_rendered(
+        self, scene_id: UUID, canvas_id: UUID
+    ) -> tuple[RenderedCoordinateSystem, TransformV2]:
+        """Build one canvas's rendered system and its embedding into the world.
+
+        The rendered system is built in **cellier displayed order** (Part 5,
+        D1): for a ``TZYX`` world displayed as ``ZYX`` its axes are
+        ``("Z", "Y", "X")``, so ``displayed_axes``, the ``slice_indices``
+        keys, the GUI sliders and ``axis_names()`` all agree.  The
+        ``(z, y, x) -> (x, y, z)`` reversal is not carried here; it stays at
+        the pygfx boundary.
+
+        The embedding's linear block is a selection matrix, and every world
+        axis the canvas does not display is a ``constant_output_axes`` entry
+        -- never a broadcast one.  A sliced axis sits at its slice position;
+        a stacked axis sits at zero, which nothing reads: the render layer
+        composites its whole extent and the region never constrains it.
+        """
+        scene = self._model.scenes[scene_id]
+        world = scene.dims.world_coordinate_system
+        selection = scene.dims.selection
+        displayed_axes = tuple(selection.displayed_axes)
+        rendered = RenderedCoordinateSystem.from_world(
+            world,
+            [world.axes[axis].id for axis in displayed_axes],
+            canvas_id,
+        )
+        constant: dict[Any, float] = {}
+        for axis in range(world.ndim):
+            if axis in displayed_axes:
+                continue
+            constant[world.axes[axis].id] = float(
+                getattr(selection, "slice_indices", {}).get(axis, 0.0)
+            )
+        embedding = TransformV2.from_axis_map(
+            rendered,
+            world,
+            axis_map={
+                rendered.axes[index].id: world.axes[axis].id
+                for index, axis in enumerate(displayed_axes)
+            },
+            constant_output_axes=constant,
+            name="rendered_to_world",
+        )
+        return rendered, embedding
+
+    def _rebuild_rendered(self, scene_id: UUID) -> None:
+        """Rebuild the rendered system and embedding for every canvas on a scene.
+
+        The trigger is a ``displayed_axes`` change, a **pure reorder
+        included**: a transpose is a different rendered system with a
+        different axis order, even though it fetches identical data.
+        """
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            previous = self._rendered.get(canvas_id)
+            if previous is not None:
+                self._forget_coordinate_systems(previous[0])
+            rendered, embedding = self._build_rendered(scene_id, canvas_id)
+            self._rendered[canvas_id] = (rendered, embedding)
+            self._register_coordinate_systems(rendered)
+
+    def _rebuild_rendered_embedding(self, scene_id: UUID) -> None:
+        """Refresh only the ``rendered -> world`` half after a slice move.
+
+        The rendered system itself is unchanged -- same axes, same ids -- so
+        it is reused rather than rebuilt, which is what keeps axis ids stable
+        across a slider drag.
+        """
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            entry = self._rendered.get(canvas_id)
+            if entry is None:
+                continue
+            _, embedding = self._build_rendered(scene_id, canvas_id)
+            self._rendered[canvas_id] = (entry[0], embedding)
+
+    def _forget_rendered(self, canvas_id: UUID) -> None:
+        """Drop a canvas's rendered system."""
+        entry = self._rendered.pop(canvas_id, None)
+        if entry is not None:
+            self._forget_coordinate_systems(entry[0])
+
+    def _rebuild_visual_space(
+        self, visual_id: UUID, render_mode: str, data_store: Any
+    ) -> None:
+        """Build the space one visual's geometry is uploaded in, for one mode.
+
+        The retained axes are in **ascending data-axis order**, never
+        ``displayed_axes`` order: ``axis_selections`` is assembled per data
+        axis ascending and numpy returns an array whose axes are ascending,
+        so a display permutation has to live in the transform and never in
+        the data (design 3.14).
+        """
+        if not data_store.data_coordinate_systems:
+            return
+        level_zero = data_store.data_coordinate_systems[0]
+        scene_id = self._visual_to_scene.get(visual_id)
+        if scene_id is None:
+            return
+        selection = self._model.scenes[scene_id].dims.selection
+        world_ndim = self._model.scenes[scene_id].dims.world_coordinate_system.ndim
+        offset = world_ndim - level_zero.ndim
+        retained = sorted(
+            axis - offset
+            for axis in getattr(selection, "displayed_axes", ())
+            if 0 <= axis - offset < level_zero.ndim
+        )
+        if not retained:
+            return
+        key = (visual_id, render_mode)
+        previous = self._visual_spaces.get(key)
+        if previous is not None:
+            self._forget_coordinate_systems(previous)
+        space = VisualCoordinateSystem.from_data(
+            level_zero,
+            [level_zero.axes[axis].id for axis in retained],
+            visual_id,
+            name=f"visual_{render_mode}",
+        )
+        self._visual_spaces[key] = space
+        self._register_coordinate_systems(space)
+
+    def render_spaces(self, visual_id: UUID) -> RenderSpaces | None:
+        """The systems a visual's render-layer counterpart places geometry with.
+
+        ``None`` when the visual is not placeable yet -- its store has no
+        coordinate systems, or the scene has no canvas and so no rendered
+        system.
+        """
+        scene_id = self._visual_to_scene.get(visual_id)
+        if scene_id is None:
+            return None
+        visual_model = self._get_visual_model(visual_id)
+        store = self._model.data.stores.get(UUID(visual_model.data_store_id))
+        if store is None or not store.data_coordinate_systems:
+            return None
+        scene = self._model.scenes[scene_id]
+        displayed_axes = scene.dims.selection.displayed_axes
+        space = self._visual_spaces.get((visual_id, _render_mode_for(displayed_axes)))
+        if space is None:
+            return None
+        rendered = self._scene_rendered(scene_id)
+        if rendered is None:
+            return None
+        rendered_cs, rendered_to_world = rendered
+        level_zero = store.data_coordinate_systems[0]
+        offset = scene.dims.world_coordinate_system.ndim - level_zero.ndim
+        retained = sorted(
+            axis - offset
+            for axis in displayed_axes
+            if 0 <= axis - offset < level_zero.ndim
+        )
+        return build_render_spaces(
+            level_zero,
+            space,
+            scene.dims.world_coordinate_system,
+            rendered_cs,
+            rendered_to_world,
+            visual_model.transform,
+            retained,
+            data_levels=store.data_coordinate_systems,
+            level_transforms=store_level_transforms(store),
+        )
+
+    def _scene_rendered(
+        self, scene_id: UUID
+    ) -> tuple[RenderedCoordinateSystem, TransformV2] | None:
+        """The rendered system node matrices on this scene are expressed in.
+
+        A node matrix lives on a pygfx node, and there is one pygfx scene per
+        cellier scene shared by every canvas showing it.  Those canvases all
+        display the same axes, so their rendered systems differ only by id and
+        any one of them yields the same matrix; the first is used.
+
+        ``None`` when the scene has no canvas yet, which is also when nothing
+        needs placing.
+        """
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            entry = self._rendered.get(canvas_id)
+            if entry is not None:
+                return entry
+        return None
+
+    def _push_render_spaces(self, scene_id: UUID) -> None:
+        """Hand every visual on a scene its rebuilt systems."""
+        scene_manager = self._render_manager._scenes.get(scene_id)
+        if scene_manager is None:
+            return
+        for visual_model in self._model.scenes[scene_id].visuals:
+            gfx_visual = scene_manager.get_visual(visual_model.id)
+            setter = getattr(gfx_visual, "set_render_spaces", None)
+            if setter is None:
+                continue
+            setter(self.render_spaces(visual_model.id))
+
+    def _rebuild_visual_spaces(self, scene_id: UUID) -> None:
+        """Rebuild every visual space on a scene after a displayed_axes change.
+
+        Only the mode the scene is actually in.  There is one
+        ``displayed_axes`` per scene, so the *other* mode's axes are not known
+        here -- the 2D and 3D nodes of one visual are genuinely different
+        spaces (D45), and inventing the idle one would put a wrong answer in
+        the cache rather than no answer.  Its entry is built when the scene
+        switches into it, which is this same trigger.
+        """
+        displayed = self._model.scenes[scene_id].dims.selection.displayed_axes
+        mode = _render_mode_for(displayed)
+        for visual_model in self._model.scenes[scene_id].visuals:
+            store = self._model.data.stores.get(UUID(visual_model.data_store_id))
+            if store is None:
+                continue
+            self._rebuild_visual_space(visual_model.id, mode, store)
+
+    def _forget_visual_spaces(self, visual_id: UUID) -> None:
+        """Drop every render mode's visual space for one visual."""
+        for key in [key for key in self._visual_spaces if key[0] == visual_id]:
+            self._forget_coordinate_systems(self._visual_spaces.pop(key))
+
+    @staticmethod
+    def _slice_signature(selection: Any) -> tuple:
+        """A comparable snapshot of where the slice sits and how thick it is.
+
+        Compared rather than the whole selection because ``displayed_axes``
+        has its own, coarser, invalidation: this one rebuilds only the
+        embedding.
+        """
+        return (
+            tuple(sorted(getattr(selection, "slice_indices", {}).items())),
+            tuple(sorted(getattr(selection, "thickness", {}).items())),
+        )
+
     def _dims_state_for_scene(self, scene_id: UUID) -> DimsState:
         """Derive a DimsState from the scene's DimsManager."""
         return self._model.scenes[scene_id].dims.to_state()
@@ -2701,6 +3163,8 @@ class CellierController:
     def _wire_dims_model(self, scene: Scene) -> None:
         """Subscribe to all field changes on a scene's DimsManager."""
         self._dims_cache[scene.id] = scene.dims.selection.displayed_axes
+        self._slice_cache[scene.id] = self._slice_signature(scene.dims.selection)
+        self._register_coordinate_systems(scene.dims.world_coordinate_system)
         handler = self._make_dims_handler(scene.id)
         scene.dims.events.connect(handler)
         self._scene_psygnal_handlers.setdefault(scene.id, []).append(
@@ -2813,17 +3277,34 @@ class CellierController:
         """Return a psygnal catch-all handler for a scene's DimsManager."""
 
         def _on_dims_psygnal(info: EmissionInfo) -> None:
+            selection = self._model.scenes[scene_id].dims.selection
             new_state = self._model.scenes[scene_id].dims.to_state()
             prev_axes = self._dims_cache[scene_id]
-            displayed_axes_changed = prev_axes != new_state.selection.displayed_axes
-            self._dims_cache[scene_id] = new_state.selection.displayed_axes
+            new_axes = new_state.selection.displayed_axes
+            displayed_axes_changed = prev_axes != new_axes
+            self._dims_cache[scene_id] = new_axes
+            prev_slice = self._slice_cache.get(scene_id)
+            new_slice = self._slice_signature(selection)
+            self._slice_cache[scene_id] = new_slice
             if displayed_axes_changed:
+                # The rendered system and every visual space are rebuilt for
+                # a reorder as well as a set change (design 3.14): a transpose
+                # is a different rendered system even though the fetch is
+                # identical.  The geometry rebuild and camera switch below
+                # keep their existing trigger; narrowing them to a set change
+                # is the separate optimisation 3.14 describes.
+                self._rebuild_rendered(scene_id)
+                if set(prev_axes) != set(new_axes):
+                    self._rebuild_visual_spaces(scene_id)
+                self._push_render_spaces(scene_id)
                 self._rebuild_visuals_geometry(
                     scene_id, new_state.selection.displayed_axes
                 )
                 self._switch_canvas_cameras(
                     scene_id, new_state.selection.displayed_axes
                 )
+            elif prev_slice != new_slice:
+                self._rebuild_rendered_embedding(scene_id)
             resolved_source_id = _source_id_override.get() or self._id
             _SOURCE_ID_LOGGER.debug(
                 "bridge  handler=_on_dims_psygnal  scene=%s"
@@ -2925,6 +3406,9 @@ class CellierController:
         """
 
         def _on_transform(new_transform: AffineTransform) -> None:
+            # A replaced transform can carry a different axis correspondence,
+            # which the render spaces read back off the matrix.
+            self._push_render_spaces(scene_id)
             self._outgoing_events.emit(
                 TransformChangedEvent(
                     source_id=self._id,
@@ -3388,6 +3872,27 @@ class CellierController:
         for scene_id in self._model.scenes:
             self.reslice_scene(scene_id)
 
+    def _selections_for_scene(self, scene_id: UUID) -> dict[UUID, RegionSelection]:
+        """The region each of a scene's canvases is showing (design 3.1).
+
+        ``DimsManager`` is the editor and emits the artifact (D43), but it
+        needs the canvas's rendered system, which is per canvas and is not
+        model state.  Both halves meet here: the controller owns the rendered
+        systems and hands one to the model, and the model layer never reaches
+        into the render layer.
+        """
+        scene = self._model.scenes.get(scene_id)
+        if scene is None:
+            return {}
+        selections: dict[UUID, RegionSelection] = {}
+        for canvas_id in self._scene_to_canvases.get(scene_id, []):
+            entry = self._rendered.get(canvas_id)
+            if entry is None:
+                continue
+            rendered, embedding = entry
+            selections[canvas_id] = scene.dims.to_selection(rendered, embedding)
+        return selections
+
     def reslice_scene(
         self,
         scene_id: UUID,
@@ -3422,8 +3927,12 @@ class CellierController:
         dims_state = self._dims_state_for_scene(scene_id)
         visual_configs = self._build_visual_configs_for_scene(scene_id)
 
+        selections = self._selections_for_scene(scene_id)
+
         if on_ready is None:
-            self._render_manager.reslice_scene(scene_id, dims_state, visual_configs)
+            self._render_manager.reslice_scene(
+                scene_id, dims_state, visual_configs, selections=selections
+            )
             return
 
         self._notify_when_resliced(
@@ -3431,7 +3940,7 @@ class CellierController:
             on_ready,
             owner_id or self._id,
             lambda: self._render_manager.reslice_scene(
-                scene_id, dims_state, visual_configs
+                scene_id, dims_state, visual_configs, selections=selections
             ),
         )
 
@@ -3515,7 +4024,9 @@ class CellierController:
             )
         else:
             cfg = VisualRenderConfig()
-        self._render_manager.reslice_visual(visual_id, dims_state, cfg)
+        self._render_manager.reslice_visual(
+            visual_id, dims_state, cfg, selections=self._selections_for_scene(scene_id)
+        )
 
     @contextmanager
     def suppress_reslice(self) -> Generator[None, None, None]:
@@ -4526,6 +5037,7 @@ class CellierController:
             dims_state=dims_state,
             visual_configs=visual_configs,
             target_visual_ids=target_ids,
+            selections=self._selections_for_scene(scene_id),
         )
 
     # ------------------------------------------------------------------
@@ -4722,6 +5234,7 @@ class CellierController:
         for canvas_id in self._scene_to_canvases.pop(scene_id, []):
             self._outgoing_events.unsubscribe_all(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
+            self._forget_rendered(canvas_id)
         self._outgoing_events.unsubscribe_all(scene_id)
 
         # 4. Disconnect the scene-level psygnal bridge, as remove_visual does
@@ -4730,7 +5243,9 @@ class CellierController:
             signal.disconnect(handler)
 
         # 5. Clean up controller-side scene maps.
+        self._forget_coordinate_systems(scene.dims.world_coordinate_system)
         self._dims_cache.pop(scene_id, None)
+        self._slice_cache.pop(scene_id, None)
         self._scene_render_modes.pop(scene_id, None)
         self._scene_background_bridges.pop(scene_id, None)
 
@@ -4779,6 +5294,7 @@ class CellierController:
         # 3. Update controller lookup maps.
         self._canvas_to_scene.pop(canvas_id)
         self._scene_to_canvases[scene_id].remove(canvas_id)
+        self._forget_rendered(canvas_id)
 
         # 4. Remove from the model layer.
         self._model.scenes[scene_id].canvases.pop(canvas_id)
@@ -4823,6 +5339,7 @@ class CellierController:
 
         # 4. Remove from controller lookup maps.
         self._visual_to_scene.pop(visual_id)
+        self._forget_visual_spaces(visual_id)
 
         # 5. Render-layer teardown.
         self._render_manager.remove_visual(visual_id)
@@ -4870,7 +5387,8 @@ class CellierController:
                 f"Cannot remove data store {data_store_id}: "
                 f"still referenced by visuals: {names}"
             )
-        self._model.data.stores.pop(data_store_id)
+        store = self._model.data.stores.pop(data_store_id)
+        self._forget_coordinate_systems(*store.data_coordinate_systems)
 
     # ------------------------------------------------------------------
     # External event subscriptions
@@ -4977,7 +5495,7 @@ class CellierController:
         dims = scene_model.dims
         displayed_axes = dims.selection.displayed_axes
         slice_indices = dims.selection.slice_indices
-        axis_labels = dims.coordinate_system.axis_labels
+        axis_labels = dims.axis_labels
         n_dims = len(axis_labels)
 
         # Promote render-layer intermediates to full-N-dim public pick types.

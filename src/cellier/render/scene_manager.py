@@ -313,6 +313,7 @@ class SceneManager:
                 lod_bias=cfg.lod_bias,
                 dims_state=request.dims_state,
                 force_level=cfg.force_level,
+                selection=request.selection,
             )
             if chunk_requests:
                 result[visual_id] = chunk_requests
@@ -357,6 +358,7 @@ class SceneManager:
                 lod_bias=cfg.lod_bias,
                 force_level=cfg.force_level,
                 use_culling=cfg.frustum_cull,
+                selection=request.selection,
             )
             if chunk_requests:
                 result[visual_id] = chunk_requests

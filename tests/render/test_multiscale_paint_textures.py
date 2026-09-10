@@ -13,13 +13,13 @@ if TYPE_CHECKING:
 
 from cellier.controller import CellierController
 from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
-from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
     MultiscaleImageVisual,
 )
+from tests._v2 import scale_and_translation
 
 
 def _make_zarr(path: Path, shape: tuple[int, int] = (64, 64)) -> Path:
@@ -60,7 +60,7 @@ def visual_setup(qtbot, tmp_path):
     )
 
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("y", "x"))
+    cs = world_coordinate_system(spatial_axes("y", "x"), name="world")
     scene = controller.add_scene(
         dim="2d",
         coordinate_system=cs,
@@ -75,7 +75,7 @@ def visual_setup(qtbot, tmp_path):
         level_transforms=data_store.level_transforms,
         appearance=MultiscaleImageAppearance(color_map="grays", clim=(0.0, 1.0)),
         render_config=rc,
-        transform=AffineTransform.identity(ndim=2),
+        transform=scale_and_translation((1.0, 1.0)),
     )
     visual = controller.add_visual(scene.id, visual_model, data_store=data_store)
     scene_manager = controller._render_manager._scenes[scene.id]

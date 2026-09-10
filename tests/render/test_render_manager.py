@@ -48,6 +48,7 @@ def _make_reslicing_request(
         screen_size_px=screen_size_px,
         world_extent=(0.0, 0.0),
         dims_state=_make_dims_state(),
+        selection=None,
         request_id=uuid4(),
         scene_id=scene_id or uuid4(),
         canvas_id=canvas_id or uuid4(),
@@ -397,7 +398,9 @@ def test_reslice_visual_uses_reverse_map() -> None:
     rm.reslice_visual(visual.visual_model_id, dims_state)
 
     canvas_mock.capture_reslicing_request.assert_called_once_with(
-        dims_state, target_visual_ids=frozenset({visual.visual_model_id})
+        dims_state,
+        selection=None,
+        target_visual_ids=frozenset({visual.visual_model_id}),
     )
 
 
@@ -428,7 +431,7 @@ def test_reslice_visual_only_targets_one_visual() -> None:
     canvas_mock = MagicMock()
     canvas_mock.scene_id = scene_id
 
-    def _capture_request(dims_state, target_visual_ids=None):
+    def _capture_request(dims_state, selection=None, target_visual_ids=None):
         return _make_reslicing_request(
             scene_id=scene_id,
             canvas_id=canvas_id,

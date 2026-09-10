@@ -133,9 +133,9 @@ def test_lazy_init_3d_respects_hidden_state():
 
     assert node is gfx.node_3d
     assert node is not None
-    assert (
-        node.visible is False
-    ), "node_3d must inherit _visible=False from lazy init, not default to True"
+    assert node.visible is False, (
+        "node_3d must inherit _visible=False from lazy init, not default to True"
+    )
 
 
 def test_lazy_init_2d_respects_hidden_state():

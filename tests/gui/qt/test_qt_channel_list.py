@@ -12,7 +12,7 @@ pytest.importorskip("superqt")
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.gui.qt.visuals import QtChannelList
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import world_coordinate_system
 from cellier.visuals._channel_appearance import ChannelAppearance
 
 
@@ -29,7 +29,9 @@ def _make_4d_store(shape=(3, 2, 16, 16)) -> ImageMemoryStore:
 
 def _make_controller_with_multichannel(n_channels=2):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "c", "y", "x"))
+    cs = world_coordinate_system(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], name="world"
+    )
     scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
     store = _make_4d_store()
     channels = {i: _make_channel_appearance() for i in range(n_channels)}
@@ -103,7 +105,9 @@ def test_inbound_colormap_object_shows_name_string(qtbot):
 
 def test_edit_fans_out_to_all_visual_ids(qtbot):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "c", "y", "x"))
+    cs = world_coordinate_system(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], name="world"
+    )
     scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
 
     def _add():

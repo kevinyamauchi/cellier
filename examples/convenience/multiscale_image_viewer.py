@@ -43,6 +43,7 @@ from cellier.convenience import (
 )
 from cellier.convenience.gui import MultiscaleImageControlsConfig, build_canvas_widget
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.scene.dims import spatial_axes
 from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance
 
@@ -122,7 +123,7 @@ store = MultiscaleZarrDataStore(
     ],
 )
 
-viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d")
+viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
 
 viewer.add_image_multiscale(
     store,

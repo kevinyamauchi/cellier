@@ -7,15 +7,18 @@ import pytest
 
 pytest.importorskip("qtpy")
 
-from cellier.controller import CellierController  # noqa: E402
-from cellier.data.label._label_memory_store import LabelMemoryStore  # noqa: E402
-from cellier.gui.qt.visuals._aabb import QtAABBWidget  # noqa: E402
-from cellier.scene.dims import CoordinateSystem  # noqa: E402
+from cellier.controller import CellierController
+from cellier.data.label._label_memory_store import LabelMemoryStore
+from cellier.gui.qt.visuals._aabb import QtAABBWidget
+from cellier.scene.dims import (
+    spatial_axes,
+    world_coordinate_system,
+)
 
 
 def _make_controller_with_visual():
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("y", "x"))
+    cs = world_coordinate_system(spatial_axes("y", "x"), name="world")
     scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
     data = np.zeros((16, 16), dtype=np.int32)
     store = LabelMemoryStore(data=data)

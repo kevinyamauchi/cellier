@@ -71,7 +71,9 @@ def _(binary_blobs, np):
 
 @app.cell
 def _(ImageMemoryStore, InMemoryImageAppearance, OrthoViewer, blobs_3d):
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"), gui="anywidget")
+    from cellier.scene.dims import spatial_axes
+
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
 
     store = ImageMemoryStore(data=blobs_3d, name="blobs")
     viewer.controller.add_data_store(store)

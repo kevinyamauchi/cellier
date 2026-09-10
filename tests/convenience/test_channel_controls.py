@@ -40,7 +40,9 @@ def _find_control(widget, channel_index: int, field: str):
 
 
 def test_resolver_single_viewer_returns_config_and_visual():
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     visual = viewer.add_multichannel_image(
         _make_store(),
         channel_axis=1,
@@ -57,13 +59,17 @@ def test_resolver_single_viewer_returns_config_and_visual():
 
 
 def test_resolver_returns_none_without_controls():
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(_make_store(), channel_axis=1, channels=_channels(2))
     assert _resolve_channel_visual_ids(viewer) is None
 
 
 def test_resolver_raises_over_cap():
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(
         _make_store(3),
         channel_axis=1,
@@ -76,7 +82,9 @@ def test_resolver_raises_over_cap():
 
 
 def test_resolver_succeeds_at_exactly_cap():
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(
         _make_store(3),
         channel_axis=1,
@@ -91,7 +99,9 @@ def test_resolver_succeeds_at_exactly_cap():
 
 def test_bumping_cap_makes_failing_case_pass():
     # Same 3-channel set that failed at max_channels_3d=2 passes at 4.
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(
         _make_store(3),
         channel_axis=1,
@@ -110,7 +120,10 @@ def test_bumping_cap_makes_failing_case_pass():
 
 
 def test_ortho_resolver_gathers_all_panel_ids():
-    ortho = OrthoViewer(("z", "c", "y", "x"), spatial_axes=("z", "y", "x"))
+    ortho = OrthoViewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")],
+        spatial_axes=("z", "y", "x"),
+    )
     visuals = ortho.add_multichannel_image(
         _make_store(2),
         channel_axis=1,
@@ -128,7 +141,10 @@ def test_ortho_resolver_gathers_all_panel_ids():
 def test_ortho_edit_reaches_all_panels(qtbot):
     from cellier.gui.qt.visuals import QtChannelList
 
-    ortho = OrthoViewer(("z", "c", "y", "x"), spatial_axes=("z", "y", "x"))
+    ortho = OrthoViewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")],
+        spatial_axes=("z", "y", "x"),
+    )
     visuals = ortho.add_multichannel_image(
         _make_store(2),
         channel_axis=1,
@@ -156,7 +172,9 @@ def test_ortho_edit_reaches_all_panels(qtbot):
 
 def test_render_channel_controls_qt_builds_widget(qtbot):
 
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(
         _make_store(2),
         channel_axis=1,
@@ -171,7 +189,9 @@ def test_render_channel_controls_qt_builds_widget(qtbot):
 def test_render_dock_qt_dispatches_channel_controls(qtbot):
     from cellier.convenience.layout._spec import ChannelControls
 
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(
         _make_store(2),
         channel_axis=1,
@@ -185,6 +205,8 @@ def test_render_dock_qt_dispatches_channel_controls(qtbot):
 
 def test_render_channel_controls_qt_none_without_config(qtbot):
 
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], dim="2d"
+    )
     viewer.add_multichannel_image(_make_store(2), channel_axis=1, channels=_channels(2))
     assert render_dock(ChannelControls(), viewer, QtLayoutHost(), []) is None

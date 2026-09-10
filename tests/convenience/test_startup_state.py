@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 from cellier.convenience._startup import StartupState, StartupTracker
+from cellier.scene.dims import spatial_axes
 
 
 def _tracker(*keys: str) -> StartupTracker:
@@ -189,7 +190,7 @@ def test_an_unstarted_viewer_reports_idle_rather_than_raising():
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(4, 4, 4).astype(np.float32)),
         appearance=InMemoryImageAppearance(color_map="viridis"),
@@ -205,7 +206,7 @@ def test_the_startup_hooks_refuse_before_the_viewer_has_started():
     pytest.importorskip("qtpy")
     from cellier.convenience import Viewer
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
 
     for register in (
         lambda: viewer.on_scene_ready("scene", lambda: None),
@@ -232,7 +233,7 @@ async def test_a_viewer_that_never_connects_reports_stalled(qtbot):
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(4, 4, 4).astype(np.float32)),
         appearance=InMemoryImageAppearance(color_map="viridis"),

@@ -31,6 +31,7 @@ from cellier.convenience.layout import (
     RenderControls,
     VStack,
 )
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 __all__ = [
     "AppearanceControls",
@@ -62,4 +63,6 @@ __all__ = [
     "run",
     "screenshot_window",
     "show",
+    "spatial_axes",
+    "world_coordinate_system",
 ]

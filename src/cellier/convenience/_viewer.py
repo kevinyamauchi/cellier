@@ -9,7 +9,7 @@ from cellier.controller import CellierController
 from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
 from cellier.render._capture import write_png
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import WorldAxesLike, world_coordinate_system
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -77,9 +77,15 @@ class Viewer(RenderSettingsMixin):
 
     Parameters
     ----------
-    axis_labels : tuple[str, ...]
-        World-axis names in order, e.g. ``("z", "y", "x")``.
-        The number of labels determines the dimensionality of the scene.
+    axes : WorldAxesLike
+        The world axes in order: a ``WorldCoordinateSystem``, or a sequence of
+        ``Axis`` objects and/or ``(name, axis_type)`` pairs.  Their number
+        determines the dimensionality of the scene.  Axis types are stated,
+        never inferred from the name -- ``spatial_axes("z", "y", "x")`` is the
+        shorthand for an all-spatial world, and a mixed one spells the rest
+        out::
+
+            Viewer([("t", "time"), *spatial_axes("z", "y", "x")])
     dim : "2d" or "3d"
         Initial display dimensionality. Default ``"2d"``.
     render_modes : set[str] or None
@@ -100,7 +106,7 @@ class Viewer(RenderSettingsMixin):
 
     def __init__(
         self,
-        axis_labels: tuple[str, ...],
+        axes: WorldAxesLike,
         *,
         dim: Literal["2d", "3d"] = "2d",
         render_modes: set[str] | None = None,
@@ -114,7 +120,7 @@ class Viewer(RenderSettingsMixin):
         self._scene = self._controller.add_scene(
             name="main",
             dim=dim,
-            coordinate_system=CoordinateSystem(name="world", axis_labels=axis_labels),
+            coordinate_system=world_coordinate_system(axes),
             render_modes=resolved_render_modes,
         )
         # Saved world-space slice positions, keyed by axis index. Populated
@@ -556,7 +562,7 @@ class Viewer(RenderSettingsMixin):
                 f"{axis_names!r}"
             )
 
-        coord_labels = self._scene.dims.coordinate_system.axis_labels
+        coord_labels = self._scene.dims.axis_labels
         label_to_index = {label: i for i, label in enumerate(coord_labels)}
 
         invalid = [n for n in axis_names if n not in label_to_index]

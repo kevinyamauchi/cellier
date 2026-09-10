@@ -85,7 +85,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         has_toggle = axes_2d is not None and axes_3d is not None
         is_3d = len(displayed_axes) == 3
         super().__init__(
-            slice_indices={str(k): int(v) for k, v in slice_indices.items()},
+            slice_indices={str(k): float(v) for k, v in slice_indices.items()},
             axis_labels={str(k): str(v) for k, v in axis_labels.items()},
             axis_ranges={
                 str(k): [float(lo), float(hi)] for k, (lo, hi) in axis_ranges.items()
@@ -122,7 +122,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         an ``OrthoViewer`` -- gets no toggle, because there is nothing to
         switch to.
         """
-        axis_labels_list = scene.dims.coordinate_system.axis_labels
+        axis_labels_list = scene.dims.axis_labels
         axis_labels = dict(enumerate(axis_labels_list))
         selection = scene.dims.selection
 
@@ -189,7 +189,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         selection = event.dims_state.selection
         new_slices = dict(self.slice_indices)
         for axis, value in selection.slice_indices.items():
-            new_slices[str(axis)] = int(value)
+            new_slices[str(axis)] = float(value)
         self._set_field("slice_indices", new_slices)
         self._set_field("displayed_axes", [int(a) for a in selection.displayed_axes])
         stacked = getattr(selection, "stacked_axes", ())
@@ -223,7 +223,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
             set(self.displayed_axes) | set(self.stacked_axes) | set(self.non_displayed)
         )
         updates = {
-            int(axis): int(value)
+            int(axis): float(value)
             for axis, value in self.slice_indices.items()
             if int(axis) not in hidden
         }
@@ -245,7 +245,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         # axis (including hidden ones) -- no separate "saved position"
         # bookkeeping needed.
         new_slices = {
-            int(axis): int(value)
+            int(axis): float(value)
             for axis, value in self.slice_indices.items()
             if int(axis) not in target_set and int(axis) not in set(self.stacked_axes)
         }

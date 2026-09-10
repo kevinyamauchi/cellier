@@ -19,6 +19,7 @@ from cellier.convenience.layout._shared import (
     render_panel_sections,
 )
 from cellier.convenience.layout._walk import render_dock
+from cellier.scene.dims import spatial_axes
 
 # ---------------------------------------------------------------------------
 # The dock spec
@@ -63,7 +64,7 @@ def test_the_single_layout_preset_stacks_with_the_appearance_dock():
 
 def test_the_ssao_panel_is_given_a_live_radius_reader():
     """A value would be a snapshot; the radius is derived and moves."""
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     kwargs = render_panel_kwargs("ambient_occlusion", viewer.controller)
     assert callable(kwargs["effective_radius"])
     assert (
@@ -73,7 +74,7 @@ def test_the_ssao_panel_is_given_a_live_radius_reader():
 
 
 def test_the_temporal_panel_is_given_a_live_frame_count_and_a_reset():
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     kwargs = render_panel_kwargs("temporal", viewer.controller)
     assert callable(kwargs["frame_count"])
     kwargs["on_reset"]()  # must not raise with no canvas
@@ -90,7 +91,7 @@ def test_the_outline_panel_is_given_live_slot_usage():
     both front ends draw it -- but nothing passed it and the Qt panel did not
     even forward the keyword, so the readout was dead on both toolkits.
     """
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     kwargs = render_panel_kwargs("outline", viewer.controller)
     assert callable(kwargs["slot_usage"])
     assert kwargs["slot_usage"]() == {}  # no visuals yet, and it must not raise
@@ -104,7 +105,7 @@ def test_the_outline_panel_is_given_live_slot_usage():
 def test_the_qt_dock_renders_and_wires_every_panel(qtbot):
     """No configured visual needed: render settings belong to the renderer."""
 
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     closeables: list = []
     dock = render_dock(RenderControls(), viewer, QtLayoutHost(), closeables)
 
@@ -121,7 +122,7 @@ def test_the_qt_dock_renders_and_wires_every_panel(qtbot):
 def test_a_qt_dock_panel_edit_reaches_the_render_config(qtbot):
     """The dock connects its panels, so an edit lands without further wiring."""
 
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     closeables: list = []
     dock = render_dock(
         RenderControls(sections=("ambient_occlusion",)),
@@ -140,7 +141,7 @@ def test_a_qt_dock_panel_edit_reaches_the_render_config(qtbot):
 
 def test_the_qt_dock_honours_a_section_subset(qtbot):
 
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     closeables: list = []
     dock = render_dock(
         RenderControls(sections=("temporal",)), viewer, QtLayoutHost(), closeables
@@ -153,7 +154,7 @@ def test_the_qt_dock_honours_a_section_subset(qtbot):
 def test_the_qt_dock_works_on_an_ortho_viewer(qtbot):
     """An ``OrthoViewer`` has no ``scene``, which used to defeat other docks."""
 
-    viewer = OrthoViewer(("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     closeables: list = []
     dock = render_dock(RenderControls(), viewer, QtLayoutHost(), closeables)
 
@@ -166,7 +167,7 @@ def test_the_anywidget_dock_renders_and_wires_every_panel():
     pytest.importorskip("anywidget")
     from cellier.convenience._hosts import JupyterHost
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
     closeables: list = []
     dock = render_dock(RenderControls(), viewer, JupyterHost(), closeables)
 
@@ -182,7 +183,7 @@ def test_an_anywidget_dock_panel_edit_reaches_the_render_config():
     pytest.importorskip("anywidget")
     from cellier.convenience._hosts import JupyterHost
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
     closeables: list = []
     render_dock(
         RenderControls(sections=("ambient_occlusion",)),
@@ -220,7 +221,7 @@ _VIEWER_PROPERTIES = [
 
 @pytest.mark.parametrize(("prop", "value"), _VIEWER_PROPERTIES)
 def test_the_viewer_exposes_every_setting(prop, value):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     setattr(viewer, prop, value)
     assert getattr(viewer, prop) == value
     assert getattr(viewer.controller, prop) == value
@@ -228,7 +229,7 @@ def test_the_viewer_exposes_every_setting(prop, value):
 
 @pytest.mark.parametrize(("prop", "value"), _VIEWER_PROPERTIES)
 def test_the_ortho_viewer_exposes_every_setting(prop, value):
-    viewer = OrthoViewer(("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     setattr(viewer, prop, value)
     assert getattr(viewer, prop) == value
 
@@ -240,7 +241,7 @@ def test_the_viewer_reaches_every_settable_field():
     radius and the temporal pair, and into ``canvas._ssao_pass`` for the
     auto radius fraction.
     """
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     for section, field in _RENDER_CONFIG_ROUTES:
         if field in {"palette", "inner_color", "inner_thickness"} or "." in field:
             # Reachable through ``viewer.render_config`` plus the
@@ -252,14 +253,14 @@ def test_the_viewer_reaches_every_settable_field():
 
 
 def test_the_viewer_exposes_the_read_only_effective_radius():
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     assert viewer.ambient_occlusion_effective_radius is None  # no canvas yet
     with pytest.raises(AttributeError):
         viewer.ambient_occlusion_effective_radius = 1.0
 
 
 def test_the_viewer_can_reset_accumulation():
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     viewer.reset_temporal_accumulation()  # must not raise with no canvas
 
 
@@ -269,7 +270,7 @@ def test_a_viewer_edit_announces_itself(qtbot):
 
     from cellier.events import RenderConfigChangedEvent
 
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     seen: list = []
     viewer.controller._outgoing_events.subscribe(
         RenderConfigChangedEvent, seen.append, owner_id=uuid4()
@@ -374,7 +375,9 @@ def _outlining_config():
 def test_the_viewer_forwards_the_render_settings(method):
     from cellier.visuals._base_visual import VisualOutline
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", render_config=_outlining_config())
+    viewer = Viewer(
+        spatial_axes("z", "y", "x"), dim="3d", render_config=_outlining_config()
+    )
     visual = _call_add(
         viewer,
         method,
@@ -392,7 +395,7 @@ def test_the_ortho_viewer_forwards_them_to_every_panel(method):
     """One call, four panels, all carrying the same settings."""
     from cellier.visuals._base_visual import VisualOutline
 
-    viewer = OrthoViewer(("z", "y", "x"), render_config=_outlining_config())
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), render_config=_outlining_config())
     visuals = _call_add(viewer, method, outline=VisualOutline(slot=2))
 
     assert len(visuals) == 4
@@ -406,7 +409,9 @@ def test_the_viewer_forwards_a_label_selection():
     from cellier.visuals import InMemoryLabelsAppearance
     from cellier.visuals._base_visual import VisualOutline
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", render_config=_outlining_config())
+    viewer = Viewer(
+        spatial_axes("z", "y", "x"), dim="3d", render_config=_outlining_config()
+    )
     visual = viewer.add_labels(
         LabelMemoryStore(data=np.zeros((8, 8, 8), dtype=np.int32), name="l"),
         InMemoryLabelsAppearance(colormap_mode="random"),
@@ -426,7 +431,7 @@ def test_the_global_dock_names_its_scope(qtbot):
     """
     from cellier.gui._render_controls import RENDER_DOCK_TITLE
 
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     dock = render_dock(RenderControls(), viewer, QtLayoutHost(), [])
     qtbot.addWidget(dock)
 

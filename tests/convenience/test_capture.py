@@ -15,6 +15,7 @@ import pytest
 
 from cellier.convenience import OrthoViewer, Viewer
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -29,7 +30,7 @@ def volume_store() -> ImageMemoryStore:
 @pytest.fixture
 def offscreen_viewer(volume_store, offscreen_gpu) -> Viewer:
     """A headless ``Viewer`` holding one image, with no canvas yet."""
-    viewer = Viewer(axis_labels=("z", "y", "x"), gui="offscreen")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="offscreen")
     viewer.add_image(
         data=volume_store,
         appearance=InMemoryImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
@@ -40,7 +41,7 @@ def offscreen_viewer(volume_store, offscreen_gpu) -> Viewer:
 @pytest.fixture
 def offscreen_ortho(volume_store, offscreen_gpu) -> OrthoViewer:
     """A headless ``OrthoViewer`` holding one image across all four panels."""
-    ortho = OrthoViewer(axis_labels=("z", "y", "x"), gui="offscreen")
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"), gui="offscreen")
     ortho.add_image(
         data=volume_store,
         appearance=InMemoryImageAppearance(color_map="viridis", clim=(0.0, 1.0)),

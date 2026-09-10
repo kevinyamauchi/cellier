@@ -25,6 +25,7 @@ from cellier.convenience.gui import (
     InMemoryImageControlsConfig,
     MultiscaleImageControlsConfig,
 )
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 from tests.convenience._qt_acceptance import (
@@ -52,7 +53,7 @@ def test_multiscale_panel_control_names_in_order(qtbot, multiscale_image_store):
     not requested by name -- ``aabb`` is on ``BaseVisual`` with a default
     factory, so every configured panel gets it, on both toolkits.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
@@ -83,7 +84,7 @@ def test_in_memory_panel_control_names_in_order(qtbot, image_store):
     Requesting the same fields on an ``InMemoryImageControlsConfig`` now
     raises at construction -- see ``test_controls_config_validation.py``.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -108,7 +109,7 @@ def test_panel_order_follows_the_builder_not_the_config(qtbot, image_store):
     The docstring on ``appearance`` says "in display order"; it is not.  Pinned
     so stage 1's shared spec list either preserves this or changes it visibly.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -145,7 +146,7 @@ def test_bounding_box_group_is_seeded_from_the_visual(qtbot, image_store):
     """
     from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QGroupBox
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),

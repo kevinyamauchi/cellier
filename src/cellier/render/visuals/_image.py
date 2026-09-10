@@ -29,6 +29,13 @@ from cellier.render._level_of_detail_2d import (
     sort_tiles_by_distance_2d,
     viewport_cull_2d,
 )
+from cellier.render._spaces import (
+    RenderSpaces,
+    axis_correspondence,
+    cellier_to_pygfx_order,
+    node_matrix,
+    pygfx_to_cellier_order,
+)
 from cellier.render.block_cache import (
     BlockCache3D,
     BlockKey3D,
@@ -51,16 +58,15 @@ from cellier.render.lut_indirection._lut_indirection_manager_2d import (
 from cellier.render.shaders._block_image import ImageBlockMaterial
 from cellier.render.shaders._multiscale_volume_brick import (
     MultiscaleVolumeBrickMaterial,
+    _norm_to_data_params,
     build_brick_scales_buffer,
     build_vol_params_buffer,
-    compose_world_transform,
     compute_normalized_size,
     norm_full_extent_box,
 )
 from cellier.render.visuals._image_memory import (
     _box_wireframe_positions,
     _make_aabb_line,
-    _pygfx_matrix,
     _rect_wireframe_positions,
 )
 from cellier.render.visuals._paint_tile_slot_manager import (
@@ -70,9 +76,13 @@ from cellier.render.visuals._pick import (
     multiscale_image_data_coordinate,
     multiscale_volume_data_coordinate,
 )
-from cellier.render.visuals._slicing import map_world_slice_to_voxel
+from cellier.render.visuals._slicing import (
+    axis_selections_from_box,
+    map_world_slice_to_voxel,
+)
 from cellier.transform import AffineTransform
 from cellier.transform._axis_order import select_axes, swap_axes
+from cellier.transform_v2 import AffineTransform as TransformV2  # noqa: TC001
 
 if TYPE_CHECKING:
     from pygfx.resources import Buffer
@@ -93,6 +103,7 @@ if TYPE_CHECKING:
     from cellier.render.block_cache._tile_manager_2d import (
         TileSlot as TileSlot2D,
     )
+    from cellier.transform_v2 import RegionSelection
     from cellier.visuals._image import MultiscaleImageVisual
 
 # Importing this module registers the shader class with pygfx via the
@@ -229,24 +240,145 @@ def _check_transform_no_rotation(transform: AffineTransform) -> None:
 
     Parameters
     ----------
-    transform : AffineTransform
-        The data-to-world transform to validate.
+    transform : AffineTransform or None
+        The ``data -> world`` transform to validate.  ``None`` means the
+        visual has not been placed in a world yet.
 
     Raises
     ------
     ValueError
         If the linear part of the transform is not diagonal.
     """
-    nd = transform.ndim
-    linear = transform.matrix[:nd, :nd]
-    diagonal_only = np.diag(np.diag(linear))
-    if not np.allclose(linear, diagonal_only, atol=1e-5):
+    if transform is None:
+        # The visual has not been placed in a world yet, so there is no
+        # transform to constrain.  It is checked again when one arrives.
+        return
+    # A ``data -> world`` transform need not be square, so "is the linear
+    # block diagonal" is not a well-formed question (P10 / F0.6).  The
+    # equivalent, and what the shader actually needs, is: each input axis
+    # reaches at most one output axis, each output axis is reached by at most
+    # one input axis, and the correspondence preserves order.  For a square
+    # transform that is exactly "the linear block is diagonal", so this is a
+    # generalisation and not a relaxation.
+    try:
+        correspondence = axis_correspondence(transform)
+    except ValueError as error:
         raise ValueError(
             "The brick shader only supports scale and translation transforms. "
             "The provided transform contains rotation or shear components. "
             "Support for general affine transforms requires changes to the "
             "WGSL norm_to_voxel function and is not yet implemented."
+        ) from error
+    outputs = [correspondence[axis] for axis in sorted(correspondence)]
+    if outputs != sorted(outputs):
+        raise ValueError(
+            f"The brick shader only supports scale and translation transforms. "
+            f"This one permutes its axes: data axes {sorted(correspondence)} "
+            f"map to world axes {outputs}.  Support for general affine "
+            f"transforms requires changes to the WGSL norm_to_voxel function "
+            f"and is not yet implemented."
         )
+
+
+def _norm_to_data_params_for(
+    spaces: RenderSpaces, dataset_size: np.ndarray, norm_size: np.ndarray
+) -> tuple[dict[int, float], dict[int, float]]:
+    """The 3D node's ``visual -> data`` factors, keyed by data axis.
+
+    The 3D node's geometry is a proxy box in **normalized** space, not in
+    voxel indices, which is what ``VisualCoordinateSystem`` names (design 3.11
+    B).  Its transform into data space is what ``compose_world_transform``
+    used to build by hand as ``norm_to_data``: the box ``[-norm/2, +norm/2]``
+    spans the voxel extent ``[-0.5, N - 0.5]``, so the scale is
+    ``dataset_size / norm_size`` and the translation ``0.5 * dataset_size -
+    0.5``.  The ``-0.5`` is the existing centre-at-integer convention,
+    unchanged.
+
+    ``dataset_size`` and ``norm_size`` are in shader ``(x, y, z)`` order while
+    the retained axes are ascending data axes, so the two are zipped in
+    reverse.
+
+    Parameters
+    ----------
+    spaces : RenderSpaces
+        The systems this visual is placed with.
+    dataset_size : np.ndarray
+        Finest-level voxel counts in shader order.
+    norm_size : np.ndarray
+        Normalized physical extent in shader order.
+
+    Returns
+    -------
+    tuple[dict[int, float], dict[int, float]]
+        ``(scale, translation)``, both keyed by data axis.
+    """
+    scale_xyz, offset_xyz = _norm_to_data_params(dataset_size, norm_size)
+    retained = spaces.retained_axes
+    last = len(retained) - 1
+    scale = {
+        axis: float(scale_xyz[last - index]) for index, axis in enumerate(retained)
+    }
+    translation = {
+        axis: float(offset_xyz[last - index]) for index, axis in enumerate(retained)
+    }
+    return scale, translation
+
+
+def _displayed_subtransform(
+    transform: TransformV2, displayed_axes: tuple[int, ...]
+) -> AffineTransform:
+    """The square displayed-axes block of a ``data -> world`` transform.
+
+    A **bridge**, not an end state.  Sites C and D of design 1.4 -- the camera
+    and frustum entering data space -- still do their own
+    ``select_axes`` + reverse + ``imap_coordinates`` dance, which the
+    multiscale phase replaces with a single
+    ``rendered_to_level0.map_coordinates``.  Until then they need a square v1
+    transform, and ``select_axes`` no longer exists on a v2 one.
+
+    The arithmetic is identical to what ``select_axes(displayed_axes)``
+    produced on an equal-rank transform: row ``i`` is world axis
+    ``displayed_axes[i]``, column ``j`` is the data axis that feeds world axis
+    ``displayed_axes[j]``.  Unlike ``select_axes`` it does not read the
+    homogeneous row when the ranks disagree (design 3.8 finding 2) -- it
+    raises instead.
+
+    Parameters
+    ----------
+    transform : TransformV2
+        The ``data -> world`` transform.
+    displayed_axes : tuple[int, ...]
+        The displayed **world** axes, in display order.
+
+    Returns
+    -------
+    AffineTransform
+        A square v1 transform of rank ``len(displayed_axes)``.
+
+    Raises
+    ------
+    ValueError
+        If a displayed world axis has no data axis feeding it.
+    """
+    correspondence = axis_correspondence(transform)
+    world_to_data = {world: data for data, world in correspondence.items()}
+    linear = np.asarray(transform.linear)
+    translation = np.asarray(transform.translation)
+    missing = [axis for axis in displayed_axes if axis not in world_to_data]
+    if missing:
+        raise ValueError(
+            f"World axes {missing} are displayed but no data axis of this "
+            f"visual maps to them, so it has no extent along them."
+        )
+    n = len(displayed_axes)
+    matrix = np.eye(n + 1, dtype=np.float64)
+    for column, world_axis in enumerate(displayed_axes):
+        data_axis = world_to_data[world_axis]
+        for row, out_axis in enumerate(displayed_axes):
+            matrix[row, column] = linear[out_axis, data_axis]
+    for row, out_axis in enumerate(displayed_axes):
+        matrix[row, n] = translation[out_axis]
+    return AffineTransform(matrix=matrix)
 
 
 def _norm_size_from_transform(
@@ -288,15 +420,33 @@ def _norm_size_from_transform(
             f"_norm_size_from_transform requires 3 displayed axes, "
             f"got {len(displayed_axes)} ({displayed_axes})"
         )
-    sub = transform.select_axes(displayed_axes)
-    nd = sub.ndim
-    linear = sub.matrix[:nd, :nd]
-    # Column norms are in displayed-axis order over the 3 displayed axes.
-    col_norms = np.array(
-        [np.linalg.norm(linear[:, i]) for i in range(nd)], dtype=np.float64
+    # The scale of one displayed world axis is the magnitude of the single
+    # entry its data axis contributes.  On a square diagonal transform that is
+    # the column norm the old ``select_axes`` path computed, so the numbers are
+    # unchanged; unlike that path it is well defined when the two ranks differ
+    # (P10 / F0.6), because it never asks for a square sub-block that does not
+    # exist.
+    if transform is None:
+        # Unplaced: every axis is at unit scale, which is what a placed
+        # identity would have given.
+        return compute_normalized_size(dataset_size_xyz, np.ones(3))
+    correspondence = axis_correspondence(transform)
+    world_to_data = {world: data for data, world in correspondence.items()}
+    linear = np.asarray(transform.linear)
+    scales = []
+    for world_axis in displayed_axes:
+        data_axis = world_to_data.get(world_axis)
+        if data_axis is None:
+            raise ValueError(
+                f"World axis {world_axis} is displayed but no data axis maps "
+                f"to it, so this visual has no extent along it and no scale "
+                f"to normalise by."
+            )
+        scales.append(abs(float(linear[world_axis, data_axis])))
+    # Convert displayed-axis order to shader order via explicit reversal.
+    per_axis_scale_xyz = np.asarray(
+        swap_axes(np.array(scales, dtype=np.float64), (2, 1, 0))
     )
-    # Convert displayed-axis order → shader order via explicit reversal.
-    per_axis_scale_xyz = np.asarray(swap_axes(col_norms, (2, 1, 0)))
     return compute_normalized_size(dataset_size_xyz, per_axis_scale_xyz)
 
 
@@ -497,6 +647,32 @@ def _brick_key_to_padded_coords(
     return z0, y0, x0, z0 + padded, y0 + padded, x0 + padded
 
 
+def _fetch_order(displayed_axes: tuple[int, ...]) -> tuple[int, ...]:
+    """The displayed axes in the order the fetched array carries them.
+
+    ``displayed_axes`` is a **display** order.  ``axis_selections`` is
+    assembled per data axis ascending, and ``get_data`` hands back an array
+    whose axes are therefore ascending -- numpy fixes that and nothing
+    downstream can negotiate it.  So a brick grid, a level shape projection
+    and a per-level transform projection all index the *fetch* order, and the
+    display permutation lives entirely in the node matrix (design 3.14).
+
+    Before this, the grid was built in display order and a transposed tuple
+    rotated it against its own uploaded array.
+
+    Parameters
+    ----------
+    displayed_axes : tuple[int, ...]
+        The displayed axes, in display order.
+
+    Returns
+    -------
+    tuple[int, ...]
+        The same axes, ascending.
+    """
+    return tuple(sorted(displayed_axes))
+
+
 def _build_axis_selections_multiscale(
     sel: AxisAlignedSelectionState,
     ndim: int,
@@ -523,7 +699,9 @@ def _build_axis_selections_multiscale(
     world_to_level_k : AffineTransform
         Composed world→level-k transform (data-axis order).
     """
-    display_pos = {ax: i for i, ax in enumerate(sel.displayed_axes)}
+    # Ascending, matching the brick grid and the fetched array; see
+    # :func:`_fetch_order`.
+    display_pos = {ax: i for i, ax in enumerate(_fetch_order(sel.displayed_axes))}
 
     # Map every non-displayed axis from world to level-k voxel space via the
     # shared world->voxel mapper (round-half-up + clamp).  Any non-displayed
@@ -565,7 +743,136 @@ def _block_key_2d_to_padded_coords(
 # ---------------------------------------------------------------------------
 
 
-class GFXMultiscaleImageVisual:
+class MultiscaleRegionPlanner:
+    """Pulls the selected region back to each pyramid level (design 3.11 A).
+
+    Mixed into both multiscale families, which are near-copies of each other
+    everywhere else too.
+
+    The pull-back composes cleanly: level-0 first, through the visual's own
+    ``data -> world``, then each level's own transform.  Every step is
+    ``imap_region``, which is ``A^T`` on the normals and needs no inverse at
+    all (D39) -- so this replaces ``_build_world_to_level_transforms`` and the
+    precomputed ``inv_level_k @ inv_visual`` list it held.
+
+    The per-level answer now falls out of the per-level transform rather than
+    from a ``2 ** (level - 1)`` assumption applied to every axis.  That
+    assumption is the one this repo has already paid for once, on a pyramid
+    whose ``z`` was not downsampled.
+
+    Boxes are memoised for the duration of one planning call: a frame plans
+    hundreds of bricks across a handful of levels, and each level's answer is
+    the same for all of them.
+    """
+
+    def _begin_region_planning(self, selection) -> None:
+        """Start a planning call: adopt the selection and drop the memo."""
+        self._selection = selection
+        self._level0_region = None
+        self._level_boxes = {}
+
+    def _level_box(self, level_index: int):
+        """The selection pulled back to level *level_index*, as a box.
+
+        ``None`` when there is nothing to pull back -- no region, or a visual
+        the controller has not placed -- in which case the caller falls back to
+        the ``dims_state`` path.
+        """
+        selection = getattr(self, "_selection", None)
+        spaces = self._spaces
+        if selection is None or spaces is None or self._transform is None:
+            return None
+        if level_index >= len(spaces.level_transforms):
+            return None
+        cached = self._level_boxes.get(level_index)
+        if cached is not None:
+            return cached
+        if self._level0_region is None:
+            self._level0_region = self._transform.imap_region(
+                selection.region, spaces.world
+            )
+        box = (
+            spaces.level_transforms[level_index]
+            .imap_region(self._level0_region, spaces.data)
+            .simplify()
+            .bounding_box()
+        )
+        self._level_boxes[level_index] = box
+        return box
+
+    def _rendered_to_level0(self):
+        """``rendered -> level-0 voxel``, or ``None`` if the visual is unplaced.
+
+        Design 3.11 C.  The camera and the frustum arrive in **pygfx**
+        coordinates -- ``ReslicingRequest`` says so in a docstring and nowhere
+        in the type system -- so they are reversed once, by name, and then
+        mapped in a single step.  What is gone is the
+        ``select_axes`` + ``[[2, 1, 0]]`` + ``imap_coordinates`` +
+        ``[[2, 1, 0]]`` dance, and with it the class of bug that produced the
+        LOD/frustum axis-order fix already in this repo's history.
+        """
+        spaces = self._spaces
+        if spaces is None or self._transform is None:
+            return None
+        inverse = self._transform.inverse()
+        if inverse is None:
+            return None
+        return spaces.rendered_to_world.then(inverse, spaces.world, spaces.data)
+
+    def _to_level0_displayed(self, points: np.ndarray) -> np.ndarray | None:
+        """Map pygfx-order points to level-0 voxels on the displayed axes.
+
+        Returns them back in pygfx order, which is what the LOD thresholds,
+        the distance sort and the frustum culler take.  The composed transform
+        also returns the collapsed axes -- the ``t`` the camera is looking at,
+        say -- which are harmless and dropped here.
+        """
+        chain = self._rendered_to_level0()
+        if chain is None:
+            return None
+        points = np.asarray(points, dtype=np.float64)
+        flat = points.reshape(-1, points.shape[-1])
+        level0 = chain.map_coordinates(pygfx_to_cellier_order(flat))
+        displayed = level0[:, list(self._spaces.retained_axes)]
+        return cellier_to_pygfx_order(displayed).reshape(points.shape)
+
+    def _level_axis_selections(
+        self,
+        sel,
+        ndim: int,
+        display_coords: list[tuple[int, int]],
+        level_index: int,
+        level_shape: tuple[int, ...],
+    ) -> tuple[int | tuple[int, int], ...]:
+        """One brick's or tile's per-axis selection.
+
+        The displayed axes and the collapsed axes come from **different
+        places**, and always did (design 3.11 D): the displayed axes carry the
+        padded brick window, which LOD selection, the distance sort and
+        frustum culling decide and the region never touches; the collapsed
+        axes come from the region.
+
+        The windows are keyed by **ascending** data axis, matching the brick
+        grid, because ``get_data`` returns an array whose axes are ascending
+        and numpy will not negotiate (design 3.14).
+        """
+        box = self._level_box(level_index)
+        if box is None:
+            return _build_axis_selections_multiscale(
+                sel,
+                ndim,
+                display_coords,
+                level_shape=level_shape,
+                world_to_level_k=self._world_to_level_transforms[level_index],
+            )
+        windows = {
+            axis: display_coords[position]
+            for position, axis in enumerate(self._spaces.retained_axes)
+        }
+        return axis_selections_from_box(box, level_shape, windows)
+
+
+class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
     """Render-layer wrapper for one logical multiscale image visual.
 
     Owns GPU resources (brick caches, LUT textures, pygfx nodes) for both
@@ -635,11 +942,15 @@ class GFXMultiscaleImageVisual:
         else:
             self._ndim = 3
 
-        if transform is None:
-            transform = AffineTransform.identity(ndim=self._ndim)
-        elif transform.ndim < self._ndim:
-            transform = transform.expand_dims(self._ndim)
-        self._transform: AffineTransform = transform
+        # The data -> world transform.  There is no coordinate-system-less
+        # identity to fall back on (D18); the controller supplies one.
+        self._transform: TransformV2 | None = transform
+        # The systems this visual's geometry is placed with, pushed by the
+        # controller.  ``None`` until the scene has a canvas.
+        self._spaces: RenderSpaces | None = None
+        # The collapsed voxel index per dropped data axis, refreshed on every
+        # planned request (design 3.9).
+        self._collapsed_indices: dict[int, float] = {}
         self.render_modes = render_modes
         self._volume_geometry = volume_geometry
         self._image_geometry_2d = image_geometry_2d
@@ -908,8 +1219,9 @@ class GFXMultiscaleImageVisual:
         # therefore in displayed-axis order over the displayed subset.
         volume_geometry: MultiscaleBrickLayout3D | None = None
         if "3d" in render_modes and axes_3d is not None:
-            shapes_3d = [select_axes(s, axes_3d) for s in level_shapes]
-            transforms_3d = [t.select_axes(axes_3d) for t in model.level_transforms]
+            fetch_3d = _fetch_order(axes_3d)
+            shapes_3d = [select_axes(s, fetch_3d) for s in level_shapes]
+            transforms_3d = [t.select_axes(fetch_3d) for t in model.level_transforms]
             volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
                 level_transforms=transforms_3d,
@@ -921,8 +1233,9 @@ class GFXMultiscaleImageVisual:
         # to the first call to rebuild_geometry with len(displayed_axes)==2.
         image_geometry_2d: ImageGeometry3D | None = None
         if "2d" in render_modes and axes_2d is not None:
-            shapes_2d = [select_axes(s, axes_2d) for s in level_shapes]
-            transforms_2d = [t.select_axes(axes_2d) for t in model.level_transforms]
+            fetch_2d = _fetch_order(axes_2d)
+            shapes_2d = [select_axes(s, fetch_2d) for s in level_shapes]
+            transforms_2d = [t.select_axes(fetch_2d) for t in model.level_transforms]
             image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
                 block_size=block_size,
@@ -1047,7 +1360,8 @@ class GFXMultiscaleImageVisual:
                 self._lazy_init_3d(displayed_axes)
             else:
                 shapes_3d = [
-                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                    tuple(s[ax] for ax in _fetch_order(displayed_axes))
+                    for s in level_shapes
                 ]
                 if shapes_3d != self._volume_geometry.level_shapes:
                     self._volume_geometry.update(shapes_3d)
@@ -1060,7 +1374,8 @@ class GFXMultiscaleImageVisual:
                 self._lazy_init_2d(displayed_axes)
             else:
                 shapes_2d_full = [
-                    tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                    tuple(s[ax] for ax in _fetch_order(displayed_axes))
+                    for s in level_shapes
                 ]
                 shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
                 if shapes_2d != self._image_geometry_2d.level_shapes:
@@ -1118,14 +1433,18 @@ class GFXMultiscaleImageVisual:
         self._full_level_shapes = list(level_shapes)
         self._last_displayed_axes = displayed_axes
         if mode == "3d" and self._volume_geometry is not None:
-            shapes_3d = [tuple(s[ax] for ax in displayed_axes) for s in level_shapes]
+            shapes_3d = [
+                tuple(s[ax] for ax in _fetch_order(displayed_axes))
+                for s in level_shapes
+            ]
             if shapes_3d != self._volume_geometry.level_shapes:
                 self._volume_geometry.update(shapes_3d)
                 self._rebuild_3d_resources()
             return self.node_3d
         if mode == "2d" and self._image_geometry_2d is not None:
             shapes_2d_full = [
-                tuple(s[ax] for ax in displayed_axes) for s in level_shapes
+                tuple(s[ax] for ax in _fetch_order(displayed_axes))
+                for s in level_shapes
             ]
             shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
             if shapes_2d != self._image_geometry_2d.level_shapes:
@@ -1160,8 +1479,9 @@ class GFXMultiscaleImageVisual:
             render_mode = "mip"
             pick_write = False
 
-        shapes_3d = [select_axes(s, displayed_axes) for s in self._full_level_shapes]
-        transforms_3d = [t.select_axes(displayed_axes) for t in self._level_transforms]
+        fetch_axes = _fetch_order(displayed_axes)
+        shapes_3d = [select_axes(s, fetch_axes) for s in self._full_level_shapes]
+        transforms_3d = [t.select_axes(fetch_axes) for t in self._level_transforms]
         self._volume_geometry = MultiscaleBrickLayout3D(
             level_shapes=shapes_3d,
             level_transforms=transforms_3d,
@@ -1216,10 +1536,9 @@ class GFXMultiscaleImageVisual:
         self.node_3d = gfx.Group()
         self.node_3d.add(inner)
         self.node_3d.add(self._aabb_line_3d)
-        sub = self._transform.select_axes(displayed_axes)
-        data_to_world = _pygfx_matrix(sub)
-        m = compose_world_transform(data_to_world, self._dataset_size, self._norm_size)
-        self.node_3d.local.matrix = m
+        self._last_displayed_axes = displayed_axes
+        if self._spaces is not None and self._transform is not None:
+            self.node_3d.local.matrix = self._node_matrices()[0]
         if visual_model is not None:
             self.material_3d.opacity = visual_model.appearance.opacity
             self.material_3d.depth_test = visual_model.appearance.depth_test
@@ -1249,11 +1568,10 @@ class GFXMultiscaleImageVisual:
             interpolation = "linear"
             pick_write = False
 
-        shapes_2d_full = [
-            select_axes(s, displayed_axes) for s in self._full_level_shapes
-        ]
+        fetch_axes = _fetch_order(displayed_axes)
+        shapes_2d_full = [select_axes(s, fetch_axes) for s in self._full_level_shapes]
         shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
-        transforms_2d = [t.select_axes(displayed_axes) for t in self._level_transforms]
+        transforms_2d = [t.select_axes(fetch_axes) for t in self._level_transforms]
         self._image_geometry_2d = ImageGeometry3D(
             level_shapes=shapes_2d,
             block_size=self._block_size,
@@ -1294,8 +1612,9 @@ class GFXMultiscaleImageVisual:
         self.node_2d = gfx.Group()
         self.node_2d.add(inner)
         self.node_2d.add(self._aabb_line_2d)
-        sub = self._transform.select_axes(displayed_axes)
-        self.node_2d.local.matrix = _pygfx_matrix(sub)
+        self._last_displayed_axes = displayed_axes
+        if self._spaces is not None and self._transform is not None:
+            self.node_2d.local.matrix = self._node_matrices()[1]
         if visual_model is not None:
             self.material_2d.opacity = visual_model.appearance.opacity
             self.material_2d.depth_test = visual_model.appearance.depth_test
@@ -1375,20 +1694,57 @@ class GFXMultiscaleImageVisual:
                 self._update_node_matrix(self._last_displayed_axes)
         self._pending_slot_map_2d = {}
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with."""
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
+    def _collapsed_origin(self) -> dict[int, float]:
+        """Where the dropped data axes sit, for the node matrix (design 3.9)."""
+        return {
+            axis: float(self._collapsed_indices.get(axis, 0.0))
+            for axis in self._spaces.collapsed_axes
+        }
+
+    def _node_matrices(self) -> tuple[object, object]:
+        """``(matrix for the 3D node, matrix for the 2D node)``.
+
+        Two matrices because the two nodes are indexed in different spaces:
+        the 3D node in the normalized proxy box, the 2D node in level-0
+        pixels.  Either entry is ``None`` when the systems cannot express it.
+        """
+        plain = node_matrix(self._spaces, self._transform, self._collapsed_origin())
+        if len(self._spaces.retained_axes) != 3 or self._norm_size is None:
+            return plain, plain
+        scale, translation = _norm_to_data_params_for(
+            self._spaces, self._dataset_size, self._norm_size
+        )
+        composed = node_matrix(
+            self._spaces,
+            self._transform,
+            self._collapsed_origin(),
+            scale,
+            translation,
+        )
+        return composed, plain
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
-        """Recompute and apply the pygfx node matrix for *displayed_axes*."""
+        """Recompute and apply the pygfx node matrices for *displayed_axes*.
+
+        Design 3.9's composition, ``visual -> data -> world -> rendered``,
+        replacing ``select_axes`` plus a hand-built ``norm_to_data``.  The
+        reversal now happens once, at the end, instead of in the middle.
+        A no-op until the controller supplies the systems.
+        """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-
+        if self._spaces is None or self._transform is None:
+            return
+        composed, plain = self._node_matrices()
         if self.node_3d is not None:
-            data_to_world = _pygfx_matrix(sub)
-            m = compose_world_transform(
-                data_to_world, self._dataset_size, self._norm_size
-            )
-            self.node_3d.local.matrix = m
-
+            self.node_3d.local.matrix = composed
         if self.node_2d is not None:
-            self.node_2d.local.matrix = _pygfx_matrix(sub)
+            self.node_2d.local.matrix = plain
 
     def _build_world_to_level_transforms(
         self,
@@ -1403,7 +1759,22 @@ class GFXMultiscaleImageVisual:
         ``map_coordinates(world_pt)`` applies inv_visual first
         (world → level-0), then inv_level (level-0 → level-k).
         """
-        inv_visual = AffineTransform(matrix=self._transform.inverse_matrix)
+        # Bridge: a v1 square inverse of the v2 ``data -> world`` transform.
+        # The multiscale phase replaces this whole list with
+        # ``level_transforms[k].imap_region(...)``, which needs no inverse at
+        # all (D39); until then the arithmetic is preserved exactly.
+        if self._transform is None:
+            # The visual has not been placed -- no controller has told it which
+            # world it is in -- so world positions are read as level-0 voxels.
+            inv_visual = AffineTransform.identity(ndim=self._ndim)
+        else:
+            inverse = self._transform.inverse()
+            if inverse is None:
+                raise ValueError(
+                    "This visual's data -> world transform has no inverse, so "
+                    "a world position cannot be pulled back to a voxel index."
+                )
+            inv_visual = AffineTransform(matrix=np.asarray(inverse.matrix))
         result: list[AffineTransform] = []
         for lt in self._level_transforms:
             inv_level = AffineTransform(matrix=lt.inverse_matrix)
@@ -1462,10 +1833,19 @@ class GFXMultiscaleImageVisual:
                 f"displayed_axes={self._last_displayed_axes}"
             )
 
-        sub_3d = self._transform.select_axes(self._last_displayed_axes)
-        cam_zyx = camera_pos_world[[2, 1, 0]]
-        cam_data_zyx = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()
-        camera_pos_data = cam_data_zyx[[2, 1, 0]]
+        camera_pos_data = self._to_level0_displayed(
+            np.asarray(camera_pos_world).reshape(1, -1)
+        )
+        if camera_pos_data is None:
+            # Unplaced: fall back to the pre-migration three-step dance, which
+            # is what a headlessly constructed visual has always used.
+            sub_3d = _displayed_subtransform(self._transform, self._last_displayed_axes)
+            cam_zyx = camera_pos_world[[2, 1, 0]]
+            camera_pos_data = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()[
+                [2, 1, 0]
+            ]
+        else:
+            camera_pos_data = camera_pos_data.flatten()
 
         if force_level is None and fov_y_rad > 0:
             safe_bias = max(lod_bias, 1e-6)
@@ -1478,12 +1858,15 @@ class GFXMultiscaleImageVisual:
             thresholds = None
 
         if frustum_corners_world is not None:
-            corners_flat = frustum_corners_world.reshape(-1, 3)
-            corners_flat_zyx = corners_flat[:, [2, 1, 0]]
-            corners_data_flat_zyx = sub_3d.imap_coordinates(corners_flat_zyx)
-            corners_data = corners_data_flat_zyx[:, [2, 1, 0]].reshape(
-                frustum_corners_world.shape
-            )
+            corners_data = self._to_level0_displayed(frustum_corners_world)
+            if corners_data is None:
+                sub_3d = _displayed_subtransform(
+                    self._transform, self._last_displayed_axes
+                )
+                corners_flat = frustum_corners_world.reshape(-1, 3)
+                corners_data = (
+                    sub_3d.imap_coordinates(corners_flat[:, [2, 1, 0]])[:, [2, 1, 0]]
+                ).reshape(frustum_corners_world.shape)
             frustum_planes = frustum_planes_from_corners(corners_data)
         else:
             frustum_planes = None
@@ -1588,12 +1971,12 @@ class GFXMultiscaleImageVisual:
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
-                axis_selections = _build_axis_selections_multiscale(
+                axis_selections = self._level_axis_selections(
                     dims_state.selection,
                     ndim,
                     display_coords,
-                    level_shape=self._full_level_shapes[level_index],
-                    world_to_level_k=self._world_to_level_transforms[level_index],
+                    level_index,
+                    self._full_level_shapes[level_index],
                 )
             else:
                 axis_selections = tuple(display_coords)
@@ -1679,7 +2062,7 @@ class GFXMultiscaleImageVisual:
         n_levels = geo2d.n_levels
 
         displayed = self._last_displayed_axes
-        sub_2d = self._transform.select_axes(displayed)
+        sub_2d = _displayed_subtransform(self._transform, displayed)
 
         nd2 = sub_2d.ndim
         world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
@@ -1816,12 +2199,12 @@ class GFXMultiscaleImageVisual:
             )
             level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections_multiscale(
+            axis_selections = self._level_axis_selections(
                 sel,
                 ndim,
                 display_coords,
-                level_shape=self._full_level_shapes[level_index],
-                world_to_level_k=self._world_to_level_transforms[level_index],
+                level_index,
+                self._full_level_shapes[level_index],
             )
 
             if fill:
@@ -1852,6 +2235,7 @@ class GFXMultiscaleImageVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Run the synchronous 3D planning phase and return ChunkRequests.
 
@@ -1879,12 +2263,21 @@ class GFXMultiscaleImageVisual:
         force_level : int or None
             Override LOD level.
 
+        selection : RegionSelection or None
+            The region this canvas is showing, in world coordinates.  It is
+            pulled back to each pyramid level through that level's own
+            transform (design 3.11 A) and decides the collapsed axes; the
+            displayed axes still take their windows from LOD selection and
+            frustum culling.  ``dims_state`` is the fallback for a visual the
+            controller has not placed.
+
         Returns
         -------
         list[ChunkRequest]
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
+        self._begin_region_planning(selection)
         geo = self._volume_geometry
         if geo is None or self._block_cache_3d is None:
             return []
@@ -1970,12 +2363,12 @@ class GFXMultiscaleImageVisual:
             display_coords = [(z0, z1), (y0, y1), (x0, x1)]
             if dims_state is not None:
                 ndim = len(dims_state.axis_labels)
-                axis_selections = _build_axis_selections_multiscale(
+                axis_selections = self._level_axis_selections(
                     dims_state.selection,
                     ndim,
                     display_coords,
-                    level_shape=self._full_level_shapes[level_index],
-                    world_to_level_k=self._world_to_level_transforms[level_index],
+                    level_index,
+                    self._full_level_shapes[level_index],
                 )
             else:
                 axis_selections = tuple(display_coords)
@@ -2080,6 +2473,7 @@ class GFXMultiscaleImageVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Run the synchronous 2D planning phase and return ChunkRequests.
 
@@ -2111,6 +2505,14 @@ class GFXMultiscaleImageVisual:
         use_culling : bool
             Enable viewport culling.
 
+        selection : RegionSelection or None
+            The region this canvas is showing, in world coordinates.  It is
+            pulled back to each pyramid level through that level's own
+            transform (design 3.11 A) and decides the collapsed axes; the
+            displayed axes still take their windows from LOD selection and
+            frustum culling.  ``dims_state`` is the fallback for a visual the
+            controller has not placed.
+
         Returns
         -------
         list[ChunkRequest]
@@ -2118,6 +2520,7 @@ class GFXMultiscaleImageVisual:
         """
         t_plan_start = time.perf_counter()
         self._frame_number += 1
+        self._begin_region_planning(selection)
 
         # Record the current slice coordinate for two-phase LUT rebuild (Step 3).
         self._current_slice_coord = tuple(
@@ -2133,23 +2536,19 @@ class GFXMultiscaleImageVisual:
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
 
-        # Camera / viewport are 2D from pygfx -- use the 2D
-        # sub-transform for inverse mapping.
-        #
-        # Axis-order note: pygfx delivers world coords as (X, Y) where
-        #   X = second displayed axis,  Y = first displayed axis.
-        # But select_axes(displayed=(a, b)).imap_coordinates expects input in
-        #   (a-world, b-world) = (first-displayed, second-displayed) order
-        # and returns (a-data, b-data) = (gy, gx) order.
-        # Downstream consumers (sort_tiles_by_distance_2d, viewport_cull_2d)
-        # expect (gx, gy) = (second-displayed, first-displayed) order.
-        # So we swap the input and swap the output.
-        sub_2d = self._transform.select_axes(displayed)
+        # The camera and the viewport arrive in **pygfx** order, which for a
+        # 2D canvas is (X, Y) = (second displayed axis, first displayed axis).
+        # ``_to_level0_displayed`` reverses once, maps in one step, and hands
+        # them back in pygfx order -- which is what the distance sort and the
+        # viewport culler take.  The three-step index dance is gone.
+        sub_2d = _displayed_subtransform(self._transform, displayed)
 
-        # Convert world_width to level-0 voxels using the geometric mean of
-        # the per-axis world-to-voxel scale from the forward (data→world)
-        # transform.  sub_2d.matrix diagonal = world_units/voxel per axis;
-        # the inverse geometric mean gives voxels/world_unit.
+        # ``voxel_width`` is deliberately still read off the diagonal of the
+        # linear block.  That assumption -- the block is diagonal -- is a real
+        # constraint of the LOD heuristic rather than an artifact of the old
+        # ``select_axes`` path, so it is ported as-is and generalising it is
+        # left to the oblique work.  Changing the LOD metric and the transform
+        # layer in one phase would make a regression impossible to attribute.
         nd2 = sub_2d.ndim
         world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
         world_to_voxel_scale_2d = float(
@@ -2157,10 +2556,15 @@ class GFXMultiscaleImageVisual:
         )
         voxel_width = world_width * world_to_voxel_scale_2d
 
-        # camera_pos_world[:2] is (X_world, Y_world); imap expects (Y_world, X_world).
-        camera_pos_2d = sub_2d.imap_coordinates(
-            camera_pos_world[[1, 0]].reshape(1, -1)
-        ).flatten()[[1, 0]]  # swap output (gy, gx) -> (gx, gy)
+        camera_pos_2d = self._to_level0_displayed(
+            np.asarray(camera_pos_world)[:2].reshape(1, -1)
+        )
+        if camera_pos_2d is None:
+            camera_pos_2d = sub_2d.imap_coordinates(
+                camera_pos_world[[1, 0]].reshape(1, -1)
+            ).flatten()[[1, 0]]
+        else:
+            camera_pos_2d = camera_pos_2d.flatten()
         # Pad to 3D for compatibility with downstream code.
         camera_pos = np.array(
             [camera_pos_2d[0], camera_pos_2d[1], 0.0], dtype=np.float32
@@ -2172,18 +2576,20 @@ class GFXMultiscaleImageVisual:
             cy = float(camera_pos_world[1])  # Y_world = first-displayed axis
             half_w = world_width / 2.0
             half_h = (float(view_max_world[1]) - float(view_min_world[1])) / 2.0
-            # imap expects (first-displayed, second-displayed) = (cy, cx) order.
-            corners_world_2d = np.array(
+            corners_pygfx = np.array(
                 [
-                    [cy - half_h, cx - half_w],
-                    [cy - half_h, cx + half_w],
-                    [cy + half_h, cx + half_w],
-                    [cy + half_h, cx - half_w],
+                    [cx - half_w, cy - half_h],
+                    [cx + half_w, cy - half_h],
+                    [cx + half_w, cy + half_h],
+                    [cx - half_w, cy + half_h],
                 ],
-                dtype=np.float32,
+                dtype=np.float64,
             )
-            # imap returns (gy, gx); swap columns to (gx, gy) for culling.
-            corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)[:, [1, 0]]
+            corners_data_2d = self._to_level0_displayed(corners_pygfx)
+            if corners_data_2d is None:
+                corners_data_2d = sub_2d.imap_coordinates(corners_pygfx[:, [1, 0]])[
+                    :, [1, 0]
+                ]
             view_min = corners_data_2d.min(axis=0)
             view_max = corners_data_2d.max(axis=0)
         else:
@@ -2329,12 +2735,12 @@ class GFXMultiscaleImageVisual:
             )
             level_index = tile_key.level - 1
             display_coords = [(y0, y1), (x0, x1)]
-            axis_selections = _build_axis_selections_multiscale(
+            axis_selections = self._level_axis_selections(
                 sel,
                 ndim,
                 display_coords,
-                level_shape=self._full_level_shapes[level_index],
-                world_to_level_k=self._world_to_level_transforms[level_index],
+                level_index,
+                self._full_level_shapes[level_index],
             )
 
             # ── DEBUG: print tile region and data selection ─────────────────

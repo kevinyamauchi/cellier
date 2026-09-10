@@ -42,6 +42,14 @@ function render({ model, el }) {
   let timer = null;
   let pending = null; // { axis, value } captured during the throttle window
 
+  // World positions are floats now, and a raw float64 readout is unreadable
+  // while dragging.  Whole numbers keep their bare form.
+  function formatPosition(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return String(value);
+    return Number.isInteger(number) ? String(number) : number.toFixed(3);
+  }
+
   function submit(axis, value) {
     if (guard) return;
     const current = { ...(model.get("slice_indices") || {}) };
@@ -92,15 +100,18 @@ function render({ model, el }) {
       input.type = "range";
       input.min = lo;
       input.max = hi;
-      input.step = 1;
+      // A slice position is a world coordinate, not a voxel index, so the
+      // slider is continuous: on a 0.5 world-unit-per-voxel axis an integer
+      // step cannot reach the odd-numbered planes.
+      input.step = "any";
       input.value = slices[axis] !== undefined ? slices[axis] : lo;
 
       const readout = document.createElement("span");
       readout.className = "cellier-dim-readout";
-      readout.textContent = input.value;
+      readout.textContent = formatPosition(input.value);
 
       input.addEventListener("input", () => {
-        readout.textContent = input.value;
+        readout.textContent = formatPosition(input.value);
         scheduleSubmit(axis, input.value); // live, throttled
       });
       input.addEventListener("change", () => {
@@ -140,7 +151,7 @@ function render({ model, el }) {
       for (const axis of Object.keys(rows)) {
         if (Object.prototype.hasOwnProperty.call(slices, axis)) {
           rows[axis].input.value = slices[axis];
-          rows[axis].readout.textContent = slices[axis];
+          rows[axis].readout.textContent = formatPosition(slices[axis]);
         }
       }
     } finally {

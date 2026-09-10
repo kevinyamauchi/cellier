@@ -28,6 +28,7 @@ from cellier.convenience import (
 )
 from cellier.convenience.gui import build_ortho_grid_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals import InMemoryImageAppearance
 
 # ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ blobs_3d = binary_blobs(length=200, n_dim=3, rng=0).astype(np.float32)
 # Orthoviewer model
 # ---------------------------------------------------------------------------
 
-viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+viewer = OrthoViewer(spatial_axes("z", "y", "x"))
 
 store = ImageMemoryStore(data=blobs_3d, name="blobs")
 viewer.controller.add_data_store(store)

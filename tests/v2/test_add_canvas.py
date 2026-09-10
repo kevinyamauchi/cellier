@@ -6,7 +6,12 @@ import pytest
 
 from cellier.controller import CellierController
 from cellier.scene.cameras import OrthographicCamera, PerspectiveCamera
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 
 
@@ -17,10 +22,10 @@ def _make_scene(
     """Return a minimal Scene with the given displayed_axes and render_modes."""
     n_axes = max(displayed_axes) + 1
     axis_labels = tuple(f"axis_{i}" for i in range(n_axes))
-    cs = CoordinateSystem(name="world", axis_labels=axis_labels)
+    cs = world_coordinate_system(spatial_axes(*axis_labels), name="world")
     slice_indices = {i: 0 for i in range(n_axes) if i not in displayed_axes}
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=displayed_axes,
             slice_indices=slice_indices,

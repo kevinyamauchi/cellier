@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def initial_slice_indices(
     selection: object, axis_ranges: Mapping[int, tuple[float, float]]
-) -> dict[int, int]:
+) -> dict[int, float]:
     """Return a slice index for **every** axis, not only the hidden ones.
 
     A dims panel needs a position for each axis, including the ones currently
@@ -44,19 +44,21 @@ def initial_slice_indices(
 
     Returns
     -------
-    dict[int, int]
-        One entry per axis in *axis_ranges*.
+    dict[int, float]
+        One entry per axis in *axis_ranges*.  World positions, not voxel
+        indices: since D3 a slice position is a float, so the midpoint is no
+        longer rounded and a fine axis's odd-numbered planes are reachable.
     """
     known = {
-        int(axis): int(value)
+        int(axis): float(value)
         for axis, value in getattr(selection, "slice_indices", {}).items()
     }
-    seeded: dict[int, int] = {}
+    seeded: dict[int, float] = {}
     for axis, bounds in axis_ranges.items():
         axis = int(axis)
         if axis in known:
             seeded[axis] = known[axis]
             continue
         low, high = float(bounds[0]), float(bounds[1])
-        seeded[axis] = round((low + high) / 2.0)
+        seeded[axis] = (low + high) / 2.0
     return seeded

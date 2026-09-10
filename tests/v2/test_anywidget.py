@@ -24,8 +24,9 @@ from cellier.convenience.gui import InMemoryImageControlsConfig  # noqa: E402
 from cellier.render.canvas_view import CanvasView  # noqa: E402
 from cellier.scene.dims import (  # noqa: E402
     AxisAlignedSelection,
-    CoordinateSystem,
     DimsManager,
+    spatial_axes,
+    world_coordinate_system,
 )
 from cellier.scene.scene import Scene  # noqa: E402
 
@@ -37,10 +38,10 @@ def _make_scene(
     """Return a minimal Scene with the given displayed_axes and render_modes."""
     n_axes = max(displayed_axes) + 1
     axis_labels = tuple(f"axis_{i}" for i in range(n_axes))
-    cs = CoordinateSystem(name="world", axis_labels=axis_labels)
+    cs = world_coordinate_system(spatial_axes(*axis_labels), name="world")
     slice_indices = {i: 0 for i in range(n_axes) if i not in displayed_axes}
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=displayed_axes,
             slice_indices=slice_indices,
@@ -105,7 +106,7 @@ def test_viewer_gui_property():
     """Viewer exposes the chosen gui and threads it to the controller."""
     from cellier.convenience import Viewer
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     assert viewer.gui == "anywidget"
     assert viewer.controller._gui == "anywidget"
 
@@ -114,7 +115,7 @@ def test_ortho_viewer_gui_property():
     """OrthoViewer exposes the chosen gui and threads it to the controller."""
     from cellier.convenience import OrthoViewer
 
-    viewer = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     assert viewer.gui == "anywidget"
     assert viewer.controller._gui == "anywidget"
 
@@ -123,7 +124,7 @@ def test_viewer_default_gui_is_qt():
     """Viewer defaults to the Qt gui."""
     from cellier.convenience import Viewer
 
-    assert Viewer(("z", "y", "x")).gui == "qt"
+    assert Viewer(spatial_axes("z", "y", "x")).gui == "qt"
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +375,7 @@ def _image_viewer():
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
-    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
     store = ImageMemoryStore(data=blobs, name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
@@ -389,7 +390,7 @@ def _image_viewer_with_controls():
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
-    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
     store = ImageMemoryStore(data=blobs, name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(
@@ -473,7 +474,7 @@ def test_build_ortho_grid_anywidget_returns_canvases():
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.gui.anywidget import AnywidgetBox
 
-    viewer = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((8, 8, 8), dtype=np.float32), name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
@@ -996,7 +997,7 @@ def test_build_appearance_widgets_anywidget_from_visual():
         AnywidgetColormapCombo,
     )
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
     viewer.controller.add_data_store(store)
     viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
@@ -1041,7 +1042,7 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
         AnywidgetColormapCombo,
     )
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
     viewer.controller.add_data_store(store)
     viewer.add_image(

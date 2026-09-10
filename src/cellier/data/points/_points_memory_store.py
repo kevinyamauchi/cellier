@@ -179,17 +179,27 @@ class PointsMemoryStore(BaseDataStore):
         positions = self.positions  # (n_points, ndim)
         colors = self.colors
         sizes = self.sizes
-        displayed = list(request.displayed_axes)
+        # Ascending: the uploaded vertex buffer's axis order is the data's,
+        # and a display permutation lives in the node matrix (design 3.14).
+        displayed = sorted(request.displayed_axes)
 
         # ── Phase 1: build proximity mask ────────────────────────────
         # A point survives if it passes the proximity test on EVERY
         # non-displayed (sliced) axis.
-        point_mask = np.ones(self.n_points, dtype=bool)
-
-        for axis, idx in request.slice_indices.items():
-            lo = float(idx) - request.thickness
-            hi = float(idx) + request.thickness
-            point_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
+        if request.region is not None:
+            # The region *is* the filter (design 3.12).  For images it is
+            # reduced to a bounding box and rounded; for points there is
+            # nothing to round -- the constraints apply to the points
+            # themselves.  A 3-D view has no slabs, so the region is
+            # unbounded, ``contains`` is all-True, and the "slice_indices is
+            # empty so the loop does not run" special case disappears.
+            point_mask = request.region.contains(positions)
+        else:
+            point_mask = np.ones(self.n_points, dtype=bool)
+            for axis, idx in request.slice_indices.items():
+                lo = float(idx) - request.thickness
+                hi = float(idx) + request.thickness
+                point_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

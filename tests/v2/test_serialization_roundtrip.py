@@ -3,7 +3,12 @@
 import numpy as np
 
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals._image import (
@@ -14,9 +19,9 @@ from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 
 def _make_minimal_model() -> ViewerModel:
-    coordinate_system = CoordinateSystem(name="world", axis_labels=["z", "y", "x"])
+    world = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     dims = DimsManager(
-        coordinate_system=coordinate_system,
+        world_coordinate_system=world,
         selection=AxisAlignedSelection(displayed_axes=(1, 2), slice_indices={0: 0}),
     )
     positions = np.zeros((4, 3), dtype=np.float32)

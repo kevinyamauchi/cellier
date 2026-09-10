@@ -33,6 +33,7 @@ from cellier.convenience.layout._shared import (
     select_appearance_target,
 )
 from cellier.convenience.layout._walk import build_appearance_widgets, render_dock
+from cellier.scene.dims import spatial_axes
 from cellier.visuals import MultiscaleImageAppearance
 from cellier.visuals._mesh_memory import MeshFlatAppearance, MeshPhongAppearance
 
@@ -83,7 +84,7 @@ def stores(labels_store, mesh_store, points_store, lines_store, graph_store):
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_viewer_add_records_the_config(kind, stores):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     config = CONFIGS[kind](appearance=True)
 
     visual = _add(viewer, kind, stores, controls=config)
@@ -93,14 +94,14 @@ def test_viewer_add_records_the_config(kind, stores):
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_viewer_add_without_controls_records_nothing(kind, stores):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     _add(viewer, kind, stores)
     assert viewer._controls_configs == {}
 
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_ortho_add_records_the_config_and_the_panel_group(kind, stores):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     config = CONFIGS[kind](appearance=True)
 
     visuals = _add(ortho, kind, stores, controls=config)
@@ -112,7 +113,7 @@ def test_ortho_add_records_the_config_and_the_panel_group(kind, stores):
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_ortho_add_without_controls_records_nothing(kind, stores):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     _add(ortho, kind, stores)
     assert ortho._controls_configs == {}
     assert ortho._visual_groups == {}
@@ -121,7 +122,7 @@ def test_ortho_add_without_controls_records_nothing(kind, stores):
 def test_add_labels_multiscale_takes_the_multiscale_config(multiscale_labels_store):
     from cellier.visuals._labels import MultiscaleLabelsAppearance
 
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     config = MultiscaleLabelsControlsConfig(appearance=["lod_bias"])
 
     visual = viewer.add_labels_multiscale(
@@ -190,7 +191,7 @@ def test_appearance_true_builds_the_default_qt_dock(qtbot, kind, stores):
     """
     from tests.convenience._qt_acceptance import assert_panel_renders, control_labels
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=True))
 
     container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
@@ -204,7 +205,7 @@ def test_appearance_true_builds_the_same_anywidget_dock(kind, stores):
     """Same names, same order, other toolkit -- section 4.2's whole point."""
     from tests.convenience._qt_acceptance import control_labels_anywidget
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=True))
     target = select_appearance_target(viewer)
 
@@ -235,7 +236,7 @@ def test_dataset_info_reaches_both_docks(qtbot, multiscale_image_store):
     rows = [("Scale levels", "2"), ("Data type", "float32")]
     expected = ["Colormap", "Bounding box", "Dataset info"]
 
-    qt_viewer = Viewer(("z", "y", "x"), gui="qt")
+    qt_viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     qt_viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
@@ -247,7 +248,7 @@ def test_dataset_info_reaches_both_docks(qtbot, multiscale_image_store):
     assert control_labels(container) == expected
     assert_panel_renders(container)
 
-    any_viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    any_viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     any_viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
@@ -291,7 +292,7 @@ def test_dataset_info_rows_reach_each_front_end_as_data(qtbot):
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_appearance_false_still_hides_the_panel(qtbot, kind, stores):
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=False))
 
     assert render_dock(AppearanceControls(), viewer, QtLayoutHost(), []) is None
@@ -306,7 +307,7 @@ def test_a_phong_mesh_gets_its_own_fields_from_the_same_config(qtbot, mesh_store
     """
     from tests.convenience._qt_acceptance import control_labels
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     # A phong mesh warns about scene lighting, which is unrelated to controls.
     with pytest.warns(UserWarning, match="requires lights"):
         viewer.add_mesh(
@@ -332,7 +333,7 @@ def test_the_labels_combo_offers_the_models_own_render_modes(qtbot, labels_store
     """In-memory labels: two modes, and no image render modes."""
     from cellier.gui.qt.visuals import QtLabelsRenderModeCombo
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_labels(
         labels_store, controls=LabelsControlsConfig(appearance=["render_mode"])
     )
@@ -352,7 +353,7 @@ def test_the_labels_combo_offers_the_models_own_render_modes(qtbot, labels_store
 def test_a_rendered_control_writes_the_model(qtbot, points_store):
     from cellier.convenience.layout._spec import AppearanceControls
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_points(
         points_store, controls=PointsControlsConfig(appearance=["size"])
     )
@@ -369,7 +370,7 @@ def test_an_ortho_non_image_edit_reaches_all_four_panels(qtbot, points_store):
     """The stage-2 fan-out, now for a visual type stage 2 did not cover."""
     from cellier.convenience.layout._spec import AppearanceControls
 
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_points(
         points_store, controls=PointsControlsConfig(appearance=["size"])
     )
@@ -392,7 +393,7 @@ def test_a_visible_toggle_reaches_the_model_on_its_own_event(qtbot, mesh_store):
     """
     from cellier.convenience.layout._spec import AppearanceControls
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_mesh(
         mesh_store,
         appearance=MeshFlatAppearance(),

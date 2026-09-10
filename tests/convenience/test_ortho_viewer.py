@@ -5,6 +5,7 @@ import pytest
 
 from cellier.convenience import OrthoViewer, Viewer, axis_ranges_from_ortho
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -16,7 +17,7 @@ def image_store() -> ImageMemoryStore:
 
 def test_scene_layout_3d():
     """The four panels get the expected displayed/sliced axes and render modes."""
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     assert set(viewer.scenes) == {"xy", "xz", "yz", "vol"}
     assert viewer.spatial_axes == (0, 1, 2)
     assert viewer.extra_axes == set()
@@ -34,7 +35,15 @@ def test_scene_layout_3d():
 
 def test_extra_axis_is_last_three_spatial_by_default():
     """A 5D dataset keeps the last three axes spatial; the rest are extra."""
-    viewer = OrthoViewer(axis_labels=("t", "c", "z", "y", "x"))
+    viewer = OrthoViewer(
+        [
+            ("t", "time"),
+            ("c", "channel"),
+            ("z", "space"),
+            ("y", "space"),
+            ("x", "space"),
+        ]
+    )
     assert viewer.spatial_axes == (2, 3, 4)
     assert viewer.extra_axes == {0, 1}
     # Every panel slices both extra axes.
@@ -45,19 +54,22 @@ def test_extra_axis_is_last_three_spatial_by_default():
 
 def test_explicit_spatial_axes_by_name():
     """spatial_axes may be given as names in (z, y, x) order."""
-    viewer = OrthoViewer(axis_labels=("z", "y", "x", "c"), spatial_axes=("z", "y", "x"))
+    viewer = OrthoViewer(
+        [("z", "space"), ("y", "space"), ("x", "space"), ("c", "channel")],
+        spatial_axes=("z", "y", "x"),
+    )
     assert viewer.spatial_axes == (0, 1, 2)
     assert viewer.extra_axes == {3}
 
 
 def test_requires_three_axes():
     with pytest.raises(ValueError, match="at least 3 axes"):
-        OrthoViewer(axis_labels=("y", "x"))
+        OrthoViewer(spatial_axes("y", "x"))
 
 
 def test_add_image_fans_out_to_all_panels(image_store):
     """One add_image registers a single store and adds one visual per panel."""
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     visuals = viewer.add_image(
         image_store,
@@ -79,7 +91,7 @@ def test_add_image_fans_out_to_all_panels(image_store):
 
 
 def test_center_slices_sets_integer_midpoints(image_store):
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     viewer.add_image(
         image_store,
@@ -98,7 +110,9 @@ def test_center_slices_sets_integer_midpoints(image_store):
 
 def test_extra_axis_sync_propagates_across_panels():
     """Changing an extra axis on one panel updates the others."""
-    viewer = OrthoViewer(axis_labels=("c", "z", "y", "x"))
+    viewer = OrthoViewer(
+        [("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")]
+    )
     assert viewer.extra_axis_sync_enabled
 
     xy = viewer.scenes["xy"]
@@ -111,7 +125,9 @@ def test_extra_axis_sync_propagates_across_panels():
 
 
 def test_extra_axis_sync_can_be_disabled():
-    viewer = OrthoViewer(axis_labels=("c", "z", "y", "x"))
+    viewer = OrthoViewer(
+        [("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")]
+    )
     viewer.extra_axis_sync_enabled = False
     assert not viewer.extra_axis_sync_enabled
 
@@ -126,7 +142,7 @@ def test_extra_axis_sync_can_be_disabled():
 
 def test_serialization_roundtrip(tmp_path, image_store):
     """OrthoViewer serializes and restores an equivalent ViewerModel."""
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     viewer.add_image(
         image_store,
@@ -146,7 +162,7 @@ def test_serialization_roundtrip(tmp_path, image_store):
 
 def test_from_file_rejects_non_ortho_model(tmp_path, image_store):
     """A single-scene Viewer file is not a valid OrthoViewer file."""
-    viewer = Viewer(axis_labels=("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     viewer.add_image(
         image_store,

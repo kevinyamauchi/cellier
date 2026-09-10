@@ -25,6 +25,7 @@ from cellier.convenience.gui._controls_config import (
 from cellier.convenience.layout._shared import select_appearance_target
 from cellier.convenience.layout._walk import build_appearance_widgets, render_dock
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 _PANELS = ("xy", "xz", "yz", "vol")
@@ -40,7 +41,7 @@ def _appearance() -> InMemoryImageAppearance:
 
 
 def _ortho_with_controls(**config_kwargs):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_image(
         _store(),
         appearance=_appearance(),
@@ -68,7 +69,7 @@ def test_add_image_records_the_config_and_the_group():
 def test_add_image_multiscale_records_the_config_and_the_group(multiscale_image_store):
     from cellier.visuals._image import MultiscaleImageAppearance
 
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis"),
@@ -80,7 +81,7 @@ def test_add_image_multiscale_records_the_config_and_the_group(multiscale_image_
 
 
 def test_controls_none_records_nothing():
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     ortho.add_image(_store(), appearance=_appearance())
 
     assert ortho._controls_configs == {}
@@ -105,7 +106,7 @@ def test_target_expands_to_all_four_panels():
 
 
 def test_target_on_a_single_scene_viewer_is_one_id():
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_image(
         _store(),
         appearance=_appearance(),
@@ -119,7 +120,7 @@ def test_target_on_a_single_scene_viewer_is_one_id():
 
 
 def test_target_is_none_on_an_unconfigured_ortho():
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     ortho.add_image(_store(), appearance=_appearance())
 
     assert select_appearance_target(ortho) is None
@@ -273,7 +274,7 @@ def test_appearance_dock_renders_on_an_ortho_viewer_anywidget():
     """The same fix reaches the anywidget renderer, which shares the resolver."""
     from tests.convenience._qt_acceptance import control_labels_anywidget
 
-    ortho = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     visuals = ortho.add_image(
         _store(),
         appearance=_appearance(),
@@ -356,7 +357,7 @@ def test_the_group_helpers_stamp_the_given_source_id():
 def test_the_renderer_warns_about_a_field_the_model_does_not_have(qtbot):
     """The residual drop stage 3's validation cannot catch, on ortho too."""
 
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     ortho.add_image(
         _store(),
         appearance=_appearance(),

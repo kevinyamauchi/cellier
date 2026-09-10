@@ -11,12 +11,12 @@ from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.controller import CellierController
 from cellier.events import DimsChangedEvent
 from cellier.gui.qt._scene import QtDimsControl
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 
 def _make_controller_with_scene(*, dim="2d"):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim=dim, coordinate_system=cs, name="main")
     return controller, scene
 

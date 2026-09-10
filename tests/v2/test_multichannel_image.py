@@ -11,7 +11,7 @@ from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.render.visuals._image_memory_multichannel import (
     GFXMultichannelImageMemoryVisual,
 )
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import world_coordinate_system
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image_memory import MultichannelImageVisual
 
@@ -46,7 +46,9 @@ def _make_dims_state_2d(shape, channel_axis=1) -> DimsState:
 
 def _make_controller_with_scene() -> tuple[CellierController, object]:
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "c", "y", "x"))
+    cs = world_coordinate_system(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")], name="world"
+    )
     scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
     return controller, scene
 

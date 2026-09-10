@@ -19,8 +19,9 @@ from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.events._events import CameraChangedEvent, TransformChangedEvent
 from cellier.render._config import CameraConfig, RenderManagerConfig
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.transform import AffineTransform
+from cellier.transform_v2 import WorldCoordinateSystem  # noqa: TC001
 from cellier.viewer_model import ViewerModel
 from cellier.visuals import (
     LinesMemoryAppearance,
@@ -29,14 +30,15 @@ from cellier.visuals import (
     MultiscaleImageVisual,
 )
 from cellier.visuals._points_memory import PointsMarkerAppearance
+from tests._v2 import bound
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_cs() -> CoordinateSystem:
-    return CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+def _make_cs() -> WorldCoordinateSystem:
+    return world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
 
 
 def _make_appearance(**kwargs) -> MultiscaleImageAppearance:
@@ -152,9 +154,7 @@ def test_add_mesh_uses_explicit_transform():
     controller = CellierController()
     scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
     store = _make_mesh_store()
-    transform = AffineTransform.from_scale_and_translation(
-        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
-    )
+    transform = bound(controller, scene.id, store, (1.5, 2.0, 3.0), (4.0, 5.0, 6.0))
 
     visual = controller.add_mesh(
         data=store,
@@ -191,9 +191,7 @@ def test_add_points_uses_explicit_transform():
     controller = CellierController()
     scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
     store = _make_points_store()
-    transform = AffineTransform.from_scale_and_translation(
-        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
-    )
+    transform = bound(controller, scene.id, store, (1.5, 2.0, 3.0), (4.0, 5.0, 6.0))
 
     visual = controller.add_points(
         data=store,
@@ -230,9 +228,7 @@ def test_add_lines_uses_explicit_transform():
     controller = CellierController()
     scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
     store = _make_lines_store()
-    transform = AffineTransform.from_scale_and_translation(
-        (1.5, 2.0, 3.0), (4.0, 5.0, 6.0)
-    )
+    transform = bound(controller, scene.id, store, (1.5, 2.0, 3.0), (4.0, 5.0, 6.0))
 
     visual = controller.add_lines(
         data=store,
@@ -270,7 +266,7 @@ def test_reslice_scene_reads_appearance_fields(small_zarr_store):
 
     captured = {}
 
-    def capturing_reslice(s_id, dims_state, visual_configs=None):
+    def capturing_reslice(s_id, dims_state, visual_configs=None, **_):
         captured.update(visual_configs or {})
 
     controller._render_manager.reslice_scene = capturing_reslice
@@ -465,8 +461,8 @@ def test_appearance_bridge_lod_bias(small_zarr_store):
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
-    controller._render_manager.reslice_visual = (
-        lambda vid, dims, cfg: reslice_calls.append(vid)
+    controller._render_manager.reslice_visual = lambda vid, dims, cfg, **_: (
+        reslice_calls.append(vid)
     )
 
     visual.appearance.lod_bias = 2.0
@@ -492,8 +488,8 @@ def test_appearance_bridge_force_level(small_zarr_store):
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
-    controller._render_manager.reslice_visual = (
-        lambda vid, dims, cfg: reslice_calls.append(vid)
+    controller._render_manager.reslice_visual = lambda vid, dims, cfg, **_: (
+        reslice_calls.append(vid)
     )
 
     visual.appearance.force_level = 1
@@ -519,8 +515,8 @@ def test_appearance_bridge_frustum_cull(small_zarr_store):
         AppearanceChangedEvent, events.append, entity_id=visual.id
     )
     reslice_calls = []
-    controller._render_manager.reslice_visual = (
-        lambda vid, dims, cfg: reslice_calls.append(vid)
+    controller._render_manager.reslice_visual = lambda vid, dims, cfg, **_: (
+        reslice_calls.append(vid)
     )
 
     visual.appearance.frustum_cull = False
@@ -539,8 +535,8 @@ def test_appearance_bridge_clim_does_not_reslice(small_zarr_store):
         data=store, scene_id=scene.id, appearance=_make_appearance(), name="vol"
     )
     reslice_calls = []
-    controller._render_manager.reslice_visual = (
-        lambda vid, dims, cfg: reslice_calls.append(vid)
+    controller._render_manager.reslice_visual = lambda vid, dims, cfg, **_: (
+        reslice_calls.append(vid)
     )
 
     visual.appearance.clim = (0.2, 0.8)
@@ -695,7 +691,7 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
     reslice_calls = []
 
     def _capturing_reslice(
-        scene_id, dims_state, visual_configs=None, target_visual_ids=None
+        scene_id, dims_state, visual_configs=None, target_visual_ids=None, **_
     ):
         reslice_calls.append(
             {
@@ -713,7 +709,7 @@ def _make_settle_controller(small_zarr_store, threshold_s=0.05):
 
 
 async def test_settle_fires_reslice_after_threshold(small_zarr_store):
-    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+    controller, scene, _visual, canvas_id, reslice_calls = _make_settle_controller(
         small_zarr_store, threshold_s=0.05
     )
 
@@ -730,7 +726,7 @@ async def test_settle_fires_reslice_after_threshold(small_zarr_store):
 
 
 async def test_settle_cancellation_on_rapid_events(small_zarr_store):
-    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+    controller, scene, _visual, canvas_id, reslice_calls = _make_settle_controller(
         small_zarr_store, threshold_s=0.05
     )
 
@@ -743,7 +739,7 @@ async def test_settle_cancellation_on_rapid_events(small_zarr_store):
 
 
 async def test_settle_disabled_flag_suppresses_reslice(small_zarr_store):
-    controller, scene, visual, canvas_id, reslice_calls = _make_settle_controller(
+    controller, scene, _visual, canvas_id, reslice_calls = _make_settle_controller(
         small_zarr_store, threshold_s=0.05
     )
 
@@ -801,7 +797,7 @@ def test_on_camera_changed_updates_orthographic_camera_model():
 
     cs = _make_cs()
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=(1, 2),
             slice_indices={0: 0},
@@ -872,7 +868,7 @@ def test_wire_transform_emits_event(small_zarr_store):
         TransformChangedEvent, fired.append, entity_id=visual.id
     )
 
-    new_t = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    new_t = bound(controller, scene.id, store, (2.0, 2.0, 2.0))
     visual.transform = new_t
 
     assert len(fired) == 1
@@ -892,12 +888,16 @@ def test_transform_change_triggers_reslice(small_zarr_store):
 
     reslice_calls = []
 
-    def _capture(scene_id, dims_state, visual_configs=None, target_visual_ids=None):
+    def _capture(
+        scene_id, dims_state, visual_configs=None, target_visual_ids=None, **_
+    ):
         reslice_calls.append(scene_id)
 
     controller._render_manager.reslice_scene = _capture
 
-    visual.transform = AffineTransform.from_translation((10.0, 0.0, 0.0))
+    visual.transform = bound(
+        controller, scene.id, store, (1.0, 1.0, 1.0), (10.0, 0.0, 0.0)
+    )
 
     assert len(reslice_calls) == 1
     assert reslice_calls[0] == scene.id
@@ -948,7 +948,7 @@ def test_remove_visual_disconnects_psygnal_bridge(small_zarr_store):
     from cellier.events import AppearanceChangedEvent
 
     controller = CellierController()
-    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+    _scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     fired = []
     controller._outgoing_events.subscribe(
@@ -982,7 +982,7 @@ def test_remove_visual_emits_event(small_zarr_store):
 
 def test_remove_scene_cleans_model(small_zarr_store):
     controller = CellierController()
-    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+    scene, _visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     controller.remove_scene(scene.id)
 
@@ -1004,7 +1004,7 @@ def test_remove_scene_cascades_to_visuals(small_zarr_store):
 
 
 async def test_remove_scene_cancels_settle_task(small_zarr_store):
-    controller, scene, visual, canvas_id, _ = _make_settle_controller(
+    controller, scene, _visual, canvas_id, _ = _make_settle_controller(
         small_zarr_store, threshold_s=10.0
     )
 
@@ -1030,7 +1030,7 @@ def test_remove_scene_emits_event(small_zarr_store):
     from cellier.events import SceneRemovedEvent
 
     controller = CellierController()
-    scene, visual, _ = _make_scene_with_visual(controller, small_zarr_store)
+    scene, _visual, _ = _make_scene_with_visual(controller, small_zarr_store)
 
     events = []
     controller._outgoing_events.subscribe(SceneRemovedEvent, events.append)
@@ -1046,7 +1046,7 @@ def test_remove_scene_emits_event(small_zarr_store):
 
 def test_remove_data_store_happy_path(small_zarr_store):
     controller = CellierController()
-    scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
+    _scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
 
     controller.remove_visual(visual.id)
     controller.remove_data_store(store.id)
@@ -1056,7 +1056,7 @@ def test_remove_data_store_happy_path(small_zarr_store):
 
 def test_remove_data_store_raises_when_referenced(small_zarr_store):
     controller = CellierController()
-    scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
+    _scene, visual, store = _make_scene_with_visual(controller, small_zarr_store)
 
     with pytest.raises(ValueError) as exc_info:
         controller.remove_data_store(store.id)

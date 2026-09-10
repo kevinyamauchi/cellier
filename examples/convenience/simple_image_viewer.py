@@ -35,6 +35,7 @@ from cellier.convenience import (
 )
 from cellier.convenience.gui import build_canvas_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals import InMemoryImageAppearance
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ blobs_3d = binary_blobs(length=200, n_dim=3, rng=0).astype(np.float32)
 # Viewer model
 # ---------------------------------------------------------------------------
 
-viewer = Viewer(axis_labels=("z", "y", "x"), dim="2d")
+viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d")
 
 store = ImageMemoryStore(data=blobs_3d, name="blobs")
 viewer.controller.add_data_store(store)

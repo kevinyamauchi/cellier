@@ -24,7 +24,7 @@ from cellier.events._events import (
     _CanvasRawPointerEvent,
 )
 from cellier.render.render_manager import RenderManager, _ImageDisplayedDataCoord
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals import LinesMemoryAppearance, MeshFlatAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance
 
@@ -56,7 +56,7 @@ def _raw_2d(
 
 def _make_2d_controller():
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="2d", coordinate_system=cs, name="main")
     return controller, scene.id
 
@@ -202,7 +202,7 @@ def test_hover_move_without_press_has_none_gesture_id():
 
 def _controller_with_points():
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     positions = np.array(
         [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=np.float32
@@ -218,7 +218,7 @@ def _controller_with_points():
 
 def _controller_with_lines():
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     # 3 edges -> 6 vertices.
     positions = np.array(
@@ -273,7 +273,7 @@ def test_extract_lines_vertex_to_edge_mapping():
 
 def _controller_with_mesh():
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
     idx = np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int32)
@@ -445,7 +445,7 @@ def test_image_pick_coord_2d_promoted_in_data_axis_order():
     pygfx order is reversed onto the ascending displayed axes.
     """
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="s")
     scene.dims.selection.slice_indices = {0: 5}
     scene.dims.selection.displayed_axes = (1, 2)
@@ -481,7 +481,7 @@ def test_image_pick_coord_2d_promoted_in_data_axis_order():
 def test_image_pick_coord_3d_promoted_in_data_axis_order():
     """3-D pick: pygfx ``(x, y, z)`` is reversed onto displayed axes (z, y, x)."""
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="s")
     scene.dims.selection.displayed_axes = (0, 1, 2)
 

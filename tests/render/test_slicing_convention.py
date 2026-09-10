@@ -18,6 +18,7 @@ from cellier.render.visuals._slicing import (
     round_world_to_voxel,
 )
 from cellier.transform import AffineTransform
+from tests._v2 import named
 
 # ── round_world_to_voxel ──────────────────────────────────────────────────
 
@@ -110,9 +111,9 @@ def test_in_memory_and_multiscale_agree_3d(data_to_world, world_pos):
     displayed_axes = (1, 2)
     slice_indices = {sliced_axis: world_pos}
 
-    in_memory = _transform_slice_indices(slice_indices, data_to_world, store_shape)[
-        sliced_axis
-    ]
+    in_memory = _transform_slice_indices(
+        slice_indices, named(data_to_world), store_shape
+    )[sliced_axis]
 
     world_to_level0 = AffineTransform(matrix=data_to_world.inverse_matrix)
     multiscale = _multiscale_index_for_axis(
@@ -138,7 +139,9 @@ def test_half_integer_tie_rounds_up_both_paths(world_pos):
     data_to_world = AffineTransform.from_scale((2.0, 1.0, 1.0))
     expected = round_world_to_voxel(world_pos / 2.0, store_shape[0])
 
-    in_memory = _transform_slice_indices({0: world_pos}, data_to_world, store_shape)[0]
+    in_memory = _transform_slice_indices(
+        {0: world_pos}, named(data_to_world), store_shape
+    )[0]
 
     world_to_level0 = AffineTransform(matrix=data_to_world.inverse_matrix)
     multiscale = _multiscale_index_for_axis(
@@ -227,7 +230,9 @@ def test_multiple_sliced_axes_agree_4d():
     data_to_world = AffineTransform.from_scale((2.0, 3.0, 1.0, 1.0))
     slice_indices = {0: 7, 1: 5}
 
-    in_memory = _transform_slice_indices(slice_indices, data_to_world, store_shape)
+    in_memory = _transform_slice_indices(
+        slice_indices, named(data_to_world), store_shape
+    )
 
     world_to_level0 = AffineTransform(matrix=data_to_world.inverse_matrix)
     for sliced_axis in (0, 1):

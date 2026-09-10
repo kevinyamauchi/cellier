@@ -1,27 +1,31 @@
-"""Tests for CoordinateSystem, DimsManager, and AxisAlignedSelection models."""
+"""Tests for the world coordinate system, DimsManager and AxisAlignedSelection."""
 
 import pytest
 
 from cellier._state import AxisAlignedSelectionState
 from cellier.scene.dims import (
     AxisAlignedSelection,
-    CoordinateSystem,
     DimsManager,
+    spatial_axes,
+    world_coordinate_system,
 )
+from cellier.transform_v2 import WorldCoordinateSystem
 
 
 def test_coordinate_system_roundtrip(tmp_path):
-    original = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    original = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     path = tmp_path / "coordinate_system.json"
     path.write_text(original.model_dump_json())
-    deserialized = CoordinateSystem.model_validate_json(path.read_text())
+    deserialized = WorldCoordinateSystem.model_validate_json(path.read_text())
     assert original.model_dump_json() == deserialized.model_dump_json()
 
 
 def test_dims_manager_roundtrip(tmp_path):
     # 3D case — all axes displayed, no slice indices
     original_3d = DimsManager(
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        world_coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         selection=AxisAlignedSelection(
             displayed_axes=(0, 1, 2),
             slice_indices={},
@@ -34,7 +38,9 @@ def test_dims_manager_roundtrip(tmp_path):
 
     # 2D slice through 3D volume
     original_2d = DimsManager(
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        world_coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         selection=AxisAlignedSelection(
             displayed_axes=(1, 2),
             slice_indices={0: 32},
@@ -91,8 +97,8 @@ def test_dims_manager_validates_axis_coverage():
     """Mismatched axes should raise ValidationError."""
     with pytest.raises(ValueError, match="Axis coverage mismatch"):
         DimsManager(
-            coordinate_system=CoordinateSystem(
-                name="world", axis_labels=("z", "y", "x")
+            world_coordinate_system=world_coordinate_system(
+                spatial_axes("z", "y", "x"), name="world"
             ),
             selection=AxisAlignedSelection(
                 displayed_axes=(0, 1),
@@ -103,8 +109,15 @@ def test_dims_manager_validates_axis_coverage():
 
 def test_dims_manager_to_state():
     dims = DimsManager(
-        coordinate_system=CoordinateSystem(
-            name="world", axis_labels=("t", "c", "z", "y", "x")
+        world_coordinate_system=world_coordinate_system(
+            [
+                ("t", "time"),
+                ("c", "channel"),
+                ("z", "space"),
+                ("y", "space"),
+                ("x", "space"),
+            ],
+            name="world",
         ),
         selection=AxisAlignedSelection(
             displayed_axes=(2, 3, 4),

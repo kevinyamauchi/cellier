@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         VisualVisibilityChangedEvent,
     )
     from cellier.transform import AffineTransform
+    from cellier.transform_v2 import RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image import MultichannelMultiscaleImageVisual
 
@@ -90,8 +91,10 @@ class GFXMultichannelMultiscaleImageVisual:
             lt.expand_dims(full_ndim) for lt in visual_model.level_transforms
         ]
 
-        # Spatial transform: let each slot expand it to full_ndim as needed.
-        self._transform = transform  # may be None; slots handle expansion
+        # The data -> world transform; the slots each hold the same one.
+        self._transform = transform
+        # The systems the slots are placed with, pushed by the controller.
+        self._spaces = None
 
         # Pool state
         rc = visual_model.render_config
@@ -485,6 +488,7 @@ class GFXMultichannelMultiscaleImageVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Plan 3D bricks once, then materialize for each visible channel."""
         visible_channels = {
@@ -561,6 +565,7 @@ class GFXMultichannelMultiscaleImageVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Plan 2D tiles once, then materialize for each visible channel."""
         visible_channels = {
@@ -678,6 +683,16 @@ class GFXMultichannelMultiscaleImageVisual:
         self._transform = event.transform
         for slot in self._slots:
             slot.on_transform_changed(event)
+
+    def set_render_spaces(self, spaces) -> None:
+        """Hand the coordinate systems to every channel slot.
+
+        The slots differ in which channel they carry, not in where they sit,
+        so they share one set of systems.
+        """
+        self._spaces = spaces
+        for slot in self._slots:
+            slot.set_render_spaces(spaces)
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
         """Toggle wrapper Group visibility."""

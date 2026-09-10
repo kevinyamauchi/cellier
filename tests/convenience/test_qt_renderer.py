@@ -33,6 +33,7 @@ from cellier.convenience.layout._spec import (
     VStack,
 )
 from cellier.convenience.layout._walk import render_center, render_dock
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
@@ -63,7 +64,7 @@ def _control_names(container):
 
 
 def test_appearance_controls_builds_colormap_and_clim_groups(qtbot, image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -77,7 +78,7 @@ def test_appearance_controls_builds_colormap_and_clim_groups(qtbot, image_store)
 
 
 def test_appearance_controls_explicit_clim_range(qtbot, image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -93,7 +94,7 @@ def test_appearance_controls_explicit_clim_range(qtbot, image_store):
 
 
 def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
@@ -107,7 +108,7 @@ def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_s
 
 
 def test_appearance_controls_none_without_configs(qtbot, image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -173,12 +174,12 @@ def test_wrap_dock_widget_orientation(qtbot, position, layout_cls):
 
 
 def test_render_dock_none_returns_none(qtbot, image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     assert render_dock(None, viewer, QtLayoutHost(), []) is None
 
 
 def test_render_dock_stack_of_appearance(qtbot, image_store):
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -200,7 +201,7 @@ def test_render_dock_stack_of_appearance(qtbot, image_store):
 def test_render_qt_builds_window_with_dock(qtbot, image_store):
     from PySide6 import QtWidgets
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),

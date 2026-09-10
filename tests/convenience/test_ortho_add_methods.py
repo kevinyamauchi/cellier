@@ -8,6 +8,7 @@ visual per panel named ``f"{name}_{key}"``.
 from __future__ import annotations
 
 from cellier.convenience import OrthoViewer
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._label_memory import InMemoryLabelsAppearance
@@ -28,7 +29,7 @@ def _assert_fanned_out(ortho: OrthoViewer, visuals: dict, name: str) -> None:
 
 
 def test_add_labels_fans_out(labels_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_labels(
         labels_store, appearance=InMemoryLabelsAppearance(), name="lbl"
     )
@@ -36,13 +37,13 @@ def test_add_labels_fans_out(labels_store):
 
 
 def test_add_mesh_fans_out(mesh_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_mesh(mesh_store, appearance=MeshFlatAppearance(), name="m")
     _assert_fanned_out(ortho, visuals, "m")
 
 
 def test_add_points_fans_out(points_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_points(
         points_store, appearance=PointsMarkerAppearance(), name="pts"
     )
@@ -50,7 +51,7 @@ def test_add_points_fans_out(points_store):
 
 
 def test_add_lines_fans_out(lines_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_lines(
         lines_store, appearance=LinesMemoryAppearance(), name="ln"
     )
@@ -58,7 +59,7 @@ def test_add_lines_fans_out(lines_store):
 
 
 def test_add_image_multiscale_fans_out(multiscale_image_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
@@ -68,7 +69,7 @@ def test_add_image_multiscale_fans_out(multiscale_image_store):
 
 
 def test_add_labels_multiscale_fans_out(multiscale_labels_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_labels_multiscale(
         multiscale_labels_store,
         appearance=MultiscaleLabelsAppearance(),
@@ -78,7 +79,10 @@ def test_add_labels_multiscale_fans_out(multiscale_labels_store):
 
 
 def test_add_multichannel_image_multiscale_fans_out(multichannel_multiscale_store):
-    ortho = OrthoViewer(("c", "z", "y", "x"), spatial_axes=("z", "y", "x"))
+    ortho = OrthoViewer(
+        [("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")],
+        spatial_axes=("z", "y", "x"),
+    )
     channels = {
         0: ChannelAppearance(color_map="red", clim=(0.0, 1.0)),
         1: ChannelAppearance(color_map="green", clim=(0.0, 1.0)),

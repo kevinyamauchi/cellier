@@ -1,0 +1,190 @@
+"""``BaseVisual.transform`` is a v2 ``data -> world`` transform (Phase 3).
+
+D18 forbids a coordinate-system-less identity, so the model field has no
+default: a visual built before it reaches a scene does not yet know which
+world it is going into.  ``CellierController.add_visual`` decides, and these
+tests pin what it decides.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from cellier.controller import CellierController
+from cellier.data._axes import default_data_to_world, transform_from_v1
+from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.render.visuals._image import (
+    _check_transform_no_rotation,
+    _norm_size_from_transform,
+)
+from cellier.scene.dims import spatial_axes
+from cellier.transform import AffineTransform as V1Affine
+from cellier.transform_v2 import AffineTransform
+from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
+from tests._v2 import bound, scale_and_translation, systems
+
+
+def _appearance():
+    return InMemoryImageAppearance(color_map="gray", clim=(0.0, 1.0))
+
+
+def _controller_and_scene(axes=None):
+    controller = CellierController(gui="offscreen")
+    scene = controller.add_scene(
+        coordinate_system=axes or spatial_axes("z", "y", "x"), dim="3d"
+    )
+    return controller, scene
+
+
+# ---------------------------------------------------------------------------
+# The default
+# ---------------------------------------------------------------------------
+
+
+def test_an_unplaced_visual_has_no_transform():
+    visual = ImageVisual(
+        name="i",
+        data_store_id=str(ImageMemoryStore(data=np.zeros((2, 2, 2))).id),
+        appearance=_appearance(),
+    )
+    assert visual.transform is None
+
+
+def test_add_visual_builds_the_identity_between_the_two_systems():
+    controller, scene = _controller_and_scene()
+    store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
+    visual = controller.add_image(
+        data=store, scene_id=scene.id, appearance=_appearance()
+    )
+    transform = visual.transform
+    assert isinstance(transform, AffineTransform)
+    assert transform.input_coordinate_system == store.data_coordinate_system.id
+    assert transform.output_coordinate_system == scene.dims.world_coordinate_system.id
+    np.testing.assert_array_equal(transform.matrix, np.eye(4))
+
+
+def test_a_sub_rank_dataset_is_broadcast_over_the_leading_world_axes():
+    """Design 3.8 / D25: "exists at every T" is not the same claim as "sits at
+    T = 0", and a zero row alone cannot tell them apart."""
+    data, _ = systems(3, ("z", "y", "x"))
+    _, world = systems(4, ("t", "z", "y", "x"))
+    transform = default_data_to_world(data, world)
+    assert transform.matrix.shape == (5, 4)
+    assert transform.broadcast_axes == frozenset({world.axes[0].id})
+
+
+def test_a_wider_dataset_projects_its_leading_axes_away():
+    """A multichannel store's channel axis is composited by the visual and
+    never reaches the world.  ``from_axis_map`` cannot express a dropped input
+    axis, so the matrix is built directly."""
+    data, _ = systems(4, ("c", "z", "y", "x"))
+    _, world = systems(3, ("z", "y", "x"))
+    transform = default_data_to_world(data, world)
+    assert transform.matrix.shape == (4, 5)
+    # The channel column is zero: nothing in the world moves with it.
+    np.testing.assert_array_equal(transform.linear[:, 0], np.zeros(3))
+
+
+# ---------------------------------------------------------------------------
+# The v1 migration affordance
+# ---------------------------------------------------------------------------
+
+
+def test_a_v1_transform_is_accepted_and_gets_its_endpoints_named():
+    controller, scene = _controller_and_scene()
+    store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
+    visual = controller.add_image(
+        data=store,
+        scene_id=scene.id,
+        appearance=_appearance(),
+        transform=V1Affine.from_scale((2.0, 3.0, 4.0)),
+    )
+    assert isinstance(visual.transform, AffineTransform)
+    np.testing.assert_allclose(np.diag(visual.transform.matrix), [2.0, 3.0, 4.0, 1.0])
+    assert visual.transform.input_coordinate_system == (store.data_coordinate_system.id)
+
+
+def test_a_v1_transform_of_the_wrong_rank_is_refused_with_a_reason():
+    data, world = systems(3, ("z", "y", "x"))
+    with pytest.raises(ValueError, match="from_axis_map"):
+        transform_from_v1(np.eye(5), data, world)
+
+
+def test_a_transform_built_against_other_systems_is_refused():
+    """A v2 transform names its endpoints, so a foreign one describes a
+    different space -- and composing it would silently join two worlds."""
+    controller, scene = _controller_and_scene()
+    store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
+    foreign = scale_and_translation((2.0, 2.0, 2.0))
+    with pytest.raises(ValueError, match="names its endpoints"):
+        controller.add_image(
+            data=store,
+            scene_id=scene.id,
+            appearance=_appearance(),
+            transform=foreign,
+        )
+
+
+def test_a_transform_built_against_the_right_systems_is_kept():
+    controller, scene = _controller_and_scene()
+    store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
+    transform = bound(controller, scene.id, store, (2.0, 2.0, 2.0))
+    visual = controller.add_image(
+        data=store,
+        scene_id=scene.id,
+        appearance=_appearance(),
+        transform=transform,
+    )
+    assert visual.transform is transform
+
+
+# ---------------------------------------------------------------------------
+# The shader guards, redefined for a non-square transform (P10 / F0.6)
+# ---------------------------------------------------------------------------
+
+
+def test_the_rotation_guard_accepts_a_non_square_transform():
+    """It used to ask whether ``matrix[:nd, :nd]`` was diagonal, which is not
+    a well-formed question when the two ranks differ."""
+    data, _ = systems(3, ("z", "y", "x"))
+    _, world = systems(4, ("t", "z", "y", "x"))
+    _check_transform_no_rotation(default_data_to_world(data, world))
+
+
+def test_the_rotation_guard_still_rejects_a_shear():
+    data, world = systems(3, ("z", "y", "x"))
+    matrix = np.eye(4)
+    matrix[1, 0] = 0.5
+    with pytest.raises(ValueError, match="rotation or shear"):
+        _check_transform_no_rotation(AffineTransform.from_matrix(matrix, data, world))
+
+
+def test_the_rotation_guard_rejects_a_permutation():
+    """A permuted ``data -> world`` reaches the brick shader as a permuted
+    node matrix, which its diagonal ``norm_to_voxel`` cannot express.  A
+    permuted *rendered* system is a different thing and is not rejected --
+    it never touches this transform (design 3.14)."""
+    data, world = systems(3, ("z", "y", "x"))
+    matrix = np.zeros((4, 4))
+    matrix[0, 1] = matrix[1, 0] = matrix[2, 2] = matrix[3, 3] = 1.0
+    with pytest.raises(ValueError, match="permutes its axes"):
+        _check_transform_no_rotation(AffineTransform.from_matrix(matrix, data, world))
+
+
+def test_the_norm_size_matches_what_the_column_norms_gave():
+    """The numbers are unchanged: on a diagonal transform the single entry per
+    displayed axis is the column norm the old ``select_axes`` path computed."""
+    transform = scale_and_translation((2.0, 0.5, 0.5), labels=("z", "y", "x"))
+    dataset_size_xyz = np.array([256.0, 256.0, 64.0])
+    norm = _norm_size_from_transform(transform, (0, 1, 2), dataset_size_xyz)
+    # physical extent (x, y, z) = (128, 128, 128) -> all equal, longest is 1.
+    np.testing.assert_allclose(norm, [1.0, 1.0, 1.0])
+
+
+def test_the_norm_size_is_well_defined_on_a_non_square_transform():
+    data, _ = systems(3, ("z", "y", "x"))
+    _, world = systems(4, ("t", "z", "y", "x"))
+    transform = default_data_to_world(data, world)
+    norm = _norm_size_from_transform(transform, (1, 2, 3), np.array([64.0, 64.0, 64.0]))
+    np.testing.assert_allclose(norm, [1.0, 1.0, 1.0])

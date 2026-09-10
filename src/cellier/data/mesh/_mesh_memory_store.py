@@ -266,18 +266,25 @@ class MeshMemoryStore(BaseDataStore):
         indices = self.indices  # (n_faces, 3)
         colors = self.colors
         n_vertices = positions.shape[0]
-        displayed = list(request.displayed_axes)
+        # Ascending: the uploaded vertex buffer's axis order is the data's,
+        # and a display permutation lives in the node matrix (design 3.14).
+        displayed = sorted(request.displayed_axes)
         n_display = len(displayed)
 
         # ── Phase 1: build slab mask ─────────────────────────────────
-        face_mask = np.ones(self.n_faces, dtype=bool)
-
-        for axis, idx in request.slice_indices.items():
-            lo = float(idx) - request.thickness
-            hi = float(idx) + request.thickness
-            # Include face only if ALL vertices are in the slab on this axis.
-            vertex_in = (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-            face_mask &= vertex_in[indices].all(axis=1)
+        if request.region is not None:
+            # The region is the filter (design 3.12).  A face survives when
+            # all three of its vertices do, which is the rule the per-axis
+            # loop applied one axis at a time.
+            face_mask = request.region.contains(positions)[indices].all(axis=1)
+        else:
+            face_mask = np.ones(self.n_faces, dtype=bool)
+            for axis, idx in request.slice_indices.items():
+                lo = float(idx) - request.thickness
+                hi = float(idx) + request.thickness
+                # Include a face only if ALL its vertices are in the slab.
+                vertex_in = (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
+                face_mask &= vertex_in[indices].all(axis=1)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

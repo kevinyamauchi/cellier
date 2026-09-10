@@ -12,7 +12,7 @@ from cellier.data.image._zarr_multiscale_store import (
     MultiscaleZarrDataStore,
 )
 from cellier.gui.qt.visuals._lod_bias import QtLodBiasSlider
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance
 
@@ -34,7 +34,7 @@ def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
 
 def _make_controller_with_visual(small_zarr_store, initial_lod_bias=1.0):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
     appearance = MultiscaleImageAppearance(

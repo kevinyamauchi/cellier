@@ -25,6 +25,7 @@ from cellier.convenience.layout._anywidget_renderer import _RenderView
 from cellier.convenience.layout._spec import Grid, HStack, VStack
 from cellier.convenience.layout._walk import render_center
 from cellier.data.image._image_memory_store import ImageMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
@@ -59,7 +60,11 @@ class _FakeLeaf:
 def _multichannel_viewer():
     data = np.random.default_rng(0).random((3, 2, 16, 16)).astype(np.float32)
     store = ImageMemoryStore(data=data)
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")],
+        dim="2d",
+        gui="anywidget",
+    )
     channels = {
         0: ChannelAppearance(color_map="red", clim=(0.0, 1.0)),
         1: ChannelAppearance(color_map="green", clim=(0.0, 1.0)),
@@ -88,7 +93,11 @@ def test_render_channel_controls_builds_and_registers_widget():
 def test_render_channel_controls_none_without_config():
     data = np.random.default_rng(0).random((3, 2, 16, 16)).astype(np.float32)
     store = ImageMemoryStore(data=data)
-    viewer = Viewer(("z", "c", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(
+        [("z", "space"), ("c", "channel"), ("y", "space"), ("x", "space")],
+        dim="2d",
+        gui="anywidget",
+    )
     viewer.add_multichannel_image(
         store,
         channel_axis=1,
@@ -104,7 +113,7 @@ def test_render_channel_controls_none_without_config():
 
 def test_appearance_controls_none_without_any_config():
     store = ImageMemoryStore(data=np.zeros((8, 16, 16), dtype=np.float32))
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     viewer.add_image(
         store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),

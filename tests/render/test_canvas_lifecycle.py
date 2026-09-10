@@ -16,7 +16,7 @@ import weakref
 import pytest
 
 from cellier.controller import CellierController
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 
 def _controller_with_canvas(qtbot) -> CellierController:
@@ -24,7 +24,7 @@ def _controller_with_canvas(qtbot) -> CellierController:
     controller = CellierController()
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )
@@ -104,7 +104,7 @@ def test_controller_close_closes_every_canvas(qtbot):
     controller = CellierController()
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )
@@ -154,7 +154,7 @@ def test_close_releases_canvas_for_both_guis(qtbot, gui):
     controller = CellierController(gui=gui)
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )

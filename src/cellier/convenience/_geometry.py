@@ -41,7 +41,7 @@ def _axis_ranges_from_scene(
     ValueError
         If no qualifying visuals are found in the scene.
     """
-    ndim = len(scene.dims.coordinate_system.axis_labels)
+    ndim = len(scene.dims.axis_labels)
 
     world_mins = np.full(ndim, np.inf)
     world_maxs = np.full(ndim, -np.inf)

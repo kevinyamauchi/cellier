@@ -100,10 +100,10 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     SceneManager.
     """
     from cellier.controller import CellierController
-    from cellier.scene.dims import CoordinateSystem
+    from cellier.scene.dims import spatial_axes, world_coordinate_system
 
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(
         dim="3d",
         coordinate_system=cs,
@@ -125,7 +125,7 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     # Spy on get_node_for_dims.
     calls = []
     original = gfx_visual.get_node_for_dims
-    gfx_visual.get_node_for_dims = lambda axes: (calls.append(axes) or original(axes))
+    gfx_visual.get_node_for_dims = lambda axes: calls.append(axes) or original(axes)
 
     # Trigger a dim toggle.
     scene.dims.selection.displayed_axes = (1, 2)

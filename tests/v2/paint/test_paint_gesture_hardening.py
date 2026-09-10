@@ -20,7 +20,7 @@ from cellier.events._events import (
     CanvasMouseRelease2DEvent,
     CanvasPickInfo,
 )
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 
@@ -28,7 +28,7 @@ from cellier.visuals._image_memory import InMemoryImageAppearance
 def paint_setup(qtbot):
     """Build a 2D scene/canvas/visual and a SyncPaintController."""
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(
         dim="2d",
         coordinate_system=cs,

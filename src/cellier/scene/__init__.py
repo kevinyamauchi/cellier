@@ -10,19 +10,28 @@ from cellier.scene.cameras import (
     PerspectiveCamera,
 )
 from cellier.scene.canvas import Canvas
-from cellier.scene.dims import CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    DEFAULT_HALF_THICKNESS,
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 
 __all__ = [
+    "DEFAULT_HALF_THICKNESS",
+    "AxisAlignedSelection",
     "BackgroundAppearance",
     "CameraControllerType",
     "CameraType",
     "Canvas",
-    "CoordinateSystem",
     "DimsManager",
     "OrbitCameraController",
     "OrthographicCamera",
     "PanZoomCameraController",
     "PerspectiveCamera",
     "Scene",
+    "spatial_axes",
+    "world_coordinate_system",
 ]

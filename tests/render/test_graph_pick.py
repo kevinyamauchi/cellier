@@ -204,13 +204,15 @@ def test_pick_falls_back_to_rows_without_a_store():
 def test_render_manager_routes_graph_picks(qtbot):
     """The pick-details branch reaches the visual through the scene manager."""
     from cellier.controller import CellierController
-    from cellier.scene.dims import CoordinateSystem
+    from cellier.scene.dims import spatial_axes, world_coordinate_system
 
     controller = CellierController()
     controller.camera_reslice_enabled = False
     scene = controller.add_scene(
         dim="3d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         name="main",
     )
     controller.add_canvas(scene_id=scene.id)

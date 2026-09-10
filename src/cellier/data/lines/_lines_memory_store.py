@@ -178,24 +178,30 @@ class LinesMemoryStore(BaseDataStore):
         positions = self.positions  # (n_vertices, ndim)
         colors = self.colors  # (n_vertices, 4) or None
         n_vertices = positions.shape[0]
-        displayed = list(request.displayed_axes)
+        # Ascending: the uploaded vertex buffer's axis order is the data's,
+        # and a display permutation lives in the node matrix (design 3.14).
+        displayed = sorted(request.displayed_axes)
 
         # ── Phase 1: build per-vertex slab mask, then require both
         #             endpoints of each segment to pass ───────────────
-        if request.slice_indices:
+        if request.region is not None:
+            # The region is the filter (design 3.12).  A 3-D view's region is
+            # unbounded, so ``contains`` is all-True and every segment
+            # survives -- the same outcome the ``slice_indices``-is-empty
+            # branch produced, by one rule instead of two.
+            vertex_mask = request.region.contains(positions)
+        elif request.slice_indices:
             vertex_mask = np.ones(n_vertices, dtype=bool)
             for axis, idx in request.slice_indices.items():
                 lo = float(idx) - request.thickness
                 hi = float(idx) + request.thickness
                 vertex_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-            # Reshape to (n_segments, 2) and require BOTH endpoints True.
-            segment_mask = vertex_mask.reshape(-1, 2).all(axis=1)  # (n_segments,)
-            surviving_edges = np.where(segment_mask)[0]
-            vertex_mask = np.repeat(segment_mask, 2)  # (n_vertices,)
         else:
-            # 3D view — all segments survive.
             vertex_mask = np.ones(n_vertices, dtype=bool)
-            surviving_edges = np.arange(n_vertices // 2)
+        # Reshape to (n_segments, 2) and require BOTH endpoints True.
+        segment_mask = vertex_mask.reshape(-1, 2).all(axis=1)  # (n_segments,)
+        surviving_edges = np.where(segment_mask)[0]
+        vertex_mask = np.repeat(segment_mask, 2)  # (n_vertices,)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

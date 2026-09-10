@@ -14,6 +14,7 @@ import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, Field, PrivateAttr
 
+from cellier.data._axes import install_level_systems
 from cellier.data._base_data_store import BaseDataStore
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._axis_info import AxisInfo
@@ -341,6 +342,12 @@ class OMEZarrImageDataStore(BaseDataStore):
         self._ts_stores = _open_ome_ts_stores(
             self.zarr_path, self.scale_names, anonymous=self.anonymous
         )
+        # NGFF already carries the axis names, types and units this store
+        # needs, so its coordinate systems are a strict information gain over
+        # the labels-only world it used to hand the scene.  An empty ``type``
+        # raises rather than defaulting to ``"space"``: the metadata had a
+        # slot for it and left it blank, which is a defect in the dataset.
+        install_level_systems(self, self.axis_names, self.axis_types, self.axis_units)
 
     # ── Convenience constructor ─────────────────────────────────────────
 

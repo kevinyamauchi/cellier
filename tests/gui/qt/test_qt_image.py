@@ -27,7 +27,7 @@ from cellier.gui.qt.visuals._image import (
     QtRenderModeCombo,
     QtVolumeRenderControls,
 )
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance
 
@@ -49,7 +49,7 @@ def _make_multiscale_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStor
 
 def _make_volume_visual(small_zarr_store, **appearance_kwargs):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_multiscale_store(small_zarr_store)
     defaults = {"color_map": "viridis", "render_mode": "mip"}

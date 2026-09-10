@@ -21,6 +21,7 @@ import pytest
 from cellier.convenience._hosts import QtLayoutHost
 from cellier.convenience.layout._walk import render_dock
 from cellier.data._dataset_info import DatasetInfo, MatrixSection, RowSection
+from cellier.scene.dims import spatial_axes
 
 _MESH_POSITIONS = np.array(
     [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32
@@ -40,7 +41,7 @@ def _viewer(gui: str, *, configure_controls: bool = False):
     from cellier.convenience import MeshControlsConfig, Viewer
     from cellier.visuals._mesh_memory import MeshFlatAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui=gui)
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui=gui)
     viewer.add_mesh(
         _mesh_store(),
         appearance=MeshFlatAppearance(),
@@ -399,7 +400,7 @@ def _ortho_viewer(gui: str):
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = OrthoViewer(("z", "y", "x"), gui=gui)
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui=gui)
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(8, 8, 8).astype(np.float32)),
         appearance=InMemoryImageAppearance(color_map=cmap.Colormap("gray")),
@@ -466,7 +467,7 @@ def _toggle_viewer(gui: str):
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui=gui)
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui=gui)
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(8, 8, 8).astype(np.float32)),
         appearance=InMemoryImageAppearance(color_map=cmap.Colormap("gray")),
@@ -479,7 +480,7 @@ def _toggled_to_2d(gui: str):
 
     Returns ``(selection, displayed, label, centre)`` -- the scene's selection
     after the toggle, what the panel believes it is showing, the button text,
-    and the index a centred slice on the hidden axis should have.
+    and the world position a centred slice on the hidden axis should have.
     """
     from cellier.convenience import axis_ranges_from_viewer
     from cellier.convenience.gui import build_canvas_widget
@@ -487,7 +488,9 @@ def _toggled_to_2d(gui: str):
     viewer = _toggle_viewer(gui)
     axis_ranges = axis_ranges_from_viewer(viewer)
     low, high = axis_ranges[0]
-    centre = round((low + high) / 2.0)
+    # Not rounded: a slice position is a world coordinate, not a voxel
+    # index (D3), so the midpoint of an even-length axis is a half.
+    centre = (low + high) / 2.0
 
     # Held, not dropped: the canvas widget owns the Qt sliders, and letting it
     # be collected deletes them out from under the control.

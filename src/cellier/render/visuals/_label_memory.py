@@ -11,6 +11,7 @@ import pygfx as gfx
 import cellier.render.shaders._label_volume  # noqa: F401
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.shaders._label_colormap import (
     build_direct_lut_textures,
     build_label_params_buffer,
@@ -21,7 +22,7 @@ from cellier.render.visuals._image_memory import (
     _box_wireframe_positions,
     _build_axis_selections_memory,
     _make_aabb_line,
-    _pygfx_matrix,
+    _plan_from_region,
     _rect_wireframe_positions,
     _transform_slice_indices,
 )
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
+    from cellier.transform_v2 import AffineTransform, RegionSelection
     from cellier.visuals._label_memory import LabelMemoryVisual
 
 
@@ -80,15 +81,17 @@ class GFXLabelMemoryVisual:
         self.render_modes: set[str] = render_modes
         self._data_store = data_store
 
-        if transform is None:
-            from cellier.transform import AffineTransform as _AT
+        # The data -> world transform.  There is no coordinate-system-less
+        # identity to fall back on (D18); the controller supplies one.
+        self._transform: AffineTransform | None = transform
 
-            transform = _AT.identity(ndim=data_store.ndim)
-        elif transform.ndim < data_store.ndim:
-            transform = transform.expand_dims(data_store.ndim)
-        self._transform: AffineTransform = transform
-
+        # The systems this visual's geometry is placed with, pushed by the
+        # controller.  ``None`` until the scene has a canvas.
+        self._spaces: RenderSpaces | None = None
         self._last_displayed_axes: tuple[int, ...] | None = None
+        # The collapsed voxel index per dropped data axis, refreshed on every
+        # planned request (design 3.9).
+        self._collapsed_indices: dict[int, float] = {}
         self._data_ready_2d: bool = False
         self._data_ready_3d: bool = False
 
@@ -215,10 +218,29 @@ class GFXLabelMemoryVisual:
     # Node matrix
     # ------------------------------------------------------------------
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with."""
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
+        """Place the nodes with the composition of design 3.9.
+
+        ``visual -> data -> world -> rendered``, replacing the ``select_axes``
+        sub-block.  A no-op until the controller supplies the systems.
+        """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-        m = _pygfx_matrix(sub)
+        if self._spaces is None or self._transform is None:
+            return
+        m = node_matrix(
+            self._spaces,
+            self._transform,
+            {
+                axis: float(self._collapsed_indices.get(axis, 0.0))
+                for axis in self._spaces.collapsed_axes
+            },
+        )
         if self.node_3d is not None:
             self.node_3d.local.matrix = m
         if self.node_2d is not None:
@@ -265,6 +287,39 @@ class GFXLabelMemoryVisual:
     # Slice request planning
     # ------------------------------------------------------------------
 
+    def _axis_selections(
+        self, dims_state: DimsState, selection: RegionSelection | None
+    ) -> tuple[int | tuple[int, int], ...]:
+        """Plan one request's per-axis selection, and record where it collapsed.
+
+        Prefers the ``RegionSelection`` the controller built (design 3.7);
+        falls back to ``dims_state`` for a visual driven headlessly or one
+        whose scene has no rendered coordinate system yet.  The two agree
+        exactly for the axis-aligned, zero-thickness selections that reach
+        this path today.
+        """
+        shape = self._data_store.shape
+        if selection is not None and self._spaces is not None:
+            axis_selections, collapsed = _plan_from_region(
+                selection, self._transform, self._spaces.world, shape
+            )
+            self._collapsed_indices = collapsed
+            return axis_selections
+        transformed_indices = _transform_slice_indices(
+            dims_state.selection.slice_indices, self._transform, shape
+        )
+        self._collapsed_indices = dict(transformed_indices)
+        return _build_axis_selections_memory(
+            DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
+            ),
+            shape,
+        )
+
     def build_slice_request_2d(
         self,
         camera_pos_world,
@@ -276,26 +331,12 @@ class GFXLabelMemoryVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         displayed = dims_state.selection.displayed_axes
+        axis_selections = self._axis_selections(dims_state, selection)
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-
-        transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices,
-            self._transform,
-            self._data_store.shape,
-        )
-        transformed_dims = DimsState(
-            axis_labels=dims_state.axis_labels,
-            selection=AxisAlignedSelectionState(
-                displayed_axes=dims_state.selection.displayed_axes,
-                slice_indices=transformed_indices,
-            ),
-        )
-        axis_selections = _build_axis_selections_memory(
-            transformed_dims, self._data_store.shape
-        )
         return [
             ChunkRequest(
                 chunk_request_id=uuid4(),
@@ -314,6 +355,7 @@ class GFXLabelMemoryVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         if dims_state is None:
             ndim = self._data_store.ndim
@@ -322,24 +364,9 @@ class GFXLabelMemoryVisual:
             )
         else:
             displayed = dims_state.selection.displayed_axes
+            axis_selections = self._axis_selections(dims_state, selection)
             if displayed != self._last_displayed_axes:
                 self._update_node_matrix(displayed)
-
-            transformed_indices = _transform_slice_indices(
-                dims_state.selection.slice_indices,
-                self._transform,
-                self._data_store.shape,
-            )
-            transformed_dims = DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            )
-            axis_selections = _build_axis_selections_memory(
-                transformed_dims, self._data_store.shape
-            )
         return [
             ChunkRequest(
                 chunk_request_id=uuid4(),

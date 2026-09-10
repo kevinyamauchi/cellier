@@ -10,7 +10,7 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.paint._history import PaintStrokeCommand
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ def paint_setup(qtbot):
     within ``_write_values``, and a running loop is required.
     """
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("y", "x"))
+    cs = world_coordinate_system(spatial_axes("y", "x"), name="world")
     scene = controller.add_scene(
         dim="2d",
         coordinate_system=cs,
@@ -183,7 +183,7 @@ async def test_add_paint_controller_unsupported_store_raises(qtbot):
     from cellier.visuals._points_memory import PointsMarkerAppearance
 
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("y", "x"))
+    cs = world_coordinate_system(spatial_axes("y", "x"), name="world")
     scene = controller.add_scene(
         dim="2d",
         coordinate_system=cs,

@@ -19,7 +19,11 @@ import tensorstore as ts
 
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.events._events import ChannelAppearanceChangedEvent
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image import MultiscaleImageRenderConfig
@@ -78,14 +82,16 @@ def multichannel_store(tmp_path) -> MultiscaleZarrDataStore:
 
 def _make_scene(controller, dim: str) -> Scene:
     """Add a CZYX scene with the channel axis marked as a stacked (composited) axis."""
-    cs = CoordinateSystem(name="world", axis_labels=("c", "z", "y", "x"))
+    cs = world_coordinate_system(
+        [("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")], name="world"
+    )
     displayed = (1, 2, 3) if dim == "3d" else (2, 3)
     slice_indices = {} if dim == "3d" else {1: 8}
     return controller.add_scene_model(
         Scene(
             name="main",
             dims=DimsManager(
-                coordinate_system=cs,
+                world_coordinate_system=cs,
                 selection=AxisAlignedSelection(
                     displayed_axes=displayed,
                     slice_indices=slice_indices,

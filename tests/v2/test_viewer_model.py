@@ -3,7 +3,12 @@
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
@@ -43,9 +48,9 @@ def _build_viewer(small_zarr_store):
         appearance=appearance,
     )
 
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=(0, 1, 2),
             slice_indices={},
@@ -78,7 +83,7 @@ def test_viewer_model_roundtrip(tmp_path, small_zarr_store):
 
 
 def test_viewer_model_worked_example(tmp_path, small_zarr_store):
-    viewer, store, scene, canvas = _build_viewer(small_zarr_store)
+    viewer, _store, _scene, _canvas = _build_viewer(small_zarr_store)
 
     viewer.to_file(tmp_path / "session.json")
     deserialized = ViewerModel.from_file(tmp_path / "session.json")

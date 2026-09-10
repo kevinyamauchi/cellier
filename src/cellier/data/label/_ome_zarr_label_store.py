@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field, PrivateAttr
 if TYPE_CHECKING:
     import tensorstore as ts
 
+from cellier.data._axes import install_level_systems
 from cellier.data._base_data_store import BaseDataStore
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._ome_zarr_image_store import _validate_uri_scheme
@@ -86,6 +87,10 @@ class OMEZarrLabelDataStore(BaseDataStore):
         self._ts_stores = _open_ome_ts_stores(
             self.zarr_path, self.scale_names, anonymous=self.anonymous
         )
+        # Same reasoning as OMEZarrImageDataStore: NGFF states the axis
+        # names, types and units, and an empty type raises rather than
+        # defaulting.
+        install_level_systems(self, self.axis_names, self.axis_types, self.axis_units)
 
     # ── Convenience constructors ────────────────────────────────────────
 

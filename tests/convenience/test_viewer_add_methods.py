@@ -17,6 +17,7 @@ from cellier.convenience.gui import (
     InMemoryImageControlsConfig,
     MultiscaleImageControlsConfig,
 )
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
@@ -41,7 +42,7 @@ def _n_stores(viewer: Viewer) -> int:
 
 
 def test_add_labels_registers_visual(labels_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_labels(
         labels_store, appearance=InMemoryLabelsAppearance(), name="lbl"
     )
@@ -51,20 +52,20 @@ def test_add_labels_registers_visual(labels_store):
 
 
 def test_add_labels_defaults_appearance_when_none(labels_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_labels(labels_store)
     assert visual.id in _visual_ids(viewer)
 
 
 def test_add_mesh_flat(mesh_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_mesh(mesh_store, appearance=MeshFlatAppearance(), name="m")
     assert visual.name == "m"
     assert visual.id in _visual_ids(viewer)
 
 
 def test_add_mesh_phong(mesh_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     # A phong mesh in a scene without lighting warns (renders black otherwise).
     with pytest.warns(UserWarning, match="requires lights"):
         visual = viewer.add_mesh(mesh_store, appearance=MeshPhongAppearance())
@@ -72,7 +73,7 @@ def test_add_mesh_phong(mesh_store):
 
 
 def test_add_points(points_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_points(
         points_store, appearance=PointsMarkerAppearance(), name="pts"
     )
@@ -81,13 +82,13 @@ def test_add_points(points_store):
 
 
 def test_add_points_defaults_appearance_when_none(points_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_points(points_store)
     assert visual.id in _visual_ids(viewer)
 
 
 def test_add_lines(lines_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_lines(
         lines_store, appearance=LinesMemoryAppearance(), name="ln"
     )
@@ -96,7 +97,7 @@ def test_add_lines(lines_store):
 
 
 def test_add_lines_defaults_appearance_when_none(lines_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_lines(lines_store)
     assert visual.id in _visual_ids(viewer)
 
@@ -107,7 +108,7 @@ def test_add_lines_defaults_appearance_when_none(lines_store):
 
 
 def test_add_image_multiscale(multiscale_image_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
@@ -118,7 +119,7 @@ def test_add_image_multiscale(multiscale_image_store):
 
 
 def test_add_labels_multiscale(multiscale_labels_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_labels_multiscale(
         multiscale_labels_store,
         appearance=MultiscaleLabelsAppearance(),
@@ -129,7 +130,7 @@ def test_add_labels_multiscale(multiscale_labels_store):
 
 
 def test_add_multichannel_image_multiscale(multichannel_multiscale_store):
-    viewer = Viewer(("c", "z", "y", "x"))
+    viewer = Viewer([("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")])
     channels = {
         0: ChannelAppearance(color_map="red", clim=(0.0, 1.0)),
         1: ChannelAppearance(color_map="green", clim=(0.0, 1.0)),
@@ -148,7 +149,7 @@ def test_add_multichannel_image_multiscale(multichannel_multiscale_store):
 def test_add_multichannel_image_multiscale_records_controls(
     multichannel_multiscale_store,
 ):
-    viewer = Viewer(("c", "z", "y", "x"))
+    viewer = Viewer([("c", "channel"), ("z", "space"), ("y", "space"), ("x", "space")])
     channels = {
         0: ChannelAppearance(color_map="red", clim=(0.0, 1.0)),
         1: ChannelAppearance(color_map="green", clim=(0.0, 1.0)),
@@ -168,7 +169,7 @@ def test_add_multichannel_image_multiscale_records_controls(
 
 
 def test_add_image_accepts_registered_store_uuid(image_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     visual = viewer.add_image(
         image_store.id,
@@ -179,14 +180,14 @@ def test_add_image_accepts_registered_store_uuid(image_store):
 
 
 def test_on_ready_registers_callback(image_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     called = []
     viewer.on_ready(lambda: called.append(True))
     assert viewer._ready_callbacks and viewer._ready_callbacks[-1] is not None
 
 
 def test_add_image_records_controls_config(image_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -196,7 +197,7 @@ def test_add_image_records_controls_config(image_store):
 
 
 def test_add_image_multiscale_records_controls_config(multiscale_image_store):
-    viewer = Viewer(("z", "y", "x"))
+    viewer = Viewer(spatial_axes("z", "y", "x"))
     visual = viewer.add_image_multiscale(
         multiscale_image_store,
         appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
@@ -206,7 +207,7 @@ def test_add_image_multiscale_records_controls_config(multiscale_image_store):
 
 
 def test_add_canvas_returns_widget_anywidget(image_store):
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
@@ -218,14 +219,14 @@ def test_add_canvas_returns_widget_anywidget(image_store):
 def test_from_file_rejects_multi_scene_model(tmp_path, image_store):
     """A model with two scenes is not a valid single-scene Viewer file."""
     controller = CellierController()
-    from cellier.scene.dims import CoordinateSystem
+    from cellier.scene.dims import spatial_axes, world_coordinate_system
 
     for name in ("a", "b"):
         controller.add_scene(
             name=name,
             dim="2d",
-            coordinate_system=CoordinateSystem(
-                name="world", axis_labels=("z", "y", "x")
+            coordinate_system=world_coordinate_system(
+                spatial_axes("z", "y", "x"), name="world"
             ),
         )
     path = tmp_path / "multi.json"

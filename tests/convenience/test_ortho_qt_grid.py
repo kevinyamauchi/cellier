@@ -12,21 +12,22 @@ import pytest
 pytest.importorskip("qtpy")
 pytest.importorskip("superqt")
 
-from cellier.convenience import (  # noqa: E402
+from cellier.convenience import (
     OrthoViewer,
     axis_ranges_from_ortho,
 )
-from cellier.convenience.gui import (  # noqa: E402
+from cellier.convenience.gui import (
     OrthoCanvasWidgets,
     build_ortho_grid_widget,
 )
-from cellier.visuals._image_memory import InMemoryImageAppearance  # noqa: E402
+from cellier.scene.dims import spatial_axes
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 _PANELS = {"xy", "xz", "yz", "vol"}
 
 
 def _ortho_with_image(image_store, gui="qt"):
-    ortho = OrthoViewer(("z", "y", "x"), gui=gui)
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"), gui=gui)
     ortho.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),

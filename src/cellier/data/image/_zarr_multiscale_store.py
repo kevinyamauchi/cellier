@@ -234,6 +234,18 @@ class MultiscaleZarrDataStore(BaseDataStore):
         return len(self._ts_stores)
 
     @property
+    def ndim(self) -> int:
+        """Number of data dimensions, read off the level-0 handle.
+
+        This store carries no axis metadata -- unlike the OME-Zarr readers it
+        is constructed from bare scale and translation vectors, and there is
+        nowhere for a name, type or unit to live.  So it cannot build its own
+        ``data_coordinate_systems``; it reports its rank and takes the axes of
+        the scene it is added to.
+        """
+        return len(self._ts_stores[0].domain.shape)
+
+    @property
     def level_shapes(self) -> list[tuple[int, ...]]:
         """Shape for each scale level, finest first."""
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]

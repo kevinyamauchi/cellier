@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
     import numpy as np
 
+    from cellier.transform_v2 import ConvexRegion
+
 
 class LinesSliceRequest(NamedTuple):
     """Request for one slab-filtered slice of line-segment data.
@@ -37,6 +39,17 @@ class LinesSliceRequest(NamedTuple):
         is included when **both** of its endpoints satisfy
         ``slice_index - thickness <= coord <= slice_index + thickness``
         on every non-displayed axis.  Default 0.5.
+    region : ConvexRegion or None
+        The selected region, already pulled back into **data** coordinates
+        (design 3.12).  When present it is the whole filter -- one
+        ``contains`` call replaces the per-axis mask loop -- and
+        ``slice_indices`` / ``thickness`` are ignored.
+
+        Those two remain for a visual the controller has not placed, which is
+        every headlessly constructed one.  They compare a **world** position
+        against **data** coordinates, which is the latent bug D4 exists to
+        fix: on a 2 um z spacing they can show a point 24 um off the slice
+        plane and hide the three that are on it.
     """
 
     slice_request_id: UUID
@@ -45,6 +58,7 @@ class LinesSliceRequest(NamedTuple):
     displayed_axes: tuple[int, ...]
     slice_indices: dict[int, int]
     thickness: float = 0.5
+    region: ConvexRegion | None = None
 
 
 @dataclass(frozen=True)

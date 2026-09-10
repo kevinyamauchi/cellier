@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
@@ -187,7 +186,8 @@ def test_graph_visual_serialization_roundtrip():
     assert restored.trail[0].before == 10.0
     assert restored.trail[0].fade is True
     assert restored.trail[0].min_alpha == 0.15
-    assert np.allclose(restored.transform.matrix, visual.transform.matrix)
+    # Unplaced on both sides: a visual outside a scene has no world to name.
+    assert restored.transform is None and visual.transform is None
 
 
 def test_visual_type_discriminator():

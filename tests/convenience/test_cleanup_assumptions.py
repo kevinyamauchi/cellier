@@ -39,6 +39,7 @@ from cellier.gui.anywidget.visuals import (
     AnywidgetAABBWidget,
     AnywidgetClimRangeSlider,
 )
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._base_visual import AABBParams, BaseVisual
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
@@ -67,7 +68,7 @@ def _two_image_viewer() -> tuple[Viewer, list]:
     Stands in for the ``OrthoViewer`` sibling group: what the fan-out tests
     need is N visuals one widget can be subscribed to, not four panels.
     """
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     visuals = [
         viewer.add_image(
             _image_store(),
@@ -327,7 +328,7 @@ def test_appearance_true_now_means_the_default_panel_in_both_renderers(qtbot):
     The assumption held while it needed to; this is the change it existed to
     make visible, not a failure of it.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_image(
         _image_store(),
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),

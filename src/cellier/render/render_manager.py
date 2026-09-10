@@ -29,6 +29,7 @@ from cellier.render.slice_coordinator import SliceCoordinator
 from cellier.slicer import AsyncSlicer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     import pygfx as gfx
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
     from cellier.scene._background import BackgroundAppearance
+    from cellier.transform_v2 import RegionSelection
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
@@ -1347,6 +1349,7 @@ class RenderManager:
         dims_state: DimsState,
         visual_configs: dict[UUID, VisualRenderConfig] | None = None,
         target_visual_ids: frozenset[UUID] | None = None,
+        selections: Mapping[UUID, RegionSelection] | None = None,
     ) -> None:
         """Reslice all visuals in one scene.
 
@@ -1361,6 +1364,10 @@ class RenderManager:
             Current dimension display state.
         visual_configs : dict[UUID, VisualRenderConfig] or None
             Per-visual render configuration.  ``None`` falls back to defaults.
+        selections : Mapping[UUID, RegionSelection] or None
+            The region each canvas is showing, keyed by canvas id.  Built by
+            the controller, which owns the rendered coordinate systems; the
+            render manager only routes them.
         target_visual_ids : frozenset[UUID] or None
             ``None`` reslices all visuals in the scene.
         """
@@ -1369,7 +1376,9 @@ class RenderManager:
         canvases = self._find_canvases_for_scene(scene_id)
         for canvas in canvases:
             request = canvas.capture_reslicing_request(
-                dims_state, target_visual_ids=target_visual_ids
+                dims_state,
+                selection=(selections or {}).get(canvas.canvas_id),
+                target_visual_ids=target_visual_ids,
             )
             self._slice_coordinator.submit(request, visual_configs)
 
@@ -1378,6 +1387,7 @@ class RenderManager:
         visual_id: UUID,
         dims_state: DimsState,
         visual_config: VisualRenderConfig | None = None,
+        selections: Mapping[UUID, RegionSelection] | None = None,
     ) -> None:
         """Reslice one visual.
 
@@ -1393,13 +1403,17 @@ class RenderManager:
             Current dimension display state.
         visual_config : VisualRenderConfig or None
             Render configuration for this visual.  ``None`` uses defaults.
+        selections : Mapping[UUID, RegionSelection] or None
+            The region each canvas is showing, keyed by canvas id.
         """
         cfg = visual_config if visual_config is not None else VisualRenderConfig()
         scene_id = self._visual_to_scene[visual_id]
         canvases = self._find_canvases_for_scene(scene_id)
         for canvas in canvases:
             request = canvas.capture_reslicing_request(
-                dims_state, target_visual_ids=frozenset({visual_id})
+                dims_state,
+                selection=(selections or {}).get(canvas.canvas_id),
+                target_visual_ids=frozenset({visual_id}),
             )
             self._slice_coordinator.submit(request, {visual_id: cfg})
 

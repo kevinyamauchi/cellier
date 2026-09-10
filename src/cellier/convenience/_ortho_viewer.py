@@ -18,8 +18,9 @@ from cellier.convenience._startup import StartupState
 from cellier.render._capture import write_png
 from cellier.scene.dims import (
     AxisAlignedSelection,
-    CoordinateSystem,
     DimsManager,
+    WorldAxesLike,
+    world_coordinate_system,
 )
 from cellier.scene.scene import Scene
 
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.transform import AffineTransform
+    from cellier.transform_v2 import WorldCoordinateSystem
     from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
@@ -198,9 +200,12 @@ class OrthoViewer(RenderSettingsMixin):
 
     Parameters
     ----------
-    axis_labels : tuple[str, ...]
-        World-axis names in order, e.g. ``("c", "z", "y", "x")``.  The number
-        of labels sets the dimensionality.  Must contain at least 3 axes.
+    axes : WorldAxesLike
+        The world axes in order: a ``WorldCoordinateSystem``, or a sequence of
+        ``Axis`` objects and/or ``(name, axis_type)`` pairs.  Their number
+        sets the dimensionality; at least 3 are required.  Axis types are
+        stated, never inferred -- a 4-D ortho viewer over a channel stack is
+        ``OrthoViewer([("c", "channel"), *spatial_axes("z", "y", "x")])``.
     spatial_axes : tuple[str, ...], tuple[int, ...], or None
         The three axes (names or indices, in ``z, y, x`` order) that form the
         orthogonal planes.  Defaults to the last three axes when ``None``.
@@ -220,7 +225,7 @@ class OrthoViewer(RenderSettingsMixin):
 
     def __init__(
         self,
-        axis_labels: tuple[str, ...],
+        axes: WorldAxesLike,
         *,
         spatial_axes: tuple[str, ...] | tuple[int, ...] | None = None,
         link_extra_axes: bool = True,
@@ -228,11 +233,11 @@ class OrthoViewer(RenderSettingsMixin):
         gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> None:
         self._controller = CellierController(render_config=render_config, gui=gui)
-        self._spatial_axes = _resolve_spatial_axes(axis_labels, spatial_axes)
-        self._ndim = len(axis_labels)
+        world = world_coordinate_system(axes)
+        self._spatial_axes = _resolve_spatial_axes(world.axis_names(), spatial_axes)
+        self._ndim = world.ndim
         self._extra_axes = {i for i in range(self._ndim) if i not in self._spatial_axes}
-        coordinate_system = CoordinateSystem(name="world", axis_labels=axis_labels)
-        self._scenes = self._build_scenes(coordinate_system)
+        self._scenes = self._build_scenes(world)
         self._syncer: _ExtraAxisSyncer | None = None
         # Per-visual controls configs, keyed by a representative (first-panel)
         # visual id; _visual_groups maps that id to every panel's sibling
@@ -250,7 +255,7 @@ class OrthoViewer(RenderSettingsMixin):
     # Scene construction
     # ------------------------------------------------------------------
 
-    def _build_scenes(self, coordinate_system: CoordinateSystem) -> dict[str, Scene]:
+    def _build_scenes(self, world: WorldCoordinateSystem) -> dict[str, Scene]:
         s0, s1, s2 = self._spatial_axes
         # displayed axes per panel; the remaining spatial axis is sliced.
         displayed_by_key: dict[str, tuple[int, ...]] = {
@@ -267,7 +272,7 @@ class OrthoViewer(RenderSettingsMixin):
             scene = Scene(
                 name=key,
                 dims=DimsManager(
-                    coordinate_system=coordinate_system,
+                    world_coordinate_system=world,
                     selection=AxisAlignedSelection(
                         displayed_axes=displayed,
                         slice_indices=slice_indices,
@@ -685,7 +690,7 @@ class OrthoViewer(RenderSettingsMixin):
             )
         scenes = {key: scenes_by_name[key] for key in _PANEL_KEYS}
         vol_displayed = tuple(scenes["vol"].dims.selection.displayed_axes)
-        ndim = len(scenes["vol"].dims.coordinate_system.axis_labels)
+        ndim = len(scenes["vol"].dims.axis_labels)
 
         obj = object.__new__(cls)
         obj._controller = controller

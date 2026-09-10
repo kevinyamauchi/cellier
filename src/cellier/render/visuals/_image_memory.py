@@ -9,9 +9,14 @@ import pygfx as gfx
 
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.shaders._image_volume import IMAGE_VOLUME_MATERIALS
 from cellier.render.visuals._pick import memory_image_data_coordinate
-from cellier.render.visuals._slicing import map_world_slice_to_voxel
+from cellier.render.visuals._slicing import (
+    axis_selections_from_box,
+    map_world_slice_to_voxel,
+    round_world_to_voxel,
+)
 
 if TYPE_CHECKING:
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -22,7 +27,11 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
+    from cellier.transform_v2 import (
+        AffineTransform,
+        RegionSelection,
+        WorldCoordinateSystem,
+    )
     from cellier.visuals._image_memory import ImageVisual
 
 
@@ -179,37 +188,76 @@ def _make_aabb_line(
     return line
 
 
-def _pygfx_matrix(transform: AffineTransform) -> np.ndarray:
-    """Embed a 2-D or 3-D AffineTransform into a pygfx-compatible 4x4 matrix.
+def _plan_from_region(
+    selection: RegionSelection,
+    transform: AffineTransform,
+    world: WorldCoordinateSystem,
+    store_shape: tuple[int, ...],
+) -> tuple[tuple[int | tuple[int, int], ...], dict[int, float]]:
+    """Pull a world-space selection into voxel space and assemble the request.
 
-    pygfx always requires a 4x4 matrix for ``node.local.matrix``.  This
-    function converts from data-axis order to pygfx/shader order and
-    places the transform into the correct positions of a 4x4 identity
-    matrix.
-
-    Data-axis order is ``(z, y, x)`` for 3D and ``(y, x)`` for 2D.
-    pygfx uses ``(x, y, z)`` order, so the spatial axes are reversed.
+    Design 3.7 steps 3 and 4.  ``imap_region`` is ``A^T`` on the normals and
+    ``d - n . t`` on the offsets: no matrix inverse, no ``select_axes``, and no
+    zero-filled probe point.  That last one is the reason to prefer it -- the
+    old path invented coordinates for the displayed axes, wrote the slice
+    positions into a zero vector and inverted, which is right for a diagonal
+    transform and an arbitrary unstated choice for anything else.
 
     Parameters
     ----------
+    selection : RegionSelection
+        The region this canvas is showing, in world coordinates.
     transform : AffineTransform
-        A transform with ``ndim`` in {1, 2, 3}.
+        The visual's ``data -> world`` transform.
+    world : WorldCoordinateSystem
+        The transform's output system.  Needed to resolve its
+        ``broadcast_axes``, which are stored as ids while the arithmetic
+        wants indices.
+    store_shape : tuple[int, ...]
+        The store's shape, one entry per data axis.
 
     Returns
     -------
-    np.ndarray
-        A ``(4, 4)`` float32 matrix.
+    tuple
+        ``(axis_selections, collapsed_indices)`` -- the request's per-axis
+        selection, and the voxel index of each axis that collapsed, which the
+        node matrix needs (design 3.9).
     """
-    nd = transform.ndim
-    src = transform.matrix
-    # Reverse axis order: data (z, y, x) → pygfx (x, y, z).
-    swap = list(reversed(range(nd)))
-    m = np.eye(4, dtype=np.float32)
-    for dst_i, src_i in enumerate(swap):
-        for dst_j, src_j in enumerate(swap):
-            m[dst_i, dst_j] = src[src_i, src_j]
-        m[dst_i, 3] = src[src_i, nd]
-    return m
+    data_region = transform.imap_region(selection.region, world).simplify()
+    box = data_region.bounding_box()
+    axis_selections = axis_selections_from_box(box, store_shape)
+    collapsed = {
+        axis: float(value)
+        for axis, value in enumerate(axis_selections)
+        if not isinstance(value, tuple)
+    }
+    return axis_selections, collapsed
+
+
+class _Pullback:
+    """Adapts a ``data -> world`` transform to the shared world->voxel mapper.
+
+    :func:`map_world_slice_to_voxel` takes a *forward* world->voxel transform
+    and calls ``map_coordinates`` on it, and the rule it encodes must survive
+    this migration unchanged.  So the adaptation happens here instead.
+
+    ``imap_coordinates`` rather than ``inverse().map_coordinates``: they are
+    the same map but not the same arithmetic.  The first computes
+    ``A^-1 (y - t)`` and the second ``(A^-1) y + (-A^-1 t)``, and on an exact
+    half-integer tie -- which ``round_world_to_voxel`` resolves toward +inf --
+    the second can land a fraction of a ULP below and round the other way.
+    A world position of 5 on a ``3 * v + 0.5`` axis is voxel 1.5 exactly, and
+    must snap to 2.
+    """
+
+    __slots__ = ("_transform",)
+
+    def __init__(self, transform: AffineTransform) -> None:
+        self._transform = transform
+
+    def map_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
+        """Pull world points back into voxel space."""
+        return self._transform.imap_coordinates(coordinates)
 
 
 def _transform_slice_indices(
@@ -242,11 +290,25 @@ def _transform_slice_indices(
     if not slice_indices:
         return slice_indices
 
-    from cellier.transform import AffineTransform
+    if transform is None:
+        # The visual has not been placed: no controller has told it which world
+        # it is in, so there is nothing to pull back through.  Reading the
+        # positions as voxel indices is what the v1 identity default did, and
+        # it keeps a headlessly-constructed visual drivable.  Through the
+        # controller this never happens -- add_visual always supplies a
+        # transform.
+        return {
+            axis: round_world_to_voxel(float(position), store_shape[axis])
+            for axis, position in slice_indices.items()
+        }
 
-    world_to_voxel = AffineTransform(matrix=transform.inverse_matrix)
+    if transform.inverse() is None:
+        raise ValueError(
+            "This visual's data -> world transform has no inverse, so a world "
+            "slice position cannot be pulled back to a voxel index."
+        )
     return map_world_slice_to_voxel(
-        slice_indices, transform.ndim, world_to_voxel, store_shape
+        slice_indices, transform.output_ndim, _Pullback(transform), store_shape
     )
 
 
@@ -330,17 +392,24 @@ class GFXImageMemoryVisual:
         self.render_modes: set[str] = render_modes
         self._data_store = data_store
 
-        # Store the data-to-world transform, auto-promoting if needed.
-        if transform is None:
-            from cellier.transform import AffineTransform as _AT
+        # The data -> world transform.  There is no coordinate-system-less
+        # identity to fall back on (D18), so a visual reaching the render layer
+        # without one cannot be placed until the controller supplies it.
+        self._transform: AffineTransform | None = transform
 
-            transform = _AT.identity(ndim=data_store.ndim)
-        elif transform.ndim < data_store.ndim:
-            transform = transform.expand_dims(data_store.ndim)
-        self._transform: AffineTransform = transform
+        # The systems this visual's geometry is placed with, pushed by the
+        # controller when displayed_axes changes.  ``None`` until the scene has
+        # a canvas.
+        self._spaces: RenderSpaces | None = None
 
         # Track displayed axes for lazy node matrix updates (Option C).
         self._last_displayed_axes: tuple[int, ...] | None = None
+        # The collapsed voxel index per dropped data axis, refreshed on every
+        # planned request.  The node matrix needs them because a collapsed
+        # axis's index enters the translation (design 3.9); it contributes
+        # nothing to the displayed rows of a block-diagonal transform, which is
+        # why ``select_axes`` got away with dropping it.
+        self._collapsed_indices: dict[int, float] = {}
 
         # Data-ready flags: AABB visibility is suppressed until real data
         # has been committed (prevents showing wrong placeholder geometry).
@@ -466,21 +535,58 @@ class GFXImageMemoryVisual:
     # Node matrix update (Option C -- lazy, displayed-axes-aware)
     # ------------------------------------------------------------------
 
+    def set_render_spaces(self, spaces: RenderSpaces | None) -> None:
+        """Receive the coordinate systems this visual is placed with.
+
+        Called by the controller when ``displayed_axes`` changes -- a pure
+        reorder included -- and when the first canvas gives the scene a
+        rendered system.
+        """
+        self._spaces = spaces
+        if spaces is not None and self._last_displayed_axes is not None:
+            self._update_node_matrix(self._last_displayed_axes)
+
     def _update_node_matrix(self, displayed_axes: tuple[int, ...]) -> None:
         """Recompute and apply the pygfx node matrix for *displayed_axes*.
 
-        Called from ``build_slice_request*`` when displayed axes change,
-        and from ``on_transform_changed`` when the transform is updated.
-        The matrix is set on the Group nodes so all children (inner image/
-        volume and AABB line) inherit the same transform.
+        Called from ``build_slice_request*`` when displayed axes change, and
+        from ``on_transform_changed`` when the transform is updated.  The
+        matrix is set on the Group nodes so all children (inner image/volume
+        and AABB line) inherit the same transform.
+
+        The matrix is the composition of design 3.9,
+        ``visual -> data -> world -> rendered``, rather than the
+        ``select_axes`` sub-block it used to be.  The two agree exactly
+        whenever the linear block is block-diagonal with respect to the
+        displayed set, which is every transform shipping today; they diverge
+        on one with a cross-term, where ``select_axes`` was silently wrong.
+
+        A no-op while the visual has no systems yet: nothing is drawn before
+        the scene has a canvas, and ``set_render_spaces`` recomputes.
         """
         self._last_displayed_axes = displayed_axes
-        sub = self._transform.select_axes(displayed_axes)
-        m = _pygfx_matrix(sub)
+        if self._spaces is None or self._transform is None:
+            return
+        m = node_matrix(
+            self._spaces, self._transform, self._collapsed_indices_or_origin()
+        )
         if self.node_3d is not None:
             self.node_3d.local.matrix = m
         if self.node_2d is not None:
             self.node_2d.local.matrix = m
+
+    def _collapsed_indices_or_origin(self) -> dict[int, float]:
+        """The last planned collapsed indices, defaulting to the origin plane.
+
+        Before the first slice request nothing has said where the collapsed
+        axes sit.  Zero is the origin plane rather than a guess at the user's
+        slice, and it is corrected the moment a request is planned -- which
+        happens before anything is drawn.
+        """
+        return {
+            axis: float(self._collapsed_indices.get(axis, 0.0))
+            for axis in self._spaces.collapsed_axes
+        }
 
     # ------------------------------------------------------------------
     # Node selection
@@ -545,6 +651,43 @@ class GFXImageMemoryVisual:
     # Planning -- build ChunkRequests (synchronous, < 1 ms)
     # ------------------------------------------------------------------
 
+    def _axis_selections(
+        self, dims_state: DimsState, selection: RegionSelection | None
+    ) -> tuple[int | tuple[int, int], ...]:
+        """Plan one request's per-axis selection, and record where it collapsed.
+
+        Prefers the ``RegionSelection`` the controller built: it pulls the
+        whole selected region back through the transform in one operation that
+        needs no inverse, and it extends to a slab, a viewport crop or an
+        oblique plane by changing only the region.
+
+        Falls back to ``dims_state`` when there is no region -- a visual driven
+        headlessly, or one whose scene has no rendered coordinate system yet.
+        The two agree exactly for the axis-aligned, zero-thickness selections
+        that reach this path today.
+        """
+        shape = self._data_store.shape
+        if selection is not None and self._spaces is not None:
+            axis_selections, collapsed = _plan_from_region(
+                selection, self._transform, self._spaces.world, shape
+            )
+            self._collapsed_indices = collapsed
+            return axis_selections
+        transformed_indices = _transform_slice_indices(
+            dims_state.selection.slice_indices, self._transform, shape
+        )
+        self._collapsed_indices = dict(transformed_indices)
+        return _build_axis_selections_memory(
+            DimsState(
+                axis_labels=dims_state.axis_labels,
+                selection=AxisAlignedSelectionState(
+                    displayed_axes=dims_state.selection.displayed_axes,
+                    slice_indices=transformed_indices,
+                ),
+            ),
+            shape,
+        )
+
     def build_slice_request_2d(
         self,
         camera_pos_world: np.ndarray,
@@ -556,6 +699,7 @@ class GFXImageMemoryVisual:
         lod_bias: float = 1.0,
         force_level: int | None = None,
         use_culling: bool = True,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Return a single ChunkRequest for the full 2-D slice.
 
@@ -583,6 +727,10 @@ class GFXImageMemoryVisual:
             Unused. Accepted for interface compatibility.
         use_culling : bool
             Unused. Accepted for interface compatibility.
+        selection : RegionSelection or None
+            The region this canvas is showing, in world coordinates.  When
+            given it decides what is fetched; ``dims_state`` is the fallback
+            for a headlessly driven visual.
 
         Returns
         -------
@@ -590,25 +738,9 @@ class GFXImageMemoryVisual:
             Always contains exactly one element.
         """
         displayed = dims_state.selection.displayed_axes
+        axis_selections = self._axis_selections(dims_state, selection)
         if displayed != self._last_displayed_axes:
             self._update_node_matrix(displayed)
-
-        # Transform slice indices from world space to data space.
-        transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices,
-            self._transform,
-            self._data_store.shape,
-        )
-        transformed_dims = DimsState(
-            axis_labels=dims_state.axis_labels,
-            selection=AxisAlignedSelectionState(
-                displayed_axes=dims_state.selection.displayed_axes,
-                slice_indices=transformed_indices,
-            ),
-        )
-        axis_selections = _build_axis_selections_memory(
-            transformed_dims, self._data_store.shape
-        )
         return [
             ChunkRequest(
                 chunk_request_id=uuid4(),
@@ -627,6 +759,7 @@ class GFXImageMemoryVisual:
         lod_bias: float = 1.0,
         dims_state: DimsState | None = None,
         force_level: int | None = None,
+        selection: RegionSelection | None = None,
     ) -> list[ChunkRequest]:
         """Return a single ChunkRequest for the full 3-D sub-volume.
 
@@ -650,6 +783,10 @@ class GFXImageMemoryVisual:
             tests), all axes are treated as displayed.
         force_level : int or None
             Unused. Accepted for interface compatibility.
+        selection : RegionSelection or None
+            The region this canvas is showing, in world coordinates.  When
+            given it decides what is fetched; ``dims_state`` is the fallback
+            for a headlessly driven visual.
 
         Returns
         -------
@@ -664,25 +801,9 @@ class GFXImageMemoryVisual:
             )
         else:
             displayed = dims_state.selection.displayed_axes
+            axis_selections = self._axis_selections(dims_state, selection)
             if displayed != self._last_displayed_axes:
                 self._update_node_matrix(displayed)
-
-            # Transform slice indices from world space to data space.
-            transformed_indices = _transform_slice_indices(
-                dims_state.selection.slice_indices,
-                self._transform,
-                self._data_store.shape,
-            )
-            transformed_dims = DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            )
-            axis_selections = _build_axis_selections_memory(
-                transformed_dims, self._data_store.shape
-            )
 
         return [
             ChunkRequest(

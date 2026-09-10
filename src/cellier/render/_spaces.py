@@ -1,0 +1,671 @@
+"""The coordinate systems a render visual places its geometry with.
+
+Today a node matrix is ``visual.transform.select_axes(displayed_axes)``
+followed by an axis reversal.  ``select_axes`` extracts a square sub-block,
+which is only correct when the linear block is block-diagonal with respect to
+the displayed set, and on an unequal-rank transform it does not even raise --
+it reads the homogeneous row and returns a plausible wrong matrix (design 3.8
+finding 2).
+
+The correct derivation composes three transforms (design 3.9):
+
+    visual -> data   the collapsed voxel indices and the window origin
+    data -> world    the visual's own transform
+    world -> rendered  the inverse of the canvas embedding
+
+and only the ``(z, y, x) -> (x, y, z)`` reversal at the end survives from the
+old path.  :class:`RenderSpaces` is the bundle of systems that composition
+needs, built by the controller (which owns all of them) and handed to each
+render visual.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from cellier.transform_v2 import AffineTransform, ConvexRegion
+from cellier.transform_v2._region import half_spaces_from_arrays
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from cellier.transform_v2 import (
+        DataCoordinateSystem,
+        RegionSelection,
+        RenderedCoordinateSystem,
+        VisualCoordinateSystem,
+        WorldCoordinateSystem,
+    )
+
+
+@dataclass(frozen=True)
+class RenderSpaces:
+    """Everything one visual needs to place its geometry in the scene.
+
+    Rebuilt when ``displayed_axes`` changes -- including a pure reorder, which
+    changes the rendered system's axis order and therefore the node matrix,
+    while changing nothing about what is fetched (design 3.14).
+
+    Parameters
+    ----------
+    data : DataCoordinateSystem
+        The store's level-0 voxel space, the input of ``data_to_world``.
+    data_levels : tuple[DataCoordinateSystem, ...]
+        One system per resolution level, finest first, with ``data_levels[0]``
+        being ``data``.  A level-2 voxel is not a level-0 voxel, and the
+        transform between them is what says so.
+    level_transforms : tuple[AffineTransform, ...]
+        Level ``k`` voxel space -> level ``0`` voxel space, one per entry in
+        ``data_levels``.  Index 0 is the identity.  These are what a region
+        is pulled back through, level by level (design 3.11 A), replacing a
+        precomputed ``inv_level_k @ inv_visual`` list -- and unlike that list
+        they need no inverse at all (D39).
+    visual : VisualCoordinateSystem
+        The space this visual's GPU geometry is indexed in, for one render
+        mode (D45).
+    world : WorldCoordinateSystem
+        The scene's world.
+    rendered : RenderedCoordinateSystem
+        The 2D or 3D scene one canvas draws, in **cellier displayed order**
+        (Part 5 D1).  The pygfx ``(x, y, z)`` reversal is not carried here; it
+        stays at the renderer boundary.
+    rendered_to_world : AffineTransform
+        The D34 embedding.  Its constant column carries the slice positions.
+    world_to_rendered : AffineTransform
+        The inverse of the D34 embedding.  Projection onto the displayed
+        world axes: it discards the collapsed ones, which the visual has
+        already accounted for in ``visual_to_data``.
+    retained_axes : tuple[int, ...]
+        The **data** axes the visual's geometry keeps, ascending.  Never in
+        ``displayed_axes`` order: ``axis_selections`` is assembled per data
+        axis ascending and numpy returns an array whose axes are ascending, so
+        a display permutation lives in the transform and never in the data.
+    data_to_world_axes : Mapping[int, int]
+        ``{data axis: world axis}``, the correspondence the visual's transform
+        encodes.
+    """
+
+    data: DataCoordinateSystem
+    visual: VisualCoordinateSystem
+    world: WorldCoordinateSystem
+    rendered: RenderedCoordinateSystem
+    rendered_to_world: AffineTransform
+    world_to_rendered: AffineTransform
+    retained_axes: tuple[int, ...]
+    data_to_world_axes: Mapping[int, int]
+    data_levels: tuple[DataCoordinateSystem, ...] = ()
+    level_transforms: tuple[AffineTransform, ...] = ()
+
+    @property
+    def collapsed_axes(self) -> tuple[int, ...]:
+        """The data axes the visual's geometry drops, ascending."""
+        retained = set(self.retained_axes)
+        return tuple(index for index in range(self.data.ndim) if index not in retained)
+
+
+def axis_correspondence(transform: AffineTransform) -> dict[int, int]:
+    """Read ``{input axis: output axis}`` off an axis-aligned transform.
+
+    The correspondence is not stored -- the matrix encodes it and keeping both
+    would be a second source of truth (D23) -- so it is read back when the
+    render layer needs to know which world axis a data axis became.
+
+    Parameters
+    ----------
+    transform : AffineTransform
+        A ``data -> world`` transform whose linear block has at most one
+        non-zero entry per row and per column.
+
+    Returns
+    -------
+    dict[int, int]
+        Input axis index to output axis index, for every input axis that
+        reaches an output axis.
+
+    Raises
+    ------
+    ValueError
+        If any input axis feeds more than one output axis, or any output axis
+        is fed by more than one input axis.  That is a shear or a rotation,
+        which the slicing path cannot express -- see
+        ``_check_transform_no_rotation``, which imposes the same restriction
+        on the multiscale brick shader.
+    """
+    linear = np.asarray(transform.linear)
+    correspondence: dict[int, int] = {}
+    for column in range(linear.shape[1]):
+        rows = np.flatnonzero(linear[:, column])
+        if rows.size == 0:
+            continue
+        if rows.size > 1:
+            raise ValueError(
+                f"Input axis {column} of this transform feeds output axes "
+                f"{rows.tolist()}.  An axis-aligned slicing path needs at most "
+                f"one output axis per input axis; a shear or rotation is not "
+                f"yet supported."
+            )
+        correspondence[column] = int(rows[0])
+    claimed: dict[int, int] = {}
+    for column, row in correspondence.items():
+        if row in claimed:
+            raise ValueError(
+                f"Output axis {row} of this transform is fed by input axes "
+                f"{claimed[row]} and {column}.  An axis-aligned slicing path "
+                f"needs at most one input axis per output axis."
+            )
+        claimed[row] = column
+    return correspondence
+
+
+def build_render_spaces(
+    data_coordinate_system: DataCoordinateSystem,
+    visual_coordinate_system: VisualCoordinateSystem,
+    world_coordinate_system: WorldCoordinateSystem,
+    rendered_coordinate_system: RenderedCoordinateSystem,
+    rendered_to_world: AffineTransform,
+    data_to_world: AffineTransform,
+    retained_axes: Sequence[int],
+    data_levels: Sequence[DataCoordinateSystem] = (),
+    level_transforms: Sequence[AffineTransform] = (),
+) -> RenderSpaces:
+    """Assemble a :class:`RenderSpaces` and invert the canvas embedding once.
+
+    Parameters
+    ----------
+    data_coordinate_system : DataCoordinateSystem
+        Level-0 voxel space.
+    visual_coordinate_system : VisualCoordinateSystem
+        The upload space for this render mode.
+    world_coordinate_system : WorldCoordinateSystem
+        The scene's world.
+    rendered_coordinate_system : RenderedCoordinateSystem
+        The canvas's rendered system.
+    rendered_to_world : AffineTransform
+        The D34 embedding.  Its left inverse is the projection the node matrix
+        ends with; an embedding always has one, so this never returns ``None``.
+    data_to_world : AffineTransform
+        The visual's own transform, read for its axis correspondence.
+    retained_axes : Sequence[int]
+        The data axes the geometry keeps, ascending.
+    data_levels : Sequence[DataCoordinateSystem]
+        One system per resolution level, finest first.  Empty for a
+        single-level store, where the level-0 system alone says everything.
+    level_transforms : Sequence[AffineTransform]
+        Level ``k`` -> level ``0``, one per entry in *data_levels*.
+
+    Returns
+    -------
+    RenderSpaces
+        The bundle.
+
+    Raises
+    ------
+    ValueError
+        If the embedding has no inverse, or the transform is sheared.
+    """
+    world_to_rendered = rendered_to_world.inverse()
+    if world_to_rendered is None:
+        raise ValueError(
+            "The rendered -> world embedding has no left inverse, so there is "
+            "no way to express a node matrix in rendered coordinates.  An "
+            "embedding built by from_axis_map always has one; this transform "
+            "was built some other way."
+        )
+    return RenderSpaces(
+        data=data_coordinate_system,
+        visual=visual_coordinate_system,
+        world=world_coordinate_system,
+        rendered=rendered_coordinate_system,
+        rendered_to_world=rendered_to_world,
+        world_to_rendered=world_to_rendered,
+        retained_axes=tuple(retained_axes),
+        data_to_world_axes=axis_correspondence(data_to_world),
+        data_levels=tuple(data_levels),
+        level_transforms=tuple(level_transforms),
+    )
+
+
+def visual_to_data_transform(
+    spaces: RenderSpaces,
+    constants: Mapping[int, float],
+    scale: Mapping[int, float] | None = None,
+    translation: Mapping[int, float] | None = None,
+) -> AffineTransform:
+    """Build the ``visual -> data`` transform for one request.
+
+    The systems are rebuilt only when ``displayed_axes`` changes; everything
+    that varies per request lives here.  ``constants`` is the collapsed voxel
+    index per dropped data axis -- the ``int`` entries of ``axis_selections``
+    -- and ``translation`` is the window origin, which is zero for a whole
+    extent and the brick corner for a windowed one.
+
+    Parameters
+    ----------
+    spaces : RenderSpaces
+        The systems this visual is placed with.
+    constants : Mapping[int, float]
+        ``{collapsed data axis: voxel index}``.  Every dropped axis must
+        appear: an unstated one has no honest default.
+    scale : Mapping[int, float] or None
+        Per-retained-data-axis scale.  ``None`` is 1 on every axis, which is
+        what an array indexed in voxels wants; the multiscale 3D node passes
+        the normalized proxy box's factors instead.
+    translation : Mapping[int, float] or None
+        Per-retained-data-axis translation, keyed by data axis.  ``None`` is
+        the origin.
+
+    Returns
+    -------
+    AffineTransform
+        ``visual -> data``, of shape ``(data.ndim + 1, visual.ndim + 1)``.
+
+    Raises
+    ------
+    ValueError
+        If a collapsed axis has no entry in *constants*.
+    """
+    missing = [axis for axis in spaces.collapsed_axes if axis not in constants]
+    if missing:
+        raise ValueError(
+            f"Collapsed data axes {missing} have no index in constants.  A "
+            f"dropped axis sits at a definite voxel and there is no default "
+            f"for where."
+        )
+    data_axes = spaces.data.axes
+    visual_axes = spaces.visual.axes
+    return AffineTransform.from_axis_map(
+        spaces.visual,
+        spaces.data,
+        axis_map={
+            visual_axes[index].id: data_axes[axis].id
+            for index, axis in enumerate(spaces.retained_axes)
+        },
+        scale=(
+            None
+            if scale is None
+            else {
+                visual_axes[index].id: scale[axis]
+                for index, axis in enumerate(spaces.retained_axes)
+                if axis in scale
+            }
+        ),
+        translation=(
+            None
+            if translation is None
+            else {
+                visual_axes[index].id: translation[axis]
+                for index, axis in enumerate(spaces.retained_axes)
+                if axis in translation
+            }
+        ),
+        constant_output_axes={
+            data_axes[axis].id: float(constants[axis]) for axis in spaces.collapsed_axes
+        },
+        name="visual_to_data",
+    )
+
+
+def node_transform(
+    spaces: RenderSpaces,
+    data_to_world: AffineTransform,
+    visual_to_data: AffineTransform,
+) -> AffineTransform:
+    """Compose ``visual -> rendered``, the transform a node matrix expresses.
+
+    This is design 3.9's chain.  It is square by construction -- the visual
+    and rendered systems have the same rank whenever the visual retains
+    exactly the displayed axes -- and is handed to ``_pygfx_matrix``, which
+    reverses the axis order and narrows to float32 (D6).
+
+    Parameters
+    ----------
+    spaces : RenderSpaces
+        The systems this visual is placed with.
+    data_to_world : AffineTransform
+        The visual's own transform.
+    visual_to_data : AffineTransform
+        From :func:`visual_to_data_transform`.
+
+    Returns
+    -------
+    AffineTransform
+        ``visual -> rendered``.
+    """
+    return visual_to_data.then(data_to_world, spaces.data, spaces.world).then(
+        spaces.world_to_rendered, spaces.world, spaces.rendered
+    )
+
+
+def pygfx_to_cellier_order(coordinates: np.ndarray) -> np.ndarray:
+    """Reverse the last axis: pygfx ``(x, y, z)`` -> cellier ``(z, y, x)``.
+
+    One of the three places the reversal lives, and the only one that acts on
+    **coordinates** rather than on a matrix or a vertex buffer.  Part 5 D1
+    keeps the flip at the pygfx boundary rather than folding it into the
+    rendered coordinate system, and narrows it to named helpers so that
+    moving it later is a change to two functions rather than a hunt for
+    ``[[2, 1, 0]]``.
+
+    ``ReslicingRequest.camera_pos`` and ``frustum_corners`` are pygfx
+    coordinates and are **not** in the rendered coordinate system.  Nothing in
+    the type system says so, which is why they pass through here by name.
+
+    The reversal stays correct when the displayed axes are transposed: it maps
+    whatever order the rendered system is in onto pygfx's.
+
+    Parameters
+    ----------
+    coordinates : np.ndarray
+        Points whose last axis is in pygfx order.
+
+    Returns
+    -------
+    np.ndarray
+        The same points with their last axis reversed.
+    """
+    return np.asarray(coordinates)[..., ::-1]
+
+
+def cellier_to_pygfx_order(coordinates: np.ndarray) -> np.ndarray:
+    """Reverse the last axis: cellier ``(z, y, x)`` -> pygfx ``(x, y, z)``.
+
+    The inverse of :func:`pygfx_to_cellier_order`, and the same operation --
+    reversing is its own inverse.  Both names exist so a call site says which
+    direction it means.
+
+    Parameters
+    ----------
+    coordinates : np.ndarray
+        Points whose last axis is in cellier order.
+
+    Returns
+    -------
+    np.ndarray
+        The same points with their last axis reversed.
+    """
+    return np.asarray(coordinates)[..., ::-1]
+
+
+def pygfx_matrix(transform: AffineTransform) -> np.ndarray:
+    """Embed a square 2-D or 3-D transform into a pygfx 4x4 matrix.
+
+    pygfx always requires a 4x4 matrix for ``node.local.matrix``.  This
+    function converts from cellier's axis order to pygfx/shader order and
+    places the transform into the correct positions of a 4x4 identity matrix.
+
+    Cellier order is ``(z, y, x)`` for 3D and ``(y, x)`` for 2D; pygfx uses
+    ``(x, y, z)``, so the axes are reversed.  This is one of the three places
+    that reversal lives, and Part 5 D1 keeps it here rather than folding it
+    into the rendered coordinate system -- which stays legible against the
+    world precisely because it does not carry the flip.
+
+    The reversal is still correct when the displayed axes are **transposed**:
+    it maps whatever order the rendered system is in onto pygfx's, so a
+    rendered system of ``("X", "Y")`` reverses to pygfx ``(y, x)``.
+
+    This is also one of D6's three narrowing sites: the model layer is float64
+    throughout and float32 begins at the GPU boundary.
+
+    Parameters
+    ----------
+    transform : AffineTransform
+        A **square** ``visual -> rendered`` transform of rank 1, 2 or 3.
+
+    Returns
+    -------
+    np.ndarray
+        A ``(4, 4)`` float32 matrix.
+
+    Raises
+    ------
+    ValueError
+        If the transform is not square.  A node matrix maps a visual space
+        onto a rendered space of the same rank; an unequal one means the
+        visual retained axes the canvas is not showing.
+    """
+    nd = transform.output_ndim
+    if transform.input_ndim != nd:
+        raise ValueError(
+            f"A node matrix must be square: this transform takes "
+            f"{transform.input_ndim} dimensions and produces {nd}.  The "
+            f"visual's geometry retains axes the canvas is not displaying."
+        )
+    src = transform.matrix
+    # Reverse axis order: cellier (z, y, x) -> pygfx (x, y, z).
+    swap = list(reversed(range(nd)))
+    m = np.eye(4, dtype=np.float32)
+    for dst_i, src_i in enumerate(swap):
+        for dst_j, src_j in enumerate(swap):
+            m[dst_i, dst_j] = src[src_i, src_j]
+        m[dst_i, 3] = src[src_i, nd]
+    return m
+
+
+def node_matrix(
+    spaces: RenderSpaces,
+    data_to_world: AffineTransform,
+    constants: Mapping[int, float],
+    scale: Mapping[int, float] | None = None,
+    translation: Mapping[int, float] | None = None,
+) -> np.ndarray:
+    """The 4x4 float32 matrix that places one visual's geometry in the scene.
+
+    The whole of design 3.9 in one call: build ``visual -> data`` from this
+    request's collapsed indices and window origin, compose it through the
+    visual's ``data -> world`` and the canvas's ``world -> rendered``, then
+    reverse to pygfx order and narrow to float32.
+
+    Parameters
+    ----------
+    spaces : RenderSpaces
+        The systems this visual is placed with.
+    data_to_world : AffineTransform
+        The visual's own transform.
+    constants : Mapping[int, float]
+        ``{collapsed data axis: voxel index}``.
+    scale : Mapping[int, float] or None
+        Per-retained-data-axis scale of the visual space.  ``None`` is 1,
+        which is what an array indexed in voxels wants.
+    translation : Mapping[int, float] or None
+        Per-retained-data-axis window origin.  ``None`` is the origin.
+
+    Returns
+    -------
+    np.ndarray
+        A ``(4, 4)`` float32 matrix for ``node.local.matrix``.
+    """
+    return pygfx_matrix(
+        node_transform(
+            spaces,
+            data_to_world,
+            visual_to_data_transform(spaces, constants, scale, translation),
+        )
+    )
+
+
+def _extent_along(region: ConvexRegion, index: int) -> float:
+    """The region's extent along one half-space's normal.
+
+    Half-spaces come in opposed pairs from every constructor that bounds
+    something -- ``from_axis_slabs`` emits ``+e`` / ``-e`` per axis and
+    ``from_plane_slab`` emits ``+n`` / ``-n`` -- so the extent is read off the
+    pair.  An unpaired half-space bounds one side only and there is nothing to
+    widen, so it reports ``inf``.
+    """
+    normals, offsets = region.normals, region.offsets
+    normal = normals[index]
+    length = float(np.linalg.norm(normal))
+    if length == 0.0:
+        return float("inf")
+    for other in range(len(normals)):
+        if other != index and np.allclose(normals[other], -normal):
+            return float(offsets[index] + offsets[other]) / length
+    return float("inf")
+
+
+def with_minimum_thickness(
+    region: ConvexRegion, minimum_half_thickness: float
+) -> ConvexRegion:
+    """Grow a region so it has at least the given half-thickness everywhere.
+
+    A geometry visual draws **points**, which have no extent.  ``contains``
+    on a measure-zero region is float-exact and so effectively always
+    ``False`` (D42), which means a zero-thickness plane -- what the dims
+    editor emits for an axis nobody gave a thickness -- would select nothing
+    at all.  So the geometry families give the selection a floor.
+
+    This is a per-family policy on top of the region, not a different
+    mechanism: the images want the plane, because they draw one.
+
+    A half-space ``n . p <= d`` is offset outward to ``n . p <= d + s|n|``,
+    which is the Minkowski sum with a ball -- exact for an axis slab and for
+    an oblique one alike.  A direction the region already has enough extent
+    along is left alone, so a thickness the user actually asked for is theirs.
+
+    Parameters
+    ----------
+    region : ConvexRegion
+        The region, in any coordinate system.
+    minimum_half_thickness : float
+        The floor, in that system's units.
+
+    Returns
+    -------
+    ConvexRegion
+        The region, grown where it was too thin.
+    """
+    if minimum_half_thickness <= 0.0 or not region.half_spaces:
+        return region
+    normals, offsets = region.normals, region.offsets
+    grown = np.asarray(offsets, dtype=float).copy()
+    changed = False
+    for index in range(len(normals)):
+        extent = _extent_along(region, index)
+        shortfall = minimum_half_thickness - extent / 2.0
+        if shortfall > 0.0:
+            grown[index] += shortfall * float(np.linalg.norm(normals[index]))
+            changed = True
+    if not changed:
+        return region
+    return ConvexRegion(
+        coordinate_system=region.coordinate_system,
+        ndim=region.ndim,
+        half_spaces=half_spaces_from_arrays(normals, grown),
+    )
+
+
+def geometry_data_region(
+    selection: RegionSelection,
+    data_to_world: AffineTransform,
+    world: WorldCoordinateSystem,
+    minimum_half_thickness: float,
+) -> ConvexRegion:
+    """The selected region in **data** coordinates, with a thickness floor.
+
+    Design 3.12.  ``imap_region`` is ``A^T`` on the normals and needs no
+    inverse (D39), so a geometry visual whose transform is a non-invertible
+    embedding still slices -- which is the ``tzyx`` points in a ``TCZYX``
+    world of 3.13, where D8 additionally drops the channel constraint the
+    dataset has no extent along.
+
+    Parameters
+    ----------
+    selection : RegionSelection
+        The canvas's selection, whose region is in world coordinates.
+    data_to_world : AffineTransform
+        The visual's own transform.
+    world : WorldCoordinateSystem
+        Its output system, needed to resolve ``broadcast_axes``.
+    minimum_half_thickness : float
+        The world-unit floor applied before the pull-back, so that the
+        thickness a user states and the thickness a family needs are both
+        expressed in the space they were stated in.
+
+    Returns
+    -------
+    ConvexRegion
+        The region in the visual's data coordinates.
+    """
+    widened = with_minimum_thickness(selection.region, minimum_half_thickness)
+    return data_to_world.imap_region(widened, world).simplify()
+
+
+def axis_scales(data_to_world: AffineTransform) -> dict[int, float]:
+    """World units per data unit, keyed by **data** axis.
+
+    Read off the single entry each data axis contributes, which is what an
+    axis-aligned transform has (see :func:`axis_correspondence`).  Used to
+    convert a thickness stated in world units into the data units a store's
+    own slab arithmetic works in.
+
+    Parameters
+    ----------
+    data_to_world : AffineTransform
+        The visual's transform.
+
+    Returns
+    -------
+    dict[int, float]
+        Data axis to the magnitude of its scale.  Axes that reach no world
+        axis are absent.
+    """
+    linear = np.asarray(data_to_world.linear)
+    return {
+        data_axis: abs(float(linear[world_axis, data_axis]))
+        for data_axis, world_axis in axis_correspondence(data_to_world).items()
+    }
+
+
+def data_slice_positions(
+    region: ConvexRegion,
+    data_to_world: AffineTransform,
+    world: WorldCoordinateSystem,
+) -> dict[int, float]:
+    """Where the selection sits, per collapsed data axis, in data units.
+
+    For the families whose own slab arithmetic the region does not replace --
+    the graph, whose trail is an asymmetric window with a fade measured from
+    the slice (design 3.12's "per-family policy on top of the region").  They
+    need the position, not the extent, so this returns the centre of the
+    pulled-back region on every axis it bounds.
+
+    Parameters
+    ----------
+    region : ConvexRegion
+        The selection's region, in world coordinates.
+    data_to_world : AffineTransform
+        The visual's transform.
+    world : WorldCoordinateSystem
+        Its output system, needed to resolve ``broadcast_axes``.
+
+    Returns
+    -------
+    dict[int, float]
+        Data axis to slice position.  Axes the region leaves unbounded are
+        absent.
+
+    Raises
+    ------
+    ValueError
+        If an axis comes back bounded on one side only, which is the shear
+        case D7 rejects.
+    """
+    box = data_to_world.imap_region(region, world).simplify().bounding_box()
+    positions: dict[int, float] = {}
+    for axis in range(box.ndim):
+        low = float(box.min_coordinate[axis])
+        high = float(box.max_coordinate[axis])
+        low_unbounded, high_unbounded = np.isneginf(low), np.isposinf(high)
+        if low_unbounded and high_unbounded:
+            continue
+        if low_unbounded or high_unbounded:
+            raise ValueError(
+                f"Data axis {axis} of this region is bounded on one side only "
+                f"([{low}, {high}]).  That is a cross-term on a collapsed "
+                f"axis; remove the shear."
+            )
+        positions[axis] = (low + high) / 2.0
+    return positions
