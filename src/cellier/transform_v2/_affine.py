@@ -516,7 +516,11 @@ class AffineTransform(BaseTransform):
             half_spaces=half_spaces_from_arrays(normals, offsets),
         )
 
-    def imap_region(self, region: ConvexRegion) -> ConvexRegion:
+    def imap_region(
+        self,
+        region: ConvexRegion,
+        output_coordinate_system: CoordinateSystem,
+    ) -> ConvexRegion:
         """Map a convex region back into the input coordinate system.
 
         This is the operation the slicer runs, and it needs nothing but
@@ -529,15 +533,42 @@ class AffineTransform(BaseTransform):
         box for chunk selection and the constraints for the per-voxel
         mask.  Callers that want the box ask for it themselves.
 
-        A constraint on an axis this transform has no extent along comes
-        back with a zero normal, which is vacuous or infeasible rather
-        than an error.  Call :meth:`ConvexRegion.simplify` to drop the
-        vacuous ones.
+        Constraints on a **broadcast** axis are dropped before ``A^T`` is
+        applied (D8).  A broadcast axis is a free variable -- the source
+        exists at *every* position on it -- so such a constraint can
+        always be satisfied by moving along that axis.  This is exactly
+        Fourier-Motzkin elimination of the broadcast axes specialised to
+        the axis-aligned case: the single ``+b`` / ``-b`` pair combines
+        to ``0 <= 2 * half_thickness``, which is trivially true.  The
+        general pairwise combination is deferred until a consumer exists
+        that tilts an oblique plane *through* a broadcast axis **and**
+        bounds that same axis; nothing shipping does.
+
+        Without this step, selecting ``C = 2`` against a source declared
+        broadcast over ``C`` pulls back through an all-zero row to
+        ``0 <= -2`` and the region comes back **empty** -- the visual
+        disappears the moment the channel slider leaves zero.
+
+        A constraint on an axis this transform has no extent along and
+        which is *not* broadcast still comes back with a zero normal,
+        which is vacuous or infeasible rather than an error.  Call
+        :meth:`ConvexRegion.simplify` to drop the vacuous ones.
+
+        ``map_region`` is deliberately **not** given the symmetric
+        treatment: the asymmetry is D31's, and ``broadcast_axes``
+        affects the forward direction as unboundedness rather than as a
+        dropped constraint.
 
         Parameters
         ----------
         region : ConvexRegion
             A region in the output coordinate system.
+        output_coordinate_system : CoordinateSystem
+            This transform's output system, used to resolve
+            ``broadcast_axes`` to axis indices.  Required for the same
+            reason it is on :meth:`map_bounding_box` and :meth:`then`:
+            the field holds axis **ids** and the arithmetic needs
+            **indices**, and a transform stores only ids.
 
         Returns
         -------
@@ -547,11 +578,53 @@ class AffineTransform(BaseTransform):
         Raises
         ------
         ValueError
-            If the region is not in this transform's output system.
+            If the region is not in this transform's output system, or
+            the given system is not this transform's output system.
+        """
+        if output_coordinate_system.id != self.output_coordinate_system:
+            raise ValueError(
+                f"output_coordinate_system must be this transform's output "
+                f"system {self.output_coordinate_system}, got "
+                f"{output_coordinate_system.id}."
+            )
+        broadcast_indices = tuple(
+            sorted(
+                output_coordinate_system.index_of(axis_id)
+                for axis_id in self.broadcast_axes
+            )
+        )
+        return self._imap_region(region, broadcast_indices)
+
+    def _imap_region(
+        self, region: ConvexRegion, broadcast_axes: tuple[int, ...]
+    ) -> ConvexRegion:
+        """Pull a region back with the broadcast axes already resolved.
+
+        Split out of :meth:`imap_region` for the one caller that knows
+        the indices without holding the coordinate system object:
+        :class:`~cellier.transform_v2.RegionSelection`, whose validator
+        runs on a ``rendered -> world`` embedding that carries no
+        broadcast axes at all (D34/D35).
+
+        Parameters
+        ----------
+        region : ConvexRegion
+            A region in the output coordinate system.
+        broadcast_axes : tuple[int, ...]
+            Output-space indices of the broadcast axes.
+
+        Returns
+        -------
+        ConvexRegion
+            The pulled-back region, in the input coordinate system.
         """
         self._check_output_coordinate_system(region.coordinate_system)
         normals, offsets = ops.imap_half_spaces(
-            region.normals, region.offsets, self.linear, self.translation
+            region.normals,
+            region.offsets,
+            self.linear,
+            self.translation,
+            broadcast_axes,
         )
         return ConvexRegion(
             coordinate_system=self.input_coordinate_system,

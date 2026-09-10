@@ -257,12 +257,13 @@ def test_a_world_selection_pulls_back_into_data_space():
             world, {"T": (7.0, 0.5), "C": (0.0, 0.5), "Z": (12.0, 1.0)}
         ),
     )
-    in_data = data_to_world.imap_region(selection.region).simplify()
+    in_data = data_to_world.imap_region(selection.region, world).simplify()
     assert in_data.coordinate_system == data.id
     assert in_data.ndim == 4
     assert not in_data.is_empty()
 
-    # the two constraints on the broadcast axis went vacuous
+    # the two constraints on the broadcast axis were dropped by D8's rule
+    # before A^T was applied, so they never reach the pulled-back region
     assert len(selection.region.half_spaces) == 6
     assert len(in_data.half_spaces) == 4
 
@@ -303,7 +304,7 @@ def test_bounding_the_displayed_axes_culls_to_the_viewport_r3():
     )
 
     def voxels(region):
-        box = data_to_world.imap_region(region).simplify().bounding_box()
+        box = data_to_world.imap_region(region, world).simplify().bounding_box()
         lower = np.where(np.isneginf(box.min_coordinate), 0.0, box.min_coordinate)
         upper = np.where(np.isposinf(box.max_coordinate), volume, box.max_coordinate)
         return float(np.prod((upper - lower)[1:]))

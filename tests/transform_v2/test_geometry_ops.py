@@ -7,6 +7,7 @@ from cellier.transform_v2._geometry_ops import (
     DegenerateNormalError,
     affine_bounding_box,
     axis_aligned_bounds,
+    drop_broadcast_constraints,
     imap_directions,
     imap_half_spaces,
     imap_normals,
@@ -381,7 +382,13 @@ def test_half_spaces_agree_with_the_direct_predicate_d39():
 def test_a_broadcast_axis_constraint_is_vacuous_or_infeasible_not_an_error(
     offset, satisfiable
 ):
-    """D39: contrast with D32, where the same geometry raises."""
+    """D39 with no broadcast axes declared: contrast with D32, which raises.
+
+    This is the raw ``A^T`` behaviour, still reachable by passing no
+    ``broadcast_axes``.  Once the axis is declared broadcast, D8 drops
+    the constraint entirely rather than letting it become a zero normal;
+    see :func:`test_declaring_the_axis_broadcast_drops_the_constraint_d8`.
+    """
     linear, translation, _ = UC3
     normals = np.array([[0.0, 1.0, 0.0, 0.0, 0.0]])
     pulled, pulled_offsets = imap_half_spaces(
@@ -389,6 +396,50 @@ def test_a_broadcast_axis_constraint_is_vacuous_or_infeasible_not_an_error(
     )
     assert np.allclose(pulled, 0.0)
     assert bool(pulled_offsets[0] >= 0) is satisfiable
+
+
+@pytest.mark.parametrize("offset", [5.0, -5.0])
+def test_declaring_the_axis_broadcast_drops_the_constraint_d8(offset):
+    """Both signs go away: a free variable satisfies either bound."""
+    linear, translation, broadcast = UC3
+    normals = np.array([[0.0, 1.0, 0.0, 0.0, 0.0]])
+    pulled, pulled_offsets = imap_half_spaces(
+        normals, np.array([offset]), linear, translation, broadcast
+    )
+    assert pulled.shape == (0, 4)
+    assert pulled_offsets.shape == (0,)
+
+
+def test_drop_broadcast_constraints_keeps_everything_it_does_not_touch():
+    normals = np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0],  # T only        -> kept
+            [0.0, 1.0, 0.0, 0.0, 0.0],  # C only        -> dropped
+            [0.0, 0.0, 1.0, 0.0, 0.0],  # Z only        -> kept
+            [1.0, 0.5, 0.0, 0.0, 0.0],  # T and C       -> dropped
+        ]
+    )
+    offsets = np.array([1.0, 2.0, 3.0, 4.0])
+    kept, kept_offsets = drop_broadcast_constraints(normals, offsets, (1,))
+    assert np.allclose(kept, normals[[0, 2]])
+    assert np.allclose(kept_offsets, offsets[[0, 2]])
+
+
+def test_drop_broadcast_constraints_is_a_no_op_without_broadcast_axes():
+    normals = np.array([[1.0, 0.0], [0.0, 1.0]])
+    offsets = np.array([1.0, 2.0])
+    kept, kept_offsets = drop_broadcast_constraints(normals, offsets, ())
+    assert kept is normals
+    assert kept_offsets is offsets
+
+
+def test_drop_broadcast_constraints_handles_an_unbounded_region():
+    """A region with no constraints at all still has a rank."""
+    normals = np.zeros((0, 5))
+    offsets = np.zeros(0)
+    kept, kept_offsets = drop_broadcast_constraints(normals, offsets, (1,))
+    assert kept.shape == (0, 5)
+    assert kept_offsets.shape == (0,)
 
 
 def test_half_spaces_round_trip_forward_and_back():

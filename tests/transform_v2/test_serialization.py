@@ -19,6 +19,7 @@ from cellier.transform_v2 import (
     Plane,
     RegionSelection,
     RenderedCoordinateSystem,
+    VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
 from tests.transform_v2._use_cases import uc1, uc3
@@ -56,6 +57,9 @@ def every_model():
         "Axis": space("z"),
         "CoordinateSystem": CoordinateSystem(name="c", axes=(space("z"),)),
         "DataCoordinateSystem": data,
+        "VisualCoordinateSystem": VisualCoordinateSystem.from_data(
+            data, ("y", "x"), uuid4()
+        ),
         "WorldCoordinateSystem": world,
         "RenderedCoordinateSystem": rendered,
         "AxisAlignedBoundingBox": AxisAlignedBoundingBox(

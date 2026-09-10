@@ -452,11 +452,66 @@ def map_half_spaces(
     return mapped, mapped_offsets
 
 
+def drop_broadcast_constraints(
+    normals: np.ndarray,
+    offsets: np.ndarray,
+    broadcast_axes: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Drop half-spaces that constrain a broadcast axis (D8).
+
+    A broadcast axis is a **free variable**: the source occupies
+    ``{M p + t + s e_b : p in data, s in R}`` in the output space, so the
+    set of input points visible in ``{w : N w <= o}`` is
+
+    ``{ p : EXISTS s,  (N M) p + N t + N[:, b] s <= o }``
+
+    which is Fourier-Motzkin elimination of ``s`` *before* ``A^T`` is
+    applied.  Eliminating ``s`` passes through every constraint with a
+    zero coefficient on ``b``, combines each ``(+b, -b)`` pair into one
+    new constraint, and drops constraints carrying only one sign.
+
+    For an **axis-aligned** selection there is exactly one ``+b`` and one
+    ``-b`` constraint, and their combination is
+    ``0 <= (c + h) - (c - h) = 2h``, trivially true for any non-negative
+    half thickness.  So the elimination degenerates exactly to "drop
+    every constraint whose normal touches a broadcast axis", which is
+    what this function implements.
+
+    That is exact for every axis-aligned selection and for an oblique
+    slab tilted through a broadcast axis.  It **diverges** from the true
+    elimination only for an oblique slab tilted through a broadcast axis
+    *intersected with* a bound on that same axis, where the pairwise
+    combination produces a constraint this rule discards.  The general
+    pairwise form is deferred until such a consumer exists; no shipping
+    selection is one.
+
+    Parameters
+    ----------
+    normals : np.ndarray
+        ``(M, D_out)`` normals in the output space.
+    offsets : np.ndarray
+        ``(M,)`` offsets.
+    broadcast_axes : tuple[int, ...]
+        Output-space axis indices that are broadcast (free).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        The surviving normals and offsets.
+    """
+    indices = tuple(broadcast_axes)
+    if not indices or normals.shape[0] == 0:
+        return normals, offsets
+    touches = np.any(normals[:, indices] != 0.0, axis=1)
+    return normals[~touches], offsets[~touches]
+
+
 def imap_half_spaces(
     normals: np.ndarray,
     offsets: np.ndarray,
     linear: np.ndarray,
     translation: np.ndarray,
+    broadcast_axes: tuple[int, ...] = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Pull half-spaces back: ``n = A^T m``, ``f = e - m . t`` (D39).
 
@@ -465,10 +520,18 @@ def imap_half_spaces(
     ``A^T``.  It is exact, cheap, and available on a transform whose
     inverse is ``None``.
 
-    A constraint on an axis the transform has no extent in comes back
-    with a zero normal.  That is not an error: with a non-negative offset
-    it is vacuous ("fetch everything") and with a negative one it is
-    infeasible ("fetch nothing").  Resolving which is the region's job.
+    Constraints touching a broadcast axis are removed first, by
+    :func:`drop_broadcast_constraints` (D8).  Without that step a
+    selection on an axis the source is broadcast over pulls back through
+    an all-zero row to an infeasible ``0 <= negative`` and the region
+    comes back empty -- the wrong answer for a source that by definition
+    exists at every position on that axis.
+
+    A constraint on an axis the transform has no extent in, and which is
+    *not* broadcast, still comes back with a zero normal.  That is not an
+    error: with a non-negative offset it is vacuous ("fetch everything")
+    and with a negative one it is infeasible ("fetch nothing").
+    Resolving which is the region's job.
 
     Parameters
     ----------
@@ -480,6 +543,9 @@ def imap_half_spaces(
         The ``(D_out, D_in)`` forward linear block.
     translation : np.ndarray
         The forward ``(D_out,)`` translation.
+    broadcast_axes : tuple[int, ...]
+        Output-space axis indices that are broadcast (free).  Empty
+        leaves the pull-back at raw ``A^T``.
 
     Returns
     -------
@@ -488,10 +554,12 @@ def imap_half_spaces(
     """
     matrix = np.asarray(linear, dtype=float)
     values = np.asarray(normals, dtype=float).reshape(-1, matrix.shape[0])
-    mapped = values @ matrix
-    mapped_offsets = np.asarray(offsets, dtype=float) - values @ np.asarray(
-        translation, dtype=float
+    kept_offsets = np.asarray(offsets, dtype=float)
+    values, kept_offsets = drop_broadcast_constraints(
+        values, kept_offsets, broadcast_axes
     )
+    mapped = values @ matrix
+    mapped_offsets = kept_offsets - values @ np.asarray(translation, dtype=float)
     return mapped, mapped_offsets
 
 

@@ -184,6 +184,102 @@ class DataCoordinateSystem(CoordinateSystem):
     datastore_id: UUID4
 
 
+class VisualCoordinateSystem(CoordinateSystem):
+    """The space one visual's GPU geometry is indexed in (D45).
+
+    This is the space ``node.local.matrix`` maps *from*: the index space
+    of the array a datastore returned, or the normalized proxy-box space
+    a multiscale volume's vertex shader emits.  It is **not** the data
+    coordinate system -- a request drops collapsed axes (numpy applies an
+    integer index and the axis disappears) and may start at a non-zero
+    origin.
+
+    There is **one per visual per render mode**, not one per visual: a
+    multiscale visual's 3D node is indexed in normalized space while its
+    2D node is in level-0 pixel coordinates.  Everything that varies per
+    request -- the collapsed voxel indices and the window origin -- lives
+    on the paired ``visual -> data`` transform, not here, so a system is
+    rebuilt only when the displayed axes change.
+
+    Deliberately **not** per chunk: a multiscale brick's position never
+    exists as a CPU-side transform, and modelling one per brick would
+    produce objects no consumer reads.
+
+    Unlike :class:`RenderedCoordinateSystem` there is no rank check.  A
+    rendered system is 2D or 3D because that is what a camera draws; a
+    visual system is whatever rank the request retained.
+
+    Parameters
+    ----------
+    coordinate_system_type : Literal["visual"]
+        Discriminator field.
+    name : str
+        Human-readable name.  Defaults to ``"visual"``.
+    visual_id : UUID4
+        The id of the visual whose geometry is indexed in this space.
+    """
+
+    coordinate_system_type: Literal["visual"] = "visual"
+    name: str = "visual"
+    visual_id: UUID4
+
+    @classmethod
+    def from_data(
+        cls,
+        data_coordinate_system: DataCoordinateSystem,
+        retained_axes: Sequence[AxisRef],
+        visual_id: UUID4,
+        name: str = "visual",
+    ) -> Self:
+        """Build a visual system from the data axes a request retains.
+
+        Mirrors :meth:`RenderedCoordinateSystem.from_world` exactly: each
+        visual axis corresponds to one data axis, so ``name``,
+        ``axis_type`` and ``unit`` are inherited from it rather than
+        re-specified (R5), and the axis ids are **fresh** because these
+        are distinct axes of a distinct system (D33).
+
+        Parameters
+        ----------
+        data_coordinate_system : DataCoordinateSystem
+            The data system the array is drawn from.
+        retained_axes : Sequence[AxisRef]
+            The data axes the request keeps, **in the order the returned
+            array carries them**.  Collapsed axes are absent; they are
+            pinned on the paired ``visual -> data`` transform as
+            ``constant_output_axes``.
+        visual_id : UUID4
+            The id of the visual this space belongs to.
+        name : str
+            Human-readable name for the new system.
+
+        Returns
+        -------
+        VisualCoordinateSystem
+            A system of the same rank as ``retained_axes``.
+
+        Raises
+        ------
+        ValueError
+            If ``retained_axes`` names the same data axis twice.
+        """
+        indices = [data_coordinate_system.resolve(ref) for ref in retained_axes]
+        if len(set(indices)) != len(indices):
+            raise ValueError(
+                f"retained_axes must name distinct data axes, got "
+                f"{list(retained_axes)}."
+            )
+        axes = tuple(
+            Axis(
+                name=data_coordinate_system.axes[index].name,
+                axis_type=data_coordinate_system.axes[index].axis_type,
+                unit=data_coordinate_system.axes[index].unit,
+            )
+            for index in indices
+        )
+        return cls(name=name, axes=axes, visual_id=visual_id)
+
+
 class WorldCoordinateSystem(CoordinateSystem):
     """A coordinate system that data can be transformed into for rendering.
 
@@ -297,6 +393,7 @@ CoordinateSystemType = Annotated[
     Union[
         CoordinateSystem,
         DataCoordinateSystem,
+        VisualCoordinateSystem,
         WorldCoordinateSystem,
         RenderedCoordinateSystem,
     ],

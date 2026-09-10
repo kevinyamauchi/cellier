@@ -13,6 +13,7 @@ from cellier.transform_v2._coordinate_system import (
     CoordinateSystemType,
     DataCoordinateSystem,
     RenderedCoordinateSystem,
+    VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
 from cellier.transform_v2._geometry import AxisAlignedBoundingBox, Plane
@@ -40,5 +41,6 @@ __all__ = [
     "Plane",
     "RegionSelection",
     "RenderedCoordinateSystem",
+    "VisualCoordinateSystem",
     "WorldCoordinateSystem",
 ]

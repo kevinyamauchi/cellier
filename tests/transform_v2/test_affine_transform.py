@@ -17,6 +17,7 @@ from cellier.transform_v2 import (
     NonInvertibleTransformError,
     Plane,
     RenderedCoordinateSystem,
+    VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
 from tests.transform_v2._use_cases import MODEL_USE_CASES, uc1, uc2, uc3, uc4
@@ -407,7 +408,7 @@ def test_imap_bounding_box_drops_the_broadcast_axis_either_way_d31(extent):
 def test_imap_region_returns_a_region_not_a_box_d41():
     data, world, transform = uc3()
     region = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5)})
-    pulled = transform.imap_region(region)
+    pulled = transform.imap_region(region, world)
     assert isinstance(pulled, ConvexRegion)
     assert pulled.coordinate_system == data.id
     assert pulled.ndim == 4
@@ -417,7 +418,7 @@ def test_imap_region_works_without_an_inverse_d39():
     data, flat, transform = reducing_transform()
     assert transform.inverse() is None
     region = ConvexRegion.from_axis_slabs(flat, {"v": (1.0, 0.5)})
-    pulled = transform.imap_region(region)
+    pulled = transform.imap_region(region, flat)
     assert pulled.ndim == 3
     with pytest.raises(NonInvertibleTransformError):
         transform.map_region(
@@ -428,24 +429,240 @@ def test_imap_region_works_without_an_inverse_d39():
 
 
 def test_imap_region_agrees_with_the_direct_predicate_d39():
-    _, world, transform = uc3()
+    """Without broadcast axes the pull-back is exactly the forward predicate.
+
+    This is D39's original property, and D8 must not disturb it: for a
+    transform with no broadcast axes the drop rule removes nothing, so
+    ``imap_region`` is still raw ``A^T``.  UC2 is used rather than UC3
+    because a *broadcast* axis deliberately breaks this equivalence --
+    the forward map puts the data at ``C = 0``, which is not where it
+    is, and pinning that is
+    :func:`test_imap_region_drops_constraints_on_a_broadcast_axis_d8`.
+    """
+    _, world, transform = uc2()
     rng = np.random.default_rng(3)
     region = ConvexRegion(
         coordinate_system=world.id,
-        ndim=5,
+        ndim=4,
         half_spaces=tuple(
             HalfSpace(normal=normal, offset=float(offset))
             for normal, offset in zip(
-                rng.normal(size=(4, 5)), rng.normal(size=4) * 3, strict=True
+                rng.normal(size=(4, 4)), rng.normal(size=4) * 3, strict=True
             )
         ),
     )
-    pulled = transform.imap_region(region)
+    pulled = transform.imap_region(region, world)
     points = rng.normal(size=(3000, 4)) * 4
     assert np.array_equal(
         pulled.contains(points),
         region.contains(transform.map_coordinates(points)),
     )
+
+
+# --- D8: imap_region consults broadcast_axes --------------------------
+
+
+def _exists_s_oracle(region, transform, broadcast_index, points):
+    """Exact membership by brute force over the free (broadcast) axis.
+
+    A point ``p`` is visible in ``region`` when **some** position ``s``
+    on the broadcast axis puts it inside:
+
+    ``EXISTS s :  (N M) p + N t + N[:, b] s <= o``
+
+    Independent of :meth:`imap_region` -- it evaluates the world-space
+    constraints directly rather than pulling anything back -- which is
+    what makes it an oracle rather than a restatement.
+    """
+    normals = region.normals
+    offsets = region.offsets
+    base = points @ (normals @ transform.linear).T + normals @ transform.translation
+    column = normals[:, broadcast_index]
+    inside = np.zeros(len(points), dtype=bool)
+    for s in np.linspace(-50.0, 50.0, 401):
+        inside |= np.all(base + column * s <= offsets + 1e-9, axis=1)
+    return inside
+
+
+def _uc3_oblique_through_c(world):
+    """A slab whose normal tilts through the broadcast axis C and Z."""
+    normal = np.array([0.0, 0.7, 0.7, 0.0, 0.0])
+    return ConvexRegion.from_plane_slab(world, normal, 21.9, 1.0)
+
+
+def test_imap_region_drops_constraints_on_a_broadcast_axis_d8():
+    """The failure D8 exists to fix, on the case the viewer hits first.
+
+    Selecting a channel the dataset has no axis for must not empty the
+    region: the dataset is declared broadcast over ``C``, so it exists at
+    every ``C``.  Without the drop rule the ``C`` constraints pull back
+    through the all-zero row to ``0 <= -1.5`` and the visual vanishes the
+    moment the channel slider leaves zero.
+    """
+    data, world, transform = uc3()
+    region = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5), "C": (2.0, 0.5)})
+    assert len(region.half_spaces) == 4
+
+    pulled = transform.imap_region(region, world)
+
+    assert not pulled.is_empty()
+    # only the two T constraints survive; both C constraints were dropped
+    # before A^T rather than pulled back to a zero normal.
+    assert len(pulled.half_spaces) == 2
+    assert np.all(np.any(pulled.normals != 0.0, axis=1))
+    assert pulled.coordinate_system == data.id
+
+    box = pulled.bounding_box()
+    assert box.min_coordinate[0] == pytest.approx(6.5)
+    assert box.max_coordinate[0] == pytest.approx(7.5)
+
+
+def test_imap_region_without_d8_would_have_been_empty():
+    """Pin the old answer, so the fix cannot silently regress."""
+    _, world, transform = uc3()
+    region = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5), "C": (2.0, 0.5)})
+    # the shipped-before-D8 arithmetic: raw A^T with nothing dropped
+    unamended = transform._imap_region(region, ())
+    assert unamended.is_empty()
+    assert transform.imap_region(region, world).is_empty() is False
+
+
+@pytest.mark.parametrize("kind", ["axis_aligned", "oblique_through_c"])
+def test_the_d8_drop_rule_matches_an_exists_s_oracle(kind):
+    """The measurement that justifies shipping the cheap rule.
+
+    For an axis-aligned selection the Fourier-Motzkin elimination of the
+    broadcast axis degenerates exactly to "drop every constraint whose
+    normal touches it", because the single ``(+C, -C)`` pair combines to
+    ``0 <= 2 * half_thickness``.  The same holds for a lone oblique slab
+    tilted through the axis.
+    """
+    _, world, transform = uc3()
+    broadcast_index = world.resolve("C")
+
+    if kind == "axis_aligned":
+        region = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5), "C": (1.5, 1.0)})
+    else:
+        region = _uc3_oblique_through_c(world)
+
+    rng = np.random.default_rng(0)
+    points = rng.uniform(-6.0, 12.0, size=(3000, 4))
+
+    truth = _exists_s_oracle(region, transform, broadcast_index, points)
+    drop_rule = transform.imap_region(region, world).contains(points)
+
+    assert truth.any(), "the oracle must select something for this to mean anything"
+    assert np.array_equal(drop_rule, truth)
+
+
+def test_the_d8_drop_rule_diverges_only_where_the_design_says_it_does():
+    """The documented limit, pinned as a limit rather than as a bug.
+
+    An oblique slab tilted *through* the broadcast axis, intersected
+    with a bound on that same axis, is the one shape where the pairwise
+    Fourier-Motzkin combination produces a constraint the drop rule
+    discards.  The rule is then **over**-inclusive -- it fetches more
+    than it needs to, never less -- and no shipping selection has this
+    shape.  When one does, this test is the place the generalisation
+    lands.
+    """
+    _, world, transform = uc3()
+    broadcast_index = world.resolve("C")
+    region = ConvexRegion.intersection(
+        _uc3_oblique_through_c(world),
+        ConvexRegion.from_axis_slabs(world, {"C": (2.0, 0.5)}),
+    )
+
+    rng = np.random.default_rng(0)
+    points = rng.uniform(-6.0, 12.0, size=(3000, 4))
+
+    truth = _exists_s_oracle(region, transform, broadcast_index, points)
+    drop_rule = transform.imap_region(region, world).contains(points)
+
+    assert not np.array_equal(drop_rule, truth)
+    # over-inclusive, never under-inclusive: every true point is kept
+    assert np.all(drop_rule[truth])
+    assert drop_rule.sum() > truth.sum()
+
+
+@pytest.mark.parametrize("name", ["UC1", "UC2", "UC4"])
+def test_d8_leaves_a_transform_without_broadcast_axes_bit_identical(name):
+    """No broadcast axes means nothing to drop, so the rule is raw A^T.
+
+    Checked against the closed form written out inline rather than
+    against the implementation, so this is an independent statement of
+    what the answer must be.
+    """
+    _, world, transform = MODEL_USE_CASES[name]()
+    assert transform.broadcast_axes == frozenset()
+
+    rng = np.random.default_rng(11)
+    ndim = world.ndim
+    region = ConvexRegion(
+        coordinate_system=world.id,
+        ndim=ndim,
+        half_spaces=tuple(
+            HalfSpace(normal=normal, offset=float(offset))
+            for normal, offset in zip(
+                rng.normal(size=(5, ndim)), rng.normal(size=5) * 3, strict=True
+            )
+        ),
+    )
+    pulled = transform.imap_region(region, world)
+
+    assert np.allclose(pulled.normals, region.normals @ transform.linear)
+    assert np.allclose(
+        pulled.offsets, region.offsets - region.normals @ transform.translation
+    )
+    assert len(pulled.half_spaces) == len(region.half_spaces)
+
+
+def test_a_constant_output_axis_is_not_a_broadcast_one_under_imap_region_d39():
+    """D8 must not erase D39's vacuous / infeasible distinction.
+
+    A *constant* zero row means "the source sits at exactly this
+    position", so a selection elsewhere on that axis genuinely selects
+    nothing.  Only a *broadcast* zero row means "the source is at every
+    position".  The two look identical in the matrix, which is why
+    ``broadcast_axes`` is stored beside it (D25).
+    """
+    data, world, _ = uc3()
+    constant = AffineTransform.from_axis_map(
+        data,
+        world,
+        axis_map={"t": "T", "z": "Z", "y": "Y", "x": "X"},
+        constant_output_axes={"C": 0.0},
+    )
+    assert constant.broadcast_axes == frozenset()
+
+    on_the_constant = ConvexRegion.from_axis_slabs(world, {"C": (0.0, 0.5)})
+    assert not constant.imap_region(on_the_constant, world).is_empty()
+
+    off_the_constant = ConvexRegion.from_axis_slabs(world, {"C": (2.0, 0.5)})
+    assert constant.imap_region(off_the_constant, world).is_empty()
+
+
+def test_imap_region_requires_the_matching_output_system():
+    _, world, transform = uc3()
+    region = ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5)})
+    with pytest.raises(ValueError, match="output_coordinate_system must be"):
+        transform.imap_region(region, tczyx_world())
+
+
+def test_map_region_is_not_given_the_d8_treatment_d31():
+    """The asymmetry is deliberate: broadcast is unboundedness forward.
+
+    ``map_region`` keeps its single-argument signature.  Forward,
+    ``broadcast_axes`` shows up as an unbounded extent
+    (:meth:`map_bounding_box`), not as a dropped constraint, and D31
+    draws that line.
+    """
+    import inspect
+
+    forward = inspect.signature(AffineTransform.map_region).parameters
+    backward = inspect.signature(AffineTransform.imap_region).parameters
+    assert list(forward) == ["self", "region"]
+    assert list(backward) == ["self", "region", "output_coordinate_system"]
 
 
 # --- composition (D10, D19) -------------------------------------------
@@ -762,6 +979,87 @@ def test_a_mapped_output_axis_cannot_also_be_declared():
             broadcast_output_axes=["Z"],
             constant_output_axes={"T": 7.0, "C": 2.0},
         )
+
+
+# --- D46: permuting the rendered axes transposes the view --------------
+
+
+def _node_matrix_for_rendered_order(displayed):
+    """Compose visual -> data -> world -> rendered, as the renderer does.
+
+    Design section 3.14's worked case: a ``zyx`` image in a ``ZYX``
+    world with scales ``z=2.0, y=0.5, x=0.25``, displaying ``Y``/``X``
+    sliced at ``Z``.  The only thing that varies between calls is the
+    order of ``displayed``.
+    """
+    data = DataCoordinateSystem(
+        name="image",
+        datastore_id=uuid4(),
+        axes=(space("z"), space("y"), space("x")),
+    )
+    world = WorldCoordinateSystem(axes=(space("Z"), space("Y"), space("X")))
+    data_to_world = AffineTransform.from_axis_map(
+        data,
+        world,
+        axis_map={"z": "Z", "y": "Y", "x": "X"},
+        scale={"z": 2.0, "y": 0.5, "x": 0.25},
+    )
+
+    rendered = RenderedCoordinateSystem.from_world(world, displayed, uuid4())
+    rendered_to_world_transform = AffineTransform.from_axis_map(
+        rendered,
+        world,
+        axis_map={name: name for name in displayed},
+        constant_output_axes={"Z": 14.0},
+    )
+
+    visual = VisualCoordinateSystem.from_data(data, ("y", "x"), uuid4())
+    visual_to_data = AffineTransform.from_axis_map(
+        visual,
+        data,
+        axis_map={"y": "y", "x": "x"},
+        constant_output_axes={"z": 7.0},
+    )
+
+    inverse = rendered_to_world_transform.inverse()
+    assert inverse is not None, "the D34 embedding must have an exact left inverse"
+    node = visual_to_data.then(data_to_world, data, world).then(
+        inverse, world, rendered
+    )
+    return node
+
+
+def test_a_permuted_rendered_system_transposes_the_node_matrix_d46():
+    """The call sites differ only in the order of the displayed sequence."""
+    in_order = _node_matrix_for_rendered_order(("Y", "X"))
+    permuted = _node_matrix_for_rendered_order(("X", "Y"))
+
+    assert np.allclose(in_order.linear, [[0.5, 0.0], [0.0, 0.25]])
+    assert np.allclose(permuted.linear, [[0.0, 0.25], [0.5, 0.0]])
+
+
+def test_a_permuted_rendered_system_has_a_negative_determinant_d46():
+    """A swap of two axes is a reflection, not a rotation.
+
+    Worth pinning because "rotate the view 90 degrees" is a *different*
+    operation -- a swap plus a flip -- which an axis map cannot express
+    without a negative scale.  Nothing in ``transform_v2`` cares; the
+    renderer's winding order might.
+    """
+    in_order = _node_matrix_for_rendered_order(("Y", "X"))
+    permuted = _node_matrix_for_rendered_order(("X", "Y"))
+
+    assert np.linalg.det(in_order.linear) == pytest.approx(0.125)
+    assert np.linalg.det(permuted.linear) == pytest.approx(-0.125)
+
+
+def test_a_permuted_rendered_system_is_still_exactly_invertible_d46():
+    permuted = _node_matrix_for_rendered_order(("X", "Y"))
+    inverse = permuted.inverse()
+    assert inverse is not None
+
+    point = np.array([3.0, 4.0])
+    assert np.allclose(inverse.map_coordinates(permuted.map_coordinates(point)), point)
 
 
 # --- equality (D21) ----------------------------------------------------

@@ -157,6 +157,30 @@ def test_a_bounded_displayed_axis_is_accepted_r3():
     )
 
 
+def test_an_embedding_with_broadcast_axes_is_rejected_d8():
+    """The validator resolves D8's drop rule to "nothing to drop".
+
+    It holds axis **ids** and never the world ``CoordinateSystem``
+    object, so it cannot resolve ``broadcast_axes`` to indices.  That is
+    fine because a ``rendered -> world`` embedding records where the
+    slice sits as ``constant_output_axes`` and never as a broadcast axis
+    (D34/D35) -- but the assumption is checked rather than assumed.
+    """
+    world = tczyx()
+    rendered = RenderedCoordinateSystem.from_world(world, ("Z", "Y", "X"), uuid4())
+    broadcasting = AffineTransform.from_axis_map(
+        rendered,
+        world,
+        axis_map={"Z": "Z", "Y": "Y", "X": "X"},
+        broadcast_output_axes=["T", "C"],
+    )
+    with pytest.raises(ValidationError, match="must not declare broadcast_axes"):
+        RegionSelection(
+            transform=broadcasting,
+            region=ConvexRegion.from_axis_slabs(world, {"T": (7.0, 0.5)}),
+        )
+
+
 def test_a_selection_that_reaches_nothing_is_still_rejected():
     """The generalisation must not weaken the check D43 was written for."""
     world = tczyx()

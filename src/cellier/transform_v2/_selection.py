@@ -84,7 +84,8 @@ class RegionSelection(BaseModel):
         ------
         ValueError
             If the region is in the wrong coordinate system, has the
-            wrong rank, or excludes every point the transform can reach.
+            wrong rank, declares broadcast axes, or excludes every point
+            the transform can reach.
         """
         if self.region.coordinate_system != self.transform.output_coordinate_system:
             raise ValueError(
@@ -97,7 +98,20 @@ class RegionSelection(BaseModel):
                 f"The region has rank {self.region.ndim} but the transform "
                 f"produces {self.transform.output_ndim} dimensions."
             )
-        if self.transform.imap_region(self.region).is_empty():
+        if self.transform.broadcast_axes:
+            raise ValueError(
+                "A RegionSelection's transform is the rendered -> world "
+                "embedding of D34, which records where the slice sits as "
+                "constant_output_axes.  It must not declare broadcast_axes: a "
+                "world axis the canvas does not display is at a definite "
+                "position, not free.  Rebuild the embedding with "
+                "constant_output_axes instead of broadcast_output_axes."
+            )
+        # The embedding has no broadcast axes -- checked immediately above --
+        # so there is nothing for D8's drop rule to remove and the indices
+        # are empty.  This is the one caller that has the ids but not the
+        # world CoordinateSystem object needed to resolve them.
+        if self.transform._imap_region(self.region, ()).is_empty():
             raise ValueError(
                 f"No point this transform can reach lies inside the selected "
                 f"region: the selection's own slice position "

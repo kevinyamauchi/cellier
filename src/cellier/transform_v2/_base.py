@@ -233,8 +233,12 @@ class BaseTransform(BaseModel, ABC):
         """Map a convex region forward."""
 
     @abstractmethod
-    def imap_region(self, region: ConvexRegion) -> ConvexRegion:
-        """Map a convex region back."""
+    def imap_region(
+        self,
+        region: ConvexRegion,
+        output_coordinate_system: CoordinateSystem,
+    ) -> ConvexRegion:
+        """Map a convex region back, dropping broadcast constraints (D8)."""
 
     # -- inversion -----------------------------------------------------
 
