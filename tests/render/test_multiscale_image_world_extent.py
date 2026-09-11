@@ -18,25 +18,23 @@ import pytest
 
 from cellier.render.visuals import GFXMultiscaleLabelVisual
 from cellier.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import (
     MultiscaleImageAppearance,
     MultiscaleImageVisual,
     MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )
+from tests._v2 import level_transforms
 
 
 def _make_multiscale_image_node_2d(level_shapes):
     model = MultiscaleImageVisual(
         name="img",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleImageAppearance(
             color_map="grays", clim=(0.0, 255.0), visible=True
         ),
@@ -54,12 +52,10 @@ def _make_multiscale_label_node_2d(level_shapes):
     model = MultiscaleLabelVisual(
         name="lbl",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleLabelsAppearance(visible=True),
     )
     gfx_visual = GFXMultiscaleLabelVisual.from_cellier_model(

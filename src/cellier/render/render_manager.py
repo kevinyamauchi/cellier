@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
     from cellier.scene._background import BackgroundAppearance
-    from cellier.transform_v2 import RegionSelection
+    from cellier.transform import RegionSelection
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
@@ -64,18 +64,31 @@ if TYPE_CHECKING:
 class _ImageDisplayedDataCoord(NamedTuple):
     """Render-layer intermediate for image/volume pick — displayed axes only.
 
-    ``_extract_pick_details`` can only decode the rendered axes; the
-    controller promotes this to a full-N-dim ``ImagePickInfo`` in
-    ``_on_raw_pointer_event`` by filling non-displayed axes from dims state.
+    ``_extract_pick_details`` can only decode the rendered axes from the pick
+    payload; the visual supplies the rest from what it last drew, and the
+    controller joins the two into a full-rank ``ImagePickInfo`` in
+    ``_on_raw_pointer_event``.
 
     Parameters
     ----------
     displayed_data_coord : tuple[float, ...]
         Level-0 data-array position on the displayed axes only (``floor`` gives
         the index).  Length 2 for a 2-D canvas, 3 for a 3-D canvas.
+    collapsed_data_indices : tuple[tuple[int, int], ...] or None
+        ``(data axis, level-0 voxel index)`` for every axis the visual
+        collapsed, taken from the plan it last drew.  ``None`` when the visual
+        cannot say -- it has never been resliced, or it is a headlessly
+        constructed one with no region.
+
+        Pairs rather than a mapping so the tuple stays comparable and
+        hashable like every other pick payload.  These are the planes actually
+        on screen, which is not the same as the planes the current dims state
+        implies: a slider moved since the last reslice changes the second and
+        not the first, and a pick is a question about the first.
     """
 
     displayed_data_coord: tuple[float, ...]
+    collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
 
 
 class _LabelsDisplayedDataCoord(NamedTuple):
@@ -86,6 +99,7 @@ class _LabelsDisplayedDataCoord(NamedTuple):
     """
 
     displayed_data_coord: tuple[float, ...]
+    collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
 
 
 #: Render modes that project along the ray instead of finding a surface.
@@ -1208,9 +1222,19 @@ class RenderManager:
         coord = gfx_visual.pick_data_coordinate(hit_object, pick_info)
         if coord is None:
             return None
+        # The visual knows which planes it drew; asking it is the only way to
+        # get an answer that cannot disagree with what is on screen.
+        collapsed = gfx_visual.pick_collapsed_indices()
+        collapsed_pairs = (
+            tuple(sorted(collapsed.items())) if collapsed is not None else None
+        )
         if isinstance(gfx_visual, _LABELS_TYPES):
-            return _LabelsDisplayedDataCoord(displayed_data_coord=coord)
-        return _ImageDisplayedDataCoord(displayed_data_coord=coord)
+            return _LabelsDisplayedDataCoord(
+                displayed_data_coord=coord, collapsed_data_indices=collapsed_pairs
+            )
+        return _ImageDisplayedDataCoord(
+            displayed_data_coord=coord, collapsed_data_indices=collapsed_pairs
+        )
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.

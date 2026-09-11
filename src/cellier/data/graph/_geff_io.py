@@ -19,8 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from cellier.transform import AffineTransform
-
 if TYPE_CHECKING:
     import pathlib
 
@@ -40,8 +38,13 @@ class GeffPayload:
         load time and never on the per-frame path (D18).
     node_ids : np.ndarray
         Original node ids, kept for pick payloads.
-    transform : AffineTransform
-        Built from the axes' ``scale`` / ``offset`` (D23).
+    axis_scales : tuple[float, ...]
+        The axes' ``scale``, one per axis in file order, defaulting to 1.0
+        (D23).  Raw numbers rather than a transform: a transform names the
+        two coordinate systems it maps between, and only the controller
+        knows the scene's world.
+    axis_offsets : tuple[float, ...]
+        The axes' ``offset``, defaulting to 0.0.
     directed : bool
         From ``metadata.directed``.
     axes : list
@@ -56,7 +59,8 @@ class GeffPayload:
     positions: np.ndarray
     edges: np.ndarray
     node_ids: np.ndarray
-    transform: AffineTransform
+    axis_scales: tuple[float, ...]
+    axis_offsets: tuple[float, ...]
     directed: bool
     axes: list = field(default_factory=list)
     node_props: dict = field(default_factory=dict)
@@ -167,7 +171,6 @@ def read_geff(
     # to pass.
     scales = tuple(1.0 if a.scale is None else float(a.scale) for a in axes)
     offsets = tuple(0.0 if a.offset is None else float(a.offset) for a in axes)
-    transform = AffineTransform.from_scale_and_translation(scales, offsets)
 
     axis_name_set = {axis.name for axis in axes}
     node_props = {
@@ -196,7 +199,8 @@ def read_geff(
         positions=positions,
         edges=edges,
         node_ids=node_ids,
-        transform=transform,
+        axis_scales=scales,
+        axis_offsets=offsets,
         directed=bool(metadata.directed),
         axes=axes,
         node_props=node_props,

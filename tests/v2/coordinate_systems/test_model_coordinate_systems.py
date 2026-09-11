@@ -1,6 +1,6 @@
 """The world and data coordinate systems, and what they must survive.
 
-Phase 2 of the ``transform_v2`` integration adds coordinate systems to the
+Phase 2 of the ``transform`` integration adds coordinate systems to the
 model and nothing that reads them.  These tests pin the three things that
 would otherwise be discovered much later:
 
@@ -27,7 +27,10 @@ from cellier.data.label._label_memory_store import LabelMemoryStore
 from cellier.data.lines._lines_memory_store import LinesMemoryStore
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.render.visuals._slicing import map_world_slice_to_voxel
+from cellier.render.visuals._slicing import (
+    axis_selections_from_box,
+    round_world_to_voxel,
+)
 from cellier.scene.dims import (
     DEFAULT_HALF_THICKNESS,
     AxisAlignedSelection,
@@ -35,11 +38,15 @@ from cellier.scene.dims import (
     spatial_axes,
     world_coordinate_system,
 )
-from cellier.transform import AffineTransform as V1Affine
-from cellier.transform_v2 import Axis, WorldCoordinateSystem
+from cellier.transform import (
+    Axis,
+    AxisAlignedBoundingBox,
+    WorldCoordinateSystem,
+)
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from tests._v2 import systems
 
 # ---------------------------------------------------------------------------
 # The world: types are stated
@@ -91,19 +98,29 @@ def test_a_fractional_slice_position_is_kept(tmp_path):
     unreachable through an integer-valued slider."""
     selection = AxisAlignedSelection(displayed_axes=(1, 2), slice_indices={0: 2.5})
     assert selection.slice_indices[0] == 2.5
-    assert selection.to_state().slice_indices[0] == 2.5
+    # The snapshot stopped carrying the positions in Phase 8 (D5); what
+    # reaches the render layer is the region built from them, and nothing on
+    # the way rounds or truncates.
+    assert not hasattr(selection.to_state(), "slice_indices")
 
 
 def test_a_float_slice_position_reaches_the_voxel_mapper_unchanged():
-    """``round_world_to_voxel`` must survive this migration untouched."""
-    world_to_voxel = V1Affine(
-        matrix=V1Affine.from_scale((0.5, 1.0, 1.0)).inverse_matrix
+    """``round_world_to_voxel`` must survive this migration untouched.
+
+    Phase 8 deleted ``map_world_slice_to_voxel``, the v1-era wrapper this
+    originally went through; the surviving assembler is
+    ``axis_selections_from_box``, which calls the same rule.  A world position
+    of 2.5 on a 0.5 unit-per-voxel axis is voxel 5.0 exactly, and half-up
+    keeps 5.
+    """
+    data, _ = systems(3)
+    box = AxisAlignedBoundingBox(
+        coordinate_system=data.id,
+        min_coordinate=np.asarray([5.0, -np.inf, -np.inf]),
+        max_coordinate=np.asarray([5.0, np.inf, np.inf]),
     )
-    mapped = map_world_slice_to_voxel(
-        {0: 2.5}, ndim=3, world_to_voxel=world_to_voxel, level_shape=(10, 10, 10)
-    )
-    # world 2.5 on a 0.5 unit-per-voxel axis is voxel 5.0; half-up keeps 5.
-    assert mapped == {0: 5}
+    selections = axis_selections_from_box(box, (10, 10, 10))
+    assert selections[0] == round_world_to_voxel(5.0, 10) == 5
 
 
 def test_an_absent_axis_gets_the_default_half_thickness():
@@ -142,7 +159,9 @@ def test_the_selection_state_carries_thickness_through_to_the_render_layer():
 
 def test_a_state_built_without_thickness_still_works():
     """Every render-layer construction site predates the field."""
-    state = AxisAlignedSelectionState(displayed_axes=(1, 2), slice_indices={0: 0.0})
+    state = AxisAlignedSelectionState(
+        displayed_axes=(1, 2),
+    )
     assert state.thickness == {}
 
 

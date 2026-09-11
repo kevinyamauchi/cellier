@@ -1,11 +1,16 @@
-"""Planning from the region produces what planning from ``dims_state`` did.
+"""What planning from the region selects, on every in-memory family.
 
-Design 3.7's claim, checked on every in-memory family: because this phase
-bounds only the collapsed axes at zero thickness, ``bounding_box()`` returns
-``lo == hi`` on a collapsed axis -- the slice position pulled into voxel
-space, rounded by the same function -- and ``(-inf, +inf)`` on a displayed
-one, clamped to the full extent.  So the output is byte-identical, computed
-by the general machinery.
+Design 3.7's claim: because this phase bounds only the collapsed axes at zero
+thickness, ``bounding_box()`` returns ``lo == hi`` on a collapsed axis -- the
+slice position pulled into voxel space, rounded by
+``round_world_to_voxel`` -- and ``(-inf, +inf)`` on a displayed one, clamped
+to the full extent.
+
+These tests were originally written as an equality against planning from
+``dims_state``, which was the path the region replaced.  Phase 8 deleted that
+path, so the agreement they recorded is now pinned as the expected selection
+itself -- the same numbers, asserted against the rule rather than against a
+second implementation of it.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.label._label_memory_store import LabelMemoryStore
+from cellier.render.visuals._slicing import round_world_to_voxel
 from cellier.scene.dims import spatial_axes
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
@@ -61,7 +67,7 @@ def _viewer(kind, transform_spec=None):
     return controller, scene, visual
 
 
-def _plan(controller, scene, visual, *, with_region: bool):
+def _plan(controller, scene, visual, *, with_region: bool = True):
     gfx = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     canvas_id = controller.get_canvas_ids(scene.id)[0]
     selection = (
@@ -78,28 +84,49 @@ def _plan(controller, scene, visual, *, with_region: bool):
     return [request.axis_selections for request in requests]
 
 
-@pytest.mark.parametrize("kind", ["image", "labels", "multichannel"])
+@pytest.mark.parametrize("kind", ["image", "labels"])
 @pytest.mark.parametrize("slice_position", [0.0, 1.0, 2.5, 9.0, 99.0])
-async def test_the_region_and_the_old_path_agree(kind, slice_position):
+async def test_the_region_collapses_to_the_rounded_plane(kind, slice_position):
+    """Identity transform, so the world position *is* the voxel coordinate and
+    the only thing left to check is the rounding rule and the clamp."""
     controller, scene, visual = _viewer(kind)
     controller.update_slice_indices(scene.id, {0: slice_position})
-    assert _plan(controller, scene, visual, with_region=True) == _plan(
-        controller, scene, visual, with_region=False
-    )
+    expected = round_world_to_voxel(slice_position, _SHAPE[0])
+    assert _plan(controller, scene, visual) == [(expected, (0, 20), (0, 30), (0, 40))]
+
+
+@pytest.mark.parametrize("slice_position", [0.0, 1.0, 2.5, 9.0, 99.0])
+async def test_a_multichannel_visual_plans_one_request_per_channel(slice_position):
+    """The channel axis is this family's own concern: the region names it like
+    any other collapsed axis and each request then overwrites it."""
+    controller, scene, visual = _viewer("multichannel")
+    controller.update_slice_indices(scene.id, {0: slice_position})
+    assert _plan(controller, scene, visual) == [
+        (0, (0, 20), (0, 30), (0, 40)),
+        (1, (0, 20), (0, 30), (0, 40)),
+    ]
 
 
 @pytest.mark.parametrize("kind", ["image", "labels"])
-async def test_they_agree_under_an_awkward_transform(kind):
+async def test_an_awkward_transform_still_rounds_half_up(kind):
     """Design 3.7's numbers: ``T = 0.5 t + 0.25`` and ``Z = 2 z + 10``, chosen
     so the rounding step has something to do."""
     controller, scene, visual = _viewer(
         kind, ((0.5, 2.0, 0.5, 0.5), (0.25, 10.0, 0.0, 0.0))
     )
     controller.update_slice_indices(scene.id, {0: 1.0})
-    with_region = _plan(controller, scene, visual, with_region=True)
-    assert with_region == _plan(controller, scene, visual, with_region=False)
     # world T = 1 -> voxel t = 1.5 -> half-up -> 2, and the design says so.
-    assert with_region == [(2, (0, 20), (0, 30), (0, 40))]
+    assert _plan(controller, scene, visual) == [(2, (0, 20), (0, 30), (0, 40))]
+
+
+@pytest.mark.parametrize("kind", ["image", "labels", "multichannel"])
+async def test_planning_without_a_region_is_now_an_error(kind):
+    """R8.3.  Until v1 was retired, a request carrying no region fell back to
+    reading ``dims_state.slice_indices`` as world positions.  There is no
+    second path now, and a caller who reaches this has a bug upstream."""
+    controller, scene, visual = _viewer(kind)
+    with pytest.raises(RuntimeError, match="no region to plan from"):
+        _plan(controller, scene, visual, with_region=False)
 
 
 async def test_a_thickness_on_the_collapsed_axis_fetches_a_slab():
@@ -124,7 +151,7 @@ async def test_a_sheared_transform_is_rejected_when_it_is_assigned():
     The assembler's own half-bounded guard is the second line of defence, and
     is covered in the assembler's tests.
     """
-    from cellier.transform_v2 import AffineTransform
+    from cellier.transform import AffineTransform
 
     controller, scene, visual = _viewer("image")
     store = controller.get_data_store(UUID(visual.data_store_id))

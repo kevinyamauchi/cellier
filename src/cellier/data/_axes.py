@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     AxisType,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from uuid import UUID
 
-    from cellier.transform_v2 import CoordinateSystem, WorldCoordinateSystem
+    from cellier.transform import CoordinateSystem, WorldCoordinateSystem
 
 
 #: Axis names that carry a non-spatial type when only names are supplied.
@@ -313,6 +313,75 @@ def data_axes_from_world(
     return tuple(axes)
 
 
+def install_level_transforms(store: object) -> None:
+    """Give a multi-level store its ``level k -> level 0`` transforms, as v2.
+
+    The per-level numbers are model state: the readers derive them from
+    OME-NGFF metadata and keep them as ``level_scales`` and
+    ``level_translations``.  What makes them a *transform* is the pair of
+    coordinate systems they sit between, which do not exist until the store
+    has them -- from its own axis metadata, or from the scene's world through
+    ``CellierController._ensure_data_coordinate_systems``.  So this runs after
+    the systems are installed, from both places.
+
+    A no-op when the store already has one transform per system: a store
+    restored from JSON keeps the ones it was serialized with, ids included.
+
+    Until Phase 8 the readers built these as v1 matrices, which name no
+    endpoints, and the region pull-back derived a named form alongside them
+    (D5.1).  There is one list now.
+
+    Parameters
+    ----------
+    store : object
+        The datastore.  Must expose ``data_coordinate_systems``,
+        ``level_scales`` and ``level_translations``.
+    """
+    systems = list(getattr(store, "data_coordinate_systems", []))
+    if not systems:
+        return
+    existing = list(getattr(store, "level_transforms", []))
+    if len(existing) == len(systems):
+        return
+    scales = list(getattr(store, "level_scales", []))
+    translations = list(getattr(store, "level_translations", []))
+    if not scales:
+        # A single-level store's only transform is the identity on itself.
+        store.level_transforms = [identity_transform(systems[0], systems[0])]
+        return
+    if len(scales) != len(systems):
+        raise ValueError(
+            f"Data store '{getattr(store, 'name', '?')}' has {len(scales)} "
+            f"level scales but {len(systems)} coordinate systems; they must "
+            f"match, one per resolution level."
+        )
+    ndim = systems[0].ndim
+    transforms: list[AffineTransform] = []
+    for level, system in enumerate(systems):
+        scale = tuple(float(value) for value in scales[level])
+        offset = (
+            tuple(float(value) for value in translations[level])
+            if level < len(translations)
+            else (0.0,) * ndim
+        )
+        transforms.append(
+            AffineTransform.from_axis_map(
+                system,
+                systems[0],
+                axis_map={
+                    system.axes[index].id: systems[0].axes[index].id
+                    for index in range(ndim)
+                },
+                scale={system.axes[index].id: scale[index] for index in range(ndim)},
+                translation={
+                    system.axes[index].id: offset[index] for index in range(ndim)
+                },
+                name=f"level{level}_to_level0",
+            )
+        )
+    store.level_transforms = transforms
+
+
 def install_level_systems(
     store: object,
     names: Sequence[str],
@@ -325,9 +394,10 @@ def install_level_systems(
     ``model_post_init``: a store restored from JSON keeps the ids its stored
     transforms name, and only a freshly read one mints new ones.
 
-    ``level_transforms`` is deliberately untouched.  The OME-Zarr readers
-    derive theirs from NGFF metadata and still hold them as v1 transforms;
-    converting them is the ``data -> world`` phase's job, not this one's.
+    ``level_transforms`` is built alongside, by
+    :func:`install_level_transforms`, from the store's ``level_scales`` and
+    ``level_translations`` -- the systems are exactly what those numbers were
+    missing to be transforms.
 
     Parameters
     ----------
@@ -340,12 +410,12 @@ def install_level_systems(
     units : Sequence[str | None] or None
         Physical units.
     """
-    if store.data_coordinate_systems:
-        return
-    axes = build_axes(names, types, units)
-    store.data_coordinate_systems = level_coordinate_systems(
-        store.id, axes, int(getattr(store, "n_levels", 1)), store.name
-    )
+    if not store.data_coordinate_systems:
+        axes = build_axes(names, types, units)
+        store.data_coordinate_systems = level_coordinate_systems(
+            store.id, axes, int(getattr(store, "n_levels", 1)), store.name
+        )
+    install_level_transforms(store)
 
 
 def default_data_to_world(
@@ -415,85 +485,83 @@ def default_data_to_world(
     )
 
 
-def transform_from_v1(
-    matrix: np.ndarray,
+def scale_and_translation_transform(
     data_coordinate_system: DataCoordinateSystem,
     world_coordinate_system: WorldCoordinateSystem,
+    scale: Sequence[float],
+    translation: Sequence[float] | None = None,
 ) -> AffineTransform:
-    """Name the endpoints of a bare ``data -> world`` matrix.
+    """Name the endpoints of a per-axis scale and offset.
 
-    A **migration affordance**, and the only place a v1 transform crosses into
-    the new layer.  ``cellier.transform.AffineTransform`` has no notion of what
-    it maps from or to, so a caller holding one -- a script, a geff file's
-    per-axis scale, a test written before this migration -- has stated the
-    numbers but not the spaces.  This attaches the two systems the controller
-    already knows and changes nothing else, float32 to float64 aside.
+    For a store that states its own geometry as raw numbers -- a geff file's
+    per-axis ``scale`` and ``offset`` (D23) -- and so has said *what* the map
+    is without saying *between which spaces*.  The controller knows both, so
+    this is where they get attached.
 
-    It goes away with v1 itself.  New code should build the transform with
-    ``AffineTransform.from_axis_map``, which states the axis correspondence
-    rather than assuming it is positional.
+    This replaced ``transform_from_v1``, which did the same job for a bare v1
+    matrix and went with v1 in Phase 8.  The difference is that a caller now
+    supplies numbers rather than an object that looked like a transform while
+    naming nothing.
 
     Parameters
     ----------
-    matrix : np.ndarray
-        A square ``(n + 1, n + 1)`` homogeneous matrix in data-axis order.
     data_coordinate_system : DataCoordinateSystem
         The store's level-0 system.
     world_coordinate_system : WorldCoordinateSystem
         The scene's world.
+    scale : Sequence[float]
+        Per-data-axis scale.
+    translation : Sequence[float] or None
+        Per-data-axis offset.  ``None`` is all zeros.
 
     Returns
     -------
     AffineTransform
-        The same map, with both endpoints named.
+        The map, with both endpoints named.
 
     Raises
     ------
     ValueError
-        If the matrix's rank does not match both systems.  A v1 transform is
-        square and positional, so there is nothing to align against when the
-        two systems disagree about how many axes there are.
+        If *scale* does not have one entry per axis of both systems.  The
+        correspondence is positional, so there is nothing to align against
+        when the two systems disagree about how many axes there are.
     """
-    matrix = np.asarray(matrix, dtype=float)
-    rank = matrix.shape[0] - 1
-    if matrix.shape[0] != matrix.shape[1]:
-        raise ValueError(f"A v1 transform matrix is square; got shape {matrix.shape}.")
-    if rank != data_coordinate_system.ndim or rank != world_coordinate_system.ndim:
+    ndim = data_coordinate_system.ndim
+    if len(scale) != ndim or ndim != world_coordinate_system.ndim:
         raise ValueError(
-            f"A rank-{rank} v1 transform cannot be placed between "
-            f"'{data_coordinate_system.name}' ({data_coordinate_system.ndim} "
-            f"axes) and '{world_coordinate_system.name}' "
-            f"({world_coordinate_system.ndim} axes): it is positional and "
-            f"square, so there is no correspondence to infer.  Build the "
-            f"transform with AffineTransform.from_axis_map instead."
+            f"A {len(scale)}-axis scale cannot be placed between "
+            f"'{data_coordinate_system.name}' ({ndim} axes) and "
+            f"'{world_coordinate_system.name}' "
+            f"({world_coordinate_system.ndim} axes): the correspondence is "
+            f"positional, so there is nothing to infer.  Build the transform "
+            f"with AffineTransform.from_axis_map instead."
         )
-    return AffineTransform.from_matrix(
-        matrix,
+    offsets = tuple(translation) if translation is not None else (0.0,) * ndim
+    data_axes = data_coordinate_system.axes
+    world_axes = world_coordinate_system.axes
+    return AffineTransform.from_axis_map(
         data_coordinate_system,
         world_coordinate_system,
+        axis_map={data_axes[i].id: world_axes[i].id for i in range(ndim)},
+        scale={data_axes[i].id: float(scale[i]) for i in range(ndim)},
+        translation={data_axes[i].id: float(offsets[i]) for i in range(ndim)},
         name="data_to_world",
     )
 
 
 def store_level_transforms(store: object) -> list[AffineTransform]:
-    """The level ``k`` -> level ``0`` transforms of a store, as v2.
+    """The level ``k`` -> level ``0`` transforms of a store.
 
-    A pyramid's level transforms are model state -- they are intrinsic to the
-    data and the readers derive them from OME-NGFF metadata -- but the
-    OME-Zarr and multiscale-zarr stores still hold theirs as v1 matrices,
-    which the multiscale *visuals* also consume for their brick grids and
-    shader uniforms.  Until that field moves, this derives the v2 form the
-    region pull-back needs.
-
-    It is not a fresh mint: the endpoints are the store's **stored**
-    per-level coordinate systems, so the derived transforms are as stable as
-    they are.
+    A thin read since Phase 8.  The store holds one v2 transform per
+    coordinate system, built by :func:`install_level_transforms` from its own
+    ``level_scales`` and ``level_translations`` as soon as the systems exist.
+    Until then the readers held v1 matrices, the region pull-back needed a v2
+    form, and this derived one alongside them (D5.1).
 
     Parameters
     ----------
     store : object
-        A datastore.  Must expose ``data_coordinate_systems``; a
-        ``level_transforms`` list, v1 or v2, is used where present.
+        A datastore.
 
     Returns
     -------
@@ -501,23 +569,6 @@ def store_level_transforms(store: object) -> list[AffineTransform]:
         One transform per level, finest first, index 0 the identity.  Empty
         when the store has no coordinate systems.
     """
-    systems = list(getattr(store, "data_coordinate_systems", []))
-    if not systems:
+    if not getattr(store, "data_coordinate_systems", None):
         return []
-    existing = list(getattr(store, "level_transforms", []))
-    if existing and all(
-        isinstance(transform, AffineTransform) for transform in existing
-    ):
-        return existing
-    transforms: list[AffineTransform] = []
-    for level, system in enumerate(systems):
-        if level < len(existing):
-            matrix = np.asarray(existing[level].matrix, dtype=float)
-            transforms.append(
-                AffineTransform.from_matrix(
-                    matrix, system, systems[0], name=f"level{level}_to_level0"
-                )
-            )
-        else:
-            transforms.append(identity_transform(system, systems[0]))
-    return transforms
+    return list(getattr(store, "level_transforms", []))

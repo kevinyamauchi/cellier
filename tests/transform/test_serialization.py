@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     AxisAlignedBoundingBox,
@@ -22,7 +22,7 @@ from cellier.transform_v2 import (
     VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
-from tests.transform_v2._use_cases import uc1, uc3
+from tests.transform._use_cases import uc1, uc3
 
 
 def space(name):

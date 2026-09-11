@@ -33,9 +33,30 @@ class GraphSliceRequest(NamedTuple):
         Always 0 -- no LOD levels.  Present for slicer logging compat.
     displayed_axes : tuple[int, ...]
         Axis indices rendered in the canvas (2 for 2D, 3 for 3D).
-    slice_indices : dict[int, int]
-        Collapsed axis -> world-space integer slice position.
-        Empty when all axes are displayed (full 3D view).
+    slice_positions : dict[int, float]
+        Collapsed axis -> the slab's centre, in **data** coordinates.
+
+        Design 3.12 calls the graph "a per-family policy on top of the
+        region", and the policy is real: the window is asymmetric -- a trail
+        extends backwards in time -- and the fade is a signed distance
+        measured from the slice, neither of which ``contains`` can express.
+        So this family keeps its slab and only the *space* the numbers are in
+        changed: the centre is the region pulled back through the visual's
+        transform, and ``extents`` / ``fades`` are divided by their axis's
+        world-units-per-data-unit, so the store compares data against data.
+
+        Named ``slice_indices`` until Phase 8, which was doubly misleading:
+        they are positions rather than indices, and by then they were in data
+        rather than world coordinates.
+    retained_axes : tuple[int, ...]
+        The **data** axes this visual's geometry keeps, ascending.
+
+        Not the same list as ``displayed_axes``, which indexes the **world**:
+        a ``zyx`` store in a ``czyx`` world retains ``(0, 1, 2)`` while the
+        world displays ``(1, 2, 3)``, and a transform that permutes its axes
+        retains a different set again.  Indexing the position array with
+        world axes raises on the first and silently uploads the wrong columns
+        on the second.
     extents : dict[int, tuple[float, float]]
         Axis -> ``(before, after)`` half-extents of the slab on that axis.
         Carries an entry for *every* sliced axis; axes with no
@@ -52,9 +73,10 @@ class GraphSliceRequest(NamedTuple):
     chunk_request_id: UUID
     scale_index: int
     displayed_axes: tuple[int, ...]
-    slice_indices: dict[int, int]
+    slice_positions: dict[int, float]
     extents: dict[int, tuple[float, float]]
     fades: dict[int, tuple[float, float, float]]
+    retained_axes: tuple[int, ...]
 
 
 @dataclass(frozen=True)

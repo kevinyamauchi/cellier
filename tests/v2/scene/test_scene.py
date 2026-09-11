@@ -11,8 +11,8 @@ from cellier.scene.dims import (
     world_coordinate_system,
 )
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from tests._v2 import level_transforms
 
 
 def test_scene_roundtrip(tmp_path):
@@ -28,12 +28,10 @@ def test_scene_roundtrip(tmp_path):
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleImageAppearance(color_map="viridis"),
     )
     camera = PerspectiveCamera(controller=OrbitCameraController())

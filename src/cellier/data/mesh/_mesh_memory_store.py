@@ -268,23 +268,21 @@ class MeshMemoryStore(BaseDataStore):
         n_vertices = positions.shape[0]
         # Ascending: the uploaded vertex buffer's axis order is the data's,
         # and a display permutation lives in the node matrix (design 3.14).
-        displayed = sorted(request.displayed_axes)
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform and is the right answer whenever the controller has placed
+        # the visual.  ``displayed_axes`` indexes the **world**, so using it
+        # here raises on a store of lower rank than the world and silently
+        # uploads the wrong columns on a transform that permutes its axes; it
+        # remains the fallback for a headlessly constructed visual, which has
+        # no transform to read.
+        displayed = list(request.retained_axes)
         n_display = len(displayed)
 
         # ── Phase 1: build slab mask ─────────────────────────────────
-        if request.region is not None:
-            # The region is the filter (design 3.12).  A face survives when
-            # all three of its vertices do, which is the rule the per-axis
-            # loop applied one axis at a time.
-            face_mask = request.region.contains(positions)[indices].all(axis=1)
-        else:
-            face_mask = np.ones(self.n_faces, dtype=bool)
-            for axis, idx in request.slice_indices.items():
-                lo = float(idx) - request.thickness
-                hi = float(idx) + request.thickness
-                # Include a face only if ALL its vertices are in the slab.
-                vertex_in = (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-                face_mask &= vertex_in[indices].all(axis=1)
+        # The region is the filter (design 3.12).  A face survives when all
+        # three of its vertices do, which is the rule the per-axis loop
+        # applied one axis at a time.
+        face_mask = request.region.contains(positions)[indices].all(axis=1)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

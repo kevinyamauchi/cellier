@@ -14,7 +14,7 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.scene.dims import spatial_axes
-from cellier.transform_v2 import RenderedCoordinateSystem
+from cellier.transform import RenderedCoordinateSystem
 from cellier.visuals._image_memory import InMemoryImageAppearance
 
 

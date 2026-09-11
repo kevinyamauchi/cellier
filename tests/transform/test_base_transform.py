@@ -1,4 +1,4 @@
-"""Tests for cellier.transform_v2._base (D9, D13, D14)."""
+"""Tests for cellier.transform._base (D9, D13, D14)."""
 
 from uuid import uuid4
 
@@ -6,13 +6,13 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     BaseTransform,
     CoordinateSystem,
 )
-from tests.transform_v2._use_cases import uc1, uc3
+from tests.transform._use_cases import uc1, uc3
 
 
 def zyx(name="data"):
@@ -127,7 +127,7 @@ def test_the_wrapped_transform_is_a_transformnd_object_q2():
 
 def test_spaced_is_not_used_anywhere_in_the_package():
     """Section 2.1: Spaced.invert() is wrong, so it is never reachable."""
-    import cellier.transform_v2 as package
+    import cellier.transform as package
 
     for name in package.__all__:
         assert "Spaced" not in type(getattr(package, name)).__name__

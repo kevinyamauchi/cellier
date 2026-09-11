@@ -1,8 +1,8 @@
 """Visuals for representing image data."""
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from cellier.transform import AffineTransform
 from cellier.visuals._base_visual import BaseVisual
@@ -90,7 +90,9 @@ class MultiscaleImageVisual(BaseVisual):
         The id of the data store to be visualized.
     level_transforms : list[AffineTransform]
         Per-level transforms mapping level-k voxel coords to level-0
-        voxel coords.  ``level_transforms[0]`` is the identity.
+        voxel coords.  ``level_transforms[0]`` is the identity.  Copied from
+        the data store by the controller, which is the only object that has
+        both the store and the scene.
     appearance : MultiscaleImageAppearance
         The material to use for the labels visual.
     pick_write : bool
@@ -110,33 +112,6 @@ class MultiscaleImageVisual(BaseVisual):
     )
     requires_camera_reslice: bool = Field(default=True, frozen=True)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_downscale_factors(cls, data: Any) -> Any:
-        """Convert _legacy ``downscale_factors`` to ``level_transforms``."""
-        if (
-            isinstance(data, dict)
-            and "downscale_factors" in data
-            and "level_transforms" not in data
-        ):
-            factors = data.pop("downscale_factors")
-            ndim = 3  # historical default
-            transforms: list[AffineTransform] = []
-            for k, f in enumerate(factors):
-                s = float(f)
-                if k == 0:
-                    transforms.append(AffineTransform.identity(ndim=ndim))
-                else:
-                    scale = tuple(s for _ in range(ndim))
-                    translation = tuple((s - 1) / 2 for _ in range(ndim))
-                    transforms.append(
-                        AffineTransform.from_scale_and_translation(
-                            scale=scale, translation=translation
-                        )
-                    )
-            data["level_transforms"] = transforms
-        return data
-
 
 class MultichannelMultiscaleImageVisual(BaseVisual):
     """Model-layer visual for a multichannel multiscale image.
@@ -151,7 +126,8 @@ class MultichannelMultiscaleImageVisual(BaseVisual):
         Texture sampler filter applied to all channels. ``"nearest"`` or
         ``"linear"``. Default ``"nearest"``.
     level_transforms : list[AffineTransform]
-        Per-level voxel-level-k → voxel-level-0 AffineTransforms.
+        Per-level voxel-level-k -> voxel-level-0 transforms, copied from the
+        data store by the controller.
     render_config : MultiscaleImageRenderConfig
         Render-layer brick cache and LOD configuration.
     max_channels_2d : int

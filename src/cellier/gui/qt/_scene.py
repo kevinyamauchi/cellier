@@ -281,9 +281,12 @@ class QtDimsControl:
 
         sel = event.dims_state.selection
 
-        # Update slider values for sliced axes.
+        # Update slider values for sliced axes.  The positions ride on the
+        # event rather than on ``dims_state``: the render layer takes the
+        # region instead and stopped reading them in Phase 8 (D5), but a
+        # slider that something else moved still has to resync.
         for axis in self._sliders:
-            value = sel.slice_indices.get(axis)
+            value = event.slice_indices.get(axis)
             if value is not None:
                 self._set_value(axis, value)
 

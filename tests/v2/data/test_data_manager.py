@@ -1,20 +1,18 @@
 """Tests for DataManager model."""
 
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager
+from tests._v2 import pyramid_levels
 
 
 def test_data_manager_roundtrip(tmp_path, small_zarr_store):
     store = MultiscaleZarrDataStore(
         zarr_path=str(small_zarr_store),
         scale_names=["s0", "s1"],
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         name="test_volume",
     )
     original = DataManager(stores={store.id: store})

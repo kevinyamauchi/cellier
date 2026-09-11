@@ -190,35 +190,36 @@ def test_axes_returns_axis_info(ome_zarr_5d: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests: level_transforms
+# Tests: level_scales / level_translations
 # ---------------------------------------------------------------------------
 
 
-def test_level_transforms_level0_is_identity(ome_zarr_5d: str) -> None:
+def test_level_geometry_level0_is_the_identity(ome_zarr_5d: str) -> None:
+    """Phase 8: the store states the pyramid as numbers.  What makes them a
+    transform is the pair of level coordinate systems, which
+    ``install_level_transforms`` attaches once the axes are known."""
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
+    np.testing.assert_allclose(store.level_scales[0], [1.0] * 5, atol=1e-12)
+    np.testing.assert_allclose(store.level_translations[0], [0.0] * 5, atol=1e-12)
     t0 = store.level_transforms[0]
-    ndim = t0.ndim
+    ndim = t0.input_ndim
     np.testing.assert_allclose(t0.matrix, np.eye(ndim + 1), atol=1e-12)
 
 
-def test_level_transforms_level1(ome_zarr_5d: str) -> None:
+def test_level_geometry_level1(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    t1 = store.level_transforms[1]
-    ndim = t1.ndim
-    scale = np.diag(t1.matrix[:ndim, :ndim])
-    trans = t1.matrix[:ndim, ndim]
+    scale = np.asarray(store.level_scales[1])
+    trans = np.asarray(store.level_translations[1])
     # t=1, c=1, z=2, y=2, x=2
     np.testing.assert_allclose(scale, [1.0, 1.0, 2.0, 2.0, 2.0], atol=1e-12)
     # t=0, c=0, z=0.5, y=0.5, x=0.5
     np.testing.assert_allclose(trans, [0.0, 0.0, 0.5, 0.5, 0.5], atol=1e-12)
 
 
-def test_level_transforms_level2(ome_zarr_5d: str) -> None:
+def test_level_geometry_level2(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    t2 = store.level_transforms[2]
-    ndim = t2.ndim
-    scale = np.diag(t2.matrix[:ndim, :ndim])
-    trans = t2.matrix[:ndim, ndim]
+    scale = np.asarray(store.level_scales[2])
+    trans = np.asarray(store.level_translations[2])
     # t=1, c=1, z=4, y=4, x=4
     np.testing.assert_allclose(scale, [1.0, 1.0, 4.0, 4.0, 4.0], atol=1e-12)
     # t=0, c=0, z=1.5, y=2.5, x=2.5
@@ -491,7 +492,7 @@ def test_bf2raw_series_index_out_of_range(bf2raw_store: str) -> None:
 def test_bf2raw_level_transforms_identity_at_0(bf2raw_store: str) -> None:
     store = OMEZarrImageDataStore.from_path(bf2raw_store)
     t0 = store.level_transforms[0]
-    np.testing.assert_allclose(t0.matrix, np.eye(t0.ndim + 1), atol=1e-12)
+    np.testing.assert_allclose(t0.matrix, np.eye(t0.input_ndim + 1), atol=1e-12)
 
 
 async def test_bf2raw_get_data(bf2raw_store: str) -> None:

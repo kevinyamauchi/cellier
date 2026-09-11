@@ -9,9 +9,9 @@ from cmap import Colormap
 
 pytest.importorskip("anywidget")
 
-from cellier.events import ChannelAppearanceChangedEvent  # noqa: E402
-from cellier.gui.anywidget.visuals import AnywidgetChannelList  # noqa: E402
-from cellier.visuals._channel_appearance import ChannelAppearance  # noqa: E402
+from cellier.events import ChannelAppearanceChangedEvent
+from cellier.gui.anywidget.visuals import AnywidgetChannelList
+from cellier.visuals._channel_appearance import ChannelAppearance
 
 
 def _make_channel_appearance(**kwargs) -> ChannelAppearance:

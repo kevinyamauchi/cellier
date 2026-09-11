@@ -12,8 +12,8 @@ import uuid
 
 from cellier.events._events import VisualVisibilityChangedEvent
 from cellier.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from tests._v2 import level_transforms
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,12 +25,10 @@ def _make_model(visible: bool = True) -> MultiscaleImageVisual:
     return MultiscaleImageVisual(
         name="vol",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleImageAppearance(
             color_map="grays",
             clim=(0.0, 255.0),

@@ -71,7 +71,7 @@ class MultiscalePaintController(AbstractPaintController):
     data_store :
         Either ``OMEZarrImageDataStore`` or ``MultiscaleZarrDataStore``.
         Must expose ``_ts_stores: list[ts.TensorStore]`` and
-        ``level_shapes`` / ``level_transforms``.
+        ``level_shapes`` / ``level_scales``.
     visual_block_size :
         Tile / brick side length used by the visual's render config.
         Must match the ``MultiscaleImageRenderConfig.block_size`` of the
@@ -330,7 +330,7 @@ class MultiscalePaintController(AbstractPaintController):
             return {}
 
         level_shapes = self._data_store.level_shapes
-        level_transforms = self._data_store.level_transforms
+        level_scales = self._data_store.level_scales
         stores = self._data_store._ts_stores
         ax_y, ax_x = self._displayed_axes
 
@@ -343,17 +343,11 @@ class MultiscalePaintController(AbstractPaintController):
         for k in range(1, n_levels):
             stride_y = max(
                 1,
-                round(
-                    level_transforms[k].matrix[ax_y, ax_y]
-                    / level_transforms[k - 1].matrix[ax_y, ax_y]
-                ),
+                round(level_scales[k][ax_y] / level_scales[k - 1][ax_y]),
             )
             stride_x = max(
                 1,
-                round(
-                    level_transforms[k].matrix[ax_x, ax_x]
-                    / level_transforms[k - 1].matrix[ax_x, ax_x]
-                ),
+                round(level_scales[k][ax_x] / level_scales[k - 1][ax_x]),
             )
 
             parent_dirty = dirty_by_level.get(k - 1, set())

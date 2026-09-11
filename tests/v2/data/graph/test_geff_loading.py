@@ -139,10 +139,10 @@ def test_from_geff_builds_transform(tmp_path):
     )
     store = GraphMemoryStore.from_geff(path)
 
-    assert store.transform is not None
-    assert store.transform.ndim == 4
-    assert np.allclose(np.diag(store.transform.matrix)[:4], [1.0, 4.0, 0.26, 0.26])
-    assert np.allclose(store.transform.matrix[:4, 4], [0.0, 10.0, 0.0, 0.0])
+    # Phase 8: the store keeps the file's raw numbers.  It cannot name the
+    # scene's world, so the transform is built by the controller.
+    assert store.axis_scales == (1.0, 4.0, 0.26, 0.26)
+    assert store.axis_offsets == (0.0, 10.0, 0.0, 0.0)
 
 
 @requires_geff
@@ -151,18 +151,16 @@ def test_from_geff_identity_when_axes_unscaled(tmp_path):
     path, _, _ = _write_lineage(tmp_path / "plain.geff")
     store = GraphMemoryStore.from_geff(path)
 
-    assert store.transform is not None
-    assert np.allclose(store.transform.matrix, np.eye(5))
+    assert store.axis_scales == (1.0, 1.0, 1.0, 1.0)
+    assert store.axis_offsets == (0.0, 0.0, 0.0, 0.0)
 
 
 @requires_geff
 def test_from_geff_has_no_transform_param(tmp_path):
     """D23 is enforced, not merely documented."""
-    from cellier.transform import AffineTransform
-
     path, _, _ = _write_lineage(tmp_path / "lineage.geff")
     with pytest.raises(TypeError, match="transform"):
-        GraphMemoryStore.from_geff(path, transform=AffineTransform.identity(ndim=4))
+        GraphMemoryStore.from_geff(path, transform=object())
 
 
 @requires_geff

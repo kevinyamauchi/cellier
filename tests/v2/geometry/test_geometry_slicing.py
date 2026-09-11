@@ -27,7 +27,7 @@ from cellier.render._spaces import (
     with_minimum_thickness,
 )
 from cellier.scene.dims import DEFAULT_HALF_THICKNESS
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     ConvexRegion,

@@ -12,15 +12,17 @@ import numpy as np
 import pytest
 
 from cellier.controller import CellierController
-from cellier.data._axes import default_data_to_world, transform_from_v1
+from cellier.data._axes import (
+    default_data_to_world,
+    scale_and_translation_transform,
+)
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.render.visuals._image import (
     _check_transform_no_rotation,
     _norm_size_from_transform,
 )
 from cellier.scene.dims import spatial_axes
-from cellier.transform import AffineTransform as V1Affine
-from cellier.transform_v2 import AffineTransform
+from cellier.transform import AffineTransform
 from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 from tests._v2 import bound, scale_and_translation, systems
 
@@ -87,28 +89,30 @@ def test_a_wider_dataset_projects_its_leading_axes_away():
 
 
 # ---------------------------------------------------------------------------
-# The v1 migration affordance
+# Naming the endpoints of a bare scale and offset
 # ---------------------------------------------------------------------------
+#
+# ``transform_from_v1`` did this for a v1 matrix and went with v1 in Phase 8.
+# What is left is the case that was never a migration affordance: a store that
+# states its geometry as raw numbers -- a geff file's per-axis scale and
+# offset (D23) -- and cannot name the scene's world itself.
 
 
-def test_a_v1_transform_is_accepted_and_gets_its_endpoints_named():
-    controller, scene = _controller_and_scene()
-    store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
-    visual = controller.add_image(
-        data=store,
-        scene_id=scene.id,
-        appearance=_appearance(),
-        transform=V1Affine.from_scale((2.0, 3.0, 4.0)),
+def test_a_scale_and_offset_gets_its_endpoints_named():
+    data, world = systems(3, ("z", "y", "x"))
+    transform = scale_and_translation_transform(
+        data, world, (2.0, 3.0, 4.0), (1.0, 0.0, 0.0)
     )
-    assert isinstance(visual.transform, AffineTransform)
-    np.testing.assert_allclose(np.diag(visual.transform.matrix), [2.0, 3.0, 4.0, 1.0])
-    assert visual.transform.input_coordinate_system == (store.data_coordinate_system.id)
+    np.testing.assert_allclose(np.diag(transform.matrix), [2.0, 3.0, 4.0, 1.0])
+    np.testing.assert_allclose(transform.translation, [1.0, 0.0, 0.0])
+    assert transform.input_coordinate_system == data.id
+    assert transform.output_coordinate_system == world.id
 
 
-def test_a_v1_transform_of_the_wrong_rank_is_refused_with_a_reason():
+def test_a_scale_of_the_wrong_rank_is_refused_with_a_reason():
     data, world = systems(3, ("z", "y", "x"))
     with pytest.raises(ValueError, match="from_axis_map"):
-        transform_from_v1(np.eye(5), data, world)
+        scale_and_translation_transform(data, world, (1.0, 1.0, 1.0, 1.0))
 
 
 def test_a_transform_built_against_other_systems_is_refused():

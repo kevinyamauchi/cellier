@@ -15,10 +15,10 @@ import numpy as np
 from cellier.data._axes import (
     data_axes_from_world,
     default_data_to_world,
-    identity_transform,
+    install_level_transforms,
     level_coordinate_systems,
+    scale_and_translation_transform,
     store_level_transforms,
-    transform_from_v1,
 )
 from cellier.events import (
     AABBChangedEvent,
@@ -66,7 +66,11 @@ from cellier.logging import _CAMERA_LOGGER, _SOURCE_ID_LOGGER
 from cellier.render._capture import capture_scene
 from cellier.render._config import RenderManagerConfig
 from cellier.render._scene_config import VisualRenderConfig
-from cellier.render._spaces import RenderSpaces, build_render_spaces
+from cellier.render._spaces import (
+    RenderSpaces,
+    axis_correspondence,
+    build_render_spaces,
+)
 from cellier.render._visual_lut import (
     KIND_LABEL,
     KIND_LABEL_ALL,
@@ -105,9 +109,8 @@ from cellier.scene.dims import (
     world_coordinate_system,
 )
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
-from cellier.transform_v2 import AffineTransform as TransformV2
-from cellier.transform_v2 import (
+from cellier.transform import (
+    AffineTransform,
     CoordinateSystemType,
     RegionSelection,
     RenderedCoordinateSystem,
@@ -116,6 +119,8 @@ from cellier.transform_v2 import (
 from cellier.viewer_model import DataManager, ViewerModel
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from cellier.visuals._base_visual import BaseVisual, VisualOutline
 from cellier.visuals._canvas_overlay import CenteredAxes2D
 from cellier.visuals._graph_memory import (
@@ -518,7 +523,9 @@ class CellierController:
         # canvas_id -> (rendered system, rendered -> world embedding).
         # Rebuilt when displayed_axes changes, including a pure reorder; only
         # the embedding is rebuilt when slice_indices or thickness moves.
-        self._rendered: dict[UUID, tuple[RenderedCoordinateSystem, TransformV2]] = {}
+        self._rendered: dict[
+            UUID, tuple[RenderedCoordinateSystem, AffineTransform]
+        ] = {}
         # (visual_id, render_mode) -> the space that visual's GPU geometry is
         # indexed in (D45).  One per mode: a multiscale visual's 3D node is in
         # normalized proxy-box space and its 2D node in level-0 pixels.
@@ -941,13 +948,6 @@ class CellierController:
             visual_model.transform = default_data_to_world(
                 data_store.data_coordinate_system, world
             )
-        elif isinstance(supplied, AffineTransform):
-            # A v1 transform states the numbers but not the spaces; the
-            # controller knows both, so it names them.  Migration affordance
-            # only -- it goes away with v1.
-            visual_model.transform = transform_from_v1(
-                supplied.matrix, data_store.data_coordinate_system, world
-            )
 
         if isinstance(visual_model, MultiscaleImageVisual):
             return self._add_multiscale_image_visual(scene_id, visual_model)
@@ -983,7 +983,7 @@ class CellierController:
         scene_id: UUID,
         appearance: BaseImageAppearance,
         name: str = "image",
-        transform: TransformV2 | AffineTransform | None = None,
+        transform: AffineTransform | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
     ) -> ImageVisual:
@@ -1002,9 +1002,9 @@ class CellierController:
         transform : AffineTransform or None
             The ``data -> world`` transform, from the store's level-0
             coordinate system to the scene's world.  ``None`` (default) is the
-            identity between them.  A v1
-            ``cellier.transform.AffineTransform`` is accepted and has its
-            endpoints named here; that affordance goes away with v1.
+            identity between them.  It must name those two systems: a
+            transform built against a look-alike pair describes a different
+            space and is refused.
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
@@ -1317,11 +1317,19 @@ class CellierController:
             appearance = GraphAppearance()
 
         # A geff file states its own per-axis scale and offset (D23), which
-        # stands in for an explicit transform; either arrives as a bare v1
-        # matrix and is named here against the store's and scene's systems.
-        resolved_transform = self._prepare_transform(
-            scene_id, data, transform if transform is not None else data.transform
-        )
+        # stands in for an explicit transform.  They are raw numbers -- the
+        # store cannot name the scene's world -- so they become a transform
+        # here, between the two systems this method knows.
+        resolved_transform = transform
+        if resolved_transform is None and data.axis_scales is not None:
+            self._ensure_data_coordinate_systems(scene_id, data)
+            resolved_transform = scale_and_translation_transform(
+                data.data_coordinate_system,
+                self._model.scenes[scene_id].dims.world_coordinate_system,
+                data.axis_scales,
+                data.axis_offsets,
+            )
+        resolved_transform = self._prepare_transform(scene_id, data, resolved_transform)
 
         visual_model = GraphVisual(
             name=name,
@@ -1593,6 +1601,11 @@ class CellierController:
         # It used to be stripped of its channel axis here so the GFX layer
         # could ``expand_dims`` it back; a v2 transform names its own axes and
         # the slots take it whole.
+        # Resolved first: it installs the store's coordinate systems, and
+        # ``level_transforms`` does not exist until they do.
+        resolved_transform = self._prepare_transform(
+            scene_id, data, transform, channel_axis=channel_axis
+        )
         visual_model = MultichannelMultiscaleImageVisual(
             name=name,
             data_store_id=str(data.id),
@@ -1602,9 +1615,7 @@ class CellierController:
             render_config=render_config,
             max_channels_2d=max_channels_2d,
             max_channels_3d=max_channels_3d,
-            transform=self._prepare_transform(
-                scene_id, data, transform, channel_axis=channel_axis
-            ),
+            transform=resolved_transform,
         )
         _apply_render_settings(
             visual_model,
@@ -2770,7 +2781,7 @@ class CellierController:
     def coordinate_system(self, system_id: UUID) -> CoordinateSystemType:
         """Return the coordinate system with *system_id*.
 
-        Three ``transform_v2`` methods -- ``map_bounding_box``, ``then`` and
+        Three ``transform`` methods -- ``map_bounding_box``, ``then`` and
         ``validate_against`` -- take coordinate system **objects** while a
         transform stores only their ids, so composing anything needs this
         lookup.  It is a plain dict: no edges, no path finding and no
@@ -2833,6 +2844,7 @@ class CellierController:
         rather than by luck.
         """
         if data_store.data_coordinate_systems:
+            install_level_transforms(data_store)
             self._register_coordinate_systems(*data_store.data_coordinate_systems)
             return
         ndim = getattr(data_store, "ndim", None)
@@ -2857,8 +2869,9 @@ class CellierController:
             data_store.name,
         )
         data_store.data_coordinate_systems = systems
-        if len(systems) == 1 and not data_store.level_transforms:
-            data_store.level_transforms = [identity_transform(systems[0], systems[0])]
+        # The pyramid's numbers are the store's; the systems are what makes
+        # them transforms, and they only exist now.
+        install_level_transforms(data_store)
         self._register_coordinate_systems(*systems)
 
     def _prepare_transform(
@@ -2867,14 +2880,13 @@ class CellierController:
         data_store: Any,
         transform: Any,
         channel_axis: int | None = None,
-    ) -> TransformV2 | None:
+    ) -> AffineTransform | None:
         """Resolve what a visual's ``data -> world`` transform should be.
 
-        Called by every ``add_*`` before the visual model is built, because
-        the model's field is typed v2 and a caller holding a v1 transform --
-        or a geff file's own per-axis scale -- has stated the numbers without
-        naming the spaces.  Both systems are known here, so this is where they
-        get attached.
+        Called by every ``add_*`` before the visual model is built: it
+        installs the store's coordinate systems, supplies the default when no
+        transform was given, and checks that a supplied one names the store's
+        and the scene's own systems rather than a look-alike pair.
 
         Parameters
         ----------
@@ -2883,8 +2895,8 @@ class CellierController:
         data_store : Any
             The store it reads from.
         transform : Any
-            A v2 transform (passed through), a v1 one (named), or ``None``
-            (the identity between the two systems).
+            A transform (passed through after its endpoints are checked), or
+            ``None`` (the identity between the two systems).
         channel_axis : int or None
             For a multichannel visual, the data axis it composites.
 
@@ -2903,8 +2915,6 @@ class CellierController:
         level_zero = data_store.data_coordinate_systems[0]
         if transform is None:
             return default_data_to_world(level_zero, world)
-        if isinstance(transform, AffineTransform):
-            return transform_from_v1(transform.matrix, level_zero, world)
         if transform.input_coordinate_system != level_zero.id:
             raise ValueError(
                 f"This transform maps out of coordinate system "
@@ -2924,7 +2934,7 @@ class CellierController:
 
     def _build_rendered(
         self, scene_id: UUID, canvas_id: UUID
-    ) -> tuple[RenderedCoordinateSystem, TransformV2]:
+    ) -> tuple[RenderedCoordinateSystem, AffineTransform]:
         """Build one canvas's rendered system and its embedding into the world.
 
         The rendered system is built in **cellier displayed order** (Part 5,
@@ -2956,7 +2966,7 @@ class CellierController:
             constant[world.axes[axis].id] = float(
                 getattr(selection, "slice_indices", {}).get(axis, 0.0)
             )
-        embedding = TransformV2.from_axis_map(
+        embedding = AffineTransform.from_axis_map(
             rendered,
             world,
             axis_map={
@@ -3003,16 +3013,51 @@ class CellierController:
         if entry is not None:
             self._forget_coordinate_systems(entry[0])
 
+    def _retained_data_axes(
+        self, visual_id: UUID, level_zero: Any, scene: Any
+    ) -> list[int]:
+        """The data axes a visual's geometry keeps, ascending (design 3.14).
+
+        Which data axis a displayed **world** axis names is a question only the
+        visual's ``data -> world`` transform can answer.  Subtracting a
+        trailing-alignment offset gets the same answer whenever the transform
+        preserves axis order, which is nearly always -- and gets a wrong one,
+        or an out-of-range one, when it does not: a ``zyx`` store broadcast
+        into a ``czyx`` world would be asked for data axis 3, and a store whose
+        transform permutes its axes would hand over the wrong columns without
+        complaint.  So the correspondence is read off the matrix, and the
+        offset is only the fallback for a visual with no transform yet.
+
+        Ascending data-axis order, never ``displayed_axes`` order:
+        ``axis_selections`` is assembled per data axis ascending and numpy
+        returns an array whose axes are ascending, so a display permutation
+        lives in the transform and never in the data.
+        """
+        displayed = getattr(scene.dims.selection, "displayed_axes", ())
+        visual = self._model_visual_or_none(visual_id)
+        transform = getattr(visual, "transform", None)
+        if transform is not None:
+            data_axis_of_world = {
+                world_axis: data_axis
+                for data_axis, world_axis in axis_correspondence(transform).items()
+            }
+            return sorted(
+                data_axis_of_world[axis]
+                for axis in displayed
+                if axis in data_axis_of_world
+            )
+        offset = scene.dims.world_coordinate_system.ndim - level_zero.ndim
+        return sorted(
+            axis - offset for axis in displayed if 0 <= axis - offset < level_zero.ndim
+        )
+
     def _rebuild_visual_space(
         self, visual_id: UUID, render_mode: str, data_store: Any
     ) -> None:
         """Build the space one visual's geometry is uploaded in, for one mode.
 
-        The retained axes are in **ascending data-axis order**, never
-        ``displayed_axes`` order: ``axis_selections`` is assembled per data
-        axis ascending and numpy returns an array whose axes are ascending,
-        so a display permutation has to live in the transform and never in
-        the data (design 3.14).
+        See :meth:`_retained_data_axes` for why the axis correspondence is read
+        off the transform rather than assumed positional.
         """
         if not data_store.data_coordinate_systems:
             return
@@ -3020,13 +3065,8 @@ class CellierController:
         scene_id = self._visual_to_scene.get(visual_id)
         if scene_id is None:
             return
-        selection = self._model.scenes[scene_id].dims.selection
-        world_ndim = self._model.scenes[scene_id].dims.world_coordinate_system.ndim
-        offset = world_ndim - level_zero.ndim
-        retained = sorted(
-            axis - offset
-            for axis in getattr(selection, "displayed_axes", ())
-            if 0 <= axis - offset < level_zero.ndim
+        retained = self._retained_data_axes(
+            visual_id, level_zero, self._model.scenes[scene_id]
         )
         if not retained:
             return
@@ -3067,12 +3107,7 @@ class CellierController:
             return None
         rendered_cs, rendered_to_world = rendered
         level_zero = store.data_coordinate_systems[0]
-        offset = scene.dims.world_coordinate_system.ndim - level_zero.ndim
-        retained = sorted(
-            axis - offset
-            for axis in displayed_axes
-            if 0 <= axis - offset < level_zero.ndim
-        )
+        retained = self._retained_data_axes(visual_id, level_zero, scene)
         return build_render_spaces(
             level_zero,
             space,
@@ -3087,7 +3122,7 @@ class CellierController:
 
     def _scene_rendered(
         self, scene_id: UUID
-    ) -> tuple[RenderedCoordinateSystem, TransformV2] | None:
+    ) -> tuple[RenderedCoordinateSystem, AffineTransform] | None:
         """The rendered system node matrices on this scene are expressed in.
 
         A node matrix lives on a pygfx node, and there is one pygfx scene per
@@ -3319,6 +3354,7 @@ class CellierController:
                     scene_id=scene_id,
                     dims_state=new_state,
                     displayed_axes_changed=displayed_axes_changed,
+                    slice_indices=dict(selection.slice_indices),
                 )
             )
 
@@ -4047,6 +4083,56 @@ class CellierController:
             yield
         finally:
             self._suppress_reslice = False
+
+    def data_to_world(
+        self,
+        scene_id: UUID,
+        data_store: Any,
+        scale: Sequence[float] | None = None,
+        translation: Sequence[float] | None = None,
+    ) -> AffineTransform:
+        """Build a ``data -> world`` transform from a per-axis scale and offset.
+
+        A transform names the two coordinate systems it maps between, and only
+        the viewer knows both: the store's level-0 system and the scene's
+        world.  This is the short way to say "this dataset is 4 um in z and
+        sits 10 um along it" without assembling an axis map by hand.
+
+        Before Phase 8 the same thing was said with a bare
+        v1 ``AffineTransform``, which stated the numbers and
+        named nothing; ``add_*`` accepted one and attached the endpoints
+        itself.  That went with v1, and this replaces it.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene whose world the transform maps into.
+        data_store : Any
+            The store whose voxel space it maps from.  Given its coordinate
+            systems if it does not have them.
+        scale : Sequence[float] or None
+            Per-data-axis scale.  ``None`` is all ones.
+        translation : Sequence[float] or None
+            Per-data-axis offset, in world units.  ``None`` is all zeros.
+
+        Returns
+        -------
+        AffineTransform
+            Ready to hand to any ``add_*`` or to
+            :meth:`set_visual_transform`.
+
+        Raises
+        ------
+        ValueError
+            If the store and the world disagree about how many axes they
+            have: the correspondence here is positional, so there is nothing
+            to infer.  Use ``AffineTransform.from_axis_map`` to state it.
+        """
+        self._ensure_data_coordinate_systems(scene_id, data_store)
+        data = data_store.data_coordinate_system
+        world = self._model.scenes[scene_id].dims.world_coordinate_system
+        factors = tuple(scale) if scale is not None else (1.0,) * data.ndim
+        return scale_and_translation_transform(data, world, factors, translation)
 
     def set_visual_transform(
         self,
@@ -5474,6 +5560,128 @@ class CellierController:
             weak=weak,
         )
 
+    def _promote_pick_coordinate(
+        self,
+        displayed_data_coord: Sequence[float],
+        *,
+        displayed_axes: Sequence[int],
+        slice_indices: Mapping[int, float],
+        world_ndim: int,
+        hit_visual_id: UUID | None,
+        collapsed_data_indices: Sequence[tuple[int, int]] | None = None,
+    ) -> tuple[float, ...]:
+        """Join a partial pick coordinate into a level-0 data coordinate.
+
+        The render layer decodes only the axes it drew.  The rest are the
+        planes the visual collapsed, and it reports them itself in
+        *collapsed_data_indices* -- read off the plan it last drew, so the
+        answer is the slice on screen rather than the one the current dims
+        state implies.  Those two differ while a reslice is in flight, and a
+        pick is a question about the screen.
+
+        **One convention throughout.** ``floor`` of every component gives the
+        voxel index, displayed and collapsed alike.  The displayed components
+        arrive that way already (``_pick`` adds the half-voxel).  A collapsed
+        axis has no sub-voxel position -- the visual drew one plane -- so its
+        component is the centre of that plane, ``index + 0.5``.  Emitting the
+        raw pulled-back position instead would put the two halves of one tuple
+        in two conventions, and ``floor`` would be right for one and wrong for
+        the other whenever the slider sat past a voxel's midpoint.
+
+        The fallback, for a visual that reported nothing, pulls the world
+        slice positions back through the transform and rounds them the way the
+        selection assembler does (``round_world_to_voxel``, half-up).  It lands
+        on the same plane whenever no reslice is pending, and it keeps a
+        headlessly constructed visual answerable.
+
+        The result is in **data**-axis order and has the hit visual's rank: a
+        world axis the data broadcasts over contributes nothing, because the
+        data has no such axis.  A data axis with no world counterpart -- a
+        multichannel store's composited channel axis -- is zero, since nothing
+        in the pick says which channel was hit.
+
+        Parameters
+        ----------
+        displayed_data_coord : Sequence[float]
+            Level-0 data position on the displayed axes only, in pygfx
+            ``(x, y[, z])`` order.
+        displayed_axes : Sequence[int]
+            The scene's displayed world axes, in the order the canvas draws
+            them.
+        slice_indices : Mapping[int, float]
+            World slice position per non-displayed world axis.  Used only by
+            the fallback.
+        world_ndim : int
+            The scene world's rank, used for the fallback below.
+        hit_visual_id : UUID or None
+            The visual that was hit.  When it cannot be resolved to a model
+            with a transform -- a background miss, or a removed visual -- there
+            is nothing to pull the world positions back through, so the world
+            positions are returned on their world axes as they were before this
+            pull-back existed.
+        collapsed_data_indices : Sequence[tuple[int, int]] or None
+            ``(data axis, level-0 voxel index)`` from the visual's last plan.
+
+        Returns
+        -------
+        tuple[float, ...]
+            One coordinate per data axis, ascending.
+        """
+        # The render layer decodes displayed-axis coordinates in pygfx
+        # (x, y[, z]) order, which is the reverse of cellier's ascending
+        # ``displayed_axes`` (..., row, col) order.  Reverse so each value lands
+        # on its true axis (e.g. the column coordinate on the x axis, not on the
+        # first displayed axis) -- otherwise the displayed axes come out
+        # transposed.
+        decoded = tuple(displayed_data_coord)[::-1]
+
+        visual = (
+            self._model_visual_or_none(hit_visual_id)
+            if hit_visual_id is not None
+            else None
+        )
+        transform = getattr(visual, "transform", None)
+        if transform is None:
+            coordinate = np.zeros(world_ndim, dtype=np.float64)
+            for slot, world_axis in enumerate(displayed_axes):
+                coordinate[world_axis] = decoded[slot]
+            for world_axis, world_position in slice_indices.items():
+                coordinate[world_axis] = float(world_position)
+            return tuple(float(value) for value in coordinate)
+
+        data_axis_of_world = {
+            world_axis: data_axis
+            for data_axis, world_axis in axis_correspondence(transform).items()
+        }
+        coordinate = np.zeros(transform.input_ndim, dtype=np.float64)
+        for slot, world_axis in enumerate(displayed_axes):
+            data_axis = data_axis_of_world.get(world_axis)
+            if data_axis is not None:
+                coordinate[data_axis] = decoded[slot]
+
+        if collapsed_data_indices is not None:
+            for data_axis, index in collapsed_data_indices:
+                if 0 <= data_axis < coordinate.size:
+                    coordinate[data_axis] = float(index) + 0.5
+            return tuple(float(value) for value in coordinate)
+
+        # Fallback: the visual reported no plan, so derive the plane from the
+        # dims state the way the selection assembler would have.
+        linear = np.asarray(transform.linear)
+        offsets = np.asarray(transform.translation)
+        for world_axis, world_position in slice_indices.items():
+            data_axis = data_axis_of_world.get(world_axis)
+            if data_axis is None:
+                # The visual broadcasts over this world axis: it exists at
+                # every position along it and has no coordinate of its own.
+                continue
+            scale = float(linear[world_axis, data_axis])
+            if scale == 0.0:
+                continue
+            position = (float(world_position) - float(offsets[world_axis])) / scale
+            coordinate[data_axis] = float(np.floor(position + 0.5)) + 0.5
+        return tuple(float(value) for value in coordinate)
+
     def _on_raw_pointer_event(self, event: _CanvasRawPointerEvent) -> None:
         """Embed the 2D camera position in N-dimensional world space.
 
@@ -5498,26 +5706,21 @@ class CellierController:
         axis_labels = dims.axis_labels
         n_dims = len(axis_labels)
 
-        # Promote render-layer intermediates to full-N-dim public pick types.
+        # Promote render-layer intermediates to full-rank public pick types.
         # The render layer decodes the displayed axes into level-0 data
-        # coordinates; the controller fills the remaining (non-displayed) axes
-        # from the dims slice state — which are already data indices, so every
-        # axis of the result is in the same (data) coordinate system.
+        # coordinates; the controller fills the remaining axes from the dims
+        # slice state, which since D3 holds a **world** position and so has to
+        # be pulled back through the visual's transform first.
         raw_pick = event.pick_details
         if isinstance(raw_pick, (_ImageDisplayedDataCoord, _LabelsDisplayedDataCoord)):
-            data_coord_pick = np.empty(n_dims, dtype=np.float64)
-            # The render layer decodes displayed-axis coordinates in pygfx
-            # (x, y[, z]) order, which is the reverse of cellier's ascending
-            # ``displayed_axes`` (..., row, col) order.  Reverse so each value
-            # lands on its true data axis (e.g. the column coordinate on the x
-            # axis, not on the first displayed axis) — otherwise the displayed
-            # axes come out transposed.
-            disp_coord = tuple(raw_pick.displayed_data_coord)[::-1]
-            for i, axis in enumerate(displayed_axes):
-                data_coord_pick[axis] = disp_coord[i]
-            for axis, idx in slice_indices.items():
-                data_coord_pick[axis] = float(idx)
-            full_coord: tuple[float, ...] = tuple(float(v) for v in data_coord_pick)
+            full_coord = self._promote_pick_coordinate(
+                raw_pick.displayed_data_coord,
+                displayed_axes=displayed_axes,
+                slice_indices=slice_indices,
+                world_ndim=n_dims,
+                hit_visual_id=event.hit_visual_id,
+                collapsed_data_indices=raw_pick.collapsed_data_indices,
+            )
             if isinstance(raw_pick, _ImageDisplayedDataCoord):
                 promoted_pick = ImagePickInfo(data_coordinate=full_coord)
             else:

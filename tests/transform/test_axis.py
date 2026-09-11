@@ -1,11 +1,11 @@
-"""Tests for cellier.transform_v2._axis (D2-D5)."""
+"""Tests for cellier.transform._axis (D2-D5)."""
 
 from uuid import uuid4
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from cellier.transform_v2 import Axis, AxisType
+from cellier.transform import Axis, AxisType
 
 
 def test_axis_type_outside_the_rfc5_set_is_rejected():

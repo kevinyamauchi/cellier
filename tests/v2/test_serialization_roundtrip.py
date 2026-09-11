@@ -16,6 +16,7 @@ from cellier.visuals._image import (
     MultiscaleImageRenderConfig,
 )
 from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from tests._v2 import level_transforms
 
 
 def _make_minimal_model() -> ViewerModel:
@@ -76,7 +77,6 @@ def test_multiscale_render_config_roundtrip():
     """
     from cmap import Colormap
 
-    from cellier.transform import AffineTransform
     from cellier.visuals import MultiscaleImageVisual
 
     render_config = MultiscaleImageRenderConfig(
@@ -89,7 +89,10 @@ def test_multiscale_render_config_roundtrip():
     visual = MultiscaleImageVisual(
         name="img",
         data_store_id="00000000-0000-0000-0000-000000000001",
-        level_transforms=[AffineTransform.identity(ndim=3)],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0]],
+            [[0.0, 0.0, 0.0]],
+        ),
         appearance=appearance,
         render_config=render_config,
     )

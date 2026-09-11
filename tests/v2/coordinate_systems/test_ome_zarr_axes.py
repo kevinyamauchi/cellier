@@ -13,8 +13,8 @@ import pathlib
 import pytest
 
 from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
-from cellier.transform import AffineTransform as V1Affine
-from cellier.transform_v2 import DataCoordinateSystem
+from cellier.transform import DataCoordinateSystem
+from tests._v2 import pyramid_levels
 from tests.v2.data.test_ome_zarr_image_store import _DATASETS
 
 
@@ -78,12 +78,11 @@ def test_an_empty_axis_type_raises_and_names_the_axis(ome_zarr_5d: str) -> None:
     type actually arrives in.
     """
     store_path = ome_zarr_5d.removeprefix("file://")
-    identity = V1Affine.identity(ndim=5)
     with pytest.raises(ValueError, match="'z' has an empty axis_type"):
         OMEZarrImageDataStore(
             zarr_path=ome_zarr_5d,
             scale_names=[dataset["path"] for dataset in _DATASETS],
-            level_transforms=[identity, identity, identity],
+            **pyramid_levels([[1.0] * 5] * 3),
             axis_names=["t", "c", "z", "y", "x"],
             axis_units=[None] * 5,
             axis_types=["time", "channel", "", "space", "space"],

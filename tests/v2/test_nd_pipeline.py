@@ -24,12 +24,12 @@ import pytest
 
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._spaces import select_axes
 from cellier.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
 )
-from cellier.transform import AffineTransform
-from cellier.transform._axis_order import select_axes
+from tests._v2 import level_transforms
 
 # Encode (t, c, z, y, x) into a single float so any extracted slice can
 # be decoded back to its original indices.  Bases must exceed dimension
@@ -43,7 +43,7 @@ def _encode(t: int, c: int, z: int, y: int, x: int) -> float:
 
 
 def _decode(value: float) -> tuple[int, int, int, int, int]:
-    v = int(round(value))
+    v = round(value)
     t = v // _BASES[0]
     v -= t * _BASES[0]
     c = v // _BASES[1]
@@ -136,31 +136,29 @@ def _build_5d_level_setup():
     full_scale = (10.0, 100.0, 1000.0, 10000.0, 100000.0)  # T, C, Z, Y, X
     full_translation = (1.0, 2.0, 3.0, 4.0, 5.0)
     # 3-level pyramid: level k has scale sv * 2^k.
-    level_transforms = []
-    for k in range(3):
-        scale_k = tuple(s * (2**k) for s in full_scale)
-        trans_k = tuple(t * (1 + k) for t in full_translation)
-        level_transforms.append(
-            AffineTransform.from_scale_and_translation(scale_k, trans_k)
-        )
+    scales = [tuple(s * (2**k) for s in full_scale) for k in range(3)]
+    translations = [tuple(t * (1 + k) for t in full_translation) for k in range(3)]
     # Make level 0 identity for VolumeGeometry/ImageGeometry2D's assertion.
-    level_transforms[0] = AffineTransform.identity(ndim=5)
+    scales[0] = (1.0,) * 5
+    translations[0] = (0.0,) * 5
     full_level_shapes = [(2, 3, 4, 5, 6), (2, 3, 4, 5, 6), (1, 2, 2, 3, 3)]
-    return level_transforms, full_level_shapes
+    return level_transforms(scales, translations), full_level_shapes
 
 
 def test_volume_geometry_3d_non_contiguous_displayed_axes():
     """3D display with displayed_axes=(0, 3, 4) selects T, Y, X from 5D."""
-    level_transforms, level_shapes = _build_5d_level_setup()
+    transforms, level_shapes = _build_5d_level_setup()
     displayed_axes = (0, 3, 4)  # T, Y, X
 
-    # Replicate from_cellier_model's 3D geometry construction.
+    # Replicate from_cellier_model's 3D geometry construction.  The transforms
+    # are handed over whole and projected inside: a v2 transform cannot be
+    # rank-reduced without inventing two coordinate systems (R8.1).
     shapes_3d = [select_axes(s, displayed_axes) for s in level_shapes]
-    transforms_3d = [t.select_axes(displayed_axes) for t in level_transforms]
     vg = MultiscaleBrickLayout3D(
         level_shapes=shapes_3d,
-        level_transforms=transforms_3d,
+        level_transforms=transforms,
         block_size=4,
+        fetch_axes=displayed_axes,
     )
 
     # Expected shapes per level: pick (T, Y, X) from each full shape.
@@ -186,16 +184,16 @@ def test_volume_geometry_3d_non_contiguous_displayed_axes():
 
 def test_image_geometry_2d_non_contiguous_displayed_axes():
     """2D display with displayed_axes=(0, 4) selects T, X from 5D."""
-    level_transforms, level_shapes = _build_5d_level_setup()
+    transforms, level_shapes = _build_5d_level_setup()
     displayed_axes = (0, 4)  # T, X
 
     shapes_2d = [select_axes(s, displayed_axes) for s in level_shapes]
-    transforms_2d = [t.select_axes(displayed_axes) for t in level_transforms]
     ig = ImageGeometry3D(
         level_shapes=shapes_2d,
         block_size=2,
         n_levels=3,
-        level_transforms=transforms_2d,
+        level_transforms=transforms,
+        fetch_axes=displayed_axes,
     )
 
     assert ig.level_shapes[0] == (2, 6)

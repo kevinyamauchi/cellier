@@ -8,6 +8,7 @@ import pytest
 
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.mesh._mesh_requests import MeshSliceRequest
+from tests._v2 import data_region
 
 
 def _simple_store() -> MeshMemoryStore:
@@ -17,7 +18,13 @@ def _simple_store() -> MeshMemoryStore:
     return MeshMemoryStore(positions=positions, indices=indices, name="tet")
 
 
-def _req(displayed=(1, 2), sliced=None, thickness=0.5):
+def _req(displayed=(1, 2), sliced=None, thickness=0.5, ndim=3):
+    """One request, with the filter as the region the store now takes.
+
+    ``sliced`` maps axis to a **data**-space position; each becomes a slab of
+    half-width *thickness*, which is exactly what ``slice_indices`` plus
+    ``thickness`` meant before Phase 8 deleted them (R8.3).
+    """
     if sliced is None:
         sliced = {0: 0}
     sid = uuid4()
@@ -26,8 +33,10 @@ def _req(displayed=(1, 2), sliced=None, thickness=0.5):
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=displayed,
-        slice_indices=sliced,
-        thickness=thickness,
+        retained_axes=tuple(sorted(displayed)),
+        region=data_region(
+            ndim, {axis: (position, thickness) for axis, position in sliced.items()}
+        ),
     )
 
 
@@ -43,7 +52,8 @@ def test_normals_in_3d_get_data_result():
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=(0, 1, 2),
-        slice_indices={},
+        retained_axes=(0, 1, 2),
+        region=data_region(3),
     )
     result = asyncio.run(store.get_data(req))
     assert result.normals is not None
@@ -205,7 +215,8 @@ def test_get_data_3d_returns_all_faces():
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=(0, 1, 2),
-        slice_indices={},
+        retained_axes=(0, 1, 2),
+        region=data_region(3),
     )
     result = asyncio.run(store.get_data(req))
     assert result.is_empty is False
@@ -346,7 +357,8 @@ def test_get_data_cancellable():
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=(1, 2),
-        slice_indices={0: 50},
+        retained_axes=(1, 2),
+        region=data_region(3, {0: (50, 0.5)}),
     )
 
     async def _run():

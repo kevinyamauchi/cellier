@@ -187,8 +187,12 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         if event.source_id == self._id:
             return
         selection = event.dims_state.selection
+        # The positions ride on the event rather than on ``dims_state``: the
+        # render layer takes the region instead and stopped reading them in
+        # Phase 8 (D5), but a slider that something else moved still has to
+        # resync.
         new_slices = dict(self.slice_indices)
-        for axis, value in selection.slice_indices.items():
+        for axis, value in event.slice_indices.items():
             new_slices[str(axis)] = float(value)
         self._set_field("slice_indices", new_slices)
         self._set_field("displayed_axes", [int(a) for a in selection.displayed_axes])

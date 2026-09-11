@@ -22,7 +22,6 @@ from cellier.data._dataset_info import (
     array_extent_row,
 )
 from cellier.data.graph._graph_requests import GraphData, GraphSliceRequest
-from cellier.transform import AffineTransform
 
 #: Placeholder vertex counts for an empty slice.  pygfx forbids empty
 #: geometry buffers, so a single invisible node / a single degenerate segment
@@ -110,11 +109,15 @@ class GraphMemoryStore(BaseDataStore):
     edge_colors : np.ndarray | None
         (n_edges, 4) float32 RGBA, row-matched to edges.  Expanded to two
         vertices per edge at slice time.
-    transform : AffineTransform | None
-        Data-to-world transform derived from a geff file's per-axis
-        ``scale`` / ``offset`` (D23).  ``None`` for a store built from raw
-        arrays.  ``Controller.add_graph`` uses it as the visual's default
-        transform when its own ``transform`` argument is None.
+    axis_scales : tuple[float, ...] | None
+        A geff file's per-axis ``scale`` (D23).  ``None`` for a store built
+        from raw arrays.  ``Controller.add_graph`` turns these into the
+        visual's default ``data -> world`` transform when its own
+        ``transform`` argument is None -- raw numbers here rather than a
+        transform, because a transform names the two coordinate systems it
+        maps between and the store does not know the scene's world.
+    axis_offsets : tuple[float, ...] | None
+        The per-axis ``offset`` companion.
     directed : bool
         Whether the graph is directed.  Decides which ``spatial_graph``
         class the lazy index builds, and nothing else: the slice path is
@@ -139,7 +142,8 @@ class GraphMemoryStore(BaseDataStore):
     node_sizes: np.ndarray | None = None
     edge_colors: np.ndarray | None = None
 
-    transform: AffineTransform | None = None
+    axis_scales: tuple[float, ...] | None = None
+    axis_offsets: tuple[float, ...] | None = None
     directed: bool = False
 
     slice_strategy: Literal["mask", "roi"] = "mask"
@@ -239,7 +243,8 @@ class GraphMemoryStore(BaseDataStore):
         node_colors: np.ndarray | None = None,
         node_sizes: np.ndarray | None = None,
         edge_colors: np.ndarray | None = None,
-        transform: AffineTransform | None = None,
+        axis_scales: tuple[float, ...] | None = None,
+        axis_offsets: tuple[float, ...] | None = None,
         directed: bool = False,
         slice_strategy: Literal["mask", "roi"] = "mask",
         name: str = "graph_memory_store",
@@ -259,8 +264,9 @@ class GraphMemoryStore(BaseDataStore):
             Original node ids; defaults to ``arange(n_nodes)``.
         node_colors, node_sizes, edge_colors : np.ndarray | None
             Optional per-element appearance arrays.
-        transform : AffineTransform | None
-            Data-to-world transform, normally left None for raw arrays.
+        axis_scales, axis_offsets : tuple[float, ...] | None
+            Per-axis data-to-world scale and offset, normally left None for
+            raw arrays.
         directed : bool
             Whether the graph is directed.
         slice_strategy : str
@@ -279,7 +285,8 @@ class GraphMemoryStore(BaseDataStore):
             node_colors=node_colors,
             node_sizes=node_sizes,
             edge_colors=edge_colors,
-            transform=transform,
+            axis_scales=axis_scales,
+            axis_offsets=axis_offsets,
             directed=directed,
             slice_strategy=slice_strategy,
             name=name,
@@ -300,7 +307,7 @@ class GraphMemoryStore(BaseDataStore):
         """Build a store from a geff file.
 
         There is deliberately **no** ``transform`` parameter (D23): the
-        file's axes are the sole source of the store's transform at
+        file's axes are the sole source of the store's scale and offset at
         construction.  ``Controller.add_graph(transform=...)`` still wins
         when passed explicitly, as it does for every other visual.
 
@@ -320,7 +327,8 @@ class GraphMemoryStore(BaseDataStore):
             node_ids=payload.node_ids,
             node_colors=payload.node_colors,
             node_sizes=payload.node_sizes,
-            transform=payload.transform,
+            axis_scales=payload.axis_scales,
+            axis_offsets=payload.axis_offsets,
             directed=payload.directed if directed is None else directed,
             slice_strategy=slice_strategy,
             name=name,
@@ -421,12 +429,18 @@ class GraphMemoryStore(BaseDataStore):
 
         sections: list[Section] = [RowSection(None, structure)]
 
-        if self.transform is not None:
-            axis_labels = [str(index) for index in range(self.ndim)]
+        if self.axis_scales is not None:
+            ndim = self.ndim
+            offsets = self.axis_offsets or (0.0,) * ndim
+            matrix = np.eye(ndim + 1)
+            for index in range(ndim):
+                matrix[index, index] = float(self.axis_scales[index])
+                matrix[index, ndim] = float(offsets[index])
+            axis_labels = [str(index) for index in range(ndim)]
             sections.append(
                 MatrixSection(
                     "Transform",
-                    np.asarray(self.transform.matrix),
+                    matrix,
                     row_labels=[*axis_labels, "1"],
                     col_labels=[*axis_labels, "1"],
                 )
@@ -719,7 +733,7 @@ class GraphMemoryStore(BaseDataStore):
     def _window_mask(self, request: GraphSliceRequest) -> np.ndarray:
         """Boolean (n_nodes,) mask of nodes inside the slab on every axis."""
         mask = np.ones(self.n_nodes, dtype=bool)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             coord = self.positions[:, axis]
             mask &= (coord >= idx - before) & (coord <= idx + after)
@@ -770,7 +784,7 @@ class GraphMemoryStore(BaseDataStore):
         dtype = self.positions.dtype
         roi_min = np.full(self.ndim, -np.inf, dtype=dtype)
         roi_max = np.full(self.ndim, np.inf, dtype=dtype)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             roi_min[axis] = idx - before
             roi_max[axis] = idx + after
@@ -797,7 +811,7 @@ class GraphMemoryStore(BaseDataStore):
     ) -> np.ndarray:
         """Slab test for a set of node rows -- the ROI refinement, O(k)."""
         keep = np.ones(rows.shape[0], dtype=bool)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             coord = self.positions[rows, axis]
             keep &= (coord >= idx - before) & (coord <= idx + after)
@@ -827,7 +841,7 @@ class GraphMemoryStore(BaseDataStore):
         min_alpha = 0.0
         for axis, (fade_before, fade_after, axis_min_alpha) in request.fades.items():
             min_alpha = max(min_alpha, axis_min_alpha)
-            d = self.positions[rows, axis] - request.slice_indices[axis]
+            d = self.positions[rows, axis] - request.slice_positions[axis]
             falloff = np.where(d < 0.0, fade_before, fade_after)
             a = 1.0 - np.abs(d) / np.maximum(falloff, _FALLOFF_EPS)
             alpha *= np.clip(a, 0.0, 1.0).astype(np.float32)
@@ -841,7 +855,13 @@ class GraphMemoryStore(BaseDataStore):
         edge_rows: np.ndarray | None,
     ) -> GraphData:
         """Build the GPU-ready buffers from the selected rows."""
-        displayed = list(request.displayed_axes)
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform.  ``displayed_axes`` indexes the **world**, so using it
+        # here would raise on a store of lower rank than the world and
+        # silently upload the wrong columns on a transform that permutes its
+        # axes; it was the fallback for a headlessly constructed visual until
+        # v1 was retired (R8.3).
+        displayed = list(request.retained_axes)
         fading = bool(request.fades)
 
         nodes_empty = node_rows.shape[0] == 0

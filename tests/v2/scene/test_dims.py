@@ -9,7 +9,7 @@ from cellier.scene.dims import (
     spatial_axes,
     world_coordinate_system,
 )
-from cellier.transform_v2 import WorldCoordinateSystem
+from cellier.transform import WorldCoordinateSystem
 
 
 def test_coordinate_system_roundtrip(tmp_path):
@@ -60,37 +60,16 @@ def test_axis_aligned_selection_to_state():
     state = sel.to_state()
     assert isinstance(state, AxisAlignedSelectionState)
     assert state.displayed_axes == (1, 2)
-    assert state.slice_indices == {0: 42}
 
 
-def test_to_index_selection_3d():
-    """3D data, all axes displayed, empty slice_indices."""
-    state = AxisAlignedSelectionState(
-        displayed_axes=(0, 1, 2),
-        slice_indices={},
-    )
-    result = state.to_index_selection(ndim=3)
-    assert result == (slice(None), slice(None), slice(None))
-
-
-def test_to_index_selection_2d_from_3d():
-    """3D data, 2 axes displayed, one sliced."""
-    state = AxisAlignedSelectionState(
-        displayed_axes=(1, 2),
-        slice_indices={0: 42},
-    )
-    result = state.to_index_selection(ndim=3)
-    assert result == (42, slice(None), slice(None))
-
-
-def test_to_index_selection_5d():
-    """5D data, 3 displayed axes, 2 sliced."""
-    state = AxisAlignedSelectionState(
-        displayed_axes=(2, 3, 4),
-        slice_indices={0: 5, 1: 1},
-    )
-    result = state.to_index_selection(ndim=5)
-    assert result == (5, 1, slice(None), slice(None), slice(None))
+def test_the_snapshot_does_not_carry_the_slice_positions():
+    """D5, landed in Phase 8.  The editable positions stay on the selection,
+    which the sliders write to and the region is built from; the snapshot the
+    render layer receives carries only what is still read from it.  Every
+    consumer of the positions takes the ``RegionSelection`` instead."""
+    sel = AxisAlignedSelection(displayed_axes=(1, 2), slice_indices={0: 42})
+    assert sel.slice_indices == {0: 42}
+    assert not hasattr(sel.to_state(), "slice_indices")
 
 
 def test_dims_manager_validates_axis_coverage():
@@ -127,4 +106,3 @@ def test_dims_manager_to_state():
     state = dims.to_state()
     assert state.axis_labels == ("t", "c", "z", "y", "x")
     assert state.selection.displayed_axes == (2, 3, 4)
-    assert state.selection.slice_indices == {0: 5, 1: 1}

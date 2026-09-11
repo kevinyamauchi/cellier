@@ -17,7 +17,6 @@ from cellier.controller import CellierController
 from cellier.data.graph import GraphMemoryStore
 from cellier.events import TrailChangedEvent
 from cellier.scene.dims import world_coordinate_system
-from cellier.transform import AffineTransform
 from cellier.visuals import GraphVisual, TrailConfig
 from tests._v2 import bound
 
@@ -79,9 +78,8 @@ def test_add_graph_uses_store_transform(graph_setup):
     """A geff-derived transform becomes the default; explicit still wins (D23)."""
     controller, scene, _ = graph_setup
     scaled = _store(
-        transform=AffineTransform.from_scale_and_translation(
-            (1.0, 4.0, 0.26, 0.26), (0.0, 10.0, 0.0, 0.0)
-        )
+        axis_scales=(1.0, 4.0, 0.26, 0.26),
+        axis_offsets=(0.0, 10.0, 0.0, 0.0),
     )
     visual = controller.add_graph(scaled, scene.id, name="from_file")
     assert np.allclose(np.diag(visual.transform.matrix)[:4], [1.0, 4.0, 0.26, 0.26])

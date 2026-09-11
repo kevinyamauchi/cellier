@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
 from cellier.controller import CellierController
 from cellier.data.label._label_memory_store import LabelMemoryStore
 from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
 from cellier.visuals import InMemoryLabelsAppearance
 
 # ── Data parameters ─────────────────────────────────────────────────────────
@@ -87,12 +86,11 @@ def main() -> None:
     print(f"  unique labels: {np.unique(labels).size}")
     store = LabelMemoryStore(data=labels, name="demo_labels")
 
-    # ── 2. Data-to-world transform  ─────────────────────────────────────────
+    # ── 2. Data-to-world scale ──────────────────────────────────────────────
     # Data axes: (T, Z, Y, X).  World axes in the scene: (t, z, y, x).
     # The transform maps data voxel index → world position in µm.
     # T axis has a scale of 1 (unitless frame index).
     scale_tzyx = np.array([1.0, *VOXEL_SIZE_ZYX])
-    data_to_world = AffineTransform.from_scale(scale_tzyx)
 
     # ── 3. Set up the controller ────────────────────────────────────────────
     controller = CellierController()
@@ -104,6 +102,10 @@ def main() -> None:
         name="labels_scene",
         render_modes={"2d", "3d"},
     )
+
+    # The transform names the two systems it maps between, so it is built
+    # once both exist: the store's voxel space and the scene's world.
+    data_to_world = controller.data_to_world(scene.id, store, scale=scale_tzyx)
 
     appearance = InMemoryLabelsAppearance(
         colormap_mode="random",

@@ -14,9 +14,10 @@ import tensorstore as ts
 
 from cellier.controller import CellierController
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.render.visuals._slicing import round_world_to_voxel
 from cellier.scene.dims import spatial_axes
-from cellier.transform import AffineTransform as V1Affine
 from cellier.visuals._image import MultiscaleImageAppearance
+from tests._v2 import pyramid_levels
 
 
 @pytest.fixture
@@ -54,15 +55,10 @@ def _store(path):
     return MultiscaleZarrDataStore(
         zarr_path=str(path),
         scale_names=["s0", "s1", "s2"],
-        level_transforms=[
-            V1Affine.identity(ndim=4),
-            V1Affine.from_scale_and_translation(
-                (1.0, 1.0, 2.0, 2.0), (0.0, 0.0, 0.5, 0.5)
-            ),
-            V1Affine.from_scale_and_translation(
-                (1.0, 1.0, 4.0, 4.0), (0.0, 0.0, 1.5, 1.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0], [1.0, 1.0, 4.0, 4.0]],
+            [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.5, 0.5], [0.0, 0.0, 1.5, 1.5]],
+        ),
     )
 
 
@@ -82,7 +78,9 @@ def _viewer(path, world=None):
     return controller, scene, visual
 
 
-def _plan(controller, scene, visual, *, with_region: bool, level: int | None = 0):
+def _plan(
+    controller, scene, visual, *, with_region: bool = True, level: int | None = 0
+):
     gfx = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     canvas_id = controller.get_canvas_ids(scene.id)[0]
     selection = (
@@ -102,14 +100,31 @@ def _plan(controller, scene, visual, *, with_region: bool, level: int | None = 0
 
 @pytest.mark.parametrize("level", [0, 1, 2])
 @pytest.mark.parametrize("slice_position", [0.0, 1.0, 3.0])
-async def test_the_region_and_the_old_path_agree(
+async def test_the_collapsed_axis_is_the_rounded_plane_at_every_level(
     anisotropic_zarr, level, slice_position
 ):
+    """``t`` is not downsampled by this pyramid, so the plane the region
+    selects is the same integer at every level -- and it is the world position
+    rounded half-up, because the scene's transform is the identity.
+
+    This was originally an equality against planning from ``dims_state``.
+    Phase 8 deleted that path; the numbers it agreed on are asserted directly.
+    """
     controller, scene, visual = _viewer(anisotropic_zarr)
     controller.update_slice_indices(scene.id, {0: slice_position})
-    assert _plan(controller, scene, visual, with_region=True, level=level) == _plan(
-        controller, scene, visual, with_region=False, level=level
-    )
+    planned = _plan(controller, scene, visual, level=level)
+    assert planned, f"level {level} planned nothing"
+    expected = round_world_to_voxel(slice_position, 8)
+    for _scale_index, selections in planned:
+        assert selections[0] == expected
+
+
+async def test_planning_without_a_region_is_now_an_error(anisotropic_zarr):
+    """R8.3.  The multiscale fallback -- ``_build_world_to_level_transforms``
+    plus ``_build_axis_selections_multiscale`` -- is gone with v1."""
+    controller, scene, visual = _viewer(anisotropic_zarr)
+    with pytest.raises(RuntimeError, match="no pulled-back region"):
+        _plan(controller, scene, visual, with_region=False)
 
 
 async def test_the_collapsed_axis_comes_from_the_region(anisotropic_zarr):
@@ -195,3 +210,38 @@ async def test_the_brick_grid_is_built_in_fetch_order(anisotropic_zarr):
     shapes = gfx._volume_geometry.level_shapes
     assert [s[0] for s in shapes] == [8, 8, 8]
     assert [s[1] for s in shapes] == [16, 8, 4]
+
+
+@pytest.mark.parametrize(
+    ("slice_position", "expected_plane"),
+    [(1.0, 1), (1.4, 1), (1.5, 2), (1.79, 2), (2.0, 2)],
+)
+async def test_the_pick_names_the_plane_the_plan_fetched(
+    anisotropic_zarr, slice_position, expected_plane
+):
+    """``pick_collapsed_indices`` rounds the way the fetch did, half-up.
+
+    The multiscale families never populated ``_collapsed_indices`` -- it is
+    declared, read by the node matrix, and never written -- so the pick path
+    derives its answer from the level-0 box instead, through the same
+    ``axis_selections_from_box`` the fetch uses.  Half-integer positions are
+    the interesting ones: flooring the raw position would name plane 1 for
+    every row here, and the slicer draws plane 2 for the last three.
+    """
+    controller, scene, visual = _viewer(anisotropic_zarr)
+    controller.update_slice_indices(scene.id, {0: slice_position})
+    _plan(controller, scene, visual, with_region=True, level=0)
+
+    gfx = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    assert gfx.pick_collapsed_indices() == {0: expected_plane}
+
+
+async def test_an_unplanned_multiscale_visual_reports_nothing(anisotropic_zarr):
+    """No plan, no answer -- the controller falls back to the dims state.
+
+    Returning a plane it has not drawn would be worse than declining: the
+    fallback at least rounds the same way, and says where it came from.
+    """
+    controller, scene, visual = _viewer(anisotropic_zarr)
+    gfx = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    assert gfx.pick_collapsed_indices() is None

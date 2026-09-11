@@ -9,8 +9,8 @@ from typing_extensions import Self
 # Both models are imported at runtime, not under TYPE_CHECKING: pydantic
 # resolves field annotations at class-creation time and cannot see a
 # deferred import.
-from cellier.transform_v2._affine import AffineTransform  # noqa: TC001
-from cellier.transform_v2._region import ConvexRegion  # noqa: TC001
+from cellier.transform._affine import AffineTransform  # noqa: TC001
+from cellier.transform._region import ConvexRegion  # noqa: TC001
 
 
 class RegionSelection(BaseModel):

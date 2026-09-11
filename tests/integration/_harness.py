@@ -13,7 +13,7 @@ and no GPU device:
 * ``geometry_indices`` -- for the geometry families, the surviving original
   element indices from a real ``get_data`` call.
 
-Nothing here imports from ``cellier.transform_v2``.  Phase 0 changes no
+Nothing here imports from the v1 transform package.  Phase 0 changes no
 behaviour; it only records it.
 
 The three sites where the design (section 3.6) predicts a *deliberate*
@@ -33,9 +33,8 @@ import numpy as np
 
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.render._spaces import build_render_spaces
-from cellier.transform import AffineTransform as V1Affine
-from cellier.transform_v2 import AffineTransform as V2Affine
-from cellier.transform_v2 import (
+from cellier.transform import (
+    AffineTransform,
     Axis,
     ConvexRegion,
     DataCoordinateSystem,
@@ -44,6 +43,7 @@ from cellier.transform_v2 import (
     VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
+from tests._v2 import level_transforms
 
 # ---------------------------------------------------------------------------
 # JSON canonicalisation
@@ -104,7 +104,7 @@ def selection_key(selections: list[Any]) -> list[Any]:
 
 
 # ---------------------------------------------------------------------------
-# Transform specs -- v1 AffineTransform matrices for the case matrix
+# Transform specs -- the per-axis numbers for the case matrix
 # ---------------------------------------------------------------------------
 
 
@@ -133,14 +133,11 @@ class TransformSpec:
     scale: tuple[float, ...]
     translation: tuple[float, ...]
 
-    def v1(self) -> V1Affine:
-        return V1Affine.from_scale_and_translation(
-            scale=list(self.scale), translation=list(self.translation)
-        )
-
-    def v2(self, data: DataCoordinateSystem, world: WorldCoordinateSystem) -> V2Affine:
+    def v2(
+        self, data: DataCoordinateSystem, world: WorldCoordinateSystem
+    ) -> AffineTransform:
         """The same transform, between two named coordinate systems."""
-        return V2Affine.from_axis_map(
+        return AffineTransform.from_axis_map(
             data,
             world,
             axis_map={
@@ -170,13 +167,23 @@ class V2Context:
     system from the retained data axes **ascending**.
     """
 
-    transform: V2Affine
+    transform: AffineTransform
     spaces_for: Callable[[Any], Any]
     selection: Any
 
 
-def _v2_context(tspec: TransformSpec, dspec: DimsSpec) -> V2Context:
-    """Build the v2 transform and a spaces factory for one matrix cell."""
+def _v2_context(
+    tspec: TransformSpec, dspec: DimsSpec, pyramid: PyramidSpec | None = None
+) -> V2Context:
+    """Build the v2 transform and a spaces factory for one matrix cell.
+
+    *pyramid* is supplied for the multiscale families and is what puts the
+    per-level coordinate systems and their level-k -> level-0 transforms on
+    ``RenderSpaces``.  Without them ``spaces.level_transforms`` is empty and
+    ``_level_box`` has nothing to pull the region back to -- which is how
+    every multiscale case in this baseline was recorded until Phase 8
+    (F8.2): through the pre-migration fallback, not through the region.
+    """
     labels = dspec.axis_labels
     data = DataCoordinateSystem(name="data", axes=_axes(labels), datastore_id=uuid4())
     world = WorldCoordinateSystem(name="world", axes=_axes(labels))
@@ -186,7 +193,7 @@ def _v2_context(tspec: TransformSpec, dspec: DimsSpec) -> V2Context:
     rendered = RenderedCoordinateSystem.from_world(
         world, [world.axes[axis].id for axis in displayed], canvas_id
     )
-    rendered_to_world = V2Affine.from_axis_map(
+    rendered_to_world = AffineTransform.from_axis_map(
         rendered,
         world,
         axis_map={
@@ -203,7 +210,39 @@ def _v2_context(tspec: TransformSpec, dspec: DimsSpec) -> V2Context:
     retained = sorted(displayed)
 
     levels: list[Any] = []
-    level_transforms: list[V2Affine] = []
+    level_transforms: list[AffineTransform] = []
+    if pyramid is not None:
+        store_id = uuid4()
+        levels = [
+            DataCoordinateSystem(
+                name=f"level{k}", axes=_axes(labels), datastore_id=store_id
+            )
+            for k in range(len(pyramid.level_scales))
+        ]
+        level_transforms = [
+            AffineTransform.from_axis_map(
+                levels[k],
+                levels[0],
+                axis_map={
+                    levels[k].axes[i].id: levels[0].axes[i].id
+                    for i in range(len(labels))
+                },
+                scale={
+                    levels[k].axes[i].id: float(scale)
+                    for i, scale in enumerate(pyramid.level_scales[k])
+                },
+                translation={
+                    levels[k].axes[i].id: (
+                        0.0 if scale == 1.0 else (float(scale) - 1.0) / 2.0
+                    )
+                    for i, scale in enumerate(pyramid.level_scales[k])
+                },
+                name=f"level{k}_to_level0",
+            )
+            for k in range(len(pyramid.level_scales))
+        ]
+        data = levels[0]
+        transform = tspec.v2(data, world)
 
     def spaces_for(visual_id):
         visual = VisualCoordinateSystem.from_data(
@@ -277,7 +316,6 @@ class DimsSpec:
             axis_labels=self.axis_labels,
             selection=AxisAlignedSelectionState(
                 displayed_axes=self.displayed_axes,
-                slice_indices=dict(self.slice_indices),
             ),
         )
 
@@ -365,8 +403,15 @@ def _drive_slice_requests(
 
     Returns ``(selections, scale_indices)``.  ``selections`` is a sorted
     list of per-axis selection tuples: ``axis_selections`` for the image /
-    label families, or ``[displayed_axes, slice_indices, thickness]`` for
-    the geometry families (which do not resolve to voxel windows).
+    label families, or ``[displayed_axes, retained_axes, region]`` for the
+    geometry families (which do not resolve to voxel windows).
+
+    The geometry entry recorded ``slice_indices`` and ``thickness`` until
+    Phase 8 deleted both from the request (R8.3).  What replaces them is the
+    thing that actually decides which vertices survive: the pulled-back
+    region, as its per-axis bounds.  Wider than what it replaced -- a region
+    says where the slab is *and* how thick -- and in **data** coordinates,
+    which is the space the filter runs in.
     """
     if is_3d:
         reqs = visual.build_slice_request(
@@ -403,14 +448,32 @@ def _drive_slice_requests(
             selections.append(
                 {
                     "displayed_axes": list(req.displayed_axes),
-                    "slice_indices": {
-                        str(k): _canon_scalar(v)
-                        for k, v in sorted(req.slice_indices.items())
-                    },
-                    "thickness": _canon_scalar(getattr(req, "thickness", None)),
+                    "retained_axes": list(req.retained_axes),
+                    "region": _region_bounds(req),
                 }
             )
     return selection_key(selections), scale_indices
+
+
+def _region_bounds(req: Any) -> Any:
+    """A geometry request's filter, as per-axis ``[lo, hi]`` in data space.
+
+    The graph keeps its own slab rather than a region (D6.2), so it reports
+    the slab instead: its centre and the asymmetric extents around it.
+    """
+    if hasattr(req, "slice_positions"):
+        return {
+            str(axis): [
+                _canon_scalar(position),
+                [_canon_scalar(v) for v in req.extents.get(axis, (0.5, 0.5))],
+            ]
+            for axis, position in sorted(req.slice_positions.items())
+        }
+    box = req.region.simplify().bounding_box()
+    return [
+        [_canon_scalar(lo), _canon_scalar(hi)]
+        for lo, hi in zip(box.min_coordinate, box.max_coordinate)
+    ]
 
 
 def _node_matrix(visual: Any, displayed_axes: tuple[int, ...]) -> Any:
@@ -606,6 +669,7 @@ def _geometry_case(
             view_min_world=None,
             view_max_world=None,
             dims_state=dims_state,
+            selection=ctx.selection,
         )
     notes: list[str] = []
     try:
@@ -654,16 +718,24 @@ class PyramidSpec:
     level_shapes: tuple[tuple[int, int, int, int], ...]
     level_scales: tuple[tuple[float, float, float, float], ...]
 
-    def level_transforms(self) -> list[V1Affine]:
-        out = []
-        for scale in self.level_scales:
-            translation = [0.0 if s == 1.0 else (s - 1.0) / 2.0 for s in scale]
-            out.append(
-                V1Affine.from_scale_and_translation(
-                    scale=list(scale), translation=translation
-                )
-            )
-        return out
+    def level_transforms(self) -> list[AffineTransform]:
+        """The per-level transforms, between synthetic level systems.
+
+        A store reached through the controller names its own level systems;
+        these visuals are built headlessly, so ``tests._v2.level_transforms``
+        mints a matching set.  Only the matrices are read downstream -- the
+        brick grid's per-axis scale and translation -- so the substitution is
+        invisible.
+        """
+        translations = [
+            [0.0 if s == 1.0 else (s - 1.0) / 2.0 for s in scale]
+            for scale in self.level_scales
+        ]
+        return level_transforms(
+            [list(scale) for scale in self.level_scales],
+            translations,
+            labels=_LABELS_4D,
+        )
 
 
 PYRAMIDS: dict[str, PyramidSpec] = {
@@ -699,11 +771,11 @@ def _make_multiscale_image_visual(pyramid: PyramidSpec, transform, displayed_axe
     full_shapes = [tuple(s) for s in pyramid.level_shapes]
     full_tf = pyramid.level_transforms()
     disp_shapes = [tuple(s[ax] for ax in displayed_axes) for s in full_shapes]
-    disp_tf = [t.select_axes(displayed_axes) for t in full_tf]
     layout = MultiscaleBrickLayout3D(
         level_shapes=[list(s) for s in disp_shapes],
-        level_transforms=disp_tf,
+        level_transforms=full_tf,
         block_size=8,
+        fetch_axes=tuple(displayed_axes),
     )
     return GFXMultiscaleImageVisual(
         visual_model_id=_uuid4(),
@@ -725,11 +797,11 @@ def _make_multiscale_label_visual(pyramid: PyramidSpec, transform, displayed_axe
     full_shapes = [tuple(s) for s in pyramid.level_shapes]
     full_tf = pyramid.level_transforms()
     disp_shapes = [tuple(s[ax] for ax in displayed_axes) for s in full_shapes]
-    disp_tf = [t.select_axes(displayed_axes) for t in full_tf]
     layout = MultiscaleBrickLayout3D(
         level_shapes=[list(s) for s in disp_shapes],
-        level_transforms=disp_tf,
+        level_transforms=full_tf,
         block_size=8,
+        fetch_axes=tuple(displayed_axes),
     )
     return GFXMultiscaleLabelVisual(
         visual_model_id=_uuid4(),
@@ -777,7 +849,7 @@ def _multiscale_case(
     if len(displayed_axes) != 3:
         return CaseResult(status="blocked:multiscale 3D path needs 3 displayed axes")
 
-    ctx = _v2_context(tspec, dspec)
+    ctx = _v2_context(tspec, dspec, pyramid)
     visual = make_visual(pyramid, ctx.transform, displayed_axes)
     _place(visual, ctx)
     dims_state = dspec.dims_state()

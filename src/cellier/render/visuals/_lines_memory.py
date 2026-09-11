@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform_v2 import AffineTransform, RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
 
 # Placeholder geometry — one degenerate segment (both vertices at the origin).
@@ -326,25 +326,30 @@ class GFXLinesMemoryVisual:
     ) -> LinesSliceRequest:
         """One request.
 
-        The region carries the whole selection when the controller has placed
-        this visual.  ``slice_indices`` and ``thickness`` ride along for the
-        headless fallback, and their hardcoded ``0.5`` -- documented as
-        data-space voxel units on a family that has no voxels -- is now the
-        world-unit default of D4, applied to the region before the pull-back.
+        The region carries the whole selection.  Until v1 was retired,
+        ``slice_indices`` and ``thickness`` rode along for the headless
+        fallback -- with a hardcoded ``0.5`` documented as data-space voxel
+        units on a family that has no voxels; both are gone, and the
+        world-unit default of D4 is applied to the region before the
+        pull-back (R8.3).
         """
         region = self._data_region(selection)
-        if region is not None:
-            self._last_data_positions = data_slice_positions(
-                selection.region, self._transform, self._spaces.world
+        if region is None:
+            raise RuntimeError(
+                "This visual has no region to plan from: either it has not "
+                "been placed in a world or the reslicing request carried no "
+                "selection."
             )
+        self._last_data_positions = data_slice_positions(
+            selection.region, self._transform, self._spaces.world
+        )
         shared_id = uuid4()
         return LinesSliceRequest(
             slice_request_id=shared_id,
             chunk_request_id=shared_id,
             scale_index=0,
             displayed_axes=dims_state.selection.displayed_axes,
-            slice_indices=dict(dims_state.selection.slice_indices),
-            thickness=DEFAULT_HALF_THICKNESS,
+            retained_axes=self._spaces.retained_axes,
             region=region,
         )
 

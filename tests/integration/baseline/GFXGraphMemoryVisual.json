@@ -39,10 +39,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 1.0
+          "region": {
+            "0": [
+              1.0,
+              [
+                0.25,
+                0.25
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -88,10 +97,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 0.0
+          "region": {
+            "0": [
+              0.0,
+              [
+                0.25,
+                0.25
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -138,8 +156,12 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": null
+          "region": {},
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -185,10 +207,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 2.0
+          "region": {
+            "0": [
+              2.0,
+              [
+                0.5,
+                0.5
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -233,10 +264,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 0.0
+          "region": {
+            "0": [
+              0.0,
+              [
+                0.5,
+                0.5
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -282,8 +322,12 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": null
+          "region": {},
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -328,10 +372,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": -4.0
+          "region": {
+            "0": [
+              -4.0,
+              [
+                0.25,
+                0.25
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -377,10 +430,19 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": -5.0
+          "region": {
+            "0": [
+              -5.0,
+              [
+                0.25,
+                0.25
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -427,8 +489,12 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": null
+          "region": {},
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -474,11 +540,26 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0,
-            "1": 0.0
+          "region": {
+            "0": [
+              1.0,
+              [
+                0.5,
+                0.5
+              ]
+            ],
+            "1": [
+              0.0,
+              [
+                0.5,
+                0.5
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -524,10 +605,20 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 0.0
+          "region": {
+            "0": [
+              0.0,
+              [
+                0.5,
+                0.5
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -573,10 +664,20 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0
+          "region": {
+            "0": [
+              1.0,
+              [
+                0.5,
+                0.5
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -621,11 +722,26 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.5,
-            "1": -5.0
+          "region": {
+            "0": [
+              1.5,
+              [
+                1.0,
+                1.0
+              ]
+            ],
+            "1": [
+              -5.0,
+              [
+                0.25,
+                0.25
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -672,10 +788,20 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": -0.5
+          "region": {
+            "0": [
+              -0.5,
+              [
+                1.0,
+                1.0
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -722,10 +848,20 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.5
+          "region": {
+            "0": [
+              1.5,
+              [
+                1.0,
+                1.0
+              ]
+            ]
           },
-          "thickness": null
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",

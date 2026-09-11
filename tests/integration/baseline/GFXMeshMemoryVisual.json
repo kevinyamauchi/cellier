@@ -2,7 +2,9 @@
   "cases": {
     "rank=3|t=aniso|dims=2d_lead_sliced_nonzero": {
       "dims": "2d_lead_sliced_nonzero",
-      "geometry_indices": null,
+      "geometry_indices": [
+        1
+      ],
       "node_local_matrix": [
         [
           0.5,
@@ -39,10 +41,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 2.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              0.75,
+              1.25
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -90,10 +106,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -0.25,
+              0.25
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -143,8 +173,25 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": 0.5
+          "region": [
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -190,10 +237,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 2.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              1.5,
+              2.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -240,10 +301,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -0.5,
+              0.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -292,8 +367,25 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": 0.5
+          "region": [
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -338,10 +430,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 2.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -4.25,
+              -3.75
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -350,9 +456,7 @@
     },
     "rank=3|t=scale_trans|dims=2d_lead_sliced_zero": {
       "dims": "2d_lead_sliced_zero",
-      "geometry_indices": [
-        0
-      ],
+      "geometry_indices": null,
       "node_local_matrix": [
         [
           0.5,
@@ -389,10 +493,24 @@
             1,
             2
           ],
-          "slice_indices": {
-            "0": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -5.25,
+              -4.75
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -442,8 +560,25 @@
             1,
             2
           ],
-          "slice_indices": {},
-          "thickness": 0.5
+          "region": [
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            0,
+            1,
+            2
+          ]
         }
       ],
       "status": "ok",
@@ -491,11 +626,28 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0,
-            "1": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              0.5,
+              1.5
+            ],
+            [
+              -0.5,
+              0.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -543,10 +695,29 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -0.5,
+              0.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -594,10 +765,29 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              0.5,
+              1.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -605,9 +795,7 @@
     },
     "rank=4|t=tzyx|dims=2d_two_sliced": {
       "dims": "2d_two_sliced",
-      "geometry_indices": [
-        1
-      ],
+      "geometry_indices": null,
       "node_local_matrix": [
         [
           0.5,
@@ -644,11 +832,28 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0,
-            "1": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              0.5,
+              2.5
+            ],
+            [
+              -5.25,
+              -4.75
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -697,10 +902,29 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 0.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              -1.5,
+              0.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",
@@ -749,10 +973,29 @@
             2,
             3
           ],
-          "slice_indices": {
-            "0": 1.0
-          },
-          "thickness": 0.5
+          "region": [
+            [
+              0.5,
+              2.5
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ],
+            [
+              -Infinity,
+              Infinity
+            ]
+          ],
+          "retained_axes": [
+            1,
+            2,
+            3
+          ]
         }
       ],
       "status": "ok",

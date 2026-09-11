@@ -8,9 +8,9 @@ import pytest
 
 pytest.importorskip("anywidget")
 
-from cellier._state import AxisAlignedSelectionState, DimsState  # noqa: E402
-from cellier.events import DimsChangedEvent  # noqa: E402
-from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel  # noqa: E402
+from cellier._state import AxisAlignedSelectionState, DimsState
+from cellier.events import DimsChangedEvent
+from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
 
 
 def _make_panel(*, with_toggle=True, displayed_axes=(1, 2)):
@@ -30,7 +30,7 @@ def _make_panel(*, with_toggle=True, displayed_axes=(1, 2)):
 
 def _dims_changed_event(source_id, scene_id, *, displayed, slices, stacked=()):
     selection = AxisAlignedSelectionState(
-        displayed_axes=displayed, slice_indices=slices, stacked_axes=stacked
+        displayed_axes=displayed, stacked_axes=stacked
     )
     state = DimsState(axis_labels=("z", "y", "x"), selection=selection)
     return DimsChangedEvent(
@@ -38,6 +38,7 @@ def _dims_changed_event(source_id, scene_id, *, displayed, slices, stacked=()):
         scene_id=scene_id,
         dims_state=state,
         displayed_axes_changed=False,
+        slice_indices=dict(slices),
     )
 
 

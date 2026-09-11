@@ -60,7 +60,6 @@ from PySide6.QtWidgets import (
 from cellier.controller import CellierController
 from cellier.data import OMEZarrLabelDataStore
 from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
 from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
@@ -122,8 +121,7 @@ def main() -> None:
     zarr_uri = f"file://{zarr_path.resolve()}"
     data_store = OMEZarrLabelDataStore.from_path(zarr_uri, name="labels")
     print(
-        f"  Opened label store: levels={data_store.n_levels} "
-        f"dtype={data_store.dtype}"
+        f"  Opened label store: levels={data_store.n_levels} dtype={data_store.dtype}"
     )
     for i, shape in enumerate(data_store.level_shapes):
         print(f"    s{i}: {shape}")
@@ -150,7 +148,6 @@ def main() -> None:
         level_transforms=data_store.level_transforms,
         appearance=appearance,
         render_config=render_config,
-        transform=AffineTransform.identity(ndim=2),
     )
     label_visual = controller.add_visual(
         scene.id, label_visual_model, data_store=data_store

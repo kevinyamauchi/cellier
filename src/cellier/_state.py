@@ -15,29 +15,23 @@ NO_THICKNESS: Mapping[int, float] = MappingProxyType({})
 class AxisAlignedSelectionState(NamedTuple):
     """Immutable snapshot of an axis-aligned selection.
 
-    ``slice_indices`` values are **world-space positions**, not voxel
-    indices, and are floats since D3.  ``thickness`` is a per-axis world-unit
-    **half**-thickness; an axis absent from it uses
-    ``cellier.scene.dims.DEFAULT_HALF_THICKNESS``.
+    ``thickness`` is a per-axis world-unit **half**-thickness; an axis absent
+    from it uses ``cellier.scene.dims.DEFAULT_HALF_THICKNESS``.
+
+    **Where the slice positions went.**  This carried ``slice_indices`` -- a
+    mapping of world axis to world position -- until Phase 8 (D5, deferred by
+    D4.1 and D6.1).  Every consumer now takes the ``RegionSelection`` the
+    controller emits instead: it says the same thing in a form that survives a
+    slab, a viewport crop or an oblique plane, and it is pulled back through
+    each visual's own transform rather than compared against data coordinates
+    as though it were already in them.  The editable positions are still on
+    ``cellier.scene.dims.AxisAlignedSelection``, which is what the sliders
+    write to and what the region is built from.
     """
 
     displayed_axes: tuple[int, ...]
-    slice_indices: dict[int, float]
     stacked_axes: tuple[int, ...] = ()
     thickness: Mapping[int, float] = NO_THICKNESS
-
-    def to_index_selection(self, ndim: int) -> tuple[float | slice, ...]:
-        """Return a per-axis numpy indexer in axis order.
-
-        Displayed axes -> ``slice(None)``, sliced axes -> their value.
-        """
-        result: list[float | slice] = []
-        for axis in range(ndim):
-            if axis in self.slice_indices:
-                result.append(self.slice_indices[axis])
-            else:
-                result.append(slice(None))
-        return tuple(result)
 
 
 class PlaneSelectionState(NamedTuple):

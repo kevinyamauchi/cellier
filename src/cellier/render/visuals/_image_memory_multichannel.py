@@ -9,17 +9,14 @@ from uuid import UUID, uuid4
 import numpy as np
 import pygfx as gfx
 
-from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.visuals._image_memory import (
     _plan_from_region,
-    _transform_slice_indices,
 )
 from cellier.render.visuals._multichannel_utils import (
     apply_channel_appearance_2d,
     apply_channel_appearance_3d,
-    build_axis_selections_for_channel,
     channel_index_from_request,
     make_channel_group_2d,
     make_channel_group_3d,
@@ -27,6 +24,7 @@ from cellier.render.visuals._multichannel_utils import (
 from cellier.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
+    from cellier._state import DimsState
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.events._events import (
         AABBChangedEvent,
@@ -35,7 +33,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform_v2 import AffineTransform, RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image_memory import MultichannelImageVisual
 
@@ -350,35 +348,24 @@ class GFXMultichannelImageMemoryVisual:
     ) -> tuple[int | tuple[int, int], ...]:
         """The per-axis selection every channel request starts from.
 
-        Prefers the ``RegionSelection`` the controller built (design 3.7),
-        falling back to ``dims_state`` for a headlessly driven visual.  The
-        channel axis's entry is whatever the region says and is replaced per
-        request: which channel to read is this family's own concern, not the
-        selection's.
+        The ``RegionSelection`` the controller built is the only path
+        (design 3.7).  The channel axis's entry is whatever the region says
+        and is replaced per request: which channel to read is this family's
+        own concern, not the selection's.
         """
         shape = self._data_store.shape
-        if selection is not None and self._spaces is not None:
-            axis_selections, collapsed = _plan_from_region(
-                selection, self._transform, self._spaces.world, shape
+        if selection is None or self._spaces is None:
+            raise RuntimeError(
+                "This visual has no region to plan from: either it has not "
+                "been placed in a world or the reslicing request carried no "
+                "selection.  Until v1 was retired this fell back to reading "
+                "``dims_state.slice_indices`` as world positions."
             )
-            self._collapsed_indices = collapsed
-            return axis_selections
-        transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices, self._transform, shape
+        axis_selections, collapsed = _plan_from_region(
+            selection, self._transform, self._spaces.world, shape
         )
-        self._collapsed_indices = dict(transformed_indices)
-        return build_axis_selections_for_channel(
-            DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            ),
-            shape,
-            self._channel_axis,
-            0,
-        )
+        self._collapsed_indices = collapsed
+        return axis_selections
 
     def _make_channel_requests(
         self,
@@ -521,6 +508,28 @@ class GFXMultichannelImageMemoryVisual:
         for node in (self._group_2d, self._group_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_collapsed_indices(self) -> dict[int, int] | None:
+        """The level-0 planes this visual last drew, per collapsed data axis.
+
+        The **channel axis is excluded**: every channel is composited into the
+        same pixel, so a pick cannot say which one it hit, and the entry the
+        region leaves on that axis is replaced per request anyway -- reporting
+        it would name a channel this visual never read.
+
+        Returns
+        -------
+        dict[int, int] or None
+            Data axis to voxel index, for collapsed axes other than the
+            channel axis.
+        """
+        if not self._collapsed_indices:
+            return None
+        return {
+            axis: int(value)
+            for axis, value in self._collapsed_indices.items()
+            if axis != self._channel_axis
+        }
 
     def pick_data_coordinate(
         self, hit_object, pick_info: dict

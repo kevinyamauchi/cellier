@@ -36,7 +36,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform_v2 import AffineTransform, RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._graph_memory import GraphAppearance, GraphVisual
 
 # Placeholder geometry -- pygfx forbids empty geometry buffers.  One
@@ -473,23 +473,24 @@ class GFXGraphMemoryVisual:
         it compared a **world** position against **data** coordinates, which
         is the latent bug D4 exists to fix.
         """
-        sliced = dims_state.selection.slice_indices
-        positions: dict[int, float] = {}
-        scales: dict[int, float] = {}
-        if selection is not None and self._spaces is not None and self._transform:
-            positions = data_slice_positions(
-                selection.region, self._transform, self._spaces.world
+        if selection is None or self._spaces is None or self._transform is None:
+            raise RuntimeError(
+                "This visual has no region to plan from: either it has not "
+                "been placed in a world or the reslicing request carried no "
+                "selection."
             )
-            scales = axis_scales(self._transform)
-            self._last_data_positions = positions
+        positions = data_slice_positions(
+            selection.region, self._transform, self._spaces.world
+        )
+        scales = axis_scales(self._transform)
+        self._last_data_positions = positions
+        sliced = self._spaces.collapsed_axes
         displayed = set(dims_state.selection.displayed_axes)
 
         extents: dict[int, tuple[float, float]] = {}
         fades: dict[int, tuple[float, float, float]] = {}
 
-        # World units per data unit on each axis, 1.0 when the visual has not
-        # been placed -- which is the pre-migration reading, extents in
-        # whatever units the caller meant.
+        # World units per data unit on each axis.
         def _to_data(axis: int, value: float) -> float:
             return float(value) / scales.get(axis, 1.0)
 
@@ -530,10 +531,8 @@ class GFXGraphMemoryVisual:
             chunk_request_id=shared_id,
             scale_index=0,
             displayed_axes=dims_state.selection.displayed_axes,
-            slice_indices={
-                axis: positions.get(axis, float(position))
-                for axis, position in sliced.items()
-            },
+            retained_axes=self._spaces.retained_axes,
+            slice_positions={axis: float(positions.get(axis, 0.0)) for axis in sliced},
             extents=extents,
             fades=fades,
         )

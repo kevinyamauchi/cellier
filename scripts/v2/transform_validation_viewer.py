@@ -28,13 +28,13 @@ from PySide6 import QtCore, QtWidgets
 
 from cellier.controller import CellierController
 from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
+from cellier.data._axes import scale_and_translation_transform
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.gui.qt import QtCanvasWidget, QtDimsControl
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
 from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals import (
     LinesMemoryAppearance,
@@ -468,7 +468,9 @@ def _build_viewer_model(
     x_slice_index = int(initial_slice_position * WORLD_SHAPE[2])
 
     coordinate_system = CoordinateSystem(name="world", axis_labels=["z", "y", "x"])
-    voxel_to_world_transform = AffineTransform.from_scale((3.0, 2.0, 2.0))
+    voxel_to_world_transform = scale_and_translation_transform(
+        image_store.data_coordinate_system, coordinate_system, (3.0, 2.0, 2.0)
+    )
     depth_range = (1.0, 5000.0)
     clim = (0, 8)
 

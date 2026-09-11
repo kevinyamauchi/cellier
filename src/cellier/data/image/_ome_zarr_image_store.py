@@ -18,7 +18,6 @@ from cellier.data._axes import install_level_systems
 from cellier.data._base_data_store import BaseDataStore
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._axis_info import AxisInfo
-from cellier.transform import AffineTransform
 
 if TYPE_CHECKING:
     from yaozarrs import v05
@@ -227,7 +226,7 @@ def _level0_physical_transform(
 ) -> tuple[list[float], list[float]]:
     """Return the level-0 data-to-world scale and translation.
 
-    The same composition ``_derive_level_transforms`` performs for level 0,
+    The same composition ``_derive_level_geometry`` performs for level 0,
     kept before it is normalised away: that function expresses every level
     relative to level-0 voxels, which by construction makes level 0 the
     identity and discards where the array actually sits in world space.
@@ -243,14 +242,17 @@ def _level0_physical_transform(
     return scale, translation
 
 
-def _derive_level_transforms(
+def _derive_level_geometry(
     ms: v05.Multiscale,
     global_scale: list[float],
     global_translation: list[float],
-) -> list[AffineTransform]:
-    """Compute per-level voxel-level-k → voxel-level-0 AffineTransforms.
+) -> tuple[list[tuple[float, ...]], list[tuple[float, ...]]]:
+    """Compute the per-level voxel-level-k -> voxel-level-0 numbers.
 
-    Implements the math from §3.2 of the design document over all axes.
+    Implements the math from section 3.2 of the design document over all axes.
+    Returns the scales and translations rather than transforms: a transform
+    names the two coordinate systems it sits between, and those are minted
+    once the store has its axes (see ``install_level_transforms``).
     """
     n_axes = len(ms.axes)
 
@@ -263,16 +265,12 @@ def _derive_level_transforms(
         per_level.append((sc, tr))
 
     s0, t0 = per_level[0]
-    transforms: list[AffineTransform] = []
+    scales: list[tuple[float, ...]] = []
+    translations: list[tuple[float, ...]] = []
     for sc_k, tr_k in per_level:
-        cellier_scale = tuple(sc_k[i] / s0[i] for i in range(n_axes))
-        cellier_trans = tuple((tr_k[i] - t0[i]) / s0[i] for i in range(n_axes))
-        transforms.append(
-            AffineTransform.from_scale_and_translation(
-                scale=cellier_scale, translation=cellier_trans
-            )
-        )
-    return transforms
+        scales.append(tuple(sc_k[i] / s0[i] for i in range(n_axes)))
+        translations.append(tuple((tr_k[i] - t0[i]) / s0[i] for i in range(n_axes)))
+    return scales, translations
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +294,11 @@ class OMEZarrImageDataStore(BaseDataStore):
         Index into ``multiscales[]``. Defaults to 0.
     scale_names : list[str]
         Per-level relative array paths, finest to coarsest.
-    level_transforms : list[AffineTransform]
-        Full-rank (all axes) AffineTransform per level:
-        voxel-level-k to voxel-level-0.
+    level_scales : list[tuple[float, ...]]
+        Full-rank (all axes) per-level scale: level-k voxels in level-0
+        voxels.  Level 0 is all ones by construction.
+    level_translations : list[tuple[float, ...]]
+        The offset half of the same, in level-0 voxels.
     axis_names : list[str]
         All axis names in data order.
     axis_units : list[str | None]
@@ -307,7 +307,7 @@ class OMEZarrImageDataStore(BaseDataStore):
         OME axis type per axis.
     physical_scale : list[float]
         Level-0 data-to-world scale per axis, i.e. the OME global scale
-        composed with the level-0 dataset scale.  ``level_transforms`` is
+        composed with the level-0 dataset scale.  ``level_scales`` is
         normalised to level-0 voxels and so has this divided out; it is kept
         here for display.  Empty when not known.
     physical_translation : list[float]
@@ -322,7 +322,6 @@ class OMEZarrImageDataStore(BaseDataStore):
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
-    level_transforms: list[AffineTransform]
     axis_names: list[str]
     axis_units: list[str | None]
     axis_types: list[str]
@@ -427,15 +426,17 @@ class OMEZarrImageDataStore(BaseDataStore):
         # 7. Extract global coordinateTransformations.
         global_scale, global_translation = _extract_global_transform(ms)
 
-        # 8. Derive per-level AffineTransforms (full rank, all axes).
-        level_transforms = _derive_level_transforms(
+        # 8. Derive the per-level geometry (full rank, all axes).  The
+        #    transforms themselves are built once the store has its level
+        #    coordinate systems, in ``install_level_transforms``.
+        level_scales, level_translations = _derive_level_geometry(
             ms, global_scale, global_translation
         )
 
         # 9. Collect scale_names.
         scale_names = [ds.path for ds in ms.datasets]
 
-        # 10. Retain the level-0 physical transform.  ``level_transforms``
+        # 10. Retain the level-0 physical transform.  ``level_scales``
         #     divides it out, so without this the store cannot say where it
         #     sits in world space.
         physical_scale, physical_translation = _level0_physical_transform(
@@ -446,7 +447,8 @@ class OMEZarrImageDataStore(BaseDataStore):
             zarr_path=zarr_path,
             multiscale_index=multiscale_index,
             scale_names=scale_names,
-            level_transforms=level_transforms,
+            level_scales=level_scales,
+            level_translations=level_translations,
             axis_names=axis_names,
             axis_units=axis_units,
             axis_types=axis_types,

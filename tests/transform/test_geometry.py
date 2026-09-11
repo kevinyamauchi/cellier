@@ -1,4 +1,4 @@
-"""Tests for cellier.transform_v2._geometry (D29, D44)."""
+"""Tests for cellier.transform._geometry (D29, D44)."""
 
 from uuid import uuid4
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.transform_v2 import AxisAlignedBoundingBox, Plane
+from cellier.transform import AxisAlignedBoundingBox, Plane
 
 
 def box(**kwargs):

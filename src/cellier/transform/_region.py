@@ -15,13 +15,13 @@ from pydantic import (
 )
 from typing_extensions import Self
 
-from cellier.transform_v2._arrays import (
+from cellier.transform._arrays import (
     coerce_float_array,
     reject_non_finite,
     serialize_array,
 )
-from cellier.transform_v2._geometry import AxisAlignedBoundingBox
-from cellier.transform_v2._geometry_ops import (
+from cellier.transform._geometry import AxisAlignedBoundingBox
+from cellier.transform._geometry_ops import (
     axis_aligned_bounds,
     is_axis_aligned,
     polytope_bounds,
@@ -30,8 +30,8 @@ from cellier.transform_v2._geometry_ops import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from cellier.transform_v2._axis import AxisRef
-    from cellier.transform_v2._coordinate_system import CoordinateSystem
+    from cellier.transform._axis import AxisRef
+    from cellier.transform._coordinate_system import CoordinateSystem
 
 
 class HalfSpace(BaseModel):
@@ -43,7 +43,7 @@ class HalfSpace(BaseModel):
     necessarily in the same system, so storing it per-constraint would
     only create something that can disagree with itself.
 
-    Unlike :class:`~cellier.transform_v2.Plane`, a **zero normal is
+    Unlike :class:`~cellier.transform.Plane`, a **zero normal is
     allowed**.  That is not an oversight: pulling a world constraint back
     through a transform with no extent along that axis produces exactly
     that, and the honest answers are "vacuous" (offset >= 0) and

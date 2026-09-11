@@ -25,7 +25,7 @@ def _make_dims_event(scene_id=None) -> DimsChangedEvent:
         dims_state=DimsState(
             axis_labels=("z", "y", "x"),
             selection=AxisAlignedSelectionState(
-                displayed_axes=(0, 1, 2), slice_indices={}
+                displayed_axes=(0, 1, 2),
             ),
         ),
         displayed_axes_changed=False,

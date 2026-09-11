@@ -16,11 +16,19 @@ from cellier.data._dataset_info import (
 )
 from cellier.data.lines._lines_requests import LinesData, LinesSliceRequest
 
-# Placeholder returned when the slab filter produces zero surviving segments.
-# A single degenerate segment (both vertices at the origin) avoids the
-# "empty geometry is illegal" restriction in pygfx.  LineSegmentMaterial
-# requires an even vertex count, so the minimum placeholder is two vertices.
-_PLACEHOLDER_POSITIONS = np.zeros((2, 3), dtype=np.float32)
+
+def _placeholder_positions(n_display: int) -> np.ndarray:
+    """One invisible segment, returned when the filter produces none.
+
+    A single degenerate segment (both vertices at the origin) avoids the
+    "empty geometry is illegal" restriction in pygfx.  ``LineSegmentMaterial``
+    requires an even vertex count, so the minimum placeholder is two vertices.
+
+    Sized to the retained axes rather than fixed at three, for the reason
+    given in the points store: a rank-4 store displaying data axes ``(2, 3)``
+    would otherwise index a ``(2, 3)`` constant with axis 3 and raise (F8.4).
+    """
+    return np.zeros((2, n_display), dtype=np.float32)
 
 
 class LinesMemoryStore(BaseDataStore):
@@ -177,27 +185,24 @@ class LinesMemoryStore(BaseDataStore):
         """
         positions = self.positions  # (n_vertices, ndim)
         colors = self.colors  # (n_vertices, 4) or None
-        n_vertices = positions.shape[0]
         # Ascending: the uploaded vertex buffer's axis order is the data's,
         # and a display permutation lives in the node matrix (design 3.14).
-        displayed = sorted(request.displayed_axes)
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform and is the right answer whenever the controller has placed
+        # the visual.  ``displayed_axes`` indexes the **world**, so using it
+        # here raises on a store of lower rank than the world and silently
+        # uploads the wrong columns on a transform that permutes its axes; it
+        # remains the fallback for a headlessly constructed visual, which has
+        # no transform to read.
+        displayed = list(request.retained_axes)
 
         # ── Phase 1: build per-vertex slab mask, then require both
         #             endpoints of each segment to pass ───────────────
-        if request.region is not None:
-            # The region is the filter (design 3.12).  A 3-D view's region is
-            # unbounded, so ``contains`` is all-True and every segment
-            # survives -- the same outcome the ``slice_indices``-is-empty
-            # branch produced, by one rule instead of two.
-            vertex_mask = request.region.contains(positions)
-        elif request.slice_indices:
-            vertex_mask = np.ones(n_vertices, dtype=bool)
-            for axis, idx in request.slice_indices.items():
-                lo = float(idx) - request.thickness
-                hi = float(idx) + request.thickness
-                vertex_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-        else:
-            vertex_mask = np.ones(n_vertices, dtype=bool)
+        # The region is the filter (design 3.12).  A 3-D view's region is
+        # unbounded, so ``contains`` is all-True and every segment survives --
+        # the same outcome the "no sliced axes" branch produced, by one rule
+        # instead of three.
+        vertex_mask = request.region.contains(positions)
         # Reshape to (n_segments, 2) and require BOTH endpoints True.
         segment_mask = vertex_mask.reshape(-1, 2).all(axis=1)  # (n_segments,)
         surviving_edges = np.where(segment_mask)[0]
@@ -212,7 +217,7 @@ class LinesMemoryStore(BaseDataStore):
         if surviving_positions.shape[0] == 0:
             return LinesData(
                 request_id=request.slice_request_id,
-                positions=_PLACEHOLDER_POSITIONS[:, displayed],
+                positions=_placeholder_positions(len(displayed)),
                 colors=None,
                 color_mode="uniform",
                 is_empty=True,

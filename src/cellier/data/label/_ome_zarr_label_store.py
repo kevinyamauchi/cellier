@@ -18,7 +18,6 @@ from cellier.data._axes import install_level_systems
 from cellier.data._base_data_store import BaseDataStore
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._ome_zarr_image_store import _validate_uri_scheme
-from cellier.transform import AffineTransform
 
 _ACCEPTED_LABEL_DTYPES = {np.int8, np.int16, np.int32}
 
@@ -42,8 +41,10 @@ class OMEZarrLabelDataStore(BaseDataStore):
         Which multiscale entry to use (default 0).
     scale_names : list[str]
         Per-level relative array paths, finest to coarsest.
-    level_transforms : list[AffineTransform]
-        Per-level voxel-level-k → voxel-level-0 transforms.
+    level_scales : list[tuple[float, ...]]
+        Full-rank per-level scale: level-k voxels in level-0 voxels.
+    level_translations : list[tuple[float, ...]]
+        The offset half of the same, in level-0 voxels.
     axis_names : list[str]
         All axis names in data order.
     axis_units : list[str | None]
@@ -52,7 +53,7 @@ class OMEZarrLabelDataStore(BaseDataStore):
         OME axis type per axis.
     physical_scale : list[float]
         Level-0 data-to-world scale per axis, i.e. the OME global scale
-        composed with the level-0 dataset scale.  ``level_transforms`` is
+        composed with the level-0 dataset scale.  ``level_scales`` is
         normalised to level-0 voxels and so has this divided out; it is kept
         here for display.  Empty when not known.
     physical_translation : list[float]
@@ -67,7 +68,6 @@ class OMEZarrLabelDataStore(BaseDataStore):
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
-    level_transforms: list[AffineTransform]
     axis_names: list[str]
     axis_units: list[str | None]
     axis_types: list[str]
@@ -150,7 +150,7 @@ class OMEZarrLabelDataStore(BaseDataStore):
         datasets = ms["datasets"]
         scale_names = [ds["path"] for ds in datasets]
 
-        # Build per-level AffineTransforms manually (labels use raw dicts,
+        # Build the per-level geometry manually (labels use raw dicts,
         # not yaozarrs typed objects).
         per_level: list[tuple[list[float], list[float]]] = []
         for ds in datasets:
@@ -170,24 +170,23 @@ class OMEZarrLabelDataStore(BaseDataStore):
             per_level.append((sc, tr))
 
         s0, t0 = per_level[0]
-        level_transforms: list[AffineTransform] = []
+        level_scales: list[tuple[float, ...]] = []
+        level_translations: list[tuple[float, ...]] = []
         for sc_k, tr_k in per_level:
-            cellier_scale = tuple(sc_k[i] / s0[i] for i in range(n_axes))
-            cellier_trans = tuple((tr_k[i] - t0[i]) / s0[i] for i in range(n_axes))
-            level_transforms.append(
-                AffineTransform.from_scale_and_translation(
-                    scale=cellier_scale, translation=cellier_trans
-                )
+            level_scales.append(tuple(sc_k[i] / s0[i] for i in range(n_axes)))
+            level_translations.append(
+                tuple((tr_k[i] - t0[i]) / s0[i] for i in range(n_axes))
             )
 
         # ``s0``/``t0`` are the level-0 data-to-world transform, which the
-        # normalisation above divides out of ``level_transforms``.  Retained
-        # so the store can say where it sits in world space.
+        # normalisation above divides out of ``level_scales``.  Retained so
+        # the store can say where it sits in world space.
         return cls(
             zarr_path=zarr_path,
             multiscale_index=multiscale_index,
             scale_names=scale_names,
-            level_transforms=level_transforms,
+            level_scales=level_scales,
+            level_translations=level_translations,
             axis_names=axis_names,
             axis_units=axis_units,
             axis_types=axis_types,

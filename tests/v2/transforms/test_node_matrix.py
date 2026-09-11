@@ -22,8 +22,7 @@ from cellier.render._spaces import (
     pygfx_matrix,
     visual_to_data_transform,
 )
-from cellier.transform import AffineTransform as V1Affine
-from cellier.transform_v2 import AffineTransform, VisualCoordinateSystem
+from cellier.transform import AffineTransform, VisualCoordinateSystem
 from tests._v2 import Context
 
 
@@ -50,32 +49,21 @@ def _spaces(ctx: Context, retained=None):
 # ---------------------------------------------------------------------------
 
 
-def test_select_axes_on_an_unequal_rank_transform_returns_garbage():
-    """Design 3.8 finding 2, pinned as the reason the call sites had to go.
-
-    ``select_axes`` does not raise on a transform whose ranks disagree: it
-    reads the **homogeneous row** as if it were data and returns a plausible
-    wrong matrix.  This test asserts the misbehaviour, so that anyone tempted
-    to reintroduce the call has it in front of them.
-    """
-    # A 4-D tzyx transform, asked for three "displayed" axes 2, 3, 4 -- indices
-    # into a 5-axis world it does not have.
-    v1 = V1Affine.from_scale_and_translation(
-        scale=[0.5, 2.0, 0.5, 0.5], translation=[0.25, 10.0, 0.0, 0.0]
-    )
-    sub = v1.select_axes((2, 3, 4)).matrix
-    assert sub.shape == (4, 4)
-    # Row 2 is the homogeneous row of the original, read as data.
-    np.testing.assert_allclose(sub[2], [0.0, 0.0, 1.0, 1.0])
-
-
 def test_the_composition_refuses_a_displayed_axis_with_no_data_behind_it():
-    """Where ``select_axes`` invented a row, the composition raises."""
-    from cellier.render.visuals._image import _displayed_subtransform
+    """Where ``select_axes`` invented a row, the composition raises.
+
+    Design 3.8 finding 2, and the reason the call sites had to go.
+    ``select_axes`` did not raise on a transform whose ranks disagreed: asked
+    for "displayed" axes ``(2, 3, 4)`` of a 4-D ``tzyx`` transform it read the
+    **homogeneous row** as if it were data and returned a plausible wrong
+    matrix.  A second test asserted that misbehaviour directly until Phase 8
+    deleted the method with v1; this is the half that outlives it.
+    """
+    from cellier.render.visuals._image import _displayed_submatrix
 
     ctx = Context(3, (1.0, 1.0, 1.0), displayed_axes=(0, 1, 2))
     with pytest.raises(ValueError, match="no data axis of this"):
-        _displayed_subtransform(ctx.transform, (0, 1, 5))
+        _displayed_submatrix(ctx.transform, (0, 1, 5))
 
 
 def test_a_collapsed_axis_index_enters_the_translation():

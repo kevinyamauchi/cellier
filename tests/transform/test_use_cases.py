@@ -10,7 +10,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     AxisAlignedBoundingBox,
@@ -22,7 +22,7 @@ from cellier.transform_v2 import (
     RenderedCoordinateSystem,
     WorldCoordinateSystem,
 )
-from tests.transform_v2._use_cases import MODEL_USE_CASES, uc1, uc3
+from tests.transform._use_cases import MODEL_USE_CASES, uc1, uc3
 
 CASE_IDS = list(MODEL_USE_CASES)
 

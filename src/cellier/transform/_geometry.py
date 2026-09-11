@@ -15,7 +15,7 @@ from pydantic import (
 )
 from typing_extensions import Self
 
-from cellier.transform_v2._arrays import (
+from cellier.transform._arrays import (
     coerce_float_array,
     reject_nan,
     reject_non_finite,

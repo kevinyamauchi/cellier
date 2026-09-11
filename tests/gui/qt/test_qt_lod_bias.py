@@ -13,20 +13,18 @@ from cellier.data.image._zarr_multiscale_store import (
 )
 from cellier.gui.qt.visuals._lod_bias import QtLodBiasSlider
 from cellier.scene.dims import spatial_axes, world_coordinate_system
-from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance
+from tests._v2 import pyramid_levels
 
 
 def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
     defaults = {
         "zarr_path": str(small_zarr_store),
         "scale_names": ["s0", "s1"],
-        "level_transforms": [
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
     }
     defaults.update(kwargs)
     return MultiscaleZarrDataStore(**defaults)

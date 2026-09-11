@@ -9,7 +9,6 @@ import pygfx as gfx
 
 # Import the shader modules to trigger @register_wgpu_render_function.
 import cellier.render.shaders._label_volume  # noqa: F401
-from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.shaders._label_colormap import (
@@ -20,15 +19,14 @@ from cellier.render.shaders._label_image import LabelImageMaterial
 from cellier.render.shaders._label_volume import LabelVolumeMaterial
 from cellier.render.visuals._image_memory import (
     _box_wireframe_positions,
-    _build_axis_selections_memory,
     _make_aabb_line,
     _plan_from_region,
     _rect_wireframe_positions,
-    _transform_slice_indices,
 )
 from cellier.render.visuals._pick import memory_image_data_coordinate
 
 if TYPE_CHECKING:
+    from cellier._state import DimsState
     from cellier.data.label._label_memory_store import LabelMemoryStore
     from cellier.events._events import (
         AABBChangedEvent,
@@ -37,7 +35,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform_v2 import AffineTransform, RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._label_memory import LabelMemoryVisual
 
 
@@ -292,33 +290,22 @@ class GFXLabelMemoryVisual:
     ) -> tuple[int | tuple[int, int], ...]:
         """Plan one request's per-axis selection, and record where it collapsed.
 
-        Prefers the ``RegionSelection`` the controller built (design 3.7);
-        falls back to ``dims_state`` for a visual driven headlessly or one
-        whose scene has no rendered coordinate system yet.  The two agree
-        exactly for the axis-aligned, zero-thickness selections that reach
-        this path today.
+        The ``RegionSelection`` the controller built is the only path
+        (design 3.7).
         """
         shape = self._data_store.shape
-        if selection is not None and self._spaces is not None:
-            axis_selections, collapsed = _plan_from_region(
-                selection, self._transform, self._spaces.world, shape
+        if selection is None or self._spaces is None:
+            raise RuntimeError(
+                "This visual has no region to plan from: either it has not "
+                "been placed in a world or the reslicing request carried no "
+                "selection.  Until v1 was retired this fell back to reading "
+                "``dims_state.slice_indices`` as world positions."
             )
-            self._collapsed_indices = collapsed
-            return axis_selections
-        transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices, self._transform, shape
+        axis_selections, collapsed = _plan_from_region(
+            selection, self._transform, self._spaces.world, shape
         )
-        self._collapsed_indices = dict(transformed_indices)
-        return _build_axis_selections_memory(
-            DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            ),
-            shape,
-        )
+        self._collapsed_indices = collapsed
+        return axis_selections
 
     def build_slice_request_2d(
         self,
@@ -518,6 +505,22 @@ class GFXLabelMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_collapsed_indices(self) -> dict[int, int] | None:
+        """The level-0 planes this visual last drew, per collapsed data axis.
+
+        Read off the plan rather than recomputed from the dims state, so a
+        pick reports the slice that is actually on screen even while a
+        reslice is in flight.  ``None`` before the first one.
+
+        Returns
+        -------
+        dict[int, int] or None
+            Data axis to voxel index, for collapsed axes only.
+        """
+        if not self._collapsed_indices:
+            return None
+        return {axis: int(value) for axis, value in self._collapsed_indices.items()}
 
     def pick_data_coordinate(
         self, hit_object, pick_info: dict

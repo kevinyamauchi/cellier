@@ -8,6 +8,7 @@ from uuid import uuid4
 import numpy as np
 
 from cellier.controller import CellierController
+from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.lines._lines_memory_store import LinesMemoryStore
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
@@ -24,8 +25,11 @@ from cellier.events._events import (
     _CanvasRawPointerEvent,
 )
 from cellier.render.render_manager import RenderManager, _ImageDisplayedDataCoord
+from cellier.render.visuals._slicing import round_world_to_voxel
 from cellier.scene.dims import spatial_axes, world_coordinate_system
+from cellier.transform import AffineTransform, Axis
 from cellier.visuals import LinesMemoryAppearance, MeshFlatAppearance
+from cellier.visuals._image_memory import InMemoryImageAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance
 
 
@@ -515,3 +519,190 @@ def test_image_pick_coord_3d_promoted_in_data_axis_order():
     assert isinstance(details, ImagePickInfo)
     # (z, y, x) — z and x swap relative to the pygfx (x, y, z) order.
     assert tuple(details.data_coordinate) == (1.5, 4.5, 20.5)
+
+
+def _image_visual_with_transform(
+    world_axes,
+    *,
+    data_axis_names,
+    shape,
+    axis_map_by_name,
+    scale_by_name=None,
+    translation_by_name=None,
+    broadcast_names=(),
+    dim="2d",
+):
+    """A controller holding one in-memory image under a stated data -> world map."""
+    controller = CellierController()
+    cs = world_coordinate_system(world_axes, name="world")
+    scene = controller.add_scene(dim=dim, coordinate_system=cs, name="main")
+    store = ImageMemoryStore(
+        data=np.zeros(shape, dtype=np.float32),
+        name="img",
+        axis_names=data_axis_names,
+    )
+    data_cs = store.data_coordinate_systems[0]
+    world = scene.dims.world_coordinate_system
+    transform = AffineTransform.from_axis_map(
+        data_cs,
+        world,
+        axis_map={
+            data_cs.axis_by_name(data_name).id: world.axis_by_name(world_name).id
+            for data_name, world_name in axis_map_by_name.items()
+        },
+        scale={
+            data_cs.axis_by_name(name).id: value
+            for name, value in (scale_by_name or {}).items()
+        },
+        translation={
+            data_cs.axis_by_name(name).id: value
+            for name, value in (translation_by_name or {}).items()
+        },
+        broadcast_output_axes=[world.axis_by_name(name).id for name in broadcast_names],
+    )
+    visual = controller.add_image(
+        data=store,
+        scene_id=scene.id,
+        appearance=InMemoryImageAppearance(color_map="gray"),
+        name="img",
+        transform=transform,
+    )
+    return controller, scene, visual
+
+
+def _press_image_pick(controller, scene, visual, displayed_data_coord):
+    """Drive one 2-D press whose pick decoded *displayed_data_coord*."""
+    canvas_id = uuid4()
+    received: list = []
+    controller.on_mouse_press_2d(canvas_id, received.append, owner_id=uuid4())
+    controller._on_raw_pointer_event(
+        _CanvasRawPointerEvent(
+            canvas_id=canvas_id,
+            scene_id=scene.id,
+            action="press",
+            camera_type="2d",
+            position_2d=np.array(displayed_data_coord, dtype=np.float64),
+            ray=None,
+            hit_visual_id=visual.id,
+            button=1,
+            modifiers=(),
+            buttons=(1,),
+            gesture_id=None,
+            pick_details=_ImageDisplayedDataCoord(
+                displayed_data_coord=tuple(displayed_data_coord)
+            ),
+        )
+    )
+    assert len(received) == 1
+    return received[0].pick_info.details
+
+
+def test_the_slice_position_is_pulled_back_through_the_transform():
+    """D3 made slice_indices a world position; a data coordinate must not hold one.
+
+    The image sits at ``Z = 2 z + 10``, so the world plane ``Z = 30`` is data
+    plane ``z = 10``.  Reporting ``30`` would index eleven planes past the end
+    of a twelve-plane volume, or the wrong plane on any volume big enough to
+    accept it.
+
+    The component is ``10.5``, not ``10``: every component of this tuple uses
+    the ``[i, i + 1)`` convention so that ``floor`` is the one rule a consumer
+    needs, and the centre of plane 10 is ``10.5``.
+    """
+    controller, scene, visual = _image_visual_with_transform(
+        spatial_axes("z", "y", "x"),
+        data_axis_names=("z", "y", "x"),
+        shape=(12, 16, 20),
+        axis_map_by_name={"z": "z", "y": "y", "x": "x"},
+        scale_by_name={"z": 2.0},
+        translation_by_name={"z": 10.0},
+    )
+    scene.dims.selection.displayed_axes = (1, 2)
+    scene.dims.selection.slice_indices = {0: 30.0}
+
+    details = _press_image_pick(controller, scene, visual, (10.5, 3.5))
+    assert isinstance(details, ImagePickInfo)
+    assert tuple(details.data_coordinate) == (10.5, 3.5, 10.5)
+
+
+def test_a_slider_past_the_voxel_midpoint_reports_the_next_plane():
+    """A collapsed axis reports the plane drawn, not the raw pulled-back position.
+
+    ``Z = 2 z`` puts the world plane ``Z = 7`` at data ``z = 3.5`` -- exactly
+    between two planes.  The selection assembler rounds half-up and fetches
+    plane 4, so that is the plane on screen and the one the pick must name.
+    Reporting the raw ``3.5`` would floor to 3: the neighbouring plane, which
+    was never drawn.  That is the shape of the bug this convention exists to
+    prevent.
+    """
+    controller, scene, visual = _image_visual_with_transform(
+        spatial_axes("z", "y", "x"),
+        data_axis_names=("z", "y", "x"),
+        shape=(12, 16, 20),
+        axis_map_by_name={"z": "z", "y": "y", "x": "x"},
+        scale_by_name={"z": 2.0},
+    )
+    scene.dims.selection.displayed_axes = (1, 2)
+    scene.dims.selection.slice_indices = {0: 7.0}
+
+    details = _press_image_pick(controller, scene, visual, (1.0, 2.0))
+    assert tuple(details.data_coordinate) == (4.5, 2.0, 1.0)
+    assert int(np.floor(details.data_coordinate[0])) == round_world_to_voxel(3.5, 12)
+
+
+def test_a_broadcast_world_axis_contributes_no_data_coordinate():
+    """A store of lower rank than the world reports its own rank, not the world's.
+
+    The image is ``zyx`` in a ``czyx`` world and broadcasts over ``c``, so the
+    ``c`` slider says nothing about which voxel was hit.  Keying the result by
+    world axis instead would put the ``c`` position on the store's ``z`` axis.
+    """
+    controller, scene, visual = _image_visual_with_transform(
+        (Axis(name="c", axis_type="channel"), *spatial_axes("z", "y", "x")),
+        data_axis_names=("z", "y", "x"),
+        shape=(12, 16, 20),
+        axis_map_by_name={"z": "z", "y": "y", "x": "x"},
+        scale_by_name={"z": 2.0},
+        broadcast_names=("c",),
+        dim="3d",
+    )
+    scene.dims.selection.displayed_axes = (2, 3)
+    scene.dims.selection.slice_indices = {0: 2.0, 1: 8.0}
+
+    details = _press_image_pick(controller, scene, visual, (5.5, 6.5))
+    assert tuple(details.data_coordinate) == (4.5, 6.5, 5.5)
+
+
+def test_an_unresolvable_hit_keeps_the_world_positions_it_was_given():
+    """No visual, no transform, nothing to pull back through.
+
+    A removed visual or a synthetic id leaves the promotion with only the dims
+    state, and inventing a transform for it would be worse than saying what it
+    was told.
+    """
+    controller = CellierController()
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
+    scene = controller.add_scene(dim="3d", coordinate_system=cs, name="s")
+    scene.dims.selection.displayed_axes = (1, 2)
+    scene.dims.selection.slice_indices = {0: 30.0}
+
+    canvas_id = uuid4()
+    received: list = []
+    controller.on_mouse_press_2d(canvas_id, received.append, owner_id=uuid4())
+    controller._on_raw_pointer_event(
+        _CanvasRawPointerEvent(
+            canvas_id=canvas_id,
+            scene_id=scene.id,
+            action="press",
+            camera_type="2d",
+            position_2d=np.array([10.5, 3.5], dtype=np.float64),
+            ray=None,
+            hit_visual_id=uuid4(),
+            button=1,
+            modifiers=(),
+            buttons=(1,),
+            gesture_id=None,
+            pick_details=_ImageDisplayedDataCoord(displayed_data_coord=(10.5, 3.5)),
+        )
+    )
+    assert tuple(received[0].pick_info.details.data_coordinate) == (30.0, 3.5, 10.5)

@@ -6,7 +6,7 @@ from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, ConfigDict, Field
 
 from cellier.render._config import MAX_OUTLINE_SLOT
-from cellier.transform_v2 import AffineTransform
+from cellier.transform import AffineTransform
 
 
 class AABBParams(EventedModel):

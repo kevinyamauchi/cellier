@@ -1,4 +1,4 @@
-"""Tests for cellier.transform_v2._coordinate_system (D6-D8, D33, R5)."""
+"""Tests for cellier.transform._coordinate_system (D6-D8, D33, R5)."""
 
 from functools import partial
 from uuid import uuid4
@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     Axis,
     CoordinateSystem,
     CoordinateSystemType,

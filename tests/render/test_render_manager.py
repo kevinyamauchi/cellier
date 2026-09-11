@@ -28,7 +28,6 @@ def _make_dims_state() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
 
@@ -107,21 +106,21 @@ class _StubSlicer:
 def test_dims_state_construction() -> None:
     ds = DimsState(
         axis_labels=("z", "y", "x"),
-        selection=AxisAlignedSelectionState(displayed_axes=(0, 1, 2), slice_indices={}),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(0, 1, 2),
+        ),
     )
     assert ds.selection.displayed_axes == (0, 1, 2)
-    assert ds.selection.slice_indices == {}
 
 
 def test_dims_state_2d() -> None:
     ds = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
-            displayed_axes=(1, 2), slice_indices={0: 5}
+            displayed_axes=(1, 2),
         ),
     )
     assert ds.selection.displayed_axes == (1, 2)
-    assert ds.selection.slice_indices == {0: 5}
 
 
 def test_reslicing_request_construction() -> None:

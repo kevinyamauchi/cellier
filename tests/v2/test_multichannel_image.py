@@ -14,6 +14,7 @@ from cellier.render.visuals._image_memory_multichannel import (
 from cellier.scene.dims import world_coordinate_system
 from cellier.visuals._channel_appearance import ChannelAppearance
 from cellier.visuals._image_memory import MultichannelImageVisual
+from tests._v2 import Context
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,7 +40,6 @@ def _make_dims_state_2d(shape, channel_axis=1) -> DimsState:
         axis_labels=("z", "c", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(2, 3),
-            slice_indices={0: 0, 1: 0},
         ),
     )
 
@@ -125,6 +125,20 @@ def test_multichannel_image_visual_construction_defaults():
 # ---------------------------------------------------------------------------
 
 
+def _context_2d() -> Context:
+    """The systems and the region a ``(z, c, y, x)`` 2-D canvas is placed with.
+
+    Every in-memory family plans from the region alone since Phase 8 (R8.3),
+    so a render-layer test has to build one.
+    """
+    return Context(
+        4,
+        displayed_axes=(2, 3),
+        slice_indices={0: 0.0, 1: 0.0},
+        labels=("z", "c", "y", "x"),
+    )
+
+
 def _make_gfx_visual(channels=None, render_modes=None):
     if channels is None:
         channels = {
@@ -141,11 +155,15 @@ def _make_gfx_visual(channels=None, render_modes=None):
         channel_axis=1,
         channels=channels,
     )
+    ctx = _context_2d()
     gfx = GFXMultichannelImageMemoryVisual(
         visual_model=visual_model,
         data_store=store,
         render_modes=render_modes,
+        transform=ctx.transform,
     )
+    ctx.place(gfx)
+    gfx._test_context = ctx
     return gfx, visual_model, store
 
 
@@ -160,6 +178,7 @@ def test_gfx_multichannel_memory_visual_build_slice_request_2d_one_per_channel()
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=gfx._test_context.selection,
     )
 
     assert len(requests) == 2
@@ -182,6 +201,7 @@ def test_gfx_multichannel_memory_visual_hidden_channel_not_in_requests():
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=gfx._test_context.selection,
     )
 
     assert len(requests) == 1
@@ -199,6 +219,7 @@ def test_gfx_multichannel_memory_visual_on_data_ready_2d_routes_to_correct_slot(
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=gfx._test_context.selection,
     )
     assert len(requests) == 2
 
@@ -234,18 +255,25 @@ def test_gfx_multichannel_memory_visual_on_data_ready_3d_no_transpose():
         channel_axis=1,
         channels=channels,
     )
+    ctx = Context(
+        4,
+        displayed_axes=(0, 2, 3),
+        slice_indices={1: 0.0},
+        labels=("z", "c", "y", "x"),
+    )
     gfx = GFXMultichannelImageMemoryVisual(
         visual_model=visual_model,
         data_store=store,
         render_modes={"3d"},
+        transform=ctx.transform,
     )
+    ctx.place(gfx)
 
     # 3-D dims: channel axis (1) sliced, the three spatial axes displayed.
     dims = DimsState(
         axis_labels=("z", "c", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 2, 3),
-            slice_indices={1: 0},
         ),
     )
 
@@ -255,6 +283,7 @@ def test_gfx_multichannel_memory_visual_on_data_ready_3d_no_transpose():
         fov_y_rad=1.0,
         screen_height_px=512.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert len(requests) == 2
 

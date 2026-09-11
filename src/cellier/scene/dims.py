@@ -14,7 +14,7 @@ from cellier._state import (
     DimsState,
     PlaneSelectionState,
 )
-from cellier.transform_v2 import (
+from cellier.transform import (
     Axis,
     ConvexRegion,
     RegionSelection,
@@ -24,7 +24,7 @@ from cellier.transform_v2 import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         AxisType,
         RenderedCoordinateSystem,
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 #: One axis of a world coordinate system, stated explicitly.
 #:
-#: Either a built :class:`~cellier.transform_v2.Axis` or a
+#: Either a built :class:`~cellier.transform.Axis` or a
 #: ``(name, axis_type)`` pair.  There is no bare-string form: ``Axis.axis_type``
 #: has no default, and a channel or time axis silently typed ``"space"`` is
 #: rejected far from where it was written -- by ``from_axis_map``, which
@@ -202,7 +202,6 @@ class AxisAlignedSelection(EventedModel):
         """Return an immutable snapshot of this selection."""
         return AxisAlignedSelectionState(
             displayed_axes=self.displayed_axes,
-            slice_indices=dict(self.slice_indices),
             stacked_axes=self.stacked_axes,
             thickness=dict(self.thickness),
         )

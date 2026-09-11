@@ -16,10 +16,16 @@ from cellier.data._dataset_info import (
 )
 from cellier.data.points._points_requests import PointsData, PointsSliceRequest
 
-# Placeholder returned when the proximity filter produces zero points.
-# A single invisible point avoids the "empty geometry is illegal" restriction
-# in pygfx.
-_PLACEHOLDER_POSITIONS = np.zeros((1, 3), dtype=np.float32)
+
+def _placeholder_positions(n_display: int) -> np.ndarray:
+    """One invisible point, returned when the filter produces none.
+
+    pygfx will not accept empty geometry, so the store returns a single
+    zeroed vertex instead.  It is sized to the retained axes rather than
+    fixed at three: a rank-4 store displaying data axes ``(2, 3)`` would
+    otherwise index a ``(1, 3)`` constant with axis 3 and raise (F8.4).
+    """
+    return np.zeros((1, n_display), dtype=np.float32)
 
 
 class PointsMemoryStore(BaseDataStore):
@@ -181,25 +187,24 @@ class PointsMemoryStore(BaseDataStore):
         sizes = self.sizes
         # Ascending: the uploaded vertex buffer's axis order is the data's,
         # and a display permutation lives in the node matrix (design 3.14).
-        displayed = sorted(request.displayed_axes)
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform.  ``displayed_axes`` indexes the **world**, so using it
+        # here would raise on a store of lower rank than the world and
+        # silently upload the wrong columns on a transform that permutes its
+        # axes; it was the fallback for a headlessly constructed visual until
+        # v1 was retired (R8.3).
+        displayed = list(request.retained_axes)
 
         # ── Phase 1: build proximity mask ────────────────────────────
         # A point survives if it passes the proximity test on EVERY
         # non-displayed (sliced) axis.
-        if request.region is not None:
-            # The region *is* the filter (design 3.12).  For images it is
-            # reduced to a bounding box and rounded; for points there is
-            # nothing to round -- the constraints apply to the points
-            # themselves.  A 3-D view has no slabs, so the region is
-            # unbounded, ``contains`` is all-True, and the "slice_indices is
-            # empty so the loop does not run" special case disappears.
-            point_mask = request.region.contains(positions)
-        else:
-            point_mask = np.ones(self.n_points, dtype=bool)
-            for axis, idx in request.slice_indices.items():
-                lo = float(idx) - request.thickness
-                hi = float(idx) + request.thickness
-                point_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
+        # The region *is* the filter (design 3.12).  For images it is reduced
+        # to a bounding box and rounded; for points there is nothing to round
+        # -- the constraints apply to the points themselves.  A 3-D view has
+        # no slabs, so the region is unbounded, ``contains`` is all-True, and
+        # the "no sliced axes so the loop does not run" special case
+        # disappears.
+        point_mask = request.region.contains(positions)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)
@@ -211,7 +216,7 @@ class PointsMemoryStore(BaseDataStore):
             # Empty slab — return placeholder so the node stays valid.
             return PointsData(
                 request_id=request.slice_request_id,
-                positions=_PLACEHOLDER_POSITIONS[:, displayed],
+                positions=_placeholder_positions(len(displayed)),
                 colors=None,
                 sizes=None,
                 color_mode="uniform",

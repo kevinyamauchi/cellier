@@ -1,4 +1,4 @@
-"""Tests for cellier.transform_v2._selection (D43)."""
+"""Tests for cellier.transform._selection (D43)."""
 
 from uuid import uuid4
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     ConvexRegion,
@@ -134,7 +134,7 @@ def test_selection_round_trips():
 
 def test_there_is_no_dims_editor_here_d43():
     """This phase fixes the artifact, not the editor that emits it."""
-    import cellier.transform_v2 as package
+    import cellier.transform as package
 
     assert not hasattr(package, "DimsManager")
     assert not hasattr(RegionSelection, "from_indices")

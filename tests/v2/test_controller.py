@@ -20,8 +20,7 @@ from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.events._events import CameraChangedEvent, TransformChangedEvent
 from cellier.render._config import CameraConfig, RenderManagerConfig
 from cellier.scene.dims import spatial_axes, world_coordinate_system
-from cellier.transform import AffineTransform
-from cellier.transform_v2 import WorldCoordinateSystem  # noqa: TC001
+from cellier.transform import WorldCoordinateSystem  # noqa: TC001
 from cellier.viewer_model import ViewerModel
 from cellier.visuals import (
     LinesMemoryAppearance,
@@ -30,7 +29,7 @@ from cellier.visuals import (
     MultiscaleImageVisual,
 )
 from cellier.visuals._points_memory import PointsMarkerAppearance
-from tests._v2 import bound
+from tests._v2 import bound, identity, pyramid_levels
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,12 +51,10 @@ def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
     defaults = {
         "zarr_path": str(small_zarr_store),
         "scale_names": ["s0", "s1"],
-        "level_transforms": [
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
     }
     defaults.update(kwargs)
     return MultiscaleZarrDataStore(**defaults)
@@ -144,7 +141,7 @@ def test_add_mesh_defaults_transform_to_identity():
         name="mesh",
     )
 
-    expected = AffineTransform.identity(ndim=store.positions.shape[1])
+    expected = identity(store.positions.shape[1])
     np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
     gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
@@ -181,7 +178,7 @@ def test_add_points_defaults_transform_to_identity():
         name="points",
     )
 
-    expected = AffineTransform.identity(ndim=store.ndim)
+    expected = identity(store.ndim)
     np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
     gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
@@ -218,7 +215,7 @@ def test_add_lines_defaults_transform_to_identity():
         name="lines",
     )
 
-    expected = AffineTransform.identity(ndim=store.ndim)
+    expected = identity(store.ndim)
     np.testing.assert_array_equal(visual.transform.matrix, expected.matrix)
     gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     np.testing.assert_array_equal(gfx_visual._transform.matrix, expected.matrix)
@@ -312,7 +309,9 @@ def test_dims_bridge_emits_event():
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 5}
     assert len(fired) == 1
-    assert fired[0].dims_state.selection.slice_indices == {0: 5}
+    # The snapshot stopped carrying the positions in Phase 8 (D5); they stay
+    # on the selection the sliders write to.
+    assert controller.get_scene(scene.id).dims.selection.slice_indices == {0: 5}
 
 
 def test_dims_bridge_displayed_axes_flag_true():
@@ -366,9 +365,14 @@ def test_dims_update_event_expand_applies_displayed_axes_first():
     assert scene.dims.selection.slice_indices == {0: 0}
 
     events = []
-    controller._outgoing_events.subscribe(
-        DimsChangedEvent, events.append, entity_id=scene.id
-    )
+
+    def record(event):
+        # The snapshot stopped carrying the positions in Phase 8 (D5), so the
+        # ordering is observed against the live selection at the moment each
+        # event fires -- which is what the two mutations actually change.
+        events.append((event, dict(scene.dims.selection.slice_indices)))
+
+    controller._outgoing_events.subscribe(DimsChangedEvent, record, entity_id=scene.id)
 
     controller._incoming_events.emit(
         DimsUpdateEvent(
@@ -380,14 +384,14 @@ def test_dims_update_event_expand_applies_displayed_axes_first():
     )
 
     assert len(events) == 2
-    first, second = events
+    (first, first_slices), (second, second_slices) = events
     # First mutation: displayed_axes already expanded, slice_indices not
     # yet touched (axis 0 still present).
     assert len(first.dims_state.selection.displayed_axes) == 3
-    assert 0 in first.dims_state.selection.slice_indices
+    assert 0 in first_slices
     # Second mutation: slice_indices catches up.
     assert len(second.dims_state.selection.displayed_axes) == 3
-    assert 0 not in second.dims_state.selection.slice_indices
+    assert 0 not in second_slices
 
 
 def test_dims_update_event_contract_applies_slice_indices_first():
@@ -400,9 +404,11 @@ def test_dims_update_event_contract_applies_slice_indices_first():
     assert len(scene.dims.selection.displayed_axes) == 3
 
     events = []
-    controller._outgoing_events.subscribe(
-        DimsChangedEvent, events.append, entity_id=scene.id
-    )
+
+    def record(event):
+        events.append((event, dict(scene.dims.selection.slice_indices)))
+
+    controller._outgoing_events.subscribe(DimsChangedEvent, record, entity_id=scene.id)
 
     controller._incoming_events.emit(
         DimsUpdateEvent(
@@ -414,11 +420,11 @@ def test_dims_update_event_contract_applies_slice_indices_first():
     )
 
     assert len(events) == 2
-    first, second = events
+    (first, first_slices), (second, _second_slices) = events
     # First mutation: slice_indices already covers axis 0, displayed_axes
     # not yet shrunk.
     assert len(first.dims_state.selection.displayed_axes) == 3
-    assert first.dims_state.selection.slice_indices.get(0) == 4
+    assert first_slices.get(0) == 4
     # Second mutation: displayed_axes catches up.
     assert len(second.dims_state.selection.displayed_axes) == 2
 
@@ -614,7 +620,7 @@ def test_on_dims_changed_callback():
 
     controller.get_scene(scene.id).dims.selection.slice_indices = {0: 7}
     assert len(fired) == 1
-    assert fired[0].dims_state.selection.slice_indices == {0: 7}
+    assert controller.get_scene(scene.id).dims.selection.slice_indices == {0: 7}
 
 
 def test_unsubscribe_all_cleans_up(small_zarr_store):

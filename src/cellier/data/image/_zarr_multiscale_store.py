@@ -32,7 +32,6 @@ from cellier.data._dataset_info import (
     format_shape,
     source_label,
 )
-from cellier.transform import AffineTransform
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
@@ -125,10 +124,12 @@ class MultiscaleZarrDataStore(BaseDataStore):
     scale_names :
         Ordered list of subdirectory names, finest → coarsest,
         e.g. ``["s0", "s1", "s2"]``.
-    level_transforms :
-        Per-level affine transforms mapping level-k voxel coords to
-        level-0 voxel coords. ``level_transforms[0]`` must be the
-        identity. Length must match ``scale_names``.
+    level_scales :
+        Per-level, per-axis scale of level-k voxels in level-0 voxels.
+        ``level_scales[0]`` must be all ones.  Length must match
+        ``scale_names``.
+    level_translations :
+        The offset half of the same, in level-0 voxels.
     name :
         Human-readable name for the store (inherited from
         ``BaseDataStore``; defaults to ``"multiscale zarr data store"``).
@@ -146,7 +147,6 @@ class MultiscaleZarrDataStore(BaseDataStore):
     DATASET_INFO_LABEL: ClassVar[str] = "multiscale zarr"
     zarr_path: str
     scale_names: list[str]
-    level_transforms: list[AffineTransform]
     name: str = "multiscale zarr data store"
 
     # ── Private tensorstore handles (not serialised) ────────────────────
@@ -158,13 +158,19 @@ class MultiscaleZarrDataStore(BaseDataStore):
     # ── Validation ─────────────────────────────────────────────────────
 
     @model_validator(mode="after")
-    def _validate_level_transforms(self) -> MultiscaleZarrDataStore:
-        """Check that level_transforms length matches scale_names."""
-        if len(self.level_transforms) != len(self.scale_names):
+    def _validate_level_geometry(self) -> MultiscaleZarrDataStore:
+        """Check that the per-level geometry matches ``scale_names``."""
+        if len(self.level_scales) != len(self.scale_names):
             raise ValueError(
-                f"level_transforms has {len(self.level_transforms)} entries "
+                f"level_scales has {len(self.level_scales)} entries "
                 f"but scale_names has {len(self.scale_names)} entries; "
                 f"they must match."
+            )
+        if len(self.level_translations) != len(self.scale_names):
+            raise ValueError(
+                f"level_translations has {len(self.level_translations)} "
+                f"entries but scale_names has {len(self.scale_names)} "
+                f"entries; they must match."
             )
         return self
 
@@ -215,14 +221,13 @@ class MultiscaleZarrDataStore(BaseDataStore):
                 f"level_translations has {len(level_translations)} entries; "
                 f"they must match."
             )
-        transforms = [
-            AffineTransform.from_scale_and_translation(scale=sc, translation=tr)
-            for sc, tr in zip(level_scales, level_translations)
-        ]
         return cls(
             zarr_path=zarr_path,
             scale_names=scale_names,
-            level_transforms=transforms,
+            level_scales=[tuple(float(v) for v in sc) for sc in level_scales],
+            level_translations=[
+                tuple(float(v) for v in tr) for tr in level_translations
+            ],
             name=name,
         )
 
@@ -268,14 +273,14 @@ class MultiscaleZarrDataStore(BaseDataStore):
         No value range: unlike the in-memory stores, computing one here
         would mean reading every level-0 chunk off disk or over the network.
 
-        The per-level scale rows are derived from ``level_transforms``
+        The per-level scale rows are derived from ``level_scales``
         rather than asserted -- the examples used to hardcode strings like
         ``"2x isotropic"`` that no longer matched an anisotropic pyramid.
         """
         shapes = self.level_shapes
         level_rows: list[tuple[str, str]] = []
         for index, (level_name, shape) in enumerate(zip(self.scale_names, shapes)):
-            scale = np.diag(self.level_transforms[index].matrix)[:-1]
+            scale = np.asarray(self.level_scales[index], dtype=float)
             level_rows.append(
                 (
                     level_name,

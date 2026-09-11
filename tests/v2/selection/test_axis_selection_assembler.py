@@ -14,7 +14,7 @@ from cellier.render.visuals._slicing import (
     axis_selections_from_box,
     round_world_to_voxel,
 )
-from cellier.transform_v2 import AxisAlignedBoundingBox
+from cellier.transform import AxisAlignedBoundingBox
 from tests._v2 import systems
 
 

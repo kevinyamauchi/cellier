@@ -17,7 +17,7 @@ from cellier.render.visuals._slicing import (
     axis_selections_from_box,
     round_world_to_voxel,
 )
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     ConvexRegion,
@@ -197,16 +197,20 @@ def test_the_pull_back_needs_no_inverse(pyramid):
 def test_the_camera_composition_matches_the_three_step_dance(pyramid):
     """Design 3.11 C, checked against what it replaces.
 
-    Today: ``select_axes`` + ``[[2, 1, 0]]`` + ``imap_coordinates`` +
-    ``[[2, 1, 0]]``.  Now: one named reversal and one ``map_coordinates``.
+    What it replaced: ``select_axes`` + ``[[2, 1, 0]]`` + ``imap_coordinates``
+    + ``[[2, 1, 0]]``.  Now: one named reversal and one ``map_coordinates``.
     The composed transform also returns the collapsed ``t`` -- the ``t`` the
     camera is looking at -- which is harmless and dropped.
+
+    Phase 8 deleted the three-step dance, so the comparison is against the
+    square submatrix and an explicit inverse rather than against a v1
+    transform -- the same three steps, written out.
     """
     from cellier.render._spaces import (
         cellier_to_pygfx_order,
         pygfx_to_cellier_order,
     )
-    from cellier.render.visuals._image import _displayed_subtransform
+    from cellier.render.visuals._image import _displayed_submatrix, _imap_square
 
     spaces, data_to_world, _ = pyramid
     camera_pygfx = np.array([[12.0, 9.0, 40.0]])
@@ -217,10 +221,10 @@ def test_the_camera_composition_matches_the_three_step_dance(pyramid):
     level0 = chain.map_coordinates(pygfx_to_cellier_order(camera_pygfx))
     new = cellier_to_pygfx_order(level0[:, list(spaces.retained_axes)]).flatten()
 
-    sub_3d = _displayed_subtransform(data_to_world, (1, 2, 3))
-    old = sub_3d.imap_coordinates(camera_pygfx[:, [2, 1, 0]]).flatten()[[2, 1, 0]]
+    sub_3d = _displayed_submatrix(data_to_world, (1, 2, 3))
+    old = _imap_square(sub_3d, camera_pygfx[:, [2, 1, 0]]).flatten()[[2, 1, 0]]
 
-    np.testing.assert_allclose(new, old)
+    np.testing.assert_allclose(new, old, rtol=1e-6)
     # Design 3.11 C's printed values.
     np.testing.assert_allclose(level0.flatten(), [1.5, 40.0, 90.0, 120.0])
     np.testing.assert_allclose(new, [120.0, 90.0, 40.0])

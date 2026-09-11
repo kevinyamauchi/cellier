@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Self
 
-from cellier.transform_v2._axis import Axis, AxisRef
+from cellier.transform._axis import Axis, AxisRef
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

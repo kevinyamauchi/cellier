@@ -65,11 +65,9 @@ def _():
         build_canvas_widget,
     )
     from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-    from cellier.transform import AffineTransform
     from cellier.visuals import MultiscaleImageAppearance
 
     return (
-        AffineTransform,
         AppearanceControls,
         Layout,
         MultiscaleImageAppearance,
@@ -159,7 +157,6 @@ def _(Path, block_average, concentric_shells, tempfile, write_zarr3):
 
 @app.cell
 def _(
-    AffineTransform,
     MultiscaleImageAppearance,
     MultiscaleImageControlsConfig,
     MultiscaleZarrDataStore,
@@ -169,15 +166,8 @@ def _(
     store = MultiscaleZarrDataStore(
         zarr_path=str(tmpdir),
         scale_names=["s0", "s1", "s2"],
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-            AffineTransform.from_scale_and_translation(
-                (4.0, 4.0, 4.0), (1.5, 1.5, 1.5)
-            ),
-        ],
+        level_scales=[(1.0, 1.0, 1.0), (2.0, 2.0, 2.0), (4.0, 4.0, 4.0)],
+        level_translations=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (1.5, 1.5, 1.5)],
     )
 
     from cellier.scene.dims import spatial_axes

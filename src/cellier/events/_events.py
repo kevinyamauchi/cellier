@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+#: The empty slice-position mapping, shared because it is immutable.
+NO_SLICE_POSITIONS: Mapping[int, float] = MappingProxyType({})
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     import numpy as np
@@ -15,10 +20,21 @@ if TYPE_CHECKING:
 
 
 class DimsChangedEvent(NamedTuple):
+    """The dims editor changed.
+
+    ``slice_indices`` -- world axis to world position -- is here rather than
+    on ``dims_state`` because the two have different audiences.  The render
+    layer takes the ``RegionSelection`` the controller emits alongside and
+    never reads a raw position (D5, landed in Phase 8); the dims *editor*
+    widgets do need the positions, to resync their sliders when something
+    else moves them, and this is the channel they arrive on.
+    """
+
     source_id: UUID
     scene_id: UUID
     dims_state: DimsState
     displayed_axes_changed: bool
+    slice_indices: Mapping[int, float] = NO_SLICE_POSITIONS
 
 
 class CameraChangedEvent(NamedTuple):
@@ -391,16 +407,23 @@ class ImagePickInfo(NamedTuple):
     Attributes
     ----------
     data_coordinate : tuple[float, ...]
-        Position of the picked point in the visual's level-0 data-array
-        coordinate system — all axes of the scene, including non-displayed
-        ones.  Length equals the total number of axes (e.g. 5 for TCZYX).
-        ``floor`` of each component yields the integer voxel index: the
-        coordinate uses the ``[i, i + 1)`` convention where voxel ``i`` spans
-        ``[i, i + 1)`` and its center is ``i + 0.5``.
+        Position of the picked point in the hit visual's level-0 data-array
+        coordinate system, one component per **data** axis, ascending.  That is
+        the store's rank, not the scene's: an axis the visual broadcasts over
+        has no component, because the data has no such axis.
+
+        ``floor`` of each component yields the integer voxel index — one rule,
+        every component.  The coordinate uses the ``[i, i + 1)`` convention
+        where voxel ``i`` spans ``[i, i + 1)`` and its center is ``i + 0.5``.
+
         Displayed axes carry the pick-decoded position (for 3-D canvases this
         is the actual surface hit — MIP maximum or ISO surface — snapped into
-        data space); non-displayed axes carry the current slice index from the
-        dims state.
+        data space).  Non-displayed axes carry the **plane the visual last
+        drew**, at its centre: a collapsed axis has no sub-voxel position, and
+        reporting the plane rather than the dims state is what keeps the answer
+        agreeing with the screen while a reslice is in flight.  A visual with
+        nothing planned yet falls back to the dims state, rounded the way the
+        selection assembler rounds it.
     """
 
     data_coordinate: tuple[float, ...]
@@ -418,9 +441,9 @@ class LabelsPickInfo(NamedTuple):
     Attributes
     ----------
     data_coordinate : tuple[float, ...]
-        Same convention as ``ImagePickInfo.data_coordinate``.  ``floor`` of the
-        displayed-axis components indexes the label array to recover the label
-        id under the cursor.
+        Same convention as ``ImagePickInfo.data_coordinate``.  ``floor`` of
+        every component indexes the label array to recover the label id under
+        the cursor.
     """
 
     data_coordinate: tuple[float, ...]

@@ -19,7 +19,7 @@ from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.scene.dims import spatial_axes
 from cellier.visuals._lines_memory import LinesMemoryAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance
-from tests._v2 import bound
+from tests._v2 import bound, data_region
 
 # Design 3.12's six points and its 2 um z spacing.
 _POSITIONS = np.array(
@@ -72,24 +72,28 @@ async def _selected(controller, scene, visual, store, *, with_region=True):
 
 
 async def test_the_visual_now_slices_against_its_transform():
-    """Design 3.12's headline: today's code draws the one point 24 um off the
-    slice plane and hides the three that are on it."""
+    """Design 3.12's headline: the code this replaced drew the one point
+    24 um off the slice plane and hid the three that are on it.
+
+    The old path was still reachable, and asserted against here, until
+    Phase 8 deleted it (R8.3); what is left is the number it was wrong about.
+    The points sit at data z ``0, 2, 4, 6, 8, 14`` under a 4x z scale, so
+    world Z 14 +/- 1 is data z ``[3.25, 3.75]``... only on the reading that
+    ``contains`` does, against the transform.
+    """
     controller, scene, visual, store = _viewer()
     controller.update_slice_indices(scene.id, {0: 14.0})
     scene.dims.selection.thickness = {0: 1.0}
     assert await _selected(controller, scene, visual, store) == [0, 1, 2]
-    # What it did before: a world value compared against data coordinates.
-    assert await _selected(controller, scene, visual, store, with_region=False) == [5]
 
 
-async def test_an_identity_transform_is_unchanged():
-    """The fix is invisible where it was already right, which is why it went
-    unnoticed: the node matrix was always correct."""
-    controller, scene, visual, store = _viewer(scale=None)
-    controller.update_slice_indices(scene.id, {0: 2.0})
-    with_region = await _selected(controller, scene, visual, store)
-    without = await _selected(controller, scene, visual, store, with_region=False)
-    assert with_region == without
+async def test_planning_without_a_region_is_now_an_error():
+    """R8.3.  A request carrying no region used to compare a world value
+    against data coordinates; there is no second path now."""
+    controller, scene, visual, store = _viewer()
+    controller.update_slice_indices(scene.id, {0: 14.0})
+    with pytest.raises(RuntimeError, match="no region to plan from"):
+        await _selected(controller, scene, visual, store, with_region=False)
 
 
 async def test_the_world_default_thickness_is_used_when_none_is_stated():
@@ -181,9 +185,14 @@ async def test_lines_require_both_endpoints_as_they_always_did():
 
 
 async def test_a_store_reached_without_a_controller_still_slices():
-    """A headlessly constructed visual has no region.  It falls back to the
-    pre-migration comparison rather than failing, which is what keeps every
-    render-layer unit test drivable."""
+    """A store driven directly takes the region like any other caller.
+
+    Until Phase 8 a request could carry ``slice_indices`` plus ``thickness``
+    instead, which is what kept a headlessly constructed visual drivable --
+    at the cost of comparing a **world** value against **data** coordinates.
+    The region is built in the store's own space here, so the same slab
+    selects the same point.
+    """
     store = PointsMemoryStore(positions=_POSITIONS.copy(), name="pts")
     from cellier.data.points._points_requests import PointsSliceRequest
 
@@ -192,8 +201,8 @@ async def test_a_store_reached_without_a_controller_still_slices():
         chunk_request_id=UUID(int=1),
         scale_index=0,
         displayed_axes=(1, 2),
-        slice_indices={0: 14},
-        thickness=0.5,
+        retained_axes=(1, 2),
+        region=data_region(3, {0: (14, 0.5)}),
     )
     data = await store.get_data(request)
     assert data.original_indices.tolist() == [5]

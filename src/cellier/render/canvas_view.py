@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from cellier.events._bus import EventBus
     from cellier.render._config import AmbientOcclusionConfig
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
-    from cellier.transform_v2 import RegionSelection
+    from cellier.transform import RegionSelection
 
 
 class CanvasView:

@@ -2,7 +2,7 @@
 
 Shared by test_geometry_ops.py, which works on arrays rather than models.
 The matrices are lifted verbatim from
-``scripts/transform_v2_geometry_ops_probe.py``.
+``scripts/transform_geometry_ops_probe.py``.
 """
 
 import numpy as np
@@ -51,7 +51,7 @@ USE_CASES = {"UC1": UC1, "UC2": UC2, "UC3": UC3, "UC4": UC4}
 
 
 def _space(name):
-    from cellier.transform_v2 import Axis
+    from cellier.transform import Axis
 
     return Axis(name=name, axis_type="space", unit="micrometer")
 
@@ -60,7 +60,7 @@ def uc1():
     """zyx -> ZYX, scale only."""
     from uuid import uuid4
 
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         DataCoordinateSystem,
         WorldCoordinateSystem,
@@ -87,7 +87,7 @@ def uc2():
     """czyx -> cZYX, scale + translation on ZYX only."""
     from uuid import uuid4
 
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         Axis,
         DataCoordinateSystem,
@@ -126,7 +126,7 @@ def uc3():
     """tzyx -> TCZYX, broadcast over C."""
     from uuid import uuid4
 
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         Axis,
         DataCoordinateSystem,
@@ -167,7 +167,7 @@ def uc4():
     """zyx -> XYZ; the identical call to UC1, with a reordered world."""
     from uuid import uuid4
 
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         DataCoordinateSystem,
         WorldCoordinateSystem,

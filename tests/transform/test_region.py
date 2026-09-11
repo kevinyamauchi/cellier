@@ -1,4 +1,4 @@
-"""Tests for cellier.transform_v2._region (design section 10)."""
+"""Tests for cellier.transform._region (design section 10)."""
 
 from functools import partial
 from uuid import uuid4
@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     Axis,
     AxisAlignedBoundingBox,
     ConvexRegion,
@@ -15,10 +15,10 @@ from cellier.transform_v2 import (
     HalfSpace,
     WorldCoordinateSystem,
 )
-from cellier.transform_v2 import _geometry_ops as geometry_ops
-from cellier.transform_v2._geometry_ops import imap_half_spaces
-from cellier.transform_v2._region import half_spaces_from_arrays
-from tests.transform_v2._use_cases import UC3
+from cellier.transform import _geometry_ops as geometry_ops
+from cellier.transform._geometry_ops import imap_half_spaces
+from cellier.transform._region import half_spaces_from_arrays
+from tests.transform._use_cases import UC3
 
 space = partial(Axis, axis_type="space", unit="micrometer")
 
@@ -392,7 +392,7 @@ def test_simplify_takes_the_oblique_uc3_region_from_ten_constraints_to_eight():
 def test_a_channel_slab_off_the_data_makes_the_pulled_region_empty_d39():
     """The other branch of D39, and where the probe's count came from.
 
-    ``scripts/transform_v2_region_probe.py`` selects ``C`` in ``[1.5, 2.5]``
+    ``scripts/transform_region_probe.py`` selects ``C`` in ``[1.5, 2.5]``
     and drops every zero-normal row, reaching 8.  One of those rows is
     *infeasible*, not vacuous: the forward matrix places this data at
     ``C == 0``, so the selection matches nothing.  Dropping it would turn an

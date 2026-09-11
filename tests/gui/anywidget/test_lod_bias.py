@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("anywidget")
 
-from cellier.events import AppearanceChangedEvent  # noqa: E402
-from cellier.gui.anywidget.visuals._lod_bias import AnywidgetLodBiasSlider  # noqa: E402
+from cellier.events import AppearanceChangedEvent
+from cellier.gui.anywidget.visuals._lod_bias import AnywidgetLodBiasSlider
 
 
 def _make_widget(**kwargs):

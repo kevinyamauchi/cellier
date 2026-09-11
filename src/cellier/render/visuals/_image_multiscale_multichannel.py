@@ -8,9 +8,9 @@ from uuid import UUID, uuid4
 
 import pygfx as gfx
 
+from cellier.render._spaces import select_axes
 from cellier.render.visuals._image import GFXMultiscaleImageVisual
 from cellier.render.visuals._image_memory import _make_colormap
-from cellier.transform._axis_order import select_axes
 
 if TYPE_CHECKING:
     import numpy as np
@@ -24,8 +24,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform
-    from cellier.transform_v2 import RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image import MultichannelMultiscaleImageVisual
 
@@ -84,12 +83,11 @@ class GFXMultichannelMultiscaleImageVisual:
         self._channel_axis = visual_model.channel_axis
         self._full_level_shapes = list(level_shapes)
 
-        # Expand spatial level_transforms to full data ndim so that
-        # _build_world_to_level_transforms inside each slot composes correctly.
-        full_ndim = len(level_shapes[0])
-        self._expanded_level_transforms: list[AffineTransform] = [
-            lt.expand_dims(full_ndim) for lt in visual_model.level_transforms
-        ]
+        # The store's level transforms are full rank -- one entry per data
+        # axis, channel axis included -- so the slots get them as they are.
+        # Until Phase 8 they were spatial-only v1 matrices and this called
+        # ``expand_dims`` to embed them as the trailing axes.
+        self._level_transforms = list(visual_model.level_transforms)
 
         # The data -> world transform; the slots each hold the same one.
         self._transform = transform
@@ -186,28 +184,22 @@ class GFXMultichannelMultiscaleImageVisual:
         if "3d" in render_modes and len(spatial_displayed) >= 3:
             axes_3d = spatial_displayed[-3:]
             shapes_3d = [select_axes(s, axes_3d) for s in level_shapes]
-            # Use original (spatial) level_transforms for geometry; they share
-            # the same per-level scale information.
-            transforms_3d = [
-                lt.select_axes(axes_3d) for lt in visual_model.level_transforms
-            ]
             volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
-                level_transforms=transforms_3d,
+                level_transforms=list(visual_model.level_transforms),
                 block_size=rc.block_size,
+                fetch_axes=axes_3d,
             )
 
         if "2d" in render_modes:
             axes_2d = spatial_displayed[-2:]
             shapes_2d = [select_axes(s, axes_2d) for s in level_shapes]
-            transforms_2d = [
-                lt.select_axes(axes_2d) for lt in visual_model.level_transforms
-            ]
             image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
                 block_size=rc.block_size,
                 n_levels=len(level_shapes),
-                level_transforms=transforms_2d,
+                level_transforms=list(visual_model.level_transforms),
+                fetch_axes=axes_2d,
             )
 
         return GFXMultiscaleImageVisual(
@@ -223,7 +215,7 @@ class GFXMultichannelMultiscaleImageVisual:
             gpu_budget_bytes_3d=gpu_budget_bytes_3d,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             transform=transform,
-            full_level_transforms=self._expanded_level_transforms,
+            full_level_transforms=self._level_transforms,
             full_level_shapes=level_shapes,
             aabb_enabled=visual_model.aabb.enabled,
             aabb_color=visual_model.aabb.color,
@@ -509,11 +501,14 @@ class GFXMultichannelMultiscaleImageVisual:
 
         # Set current slice coord on all slots so _materialize_brick_requests
         # embeds the correct non-displayed axis position in every BlockKey3D.
-        current_slice_coord_3d: tuple[tuple[int, int], ...] = ()
-        if dims_state is not None:
-            current_slice_coord_3d = tuple(
-                sorted(dims_state.selection.slice_indices.items())
-            )
+        # Every slot also addresses its own bricks through
+        # ``_level_axis_selections``, so every slot needs the region -- not
+        # just the one that plans them.  Until v1 was retired this family
+        # dropped ``selection`` on the floor and each slot fell back to
+        # ``dims_state`` (F8.3).
+        for slot in self._slots:
+            slot._begin_region_planning(selection)
+        current_slice_coord_3d = planner._block_key_slice_coord()
         for slot in self._slots:
             slot._current_slice_coord_3d = current_slice_coord_3d
 
@@ -584,7 +579,9 @@ class GFXMultichannelMultiscaleImageVisual:
             self._rebuild_slot_geometries(displayed)
 
         # Set current slice coord on all slots (needed by _materialize_tile_requests).
-        current_slice_coord = tuple(sorted(dims_state.selection.slice_indices.items()))
+        for slot in self._slots:
+            slot._begin_region_planning(selection)
+        current_slice_coord = planner._block_key_slice_coord()
         for slot in self._slots:
             slot._current_slice_coord = current_slice_coord
 
@@ -699,6 +696,29 @@ class GFXMultichannelMultiscaleImageVisual:
         for g in (self._group_2d, self._group_3d):
             if g is not None:
                 g.visible = event.visible
+
+    def pick_collapsed_indices(self) -> dict[int, int] | None:
+        """The level-0 planes this visual last drew, per collapsed data axis.
+
+        All slots plan against the same selection, so slot 0 answers for the
+        family.  The **channel axis is excluded** for the same reason as in
+        the in-memory multichannel visual: it is composited, not collapsed.
+
+        Returns
+        -------
+        dict[int, int] or None
+            Data axis to level-0 voxel index, minus the channel axis.
+        """
+        if not self._slots:
+            return None
+        collapsed = self._slots[0].pick_collapsed_indices()
+        if collapsed is None:
+            return None
+        return {
+            axis: value
+            for axis, value in collapsed.items()
+            if axis != self._channel_axis
+        }
 
     def pick_data_coordinate(
         self, hit_object, pick_info: dict

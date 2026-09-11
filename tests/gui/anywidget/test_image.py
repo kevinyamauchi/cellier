@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("anywidget")
 
-from cellier.events import AppearanceChangedEvent  # noqa: E402
-from cellier.gui.anywidget.visuals._image import (  # noqa: E402
+from cellier.events import AppearanceChangedEvent
+from cellier.gui.anywidget.visuals._image import (
     AnywidgetVolumeRenderControls,
 )
 

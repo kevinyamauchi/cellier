@@ -7,18 +7,16 @@ from uuid import UUID, uuid4
 import numpy as np
 import pygfx as gfx
 
-from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.render._spaces import RenderSpaces, node_matrix
 from cellier.render.shaders._image_volume import IMAGE_VOLUME_MATERIALS
 from cellier.render.visuals._pick import memory_image_data_coordinate
 from cellier.render.visuals._slicing import (
     axis_selections_from_box,
-    map_world_slice_to_voxel,
-    round_world_to_voxel,
 )
 
 if TYPE_CHECKING:
+    from cellier._state import DimsState
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.events._events import (
         AABBChangedEvent,
@@ -27,7 +25,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform_v2 import (
+    from cellier.transform import (
         AffineTransform,
         RegionSelection,
         WorldCoordinateSystem,
@@ -232,116 +230,6 @@ def _plan_from_region(
         if not isinstance(value, tuple)
     }
     return axis_selections, collapsed
-
-
-class _Pullback:
-    """Adapts a ``data -> world`` transform to the shared world->voxel mapper.
-
-    :func:`map_world_slice_to_voxel` takes a *forward* world->voxel transform
-    and calls ``map_coordinates`` on it, and the rule it encodes must survive
-    this migration unchanged.  So the adaptation happens here instead.
-
-    ``imap_coordinates`` rather than ``inverse().map_coordinates``: they are
-    the same map but not the same arithmetic.  The first computes
-    ``A^-1 (y - t)`` and the second ``(A^-1) y + (-A^-1 t)``, and on an exact
-    half-integer tie -- which ``round_world_to_voxel`` resolves toward +inf --
-    the second can land a fraction of a ULP below and round the other way.
-    A world position of 5 on a ``3 * v + 0.5`` axis is voxel 1.5 exactly, and
-    must snap to 2.
-    """
-
-    __slots__ = ("_transform",)
-
-    def __init__(self, transform: AffineTransform) -> None:
-        self._transform = transform
-
-    def map_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
-        """Pull world points back into voxel space."""
-        return self._transform.imap_coordinates(coordinates)
-
-
-def _transform_slice_indices(
-    slice_indices: dict[int, int],
-    transform: AffineTransform,
-    store_shape: tuple[int, ...],
-) -> dict[int, int]:
-    """Map world-space slice positions to data-space voxel indices.
-
-    Thin adapter over :func:`map_world_slice_to_voxel`: in-memory data is a
-    single-level pyramid, so the world->voxel transform is simply the inverse
-    of the data->world transform and ``store_shape`` is the level shape.  The
-    shared mapper applies the inverse transform, snaps each axis with
-    :func:`round_world_to_voxel` (round-half-up), and clamps to valid indices.
-
-    Parameters
-    ----------
-    slice_indices : dict[int, int]
-        Axis -> world-space slice position.
-    transform : AffineTransform
-        N-D data-to-world transform (its inverse maps world -> data).
-    store_shape : tuple[int, ...]
-        Shape of the data store, used for clamping.
-
-    Returns
-    -------
-    dict[int, int]
-        Axis -> data-space voxel index.
-    """
-    if not slice_indices:
-        return slice_indices
-
-    if transform is None:
-        # The visual has not been placed: no controller has told it which world
-        # it is in, so there is nothing to pull back through.  Reading the
-        # positions as voxel indices is what the v1 identity default did, and
-        # it keeps a headlessly-constructed visual drivable.  Through the
-        # controller this never happens -- add_visual always supplies a
-        # transform.
-        return {
-            axis: round_world_to_voxel(float(position), store_shape[axis])
-            for axis, position in slice_indices.items()
-        }
-
-    if transform.inverse() is None:
-        raise ValueError(
-            "This visual's data -> world transform has no inverse, so a world "
-            "slice position cannot be pulled back to a voxel index."
-        )
-    return map_world_slice_to_voxel(
-        slice_indices, transform.output_ndim, _Pullback(transform), store_shape
-    )
-
-
-def _build_axis_selections_memory(
-    dims_state: DimsState,
-    store_shape: tuple[int, ...],
-) -> tuple[int | tuple[int, int], ...]:
-    """Build axis_selections for a ChunkRequest from a DimsState.
-
-    Displayed axes receive ``(0, store_shape[axis])`` -- the full extent.
-    Sliced axes receive their integer slice index.
-
-    Parameters
-    ----------
-    dims_state : DimsState
-        Immutable snapshot from the controller.
-    store_shape : tuple[int, ...]
-        Shape of the backing numpy array (from ``ImageMemoryStore.shape``).
-
-    Returns
-    -------
-    tuple[int | tuple[int, int], ...]
-        One entry per data axis, in data axis order.
-    """
-    sel = dims_state.selection  # AxisAlignedSelectionState
-    ndim = len(store_shape)
-    result: list[int | tuple[int, int]] = []
-    for ax in range(ndim):
-        if ax in sel.displayed_axes:
-            result.append((0, store_shape[ax]))
-        else:
-            result.append(sel.slice_indices[ax])
-    return tuple(result)
 
 
 # ---------------------------------------------------------------------------
@@ -656,37 +544,24 @@ class GFXImageMemoryVisual:
     ) -> tuple[int | tuple[int, int], ...]:
         """Plan one request's per-axis selection, and record where it collapsed.
 
-        Prefers the ``RegionSelection`` the controller built: it pulls the
-        whole selected region back through the transform in one operation that
-        needs no inverse, and it extends to a slab, a viewport crop or an
-        oblique plane by changing only the region.
-
-        Falls back to ``dims_state`` when there is no region -- a visual driven
-        headlessly, or one whose scene has no rendered coordinate system yet.
-        The two agree exactly for the axis-aligned, zero-thickness selections
-        that reach this path today.
+        The ``RegionSelection`` the controller built is the only path: it
+        pulls the whole selected region back through the transform in one
+        operation that needs no inverse, and it extends to a slab, a viewport
+        crop or an oblique plane by changing only the region.
         """
         shape = self._data_store.shape
-        if selection is not None and self._spaces is not None:
-            axis_selections, collapsed = _plan_from_region(
-                selection, self._transform, self._spaces.world, shape
+        if selection is None or self._spaces is None:
+            raise RuntimeError(
+                "This visual has no region to plan from: either it has not "
+                "been placed in a world or the reslicing request carried no "
+                "selection.  Until v1 was retired this fell back to reading "
+                "``dims_state.slice_indices`` as world positions."
             )
-            self._collapsed_indices = collapsed
-            return axis_selections
-        transformed_indices = _transform_slice_indices(
-            dims_state.selection.slice_indices, self._transform, shape
+        axis_selections, collapsed = _plan_from_region(
+            selection, self._transform, self._spaces.world, shape
         )
-        self._collapsed_indices = dict(transformed_indices)
-        return _build_axis_selections_memory(
-            DimsState(
-                axis_labels=dims_state.axis_labels,
-                selection=AxisAlignedSelectionState(
-                    displayed_axes=dims_state.selection.displayed_axes,
-                    slice_indices=transformed_indices,
-                ),
-            ),
-            shape,
-        )
+        self._collapsed_indices = collapsed
+        return axis_selections
 
     def build_slice_request_2d(
         self,
@@ -1000,6 +875,22 @@ class GFXImageMemoryVisual:
         for node in (self.node_2d, self.node_3d):
             if node is not None:
                 node.visible = event.visible
+
+    def pick_collapsed_indices(self) -> dict[int, int] | None:
+        """The level-0 planes this visual last drew, per collapsed data axis.
+
+        Read off the plan rather than recomputed from the dims state, so a
+        pick reports the slice that is actually on screen even while a
+        reslice is in flight.  ``None`` before the first one.
+
+        Returns
+        -------
+        dict[int, int] or None
+            Data axis to voxel index, for collapsed axes only.
+        """
+        if not self._collapsed_indices:
+            return None
+        return {axis: int(value) for axis, value in self._collapsed_indices.items()}
 
     def pick_data_coordinate(
         self, hit_object, pick_info: dict

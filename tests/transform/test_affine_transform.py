@@ -1,11 +1,11 @@
-"""Tests for cellier.transform_v2._affine (design section 9)."""
+"""Tests for cellier.transform._affine (design section 9)."""
 
 from uuid import uuid4
 
 import numpy as np
 import pytest
 
-from cellier.transform_v2 import (
+from cellier.transform import (
     AffineTransform,
     Axis,
     AxisAlignedBoundingBox,
@@ -20,7 +20,7 @@ from cellier.transform_v2 import (
     VisualCoordinateSystem,
     WorldCoordinateSystem,
 )
-from tests.transform_v2._use_cases import MODEL_USE_CASES, uc1, uc2, uc3, uc4
+from tests.transform._use_cases import MODEL_USE_CASES, uc1, uc2, uc3, uc4
 
 CASE_IDS = list(MODEL_USE_CASES)
 
@@ -67,7 +67,7 @@ def test_uc1_and_uc4_differ_only_in_the_world_system_d22():
     """The axis map, scale and every other argument are byte-identical."""
     import inspect
 
-    from tests.transform_v2 import _use_cases
+    from tests.transform import _use_cases
 
     one = inspect.getsource(_use_cases.uc1)
     four = inspect.getsource(_use_cases.uc4)
@@ -1043,7 +1043,7 @@ def test_a_permuted_rendered_system_has_a_negative_determinant_d46():
 
     Worth pinning because "rotate the view 90 degrees" is a *different*
     operation -- a swap plus a flip -- which an axis map cannot express
-    without a negative scale.  Nothing in ``transform_v2`` cares; the
+    without a negative scale.  Nothing in ``transform`` cares; the
     renderer's winding order might.
     """
     in_order = _node_matrix_for_rendered_order(("Y", "X"))

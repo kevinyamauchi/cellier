@@ -10,21 +10,19 @@ from cellier.scene.dims import (
     world_coordinate_system,
 )
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from tests._v2 import level_transforms, pyramid_levels
 
 
 def _build_viewer(small_zarr_store):
     store = MultiscaleZarrDataStore(
         zarr_path=str(small_zarr_store),
         scale_names=["s0", "s1"],
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         name="test_volume",
     )
     data = DataManager(stores={store.id: store})
@@ -39,12 +37,10 @@ def _build_viewer(small_zarr_store):
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(store.id),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=appearance,
     )
 

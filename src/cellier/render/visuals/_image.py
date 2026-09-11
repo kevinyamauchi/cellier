@@ -33,8 +33,11 @@ from cellier.render._spaces import (
     RenderSpaces,
     axis_correspondence,
     cellier_to_pygfx_order,
+    data_slice_positions,
     node_matrix,
     pygfx_to_cellier_order,
+    select_axes,
+    swap_axes,
 )
 from cellier.render.block_cache import (
     BlockCache3D,
@@ -76,18 +79,12 @@ from cellier.render.visuals._pick import (
     multiscale_image_data_coordinate,
     multiscale_volume_data_coordinate,
 )
-from cellier.render.visuals._slicing import (
-    axis_selections_from_box,
-    map_world_slice_to_voxel,
-)
-from cellier.transform import AffineTransform
-from cellier.transform._axis_order import select_axes, swap_axes
-from cellier.transform_v2 import AffineTransform as TransformV2  # noqa: TC001
+from cellier.render.visuals._slicing import axis_selections_from_box
 
 if TYPE_CHECKING:
     from pygfx.resources import Buffer
 
-    from cellier._state import AxisAlignedSelectionState, DimsState
+    from cellier._state import DimsState
     from cellier.events._events import (
         AABBChangedEvent,
         AppearanceChangedEvent,
@@ -103,7 +100,7 @@ if TYPE_CHECKING:
     from cellier.render.block_cache._tile_manager_2d import (
         TileSlot as TileSlot2D,
     )
-    from cellier.transform_v2 import RegionSelection
+    from cellier.transform import AffineTransform, RegionSelection
     from cellier.visuals._image import MultiscaleImageVisual
 
 # Importing this module registers the shader class with pygfx via the
@@ -191,37 +188,51 @@ class NormSizedVolume(gfx.Volume):
         return {"world_object": self, "norm_pos": (px, py, pz)}
 
 
-def _extract_scale_and_translation(
+def _level_scale_and_translation(
     level_transforms: list[AffineTransform],
+    fetch_axes: tuple[int, ...],
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Extract per-axis scale and translation vectors from level transforms.
+    """Per-axis scale and translation of each level, over the fetch axes.
 
-    Vectors are returned in the same axis order as the input transforms.
-    For VolumeGeometry / ImageGeometry2D the transforms are already
-    projected onto the displayed axes via ``select_axes``, so the
-    output is in displayed-axis order over the displayed subset (e.g.
-    ``(z, y, x)`` when displayed_axes=(0, 1, 2)).  Callers that feed
-    these into shader-space geometry must reverse the local axis order
-    via ``swap_axes`` first.
+    ``level_transforms`` are **full rank**: one per level, mapping level-k
+    voxel coordinates to level-0, over every data axis.  *fetch_axes* names
+    the ascending data axes the brick grid is built over, and the vectors come
+    back in that order -- which is the order the fetched array carries
+    (:func:`_fetch_order`).  Callers that feed these into shader-space
+    geometry must reverse the local axis order via ``swap_axes`` first.
+
+    Until v1 was retired the projection was a separate step: the caller built
+    a rank-reduced ``select_axes(fetch_axes)`` transform and this read its
+    whole diagonal.  A v2 transform names its endpoints and cannot be
+    rank-reduced without minting two coordinate systems that describe nothing,
+    so the axis selection happens here instead -- reading the same entries
+    ``select_axes`` would have kept.
 
     Parameters
     ----------
     level_transforms : list[AffineTransform]
-        Per-level transforms mapping level-k voxel coords to level-0.
+        Full-rank per-level transforms, level-k voxel to level-0 voxel.
+    fetch_axes : tuple[int, ...]
+        The data axes to read, ascending.
 
     Returns
     -------
     scale_vecs : list[np.ndarray]
-        ``(ndim,)`` per level — diagonal of the spatial block.
+        ``(len(fetch_axes),)`` per level -- the diagonal entry per axis.
     translation_vecs : list[np.ndarray]
-        ``(ndim,)`` per level — translation column.
+        ``(len(fetch_axes),)`` per level -- the translation entry per axis.
     """
     scale_vecs: list[np.ndarray] = []
     translation_vecs: list[np.ndarray] = []
-    for t in level_transforms:
-        nd = t.ndim
-        scale_vecs.append(np.diag(t.matrix[:nd, :nd]).copy())
-        translation_vecs.append(t.matrix[:nd, nd].copy())
+    for transform in level_transforms:
+        matrix = np.asarray(transform.matrix, dtype=np.float64)
+        rank = matrix.shape[0] - 1
+        scale_vecs.append(
+            np.array([matrix[axis, axis] for axis in fetch_axes], dtype=np.float64)
+        )
+        translation_vecs.append(
+            np.array([matrix[axis, rank] for axis in fetch_axes], dtype=np.float64)
+        )
     return scale_vecs, translation_vecs
 
 
@@ -230,7 +241,7 @@ def _extract_scale_and_translation(
 # ---------------------------------------------------------------------------
 
 
-def _check_transform_no_rotation(transform: AffineTransform) -> None:
+def _check_transform_no_rotation(transform: AffineTransform | None) -> None:
     """Raise ValueError if the transform contains rotation or shear.
 
     The brick shader only supports scale and translation.  A transform with
@@ -324,19 +335,21 @@ def _norm_to_data_params_for(
     return scale, translation
 
 
-def _displayed_subtransform(
-    transform: TransformV2, displayed_axes: tuple[int, ...]
-) -> AffineTransform:
+def _displayed_submatrix(
+    transform: AffineTransform, displayed_axes: tuple[int, ...]
+) -> np.ndarray:
     """The square displayed-axes block of a ``data -> world`` transform.
 
-    A **bridge**, not an end state.  Sites C and D of design 1.4 -- the camera
-    and frustum entering data space -- still do their own
-    ``select_axes`` + reverse + ``imap_coordinates`` dance, which the
-    multiscale phase replaces with a single
-    ``rendered_to_level0.map_coordinates``.  Until then they need a square v1
-    transform, and ``select_axes`` no longer exists on a v2 one.
+    A **bridge**, not an end state.  One caller is left: ``_plan_tiles_2d``,
+    the multichannel family's 2-D planner, which still does the
+    pre-migration ``select_axes`` + reverse + ``imap_coordinates`` dance that
+    the single-channel path replaced with one
+    ``rendered_to_level0.map_coordinates`` (F8.1).  Migrating it is Phase 5
+    work that was never done and is not this phase's to do, so the arithmetic
+    is preserved exactly -- **float32 included**, which is what a v1
+    transform stored.
 
-    The arithmetic is identical to what ``select_axes(displayed_axes)``
+    The numbers are identical to what ``select_axes(displayed_axes)``
     produced on an equal-rank transform: row ``i`` is world axis
     ``displayed_axes[i]``, column ``j`` is the data axis that feeds world axis
     ``displayed_axes[j]``.  Unlike ``select_axes`` it does not read the
@@ -345,15 +358,16 @@ def _displayed_subtransform(
 
     Parameters
     ----------
-    transform : TransformV2
+    transform : AffineTransform
         The ``data -> world`` transform.
     displayed_axes : tuple[int, ...]
         The displayed **world** axes, in display order.
 
     Returns
     -------
-    AffineTransform
-        A square v1 transform of rank ``len(displayed_axes)``.
+    np.ndarray
+        A square ``(n + 1, n + 1)`` homogeneous **float32** matrix, where
+        ``n`` is ``len(displayed_axes)``.
 
     Raises
     ------
@@ -378,11 +392,39 @@ def _displayed_subtransform(
             matrix[row, column] = linear[out_axis, data_axis]
     for row, out_axis in enumerate(displayed_axes):
         matrix[row, n] = translation[out_axis]
-    return AffineTransform(matrix=matrix)
+    return matrix.astype(np.float32)
+
+
+def _imap_square(matrix: np.ndarray, coordinates: np.ndarray) -> np.ndarray:
+    """Pull points back through a square homogeneous matrix.
+
+    The inverse half of what a v1 ``AffineTransform`` did, kept for
+    ``_plan_tiles_2d`` alone (see ``_displayed_submatrix``).  The inverse is
+    taken and then narrowed to float32, and the product is formed in float32,
+    because that is what v1 did and this phase changes no numbers.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        A square ``(n + 1, n + 1)`` homogeneous matrix.
+    coordinates : np.ndarray
+        ``(m, n)`` points in the matrix's output space.
+
+    Returns
+    -------
+    np.ndarray
+        ``(m, n)`` points in its input space.
+    """
+    ndim = matrix.shape[0] - 1
+    inverse = np.linalg.inv(matrix).astype(np.float32)
+    points = np.atleast_2d(coordinates)
+    if points.shape[1] == ndim:
+        points = np.pad(points, pad_width=((0, 0), (0, 1)), constant_values=1)
+    return np.dot(points, inverse.T)[:, :ndim]
 
 
 def _norm_size_from_transform(
-    transform: AffineTransform,
+    transform: AffineTransform | None,
     displayed_axes: tuple[int, ...],
     dataset_size_xyz: np.ndarray,
 ) -> np.ndarray:
@@ -400,7 +442,7 @@ def _norm_size_from_transform(
 
     Parameters
     ----------
-    transform : AffineTransform
+    transform : AffineTransform or None
         The full data-to-world transform (any ``ndim >= 3``).  Must be
         scale + translation only (validated separately by
         ``_check_transform_no_rotation``).
@@ -469,10 +511,15 @@ class MultiscaleBrickLayout3D:
         For 3D rendering this is ``(D, H, W)``; for 2D it is ``(H, W)``.
         The caller extracts the displayed dimensions before passing.
     level_transforms : list[AffineTransform]
-        Per-level transforms mapping level-k voxel coords to level-0.
-        ``level_transforms[0]`` must be the identity.
+        **Full-rank** per-level transforms mapping level-k voxel coords to
+        level-0.  ``level_transforms[0]`` must be the identity.
     block_size : int
         Rendering brick side length in voxels.
+    fetch_axes : tuple[int, ...]
+        The ascending data axes this grid is built over, which is the order
+        the fetched array carries (:func:`_fetch_order`).  The transforms are
+        projected onto them here; before v1 was retired the caller projected
+        them with ``select_axes`` and passed a rank-reduced list.
     """
 
     def __init__(
@@ -480,19 +527,23 @@ class MultiscaleBrickLayout3D:
         level_shapes: list[tuple[int, ...]],
         level_transforms: list[AffineTransform],
         block_size: int,
+        fetch_axes: tuple[int, ...],
     ) -> None:
         self.level_transforms = list(level_transforms)
+        self.fetch_axes = tuple(fetch_axes)
         self.block_size = block_size
         self.n_levels = len(level_shapes)
 
-        ndim = level_transforms[0].ndim
-        assert np.allclose(level_transforms[0].matrix, np.eye(ndim + 1)), (
+        identity = np.asarray(level_transforms[0].matrix, dtype=np.float64)
+        assert np.allclose(identity, np.eye(identity.shape[0])), (
             "level_transforms[0] must be the identity"
         )
 
-        # Inputs are in displayed-axis order over the 3 displayed axes
+        # Vectors come back in fetch order over the displayed subset
         # (e.g. (z, y, x) when displayed_axes=(0, 1, 2)).
-        sv_data, tv_data = _extract_scale_and_translation(level_transforms)
+        sv_data, tv_data = _level_scale_and_translation(
+            level_transforms, self.fetch_axes
+        )
         self._scale_vecs_data = sv_data
         self._translation_vecs_data = tv_data
 
@@ -553,8 +604,12 @@ class ImageGeometry3D:
     n_levels : int
         Number of LOD levels.
     level_transforms : list[AffineTransform]
-        Per-level transforms mapping level-k voxel coords to level-0
-        in the 2D displayed-axis sub-space.
+        **Full-rank** per-level transforms mapping level-k voxel coords to
+        level-0.
+    fetch_axes : tuple[int, ...]
+        The ascending data axes this grid is built over.  The transforms are
+        projected onto them here; before v1 was retired the caller projected
+        them with ``select_axes`` and passed a rank-reduced list.
     """
 
     def __init__(
@@ -562,22 +617,20 @@ class ImageGeometry3D:
         level_shapes: list[tuple[int, int]],
         block_size: int,
         n_levels: int,
-        level_transforms: list[AffineTransform] | None = None,
+        level_transforms: list[AffineTransform],
+        fetch_axes: tuple[int, ...],
     ) -> None:
         self.block_size = block_size
         self.n_levels = n_levels
         self.level_shapes = list(level_shapes)
-
-        # Build 2D transforms if not provided (fallback to identity).
-        if level_transforms is None:
-            level_transforms = [
-                AffineTransform.identity(ndim=2) for _ in range(n_levels)
-            ]
         self.level_transforms = list(level_transforms)
+        self.fetch_axes = tuple(fetch_axes)
 
-        # Inputs are in displayed-axis order over the 2 displayed axes
+        # Vectors come back in fetch order over the 2 displayed axes
         # (e.g. (H, W) when displayed_axes=(1, 2)).
-        sv_data, tv_data = _extract_scale_and_translation(self.level_transforms)
+        sv_data, tv_data = _level_scale_and_translation(
+            self.level_transforms, self.fetch_axes
+        )
         self._scale_vecs_data = sv_data
         self._translation_vecs_data = tv_data
 
@@ -673,56 +726,6 @@ def _fetch_order(displayed_axes: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(sorted(displayed_axes))
 
 
-def _build_axis_selections_multiscale(
-    sel: AxisAlignedSelectionState,
-    ndim: int,
-    display_coords: list[tuple[int, int]],
-    level_shape: tuple[int, ...],
-    world_to_level_k: AffineTransform,
-) -> tuple[int | tuple[int, int], ...]:
-    """Map brick/tile window coords and slice indices onto the full nD axis list.
-
-    ``display_coords`` are in the order of ``sel.displayed_axes``.
-    Non-displayed axes use ``world_to_level_k.map_coordinates`` to
-    map slice indices from world space to level-k voxel space.
-
-    Parameters
-    ----------
-    sel : AxisAlignedSelectionState
-        Current selection state.
-    ndim : int
-        Number of data dimensions.
-    display_coords : list[tuple[int, int]]
-        Padded coordinate ranges for displayed axes.
-    level_shape : tuple[int, ...]
-        Shape of the data at this level.
-    world_to_level_k : AffineTransform
-        Composed world→level-k transform (data-axis order).
-    """
-    # Ascending, matching the brick grid and the fetched array; see
-    # :func:`_fetch_order`.
-    display_pos = {ax: i for i, ax in enumerate(_fetch_order(sel.displayed_axes))}
-
-    # Map every non-displayed axis from world to level-k voxel space via the
-    # shared world->voxel mapper (round-half-up + clamp).  Any non-displayed
-    # axis absent from ``slice_indices`` defaults to world position 0, matching
-    # the previous zero-filled-point behaviour.
-    sliced_indices = {
-        ax: sel.slice_indices.get(ax, 0) for ax in range(ndim) if ax not in display_pos
-    }
-    voxel_indices = map_world_slice_to_voxel(
-        sliced_indices, ndim, world_to_level_k, level_shape
-    )
-
-    result: list[int | tuple[int, int]] = []
-    for data_axis in range(ndim):
-        if data_axis in display_pos:
-            result.append(display_coords[display_pos[data_axis]])
-        else:
-            result.append(voxel_indices[data_axis])
-    return tuple(result)
-
-
 def _block_key_2d_to_padded_coords(
     key: BlockKey2D,
     block_size: int,
@@ -800,8 +803,70 @@ class MultiscaleRegionPlanner:
         self._level_boxes[level_index] = box
         return box
 
+    def _block_key_slice_coord(self) -> tuple[tuple[int, float], ...]:
+        """Where this plan's collapsed axes sit, for the block cache key.
+
+        Bricks from different slice positions must not collide in the cache,
+        so the position is embedded in every ``BlockKey``.  Until v1 was
+        retired this read ``dims_state.selection.slice_indices`` -- **world**
+        positions keyed by **world** axis.  It now comes from the same region
+        the fetch is planned from, pulled back through this visual's own
+        transform, so the key is in the same space as the bricks it names
+        (R8.4).
+
+        Nothing about key identity changes: the values were already floats
+        after D3 widened the slider to ``float``, and two distinct slice
+        positions still give two distinct keys.
+
+        Returns
+        -------
+        tuple[tuple[int, float], ...]
+            ``(data axis, position)`` pairs, sorted by axis.
+        """
+        selection = getattr(self, "_selection", None)
+        if selection is None or self._spaces is None or self._transform is None:
+            return ()
+        positions = data_slice_positions(
+            selection.region, self._transform, self._spaces.world
+        )
+        return tuple(sorted(positions.items()))
+
+    def pick_collapsed_indices(self) -> dict[int, int] | None:
+        """The level-0 planes this visual last drew, per collapsed data axis.
+
+        Answers the pick path's question -- "which plane is the user looking
+        at?" -- from the plan rather than from the dims state, so the answer
+        cannot drift from the screen while a reslice is in flight.
+
+        Derived from the level-0 box rather than stored, because these visuals
+        plan per level and per brick; ``_level_box`` is already memoised for
+        the planning call, and ``axis_selections_from_box`` applies the same
+        round-half-up and the same clamp the fetch itself used.  The
+        ``_collapsed_indices`` attribute both multiscale families declare is
+        deliberately left alone: it feeds the node matrix, and populating it
+        here would move geometry rather than answer a pick.
+
+        Returns
+        -------
+        dict[int, int] or None
+            Data axis to level-0 voxel index, for collapsed axes only.
+            ``None`` when the visual has nothing planned to report.
+        """
+        box = self._level_box(0)
+        if box is None:
+            return None
+        level_shape = getattr(self, "_full_level_shapes", None)
+        if not level_shape:
+            return None
+        selections = axis_selections_from_box(box, tuple(level_shape[0]))
+        return {
+            axis: int(value)
+            for axis, value in enumerate(selections)
+            if not isinstance(value, tuple)
+        }
+
     def _rendered_to_level0(self):
-        """``rendered -> level-0 voxel``, or ``None`` if the visual is unplaced.
+        """``rendered -> level-0 voxel``.
 
         Design 3.11 C.  The camera and the frustum arrive in **pygfx**
         coordinates -- ``ReslicingRequest`` says so in a docstring and nowhere
@@ -810,16 +875,33 @@ class MultiscaleRegionPlanner:
         ``select_axes`` + ``[[2, 1, 0]]`` + ``imap_coordinates`` +
         ``[[2, 1, 0]]`` dance, and with it the class of bug that produced the
         LOD/frustum axis-order fix already in this repo's history.
+
+        Raises
+        ------
+        RuntimeError
+            If the visual has not been placed in a world.  Until v1 was
+            retired this returned ``None`` and every caller fell back to the
+            pre-migration three-step dance; there is no second path now.
+        ValueError
+            If the visual's ``data -> world`` transform has no inverse.
         """
         spaces = self._spaces
         if spaces is None or self._transform is None:
-            return None
+            raise RuntimeError(
+                "This visual has not been placed in a world, so a camera "
+                "position cannot be pulled back to a voxel index.  A "
+                "multiscale visual must be given its coordinate systems "
+                "before it is planned."
+            )
         inverse = self._transform.inverse()
         if inverse is None:
-            return None
+            raise ValueError(
+                "This visual's data -> world transform has no inverse, so a "
+                "camera position cannot be pulled back to a voxel index."
+            )
         return spaces.rendered_to_world.then(inverse, spaces.world, spaces.data)
 
-    def _to_level0_displayed(self, points: np.ndarray) -> np.ndarray | None:
+    def _to_level0_displayed(self, points: np.ndarray) -> np.ndarray:
         """Map pygfx-order points to level-0 voxels on the displayed axes.
 
         Returns them back in pygfx order, which is what the LOD thresholds,
@@ -828,8 +910,6 @@ class MultiscaleRegionPlanner:
         say -- which are harmless and dropped here.
         """
         chain = self._rendered_to_level0()
-        if chain is None:
-            return None
         points = np.asarray(points, dtype=np.float64)
         flat = points.reshape(-1, points.shape[-1])
         level0 = chain.map_coordinates(pygfx_to_cellier_order(flat))
@@ -858,12 +938,11 @@ class MultiscaleRegionPlanner:
         """
         box = self._level_box(level_index)
         if box is None:
-            return _build_axis_selections_multiscale(
-                sel,
-                ndim,
-                display_coords,
-                level_shape=level_shape,
-                world_to_level_k=self._world_to_level_transforms[level_index],
+            raise RuntimeError(
+                f"Level {level_index} of this visual has no pulled-back "
+                f"region, so its bricks cannot be addressed.  Either the "
+                f"visual has not been placed in a world or the reslicing "
+                f"request carried no region."
             )
         windows = {
             axis: display_coords[position]
@@ -944,7 +1023,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         # The data -> world transform.  There is no coordinate-system-less
         # identity to fall back on (D18); the controller supplies one.
-        self._transform: TransformV2 | None = transform
+        self._transform: AffineTransform | None = transform
         # The systems this visual's geometry is placed with, pushed by the
         # controller.  ``None`` until the scene has a canvas.
         self._spaces: RenderSpaces | None = None
@@ -967,8 +1046,8 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         else:
             self._level_transforms = []
 
-        # Full-ndim level shapes for _build_axis_selections_multiscale (clamping
-        # non-displayed slice indices against the correct dimension).
+        # Full-ndim level shapes, which ``axis_selections_from_box`` clamps
+        # each collapsed axis against.
         if full_level_shapes is not None:
             self._full_level_shapes = list(full_level_shapes)
         elif volume_geometry is not None:
@@ -978,7 +1057,6 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         else:
             self._full_level_shapes = []
 
-        self._world_to_level_transforms = self._build_world_to_level_transforms()
         # Track displayed axes for node matrix updates.
         self._last_displayed_axes: tuple[int, ...] | None = displayed_axes
         self._gpu_budget_bytes = gpu_budget_bytes_3d
@@ -1212,20 +1290,20 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
             axes_3d = None
             axes_2d = displayed_axes
 
-        # Build 3D geometry when 3D rendering is requested and axes are available.
-        # ``select_axes`` projects the per-data-axis level shape onto the
-        # 3 displayed data axes; ``AffineTransform.select_axes`` does the
-        # same for the per-level transforms.  Inputs to VolumeGeometry are
-        # therefore in displayed-axis order over the displayed subset.
+        # Build 3D geometry when 3D rendering is requested and axes are
+        # available.  ``select_axes`` projects the per-data-axis level shape
+        # onto the 3 displayed data axes; the per-level transforms are handed
+        # over whole and projected inside, because a v2 transform cannot be
+        # rank-reduced without inventing two coordinate systems.
         volume_geometry: MultiscaleBrickLayout3D | None = None
         if "3d" in render_modes and axes_3d is not None:
             fetch_3d = _fetch_order(axes_3d)
             shapes_3d = [select_axes(s, fetch_3d) for s in level_shapes]
-            transforms_3d = [t.select_axes(fetch_3d) for t in model.level_transforms]
             volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
-                level_transforms=transforms_3d,
+                level_transforms=list(model.level_transforms),
                 block_size=block_size,
+                fetch_axes=fetch_3d,
             )
 
         # Build 2D geometry when 2D rendering is requested and axes are known.
@@ -1235,12 +1313,12 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         if "2d" in render_modes and axes_2d is not None:
             fetch_2d = _fetch_order(axes_2d)
             shapes_2d = [select_axes(s, fetch_2d) for s in level_shapes]
-            transforms_2d = [t.select_axes(fetch_2d) for t in model.level_transforms]
             image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
                 block_size=block_size,
                 n_levels=len(level_shapes),
-                level_transforms=transforms_2d,
+                level_transforms=list(model.level_transforms),
+                fetch_axes=fetch_2d,
             )
 
         colormap = model.appearance.color_map.to_pygfx(N=256)
@@ -1481,11 +1559,11 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         fetch_axes = _fetch_order(displayed_axes)
         shapes_3d = [select_axes(s, fetch_axes) for s in self._full_level_shapes]
-        transforms_3d = [t.select_axes(fetch_axes) for t in self._level_transforms]
         self._volume_geometry = MultiscaleBrickLayout3D(
             level_shapes=shapes_3d,
-            level_transforms=transforms_3d,
+            level_transforms=self._level_transforms,
             block_size=self._block_size,
+            fetch_axes=fetch_axes,
         )
         cache_parameters_3d = compute_block_cache_parameters_3d(
             block_size=self._volume_geometry.block_size,
@@ -1571,12 +1649,12 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         fetch_axes = _fetch_order(displayed_axes)
         shapes_2d_full = [select_axes(s, fetch_axes) for s in self._full_level_shapes]
         shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
-        transforms_2d = [t.select_axes(fetch_axes) for t in self._level_transforms]
         self._image_geometry_2d = ImageGeometry3D(
             level_shapes=shapes_2d,
             block_size=self._block_size,
             n_levels=len(self._full_level_shapes),
-            level_transforms=transforms_2d,
+            level_transforms=self._level_transforms,
+            fetch_axes=fetch_axes,
         )
         cache_parameters_2d = compute_block_cache_parameters_2d(
             gpu_budget_bytes=self._gpu_budget_bytes_2d,
@@ -1746,43 +1824,6 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         if self.node_2d is not None:
             self.node_2d.local.matrix = plain
 
-    def _build_world_to_level_transforms(
-        self,
-    ) -> list[AffineTransform]:
-        """Precompute composed world→level-k transforms.
-
-        All transforms operate in data-axis order (z, y, x).
-        ``map_coordinates`` on a world-space point gives the level-k
-        voxel index.
-
-        Composition: ``inv_level @ inv_visual`` so that
-        ``map_coordinates(world_pt)`` applies inv_visual first
-        (world → level-0), then inv_level (level-0 → level-k).
-        """
-        # Bridge: a v1 square inverse of the v2 ``data -> world`` transform.
-        # The multiscale phase replaces this whole list with
-        # ``level_transforms[k].imap_region(...)``, which needs no inverse at
-        # all (D39); until then the arithmetic is preserved exactly.
-        if self._transform is None:
-            # The visual has not been placed -- no controller has told it which
-            # world it is in -- so world positions are read as level-0 voxels.
-            inv_visual = AffineTransform.identity(ndim=self._ndim)
-        else:
-            inverse = self._transform.inverse()
-            if inverse is None:
-                raise ValueError(
-                    "This visual's data -> world transform has no inverse, so "
-                    "a world position cannot be pulled back to a voxel index."
-                )
-            inv_visual = AffineTransform(matrix=np.asarray(inverse.matrix))
-        result: list[AffineTransform] = []
-        for lt in self._level_transforms:
-            inv_level = AffineTransform(matrix=lt.inverse_matrix)
-            # world → level-0 → level-k
-            composed = inv_level @ inv_visual
-            result.append(composed)
-        return result
-
     # ── 3D planning helpers ───────────────────────────────────────────
 
     def _plan_bricks(
@@ -1835,17 +1876,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         camera_pos_data = self._to_level0_displayed(
             np.asarray(camera_pos_world).reshape(1, -1)
-        )
-        if camera_pos_data is None:
-            # Unplaced: fall back to the pre-migration three-step dance, which
-            # is what a headlessly constructed visual has always used.
-            sub_3d = _displayed_subtransform(self._transform, self._last_displayed_axes)
-            cam_zyx = camera_pos_world[[2, 1, 0]]
-            camera_pos_data = sub_3d.imap_coordinates(cam_zyx.reshape(1, -1)).flatten()[
-                [2, 1, 0]
-            ]
-        else:
-            camera_pos_data = camera_pos_data.flatten()
+        ).flatten()
 
         if force_level is None and fov_y_rad > 0:
             safe_bias = max(lod_bias, 1e-6)
@@ -1859,14 +1890,6 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         if frustum_corners_world is not None:
             corners_data = self._to_level0_displayed(frustum_corners_world)
-            if corners_data is None:
-                sub_3d = _displayed_subtransform(
-                    self._transform, self._last_displayed_axes
-                )
-                corners_flat = frustum_corners_world.reshape(-1, 3)
-                corners_data = (
-                    sub_3d.imap_coordinates(corners_flat[:, [2, 1, 0]])[:, [2, 1, 0]]
-                ).reshape(frustum_corners_world.shape)
             frustum_planes = frustum_planes_from_corners(corners_data)
         else:
             frustum_planes = None
@@ -2062,17 +2085,17 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         n_levels = geo2d.n_levels
 
         displayed = self._last_displayed_axes
-        sub_2d = _displayed_subtransform(self._transform, displayed)
+        sub_2d = _displayed_submatrix(self._transform, displayed)
 
-        nd2 = sub_2d.ndim
-        world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
+        nd2 = sub_2d.shape[0] - 1
+        world_units_per_voxel_2d = np.abs(np.diag(sub_2d[:nd2, :nd2]))
         world_to_voxel_scale_2d = float(
             np.prod(1.0 / world_units_per_voxel_2d) ** (1.0 / nd2)
         )
         voxel_width = world_width * world_to_voxel_scale_2d
 
-        camera_pos_2d = sub_2d.imap_coordinates(
-            camera_pos_world[[1, 0]].reshape(1, -1)
+        camera_pos_2d = _imap_square(
+            sub_2d, camera_pos_world[[1, 0]].reshape(1, -1)
         ).flatten()[[1, 0]]
         camera_pos = np.array(
             [camera_pos_2d[0], camera_pos_2d[1], 0.0], dtype=np.float32
@@ -2092,7 +2115,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
                 ],
                 dtype=np.float32,
             )
-            corners_data_2d = sub_2d.imap_coordinates(corners_world_2d)[:, [1, 0]]
+            corners_data_2d = _imap_square(sub_2d, corners_world_2d)[:, [1, 0]]
             view_min = corners_data_2d.min(axis=0)
             view_max = corners_data_2d.max(axis=0)
         else:
@@ -2284,10 +2307,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         # Record the current slice coordinate so non-displayed axis positions
         # are embedded in every BlockKey3D (mirrors the 2D path).
-        if dims_state is not None:
-            self._current_slice_coord_3d = tuple(
-                sorted(dims_state.selection.slice_indices.items())
-            )
+        self._current_slice_coord_3d = self._block_key_slice_coord()
 
         # Lazy node matrix update when displayed axes change.
         if dims_state is not None:
@@ -2523,9 +2543,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         self._begin_region_planning(selection)
 
         # Record the current slice coordinate for two-phase LUT rebuild (Step 3).
-        self._current_slice_coord = tuple(
-            sorted(dims_state.selection.slice_indices.items())
-        )
+        self._current_slice_coord = self._block_key_slice_coord()
 
         geo2d = self._image_geometry_2d
         block_size = geo2d.block_size
@@ -2541,7 +2559,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         # ``_to_level0_displayed`` reverses once, maps in one step, and hands
         # them back in pygfx order -- which is what the distance sort and the
         # viewport culler take.  The three-step index dance is gone.
-        sub_2d = _displayed_subtransform(self._transform, displayed)
+        sub_2d = _displayed_submatrix(self._transform, displayed)
 
         # ``voxel_width`` is deliberately still read off the diagonal of the
         # linear block.  That assumption -- the block is diagonal -- is a real
@@ -2549,8 +2567,8 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
         # ``select_axes`` path, so it is ported as-is and generalising it is
         # left to the oblique work.  Changing the LOD metric and the transform
         # layer in one phase would make a regression impossible to attribute.
-        nd2 = sub_2d.ndim
-        world_units_per_voxel_2d = np.abs(np.diag(sub_2d.matrix[:nd2, :nd2]))
+        nd2 = sub_2d.shape[0] - 1
+        world_units_per_voxel_2d = np.abs(np.diag(sub_2d[:nd2, :nd2]))
         world_to_voxel_scale_2d = float(
             np.prod(1.0 / world_units_per_voxel_2d) ** (1.0 / nd2)
         )
@@ -2558,13 +2576,7 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
 
         camera_pos_2d = self._to_level0_displayed(
             np.asarray(camera_pos_world)[:2].reshape(1, -1)
-        )
-        if camera_pos_2d is None:
-            camera_pos_2d = sub_2d.imap_coordinates(
-                camera_pos_world[[1, 0]].reshape(1, -1)
-            ).flatten()[[1, 0]]
-        else:
-            camera_pos_2d = camera_pos_2d.flatten()
+        ).flatten()
         # Pad to 3D for compatibility with downstream code.
         camera_pos = np.array(
             [camera_pos_2d[0], camera_pos_2d[1], 0.0], dtype=np.float32
@@ -2586,10 +2598,6 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
                 dtype=np.float64,
             )
             corners_data_2d = self._to_level0_displayed(corners_pygfx)
-            if corners_data_2d is None:
-                corners_data_2d = sub_2d.imap_coordinates(corners_pygfx[:, [1, 0]])[
-                    :, [1, 0]
-                ]
             view_min = corners_data_2d.min(axis=0)
             view_max = corners_data_2d.max(axis=0)
         else:
@@ -3094,7 +3102,6 @@ class GFXMultiscaleImageVisual(MultiscaleRegionPlanner):
     def on_transform_changed(self, event: TransformChangedEvent) -> None:
         """Update stored transform, norm_size uniform, and pygfx node matrix."""
         self._transform = event.transform
-        self._world_to_level_transforms = self._build_world_to_level_transforms()
 
         # Recompute norm_size and push the updated uniform buffer so the
         # proxy cube shape stays consistent with the new transform.

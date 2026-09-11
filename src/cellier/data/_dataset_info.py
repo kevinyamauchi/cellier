@@ -321,7 +321,7 @@ def ome_zarr_dataset_info(store: object, dtype: object) -> DatasetInfo:
     for index, (level_name, shape) in enumerate(
         zip(store.scale_names, store.level_shapes)
     ):
-        level_scale = np.diag(store.level_transforms[index].matrix)[:-1]
+        level_scale = np.asarray(store.level_scales[index], dtype=float)
         level_rows.append(
             (level_name, f"{format_shape(shape)}  ({format_scale(level_scale)})")
         )

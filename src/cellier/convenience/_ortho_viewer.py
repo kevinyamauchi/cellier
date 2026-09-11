@@ -51,8 +51,7 @@ if TYPE_CHECKING:
     from cellier.events import DimsChangedEvent
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
-    from cellier.transform import AffineTransform
-    from cellier.transform_v2 import WorldCoordinateSystem
+    from cellier.transform import AffineTransform, WorldCoordinateSystem
     from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
@@ -116,7 +115,10 @@ class _ExtraAxisSyncer:
         """Propagate extra-axis positions from the source scene to the others."""
         if not self.enabled or self._syncing:
             return
-        slice_indices = event.dims_state.selection.slice_indices
+        source = self._scenes_by_id.get(event.scene_id)
+        if source is None:
+            return
+        slice_indices = source.dims.selection.slice_indices
         updates = {a: slice_indices[a] for a in self._extra_axes if a in slice_indices}
         if not updates:
             return

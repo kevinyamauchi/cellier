@@ -15,50 +15,8 @@ from cellier.render.visuals._image_memory import (
 )
 
 if TYPE_CHECKING:
-    from cellier._state import DimsState
     from cellier.data.image._image_requests import ChunkRequest
     from cellier.visuals._channel_appearance import ChannelAppearance
-
-
-def build_axis_selections_for_channel(
-    dims_state: DimsState,
-    store_shape: tuple[int, ...],
-    channel_axis: int,
-    channel_index: int,
-) -> tuple[int | tuple[int, int], ...]:
-    """Build axis_selections for a single-channel ChunkRequest.
-
-    Displayed axes get ``(0, store_shape[ax])``; sliced axes get their integer
-    index from ``dims_state.selection.slice_indices``; the channel axis always
-    gets ``channel_index`` as a scalar int.
-
-    Parameters
-    ----------
-    dims_state : DimsState
-        Current dimension state.
-    store_shape : tuple[int, ...]
-        Full data-axis shape of the backing store.
-    channel_axis : int
-        Data-axis index for the channel dimension.
-    channel_index : int
-        Which channel to request along ``channel_axis``.
-
-    Returns
-    -------
-    tuple[int | tuple[int, int], ...]
-        One entry per data axis.
-    """
-    sel = dims_state.selection
-    ndim = len(store_shape)
-    result: list[int | tuple[int, int]] = []
-    for ax in range(ndim):
-        if ax == channel_axis:
-            result.append(channel_index)
-        elif ax in sel.displayed_axes:
-            result.append((0, store_shape[ax]))
-        else:
-            result.append(sel.slice_indices[ax])
-    return tuple(result)
 
 
 def make_channel_group_2d(

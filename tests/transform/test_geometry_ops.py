@@ -1,9 +1,9 @@
-"""Tests for cellier.transform_v2._geometry_ops (design section 4)."""
+"""Tests for cellier.transform._geometry_ops (design section 4)."""
 
 import numpy as np
 import pytest
 
-from cellier.transform_v2._geometry_ops import (
+from cellier.transform._geometry_ops import (
     DegenerateNormalError,
     affine_bounding_box,
     axis_aligned_bounds,
@@ -22,7 +22,7 @@ from cellier.transform_v2._geometry_ops import (
     polytope_bounds,
     pseudo_inverse_affine,
 )
-from tests.transform_v2._use_cases import UC3, USE_CASES
+from tests.transform._use_cases import UC3, USE_CASES
 
 CASE_IDS = list(USE_CASES)
 

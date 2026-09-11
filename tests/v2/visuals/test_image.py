@@ -6,26 +6,17 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from cellier.transform import AffineTransform
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
 from cellier.visuals._base_visual import BaseAppearance, BaseVisual
-from tests._v2 import scale_and_translation
+from tests._v2 import level_transforms, scale_and_translation
 
 
 def _make_level_transforms_3d(factors):
     """Build level transforms from integer downscale factors."""
-    transforms = []
-    for k, f in enumerate(factors):
-        s = float(f)
-        if k == 0:
-            transforms.append(AffineTransform.identity(ndim=3))
-        else:
-            transforms.append(
-                AffineTransform.from_scale_and_translation(
-                    (s, s, s), ((s - 1) / 2,) * 3
-                )
-            )
-    return transforms
+    scales = [(float(f),) * 3 for f in factors]
+    translations = [((float(f) - 1) / 2,) * 3 for f in factors]
+    translations[0] = (0.0, 0.0, 0.0)
+    return level_transforms(scales, translations)
 
 
 def test_image_appearance_roundtrip(tmp_path):
@@ -72,27 +63,6 @@ def test_multiscale_image_visual_roundtrip(tmp_path):
     path.write_text(original.model_dump_json())
     deserialized = MultiscaleImageVisual.model_validate_json(path.read_text())
     assert original.model_dump_json() == deserialized.model_dump_json()
-
-
-def test_multiscale_image_visual_migration_from_downscale_factors():
-    v = MultiscaleImageVisual(
-        name="vol",
-        data_store_id="00000000-0000-0000-0000-000000000000",
-        downscale_factors=[1, 2, 4],
-        appearance=MultiscaleImageAppearance(color_map="viridis", clim=(0.0, 1.0)),
-    )
-    assert len(v.level_transforms) == 3
-    np.testing.assert_allclose(
-        v.level_transforms[0].matrix, np.eye(4, dtype=np.float32)
-    )
-    np.testing.assert_allclose(
-        np.diag(v.level_transforms[1].matrix[:3, :3]),
-        [2.0, 2.0, 2.0],
-    )
-    np.testing.assert_allclose(
-        v.level_transforms[1].matrix[:3, 3],
-        [0.5, 0.5, 0.5],
-    )
 
 
 # ---------------------------------------------------------------------------

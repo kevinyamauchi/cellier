@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from cellier.transform_v2 import RegionSelection
+    from cellier.transform import RegionSelection
 
 
 class ReslicingRequest(NamedTuple):

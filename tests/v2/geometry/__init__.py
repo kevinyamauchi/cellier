@@ -1,1 +1,1 @@
-"""Phase 6 of the transform_v2 integration: the geometry visuals."""
+"""Phase 6 of the transform integration: the geometry visuals."""

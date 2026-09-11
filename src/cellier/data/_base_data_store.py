@@ -15,7 +15,7 @@ from cellier.data._axes import (
     identity_transform,
 )
 from cellier.data._dataset_info import DatasetInfo, RowSection
-from cellier.transform_v2 import (  # noqa: TC001
+from cellier.transform import (  # noqa: TC001
     AffineTransform,
     DataCoordinateSystem,
 )
@@ -47,10 +47,27 @@ class BaseDataStore(EventedModel):
         ``axis_types`` shorthand.  A store that reaches
         ``CellierController.add_visual`` still empty has one derived from the
         scene's world axes; see ``CellierController._ensure_data_coordinate_systems``.
+    level_scales : list[tuple[float, ...]]
+        Per-level, per-axis scale of level ``k`` voxels in level ``0`` voxels.
+        ``level_scales[0]`` is all ones.  Empty for a single-level store.
+
+        **This is where a pyramid's geometry is stated.**  The readers derive
+        it from OME-NGFF metadata; it is raw numbers, which is all a store can
+        know on its own.
+    level_translations : list[tuple[float, ...]]
+        The offset half of the same, in level-0 voxels.
+        ``level_translations[0]`` is all zeros.
     level_transforms : list[AffineTransform]
         Level ``k`` voxel space -> level ``0`` voxel space, one per entry in
         ``data_coordinate_systems``.  Index ``0`` is the identity.  Empty
         alongside an empty ``data_coordinate_systems``.
+
+        **Derived, not authored.**  Built from ``level_scales`` /
+        ``level_translations`` by ``install_level_transforms`` as soon as the
+        store has its coordinate systems -- from its own axis metadata, or
+        from the scene's world.  It is stored rather than recomputed on read
+        because a transform serializes its endpoints as ids, and a rebuilt
+        one would name systems that no longer exist.
 
     Attributes
     ----------
@@ -64,6 +81,8 @@ class BaseDataStore(EventedModel):
     )
     name: str = "data store"
     data_coordinate_systems: list[DataCoordinateSystem] = Field(default_factory=list)
+    level_scales: list[tuple[float, ...]] = Field(default_factory=list)
+    level_translations: list[tuple[float, ...]] = Field(default_factory=list)
     level_transforms: list[AffineTransform] = Field(default_factory=list)
 
     @model_validator(mode="before")

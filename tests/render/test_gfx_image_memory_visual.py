@@ -40,7 +40,6 @@ def _make_dims_state_2d() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},
         ),
     )
 
@@ -51,7 +50,6 @@ def _make_dims_state_3d() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
 
@@ -67,7 +65,11 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_2d()
     requests = visual.build_slice_request_2d(
@@ -77,6 +79,7 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
     assert len(requests) == 1
@@ -99,7 +102,11 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+    ctx = Context(3, displayed_axes=(0, 1, 2))
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
@@ -108,6 +115,7 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
     assert len(requests) == 1
@@ -141,13 +149,16 @@ def test_5d_dims_state_2d_scene(mock_gfx):
 
     store = _make_store(shape=(2, 3, 10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(5, displayed_axes=(3, 4), slice_indices={0: 0.0, 1: 1.0, 2: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("t", "c", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(3, 4),
-            slice_indices={0: 0, 1: 1, 2: 5},
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -157,6 +168,7 @@ def test_5d_dims_state_2d_scene(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     assert req.axis_selections == (0, 1, 5, (0, 20), (0, 30))
@@ -179,7 +191,7 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 10},  # world z=10
+            # world z=10
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -189,6 +201,7 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # world z=10, scale=2 → data z=5
@@ -223,7 +236,7 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
         axis_labels=("t", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2, 3),
-            slice_indices={0: 6},  # t=6, non-spatial
+            # t=6, non-spatial
         ),
     )
     requests = visual.build_slice_request(
@@ -232,6 +245,7 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # t is non-spatial (outside 3D transform) → stays at 6
@@ -264,7 +278,7 @@ def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
         axis_labels=("t", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(2, 3),
-            slice_indices={0: 3, 1: 8},  # t=3 (non-spatial), z=8 (spatial)
+            # t=3 (non-spatial), z=8 (spatial)
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -274,6 +288,7 @@ def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # t=3 non-spatial → stays at 3
@@ -291,13 +306,16 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 7.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 7},
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -307,6 +325,7 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert requests[0].axis_selections[0] == 7
 
@@ -329,7 +348,7 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},  # world z=5, data z=10 → clamped to 9
+            # world z=5, data z=10 → clamped to 9
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -339,6 +358,7 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert requests[0].axis_selections[0] == 9  # clamped
 
@@ -450,7 +470,6 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
     visual.build_slice_request(
@@ -459,6 +478,7 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert visual._last_displayed_axes == (0, 1, 2)
     # visual -> data -> world -> rendered composes to the same diagonal;
@@ -487,7 +507,6 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},
         ),
     )
     visual.build_slice_request_2d(
@@ -497,6 +516,7 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
     # Now change the transform, against the same coordinate systems: a v2
@@ -647,7 +667,11 @@ def test_identity_transform_is_noop_3d(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+    ctx = Context(3, displayed_axes=(0, 1, 2))
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
@@ -656,6 +680,7 @@ def test_identity_transform_is_noop_3d(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert len(requests) == 1
     assert requests[0].axis_selections == ((0, 10), (0, 20), (0, 30))

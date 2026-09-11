@@ -17,7 +17,7 @@ from cellier.scene.dims import (
     spatial_axes,
     world_coordinate_system,
 )
-from cellier.transform_v2 import RegionSelection, RenderedCoordinateSystem
+from cellier.transform import RegionSelection, RenderedCoordinateSystem
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ def test_a_selection_whose_slice_misses_its_region_is_rejected():
     """D43's invariant: pulling the region back through the transform must
     leave a non-empty set.  A selection whose own slice position selects
     nothing is incoherent."""
-    from cellier.transform_v2 import AffineTransform, ConvexRegion
+    from cellier.transform import AffineTransform, ConvexRegion
 
     world = world_coordinate_system([("t", "time"), *spatial_axes("z", "y", "x")])
     canvas_id = __import__("uuid").uuid4()
