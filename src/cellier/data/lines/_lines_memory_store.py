@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, geometry_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -110,6 +110,17 @@ class LinesMemoryStore(BaseDataStore):
     def ndim(self) -> int:
         """Number of spatial dimensions per vertex."""
         return self.positions.shape[1]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...] | None:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The bounding box of the vertices, with no padding -- a vertex is a point,
+        not a cell, so there is no half-voxel to add.  ``None`` when the
+        store is empty.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return geometry_axis_extents(self.positions)
 
     @property
     def n_segments(self) -> int:

@@ -36,6 +36,7 @@ dependencies = [
     "einops>=0.8.1",
     "numpy<2.5.0",
     "psygnal",
+    "pyarrow>=25.0.1",
     "pydantic",
     "pygfx>=0.17.0",
     "pylinalg>=0.6.7",

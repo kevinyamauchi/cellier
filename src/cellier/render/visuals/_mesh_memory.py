@@ -30,7 +30,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import BaseTransform, RegionSelection
     from cellier.visuals._mesh_memory import MeshVisual
 
 _SIDE_MAP = {"both": "both", "front": "front", "back": "back"}
@@ -109,7 +109,7 @@ class GFXMeshMemoryVisual:
         Associated model-layer visual.
     render_modes : set[str]
         ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform
+    transform : BaseTransform
         Data-to-world transform. Must cover all data axes.
     """
 
@@ -121,7 +121,7 @@ class GFXMeshMemoryVisual:
         self,
         visual_model: MeshVisual,
         render_modes: set[str],
-        transform: AffineTransform,
+        transform: BaseTransform,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -132,7 +132,7 @@ class GFXMeshMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
         # The systems this visual's geometry is placed with, pushed by
         # the controller.  ``None`` until the scene has a canvas.
         self._spaces: RenderSpaces | None = None

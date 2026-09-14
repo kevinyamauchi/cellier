@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.scene.scene import Scene
-    from cellier.transform import AffineTransform
+    from cellier.transform import BaseTransform
     from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
@@ -662,7 +662,7 @@ class Viewer(RenderSettingsMixin):
         data: LabelMemoryStore | UUID,
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -679,7 +679,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"labels"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : LabelsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -721,7 +721,7 @@ class Viewer(RenderSettingsMixin):
         data: MeshMemoryStore | UUID,
         appearance: MeshAppearance,
         name: str = "mesh",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MeshControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -736,7 +736,7 @@ class Viewer(RenderSettingsMixin):
             Appearance parameters.
         name : str
             Human-readable label. Default ``"mesh"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MeshControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -773,7 +773,7 @@ class Viewer(RenderSettingsMixin):
         data: PointsMemoryStore | UUID,
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: PointsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -789,7 +789,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"points"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : PointsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -826,7 +826,7 @@ class Viewer(RenderSettingsMixin):
         data: GraphMemoryStore | UUID,
         appearance: GraphAppearance | None = None,
         name: str = "graph",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
         controls: GraphControlsConfig | None = None,
         outline: VisualOutline | None = None,
@@ -847,7 +847,7 @@ class Viewer(RenderSettingsMixin):
             Axis index -> window configuration. Extends the slab on that
             axis and optionally fades elements by distance from the current
             slice index. An out-of-range axis raises ``ValueError``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. When ``None`` the store's own transform
             is used if it has one (a geff file's per-axis scale and offset),
             and identity otherwise.
@@ -887,7 +887,7 @@ class Viewer(RenderSettingsMixin):
         data: LinesMemoryStore | UUID,
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LinesControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -903,7 +903,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"lines"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : LinesControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -941,7 +941,7 @@ class Viewer(RenderSettingsMixin):
         appearance: MultiscaleImageAppearance,
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleImageControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -959,7 +959,7 @@ class Viewer(RenderSettingsMixin):
         render_config : MultiscaleImageRenderConfig or None
             LOD and rendering configuration. Uses
             defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MultiscaleImageControlsConfig or None
             Appearance panel configuration. When ``None`` (default), no
@@ -998,7 +998,7 @@ class Viewer(RenderSettingsMixin):
         appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleLabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -1017,7 +1017,7 @@ class Viewer(RenderSettingsMixin):
         render_config : MultiscaleLabelRenderConfig or None
             LOD and rendering configuration. Uses
             defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MultiscaleLabelsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -1122,7 +1122,7 @@ class Viewer(RenderSettingsMixin):
         channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
         render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
@@ -1144,7 +1144,7 @@ class Viewer(RenderSettingsMixin):
         render_config : MultiscaleImageRenderConfig or None
             LOD and rendering configuration. Uses
             defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.

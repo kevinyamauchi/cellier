@@ -33,7 +33,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import BaseTransform, RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image_memory import MultichannelImageVisual
 
@@ -53,7 +53,7 @@ class GFXMultichannelImageMemoryVisual:
         The backing data store.
     render_modes : set[str]
         Which nodes to build: ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform or None
+    transform : BaseTransform or None
         Data-to-world transform.
     """
 
@@ -64,7 +64,7 @@ class GFXMultichannelImageMemoryVisual:
         visual_model: MultichannelImageVisual,
         data_store: ImageMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -81,7 +81,7 @@ class GFXMultichannelImageMemoryVisual:
 
         # The data -> world transform.  There is no coordinate-system-less
         # identity to fall back on (D18); the controller supplies one.
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
         # The systems this visual's geometry is placed with, pushed by the
         # controller.  ``None`` until the scene has a canvas.
         self._spaces: RenderSpaces | None = None

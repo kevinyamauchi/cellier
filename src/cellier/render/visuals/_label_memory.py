@@ -35,7 +35,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import BaseTransform, RegionSelection
     from cellier.visuals._label_memory import LabelMemoryVisual
 
 
@@ -66,7 +66,7 @@ class GFXLabelMemoryVisual:
         visual_model: LabelMemoryVisual,
         data_store: LabelMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -81,7 +81,7 @@ class GFXLabelMemoryVisual:
 
         # The data -> world transform.  There is no coordinate-system-less
         # identity to fall back on (D18); the controller supplies one.
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
 
         # The systems this visual's geometry is placed with, pushed by the
         # controller.  ``None`` until the scene has a canvas.

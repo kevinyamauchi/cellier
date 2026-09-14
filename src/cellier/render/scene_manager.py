@@ -8,9 +8,15 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.render._scene_config import VisualRenderConfig
+from cellier.render._spaces import data_slice_positions, visual_covers_position
 from cellier.scene._background import BackgroundAppearance
+from cellier.transform import (
+    NonAffineTransformError,
+    NonInvertibleTransformError,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from cellier.data.image import ChunkRequest
@@ -77,6 +83,9 @@ class SceneManager:
         )
         self._visuals: dict[UUID, _GFXVisual] = {}
         self._active_nodes: dict[UUID, gfx.WorldObject | None] = {}
+        # Per-visual store extents, for the out-of-domain check in
+        # build_slice_requests.  Absent means "not known", which never skips.
+        self._axis_extents: dict[UUID, Sequence[tuple[float, float]] | None] = {}
 
         self._has_lighting = lighting == "default"
         if self._has_lighting:
@@ -126,7 +135,12 @@ class SceneManager:
         """IDs of all registered visuals."""
         return list(self._visuals.keys())
 
-    def add_visual(self, visual: _GFXVisual, displayed_axes: tuple[int, ...]) -> None:
+    def add_visual(
+        self,
+        visual: _GFXVisual,
+        displayed_axes: tuple[int, ...],
+        axis_extents: Sequence[tuple[float, float]] | None = None,
+    ) -> None:
         """Register a visual and add its initial node to the scene graph.
 
         Calls ``visual.get_node_for_dims(displayed_axes)`` to select the
@@ -139,6 +153,11 @@ class SceneManager:
             The GFX visual to register.
         displayed_axes : tuple[int, ...]
             Current displayed axes from the scene's dims selection.
+        axis_extents : Sequence[tuple[float, float]] or None
+            The backing store's per-axis extents in level-0 data
+            coordinates, used to decide whether this visual has any data at
+            a given slice position.  ``None`` means "not known", and such a
+            visual is never skipped.
 
         Raises
         ------
@@ -152,6 +171,7 @@ class SceneManager:
                 f"get_node_for_dims({displayed_axes!r}). "
                 "Ensure render_modes includes the required dimensionality."
             )
+        self._axis_extents[visual.visual_model_id] = axis_extents
         self._scene.add(node)
         self._visuals[visual.visual_model_id] = visual
         self._active_nodes[visual.visual_model_id] = node
@@ -212,6 +232,7 @@ class SceneManager:
         visual_id : UUID
             ID of the visual to remove.
         """
+        self._axis_extents.pop(visual_id, None)
         active_node = self._active_nodes.pop(visual_id, None)
         if active_node is not None:
             self._scene.remove(active_node)
@@ -284,6 +305,35 @@ class SceneManager:
             return self._build_slice_requests_2d(request, visual_configs)
         return self._build_slice_requests_3d(request, visual_configs)
 
+    def _has_data_here(self, visual_id: UUID, request: ReslicingRequest) -> bool:
+        """Whether a visual has any data at this request's slice positions.
+
+        Compared entirely in the visual's own **data** coordinates: the
+        selection is pulled back through its transform by
+        ``data_slice_positions`` and checked against its store's extents.
+
+        Only reachable in a **mixed-extent scene** -- a scene's slider range
+        is the union of its visuals' extents, so a single-visual scene never
+        leaves its own.  A visual whose extents or spaces are unknown is
+        never skipped.
+        """
+        extents = self._axis_extents.get(visual_id)
+        if extents is None:
+            return True
+        visual = self._visuals[visual_id]
+        transform = getattr(visual, "_transform", None)
+        spaces = getattr(visual, "_spaces", None)
+        selection = getattr(request, "selection", None)
+        if transform is None or spaces is None or selection is None:
+            return True
+        try:
+            positions = data_slice_positions(selection.region, transform, spaces.world)
+        except (ValueError, NonAffineTransformError, NonInvertibleTransformError):
+            # The region cannot be pulled back here; leave the decision to
+            # the visual's own planner rather than blanking it.
+            return True
+        return visual_covers_position(extents, positions)
+
     def _build_slice_requests_3d(
         self,
         request: ReslicingRequest,
@@ -297,6 +347,8 @@ class SceneManager:
                 request.target_visual_ids is not None
                 and visual_id not in request.target_visual_ids
             ):
+                continue
+            if not self._has_data_here(visual_id, request):
                 continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
@@ -344,6 +396,8 @@ class SceneManager:
                 request.target_visual_ids is not None
                 and visual_id not in request.target_visual_ids
             ):
+                continue
+            if not self._has_data_here(visual_id, request):
                 continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())

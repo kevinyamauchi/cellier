@@ -6,13 +6,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
     format_bytes,
     format_shape,
 )
+from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
@@ -37,6 +38,7 @@ class ImageMemoryStore(BaseDataStore):
 
     store_type: Literal["image_memory"] = "image_memory"
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory image"
+    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     name: str = "image_memory_store"
     data: np.ndarray
 
@@ -81,6 +83,16 @@ class ImageMemoryStore(BaseDataStore):
     def level_shapes(self) -> list[tuple[int, ...]]:
         """List with one entry (level 0 = the full array)."""
         return [self.shape]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     # ------------------------------------------------------------------
     # Self-description

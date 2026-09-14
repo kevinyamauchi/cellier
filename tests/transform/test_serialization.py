@@ -223,7 +223,10 @@ def test_the_dumped_affine_is_a_nested_list_of_floats():
 
 def test_axis_dumps_type_under_the_rfc5_spelling():
     dumped = space("z").model_dump(by_alias=True)
-    assert set(dumped) == {"name", "type", "unit", "id"}
+    # `sampling` is a cellier extension, not an RFC-5 field: it says whether
+    # this axis's coordinates are sample indices, which RFC-5 has no slot for.
+    assert set(dumped) == {"name", "type", "unit", "sampling", "id"}
+    assert dumped["type"] == "space"
 
 
 def test_broadcast_axes_survive_json():

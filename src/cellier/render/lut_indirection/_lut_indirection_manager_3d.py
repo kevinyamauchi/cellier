@@ -9,6 +9,12 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.logging import _GPU_LOGGER
+from cellier.render.lut_indirection._cell_brick_rule import (
+    brick_rule_issues,
+    cell_range,
+    level_brick_counts,
+    level_cell_spans,
+)
 
 if TYPE_CHECKING:
     from cellier.render.block_cache import TileManager3D
@@ -50,6 +56,14 @@ class LutIndirectionManager3D:
         of the uniform ``2^(level-1)`` assumption.  Required for datasets
         where axes are downsampled at different rates (e.g. z-anisotropic
         microscopy data where z is never downsampled).
+    level_shapes : list of tuple of int, optional
+        Per-level voxel shapes in the same order.  Gives each level's brick
+        count, so the last brick owns the grid's tail cells (see
+        ``_cell_brick_rule``).  Without it the count is inferred from the grid.
+    border : float, optional
+        The brick cache's padding in voxels.  When given together with the
+        scales and shapes, levels whose cell -> brick rule needs more padding
+        than this are logged as warnings.
 
     Attributes
     ----------
@@ -71,10 +85,18 @@ class LutIndirectionManager3D:
         base_layout: BlockLayout3D,
         n_levels: int,
         level_scale_vecs_data: list | None = None,
+        level_shapes: list | None = None,
+        border: float | None = None,
     ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
         self._level_scale_vecs_data = level_scale_vecs_data
+        self._level_shapes = level_shapes
+        if border is not None:
+            for issue in brick_rule_issues(
+                level_scale_vecs_data, level_shapes, base_layout.block_size, border
+            ):
+                _GPU_LOGGER.warning("brick_rule_padding  3d  %s", issue.describe())
         self.lut_data, self.lut_tex = build_lut_texture(base_layout)
         self.brick_max_data, self.brick_max_tex = build_brick_max_texture(base_layout)
 
@@ -123,6 +145,7 @@ class LutIndirectionManager3D:
             self.brick_max_tex,
             level_scale_vecs_data=self._level_scale_vecs_data,
             current_slice_coord=current_slice_coord,
+            level_shapes=self._level_shapes,
         )
 
 
@@ -189,6 +212,7 @@ def rebuild_lut(
     brick_max_tex: gfx.Texture,
     level_scale_vecs_data: list | None = None,
     current_slice_coord: tuple[tuple[int, int], ...] | None = None,
+    level_shapes: list | None = None,
 ) -> None:
     """Rebuild the full LUT from the current tile manager state.
 
@@ -231,42 +255,40 @@ def rebuild_lut(
         the finest level.  When ``None``, falls back to the uniform
         ``2^(level-1)`` assumption (correct for isotropic power-of-2
         pyramids only).
-    current_slice_coord : tuple of (axis_index, world_value) pairs or None
-        Non-displayed axis positions for the current frame.  ``None``
+    current_slice_coord : tuple of (axis_index, selection) pairs or None
+        The block-cache slice key of the current frame.  ``None``
         disables the two-phase sweep.
+    level_shapes : list of tuple of int, optional
+        Per-level voxel shapes in data order.  Gives each level's brick count
+        for the cell -> brick rule; without it the count is inferred from the
+        grid.
     """
     gd, gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset everything to out-of-bounds (level 0 = black).
     brick_max_data[:] = 0.0
 
-    def _scale_for_level(level: int) -> tuple[int, int, int]:
-        if level_scale_vecs_data is not None and (level - 1) < len(
-            level_scale_vecs_data
-        ):
-            sv = level_scale_vecs_data[level - 1]
-            return (
-                max(1, int(round(float(sv[0])))),
-                max(1, int(round(float(sv[1])))),
-                max(1, int(round(float(sv[2])))),
-            )
-        uniform = 2 ** (level - 1)
-        return (uniform, uniform, uniform)
+    # The one cell -> brick rule, shared with the shaders through the
+    # block-scales buffer.  See _cell_brick_rule.
+    spans = level_cell_spans(n_levels, 3, level_scale_vecs_data)
+    counts = level_brick_counts(
+        spans, (gd, gh, gw), base_layout.block_size, level_shapes
+    )
 
     def _write_bricks(by_level: dict[int, list]) -> None:
         """Write one group of bricks coarsest-to-finest into lut_data."""
         for level in range(n_levels, 0, -1):
             if level not in by_level:
                 continue
-            gz_scale, gy_scale, gx_scale = _scale_for_level(level)
+            span_z, span_y, span_x = spans[level - 1]
+            count_z, count_y, count_x = counts[level - 1]
             for key, slot in by_level[level]:
                 sz, sy, sx = slot.grid_pos
-                gz0 = key.g0 * gz_scale
-                gz1 = min(gz0 + gz_scale, gd)
-                gy0 = key.g1 * gy_scale
-                gy1 = min(gy0 + gy_scale, gh)
-                gx0 = key.g2 * gx_scale
-                gx1 = min(gx0 + gx_scale, gw)
+                gz0, gz1 = cell_range(key.g0, span_z, count_z, gd)
+                gy0, gy1 = cell_range(key.g1, span_y, count_y, gh)
+                gx0, gx1 = cell_range(key.g2, span_x, count_x, gw)
+                if gz0 >= gz1 or gy0 >= gy1 or gx0 >= gx1:
+                    continue  # A brick that owns no cell.
                 lut_data[gz0:gz1, gy0:gy1, gx0:gx1] = (sx, sy, sz, level)
                 brick_max_data[gz0:gz1, gy0:gy1, gx0:gx1] = slot.brick_max
 

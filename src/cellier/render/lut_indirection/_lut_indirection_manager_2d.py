@@ -5,6 +5,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pygfx as gfx
 
+from cellier.logging import _GPU_LOGGER
+from cellier.render.lut_indirection._cell_brick_rule import (
+    brick_rule_issues,
+    cell_range,
+    level_brick_counts,
+    level_cell_spans,
+)
+
 if TYPE_CHECKING:
     from cellier.render.block_cache._tile_manager_2d import TileManager2D
     from cellier.render.lut_indirection._layout_2d import BlockLayout2D
@@ -29,6 +37,14 @@ class LutIndirectionManager2D:
         LUT fill uses the actual per-axis downsampling factor instead of
         assuming a uniform ``2^(level-1)`` factor.  Pass
         ``ImageGeometry2D._scale_vecs_data`` here.
+    level_shapes : list of tuple of int or None
+        Per-level ``(H, W)`` shapes.  Gives each level's tile count, so the
+        last tile owns the grid's tail cells (see ``_cell_brick_rule``).
+        Without it the count is inferred from the grid.
+    border : float or None
+        The tile cache's padding in pixels.  When given together with the
+        scales and shapes, levels whose cell -> tile rule needs more padding
+        than this are logged as warnings.
     """
 
     def __init__(
@@ -36,10 +52,18 @@ class LutIndirectionManager2D:
         base_layout: BlockLayout2D,
         n_levels: int,
         scale_vecs_data: list[np.ndarray] | None = None,
+        level_shapes: list | None = None,
+        border: float | None = None,
     ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
         self._scale_vecs_data = scale_vecs_data
+        self._level_shapes = level_shapes
+        if border is not None:
+            for issue in brick_rule_issues(
+                scale_vecs_data, level_shapes, base_layout.block_size, border
+            ):
+                _GPU_LOGGER.warning("brick_rule_padding  2d  %s", issue.describe())
         self.lut_data, self.lut_tex = build_lut_texture_2d(base_layout.grid_dims)
 
     def rebuild(
@@ -79,6 +103,7 @@ class LutIndirectionManager2D:
             scale_vecs_data=self._scale_vecs_data,
             current_slice_coord=current_slice_coord,
             viewport_cells=viewport_cells,
+            level_shapes=self._level_shapes,
         )
 
 
@@ -115,6 +140,7 @@ def rebuild_lut_2d(
     scale_vecs_data: list[np.ndarray] | None = None,
     current_slice_coord: tuple[tuple[int, int], ...] | None = None,
     viewport_cells: tuple[int, int, int, int] | None = None,
+    level_shapes: list | None = None,
 ) -> None:
     """Rebuild the full 2D LUT from the current tile manager state.
 
@@ -164,10 +190,18 @@ def rebuild_lut_2d(
     viewport_cells : tuple[int, int, int, int] or None
         Base-grid cell bounds ``(gy0, gx0, gy1, gx1)`` (half-open) used to clip
         background (old-slice) writes.  ``None`` disables clipping.
+    level_shapes : list of tuple of int or None
+        Per-level ``(H, W)`` shapes.  Gives each level's tile count for the
+        cell -> tile rule; without it the count is inferred from the grid.
     """
     gh, gw = base_layout.grid_dims
 
     lut_data[:] = 0  # Reset to out-of-bounds (level 0).
+
+    # The one cell -> tile rule, shared with the shaders through the
+    # block-scales buffer.  See _cell_brick_rule.
+    spans = level_cell_spans(n_levels, 2, scale_vecs_data)
+    counts = level_brick_counts(spans, (gh, gw), base_layout.block_size, level_shapes)
 
     def _write_tiles(
         tiles_by_level: dict[int, list],
@@ -181,22 +215,13 @@ def rebuild_lut_2d(
         for level in range(n_levels, 0, -1):
             if level not in tiles_by_level:
                 continue
-            level_idx = level - 1  # 0-indexed into scale_vecs_data
-            if scale_vecs_data is not None and level_idx < len(scale_vecs_data):
-                sv = scale_vecs_data[level_idx]
-                scale_y = max(1, int(round(float(sv[0]))))
-                scale_x = max(1, int(round(float(sv[1]))))
-            else:
-                iso_scale = 2 ** (level - 1)
-                scale_y = iso_scale
-                scale_x = iso_scale
+            span_y, span_x = spans[level - 1]
+            count_y, count_x = counts[level - 1]
             for key, slot in tiles_by_level[level]:
                 sy, sx = slot.grid_pos
-                # Base-grid slice covered by this coarse tile, clamped.
-                gy0 = key.g0 * scale_y
-                gy1 = min(gy0 + scale_y, gh)
-                gx0 = key.g1 * scale_x
-                gx1 = min(gx0 + scale_x, gw)
+                # Base-grid cells this coarse tile owns under the shared rule.
+                gy0, gy1 = cell_range(key.g0, span_y, count_y, gh)
+                gx0, gx1 = cell_range(key.g1, span_x, count_x, gw)
                 if clip is not None:
                     cy0, cx0, cy1, cx1 = clip
                     gy0 = max(gy0, cy0)

@@ -15,9 +15,10 @@ import tensorstore as ts
 from pydantic import ConfigDict, Field, PrivateAttr
 
 from cellier.data._axes import install_level_systems
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._axis_info import AxisInfo
+from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from yaozarrs import v05
@@ -319,6 +320,7 @@ class OMEZarrImageDataStore(BaseDataStore):
 
     store_type: Literal["ome_zarr_image"] = "ome_zarr_image"
     DATASET_INFO_LABEL: ClassVar[str] = "OME-Zarr image"
+    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
@@ -535,6 +537,16 @@ class OMEZarrImageDataStore(BaseDataStore):
         ``dims.displayed_axes`` before constructing the render visual.
         """
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     @property
     def axes(self) -> list[AxisInfo]:

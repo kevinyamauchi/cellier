@@ -19,8 +19,12 @@ from cellier.transform._geometry_ops import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import numpy as np
 
+    from cellier.transform._affine import AffineTransform
+    from cellier.transform._axis import AxisRef
     from cellier.transform._coordinate_system import CoordinateSystem
     from cellier.transform._geometry import AxisAlignedBoundingBox, Plane
     from cellier.transform._region import ConvexRegion
@@ -239,6 +243,128 @@ class BaseTransform(BaseModel, ABC):
         output_coordinate_system: CoordinateSystem,
     ) -> ConvexRegion:
         """Map a convex region back, dropping broadcast constraints (D8)."""
+
+    # -- structure ------------------------------------------------------
+
+    @abstractmethod
+    def input_domain(self) -> dict[int, tuple[float, float]]:
+        """Return ``{input axis: (low, high)}`` for every **bounded** axis.
+
+        The span of input coordinates this transform can actually map.  An
+        axis absent from the result is unbounded -- an affine transform has
+        no intrinsic domain at all, so its result is empty.
+
+        **What it is for.**  A caller that rounds a position to a whole
+        sample needs to know which samples exist, or rounding can leave the
+        domain: the last sample's cell ends half a unit past its centre, and
+        round-half-up sends that boundary *upward* to a sample that is not
+        there.  Structural, like :meth:`axis_correspondence`, and available
+        without a matrix -- a non-affine block answers from its own table.
+
+        Returns
+        -------
+        dict[int, tuple[float, float]]
+            Input axis index to ``(low, high)``, in input coordinates.
+            Bounds are inclusive.
+        """
+
+    @abstractmethod
+    def axis_correspondence(self) -> dict[int, int]:
+        """Return ``{input axis: output axis}`` for every axis that reaches one.
+
+        Answers "which output axis does each input axis become", which the
+        render layer needs in order to line a data axis up with the world
+        axis a slider moves.
+
+        The correspondence is **not stored** -- keeping it beside the
+        transform that already encodes it would be a second source of truth
+        (D23) -- so each transform reads it back from whatever it does hold.
+        An affine reads it off its matrix; a block container reads it off
+        its block declarations, structurally, with no matrix involved, which
+        is what lets a non-affine transform answer at all.
+
+        Returns
+        -------
+        dict[int, int]
+            Input axis index to output axis index.  An input axis that
+            reaches no output axis is absent.
+
+        Raises
+        ------
+        ValueError
+            If any input axis feeds more than one output axis, or any output
+            axis is fed by more than one input axis.  That is a shear or a
+            rotation, which the axis-aligned slicing path cannot express.
+        """
+
+    # -- restriction and affine-ness -----------------------------------
+
+    @abstractmethod
+    def restrict(
+        self,
+        fixed: Mapping[AxisRef | int, float],
+        input_coordinate_system: CoordinateSystem | None = None,
+    ) -> BaseTransform:
+        """Pin some input axes to fixed values, dropping them from the domain.
+
+        The question the render layer actually needs answered is not "is
+        this transform affine" but "with every collapsed axis pinned to
+        *this request's* value, is what remains affine".  That is strictly
+        weaker, because evaluating any transform at a fixed input produces
+        a constant, and folding a constant into a translation is something
+        affine algebra already does.  So a non-uniform axis that is sliced
+        rather than displayed costs nothing at the GPU boundary.
+
+        The values in *fixed* are **exact and already resolved**.
+        ``restrict`` must not round or clamp them: that already happened one
+        layer up, in ``round_world_to_voxel``, and doing it twice risks the
+        two disagreeing about which plane a position selects.
+
+        This is the input-side, post-hoc mirror of what
+        ``AffineTransform.from_axis_map(..., constant_output_axes=...)``
+        does output-side at construction time.  Named ``restrict`` rather
+        than ``slice`` because ``slice`` is claimed, hard, by the request
+        pipeline, which rounds and clamps -- precisely what this must not
+        do.
+
+        Parameters
+        ----------
+        fixed : Mapping[AxisRef | int, float]
+            ``{input axis: value}``.  An ``int`` key is an axis index and
+            needs nothing else; a name or id key needs
+            *input_coordinate_system* to resolve against.
+        input_coordinate_system : CoordinateSystem or None
+            The system to resolve named axes against.  Required only when
+            *fixed* has non-integer keys: a transform stores its endpoints
+            as ids and cannot resolve a name on its own.
+
+        Returns
+        -------
+        BaseTransform
+            A transform over the remaining (free) input axes.
+
+        Raises
+        ------
+        NonAffineTransformError
+            If some part of the transform straddles the fixed/free split
+            and is not affine, so there is no closed form for "fix one
+            input, what is left as a function of the others".
+        """
+
+    @abstractmethod
+    def to_affine(self) -> AffineTransform | None:
+        """Return this transform as an affine, or ``None`` if it is not one.
+
+        ``None`` is an answer, not a failure: callers that need a matrix
+        pair this with :meth:`restrict` and raise
+        ``NonAffineTransformError`` themselves, with a message naming the
+        axis they cannot express.
+
+        Returns
+        -------
+        AffineTransform or None
+            ``self`` for an affine transform.
+        """
 
     # -- inversion -----------------------------------------------------
 

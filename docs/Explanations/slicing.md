@@ -20,7 +20,7 @@ The table below describes the core objects and data types used to orchestrate sl
 | **`SliceCoordinator`** | Orchestrator: per-`(scene,canvas,visual)` cancellation, planning dispatch, reslice-start/complete events. |
 | **GPU brick/tile cache** (multiscale) | Fixed-slot texture atlas. `write_brick` / `write_tile` upload into a reserved slot. |
 | **`TileManager2D/3D`** (`stage`/`commit`) | Residency bookkeeping: `tilemap` of resident bricks. When the cache is full, it uses LRU eviction.|
-| **LUT indirection texture** | Maps virtual brick-grid coordinates → physical atlas slot + level; the shader walks it to sample resident bricks. Rebuilt coarsest→finest each commit, with a two-phase sweep that keeps off-slice bricks as LOD placeholders while the new slice streams in. |
+| **LUT indirection texture** | Maps virtual brick-grid coordinates → physical atlas slot + level; the shader walks it to sample resident bricks. Rebuilt coarsest→finest each commit, with a two-phase sweep that keeps off-slice bricks as LOD placeholders while the new slice streams in. The writer and the shaders share one cell → brick rule; see [Multiscale brick lookup](multiscale_brick_lookup.md). |
 
 ## Slicing flow
 

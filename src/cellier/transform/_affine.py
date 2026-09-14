@@ -949,6 +949,145 @@ class AffineTransform(BaseTransform):
             ),
         )
 
+    # -- structure -------------------------------------------------------
+
+    def input_domain(self) -> dict[int, tuple[float, float]]:
+        """An affine transform has no intrinsic domain, so this is empty.
+
+        A matrix maps every real coordinate to another; whatever bounds the
+        data has come from the store's extent, not from the transform.
+
+        Returns
+        -------
+        dict[int, tuple[float, float]]
+            Always empty.
+        """
+        return {}
+
+    def axis_correspondence(self) -> dict[int, int]:
+        """Read ``{input axis: output axis}`` off the matrix.
+
+        Returns
+        -------
+        dict[int, int]
+            Input axis index to output axis index, for every input axis that
+            reaches an output axis.
+
+        Raises
+        ------
+        ValueError
+            If any input axis feeds more than one output axis, or any output
+            axis is fed by more than one input axis -- a shear or a rotation,
+            which the axis-aligned slicing path cannot express.  See
+            ``_check_transform_no_rotation``, which imposes the same
+            restriction on the multiscale brick shader.
+        """
+        linear = np.asarray(self.linear)
+        correspondence: dict[int, int] = {}
+        for column in range(linear.shape[1]):
+            rows = np.flatnonzero(linear[:, column])
+            if rows.size == 0:
+                continue
+            if rows.size > 1:
+                raise ValueError(
+                    f"Input axis {column} of this transform feeds output axes "
+                    f"{rows.tolist()}.  An axis-aligned slicing path needs at "
+                    f"most one output axis per input axis; a shear or rotation "
+                    f"is not yet supported."
+                )
+            correspondence[column] = int(rows[0])
+        claimed: dict[int, int] = {}
+        for column, row in correspondence.items():
+            if row in claimed:
+                raise ValueError(
+                    f"Output axis {row} of this transform is fed by input axes "
+                    f"{claimed[row]} and {column}.  An axis-aligned slicing "
+                    f"path needs at most one input axis per output axis."
+                )
+            claimed[row] = column
+        return correspondence
+
+    # -- restriction and affine-ness ------------------------------------
+
+    def restrict(
+        self,
+        fixed: Mapping[AxisRef | int, float],
+        input_coordinate_system: CoordinateSystem | None = None,
+    ) -> AffineTransform:
+        """Pin input axes to fixed values, folding them into the translation.
+
+        Always succeeds: for an affine transform this is ordinary matrix
+        algebra.  Each fixed axis's column is multiplied by its value and
+        added to the translation, then dropped from the linear block --
+        the input-side mirror of ``constant_output_axes``.
+
+        ``broadcast_axes`` carries through unchanged: it names *output*
+        axes, which restricting the input does not touch.
+
+        **The result is an intermediate, not a registrable transform.** Its
+        ``input_coordinate_system`` is kept as provenance, but the
+        restricted domain is a strict subset of that system's axes, so the
+        rank no longer matches and :meth:`validate_against` will reject it.
+        That rejection is deliberate and loud; the intended use is to call
+        :meth:`to_affine` on the result and upload the matrix.
+
+        Parameters
+        ----------
+        fixed : Mapping[AxisRef | int, float]
+            ``{input axis: value}``.  Values are exact -- nothing here
+            rounds or clamps them.
+        input_coordinate_system : CoordinateSystem or None
+            Needed only to resolve named axes.
+
+        Returns
+        -------
+        AffineTransform
+            A transform over the remaining input axes, in their original
+            relative order.
+
+        Raises
+        ------
+        ValueError
+            If an axis is named twice, is out of range, or a name is given
+            with no coordinate system to resolve it against.
+        """
+        indices = _resolve_fixed_axes(
+            fixed, self.input_ndim, input_coordinate_system, "restrict"
+        )
+        if not indices:
+            return self
+
+        linear = self.linear
+        free = [axis for axis in range(self.input_ndim) if axis not in indices]
+        fixed_axes = sorted(indices)
+        fixed_values = np.array([indices[axis] for axis in fixed_axes], dtype=float)
+
+        translation = self.translation + linear[:, fixed_axes] @ fixed_values
+        reduced = linear[:, free]
+
+        matrix = np.zeros((reduced.shape[0] + 1, len(free) + 1), dtype=float)
+        matrix[:-1, :-1] = reduced
+        matrix[:-1, -1] = translation
+        matrix[-1, -1] = 1.0
+
+        return AffineTransform(
+            name=self.name,
+            input_coordinate_system=self.input_coordinate_system,
+            output_coordinate_system=self.output_coordinate_system,
+            transform=Affine(matrix),
+            broadcast_axes=self.broadcast_axes,
+        )
+
+    def to_affine(self) -> AffineTransform:
+        """Return ``self``: an affine transform already is one.
+
+        Returns
+        -------
+        AffineTransform
+            This transform.
+        """
+        return self
+
     # -- equality (D21) -------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
@@ -985,3 +1124,62 @@ class AffineTransform(BaseTransform):
                 self.matrix.tobytes(),
             )
         )
+
+
+def _resolve_fixed_axes(
+    fixed: Mapping[AxisRef | int, float],
+    ndim: int,
+    coordinate_system: CoordinateSystem | None,
+    operation: str,
+) -> dict[int, float]:
+    """Resolve a ``restrict`` mapping to ``{axis index: value}``.
+
+    Integer keys are indices and need nothing else.  A name or id needs a
+    coordinate system, because a transform stores its endpoints as ids and
+    has no axis metadata of its own.
+
+    Parameters
+    ----------
+    fixed : Mapping[AxisRef | int, float]
+        The mapping to resolve.
+    ndim : int
+        The transform's input rank, for range checking.
+    coordinate_system : CoordinateSystem or None
+        The system to resolve names against.
+    operation : str
+        The calling method's name, for error messages.
+
+    Returns
+    -------
+    dict[int, float]
+        ``{axis index: value}``.
+
+    Raises
+    ------
+    ValueError
+        If a name is given without a coordinate system, an index is out of
+        range, or one axis is named twice.
+    """
+    resolved: dict[int, float] = {}
+    for reference, value in fixed.items():
+        if isinstance(reference, (int, np.integer)) and not isinstance(reference, bool):
+            index = int(reference)
+        else:
+            if coordinate_system is None:
+                raise ValueError(
+                    f"{operation} was given the axis name {reference!r}, but "
+                    f"no input_coordinate_system to resolve it against.  A "
+                    f"transform stores its endpoints as ids and has no axis "
+                    f"metadata of its own -- pass the system, or key `fixed` "
+                    f"by axis index."
+                )
+            index = coordinate_system.resolve(reference)
+        if not 0 <= index < ndim:
+            raise ValueError(
+                f"{operation} got axis index {index}, which is out of range "
+                f"for a transform with {ndim} input axes."
+            )
+        if index in resolved:
+            raise ValueError(f"{operation} got axis {index} twice in `fixed`.")
+        resolved[index] = float(value)
+    return resolved

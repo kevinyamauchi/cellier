@@ -11,9 +11,10 @@ import pygfx as gfx
 from cellier.data.graph._graph_requests import GraphSliceRequest
 from cellier.render._spaces import (
     RenderSpaces,
-    axis_scales,
+    axis_correspondence,
     data_slice_positions,
     node_matrix,
+    snap_discrete_positions,
 )
 from cellier.render.shaders._alpha_modulated import (
     AlphaLineSegmentMaterial,
@@ -24,6 +25,7 @@ from cellier.render.visuals._aabb import (
     refresh_aabb_line,
 )
 from cellier.scene.dims import DEFAULT_HALF_THICKNESS
+from cellier.transform import AxisAlignedBoundingBox
 
 if TYPE_CHECKING:
     from cellier._state import DimsState
@@ -36,7 +38,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import BaseTransform, RegionSelection
     from cellier.visuals._graph_memory import GraphAppearance, GraphVisual
 
 # Placeholder geometry -- pygfx forbids empty geometry buffers.  One
@@ -49,6 +51,91 @@ _PLACEHOLDER_EDGE_POSITIONS = np.zeros((2, 3), dtype=np.float32)
 #: hardcoded thickness in the points and lines request builders, so a graph
 #: with no trail slices identically to them.
 _DEFAULT_EXTENT = (0.5, 0.5)
+
+
+def _window_half_extents(
+    transform,
+    world,
+    positions: dict[int, float],
+    axis: int,
+    before: float,
+    after: float,
+) -> tuple[float, float]:
+    """Pull a world-unit window's endpoints back into data-unit half-extents.
+
+    With ``w`` the slice position in world units and ``p`` the same position
+    already pulled back (which ``data_slice_positions`` supplies)::
+
+        before_data = p - imap(w - before)
+        after_data = imap(w + after) - p
+
+    Exact for any monotonic axis, and algebraically ``before / scale`` on an
+    affine one -- which is the property that keeps existing scenes identical
+    and is asserted directly in the tests.
+
+    ``GraphSliceRequest`` is unchanged: it still carries ``(before, after)``
+    half-extents in data units around ``slice_positions[axis]``, so the store
+    needs no change at all.  Only the computation of these two numbers moved.
+
+    Parameters
+    ----------
+    transform : BaseTransform
+        The visual's ``data -> world`` transform.
+    world : WorldCoordinateSystem
+        Its output system.
+    positions : dict[int, float]
+        ``{collapsed data axis: data position}``.
+    axis : int
+        The data axis to convert for.
+    before : float
+        How far back the window reaches, in world units.
+    after : float
+        How far forward, in world units.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(before, after)`` half-extents in data units.  Never negative: a
+        window clipped by the end of the axis contributes nothing on that
+        side rather than a negative extent.
+    """
+    position = float(positions.get(axis, 0.0))
+    world_axis = axis_correspondence(transform).get(axis)
+    if world_axis is None:
+        # Broadcast: the visual has no extent along this world axis, so
+        # there is no conversion to do and the window is already data-unit.
+        return (float(before), float(after))
+
+    data_point = np.zeros(transform.input_ndim, dtype=np.float64)
+    for data_axis, value in positions.items():
+        if 0 <= data_axis < data_point.size:
+            data_point[data_axis] = float(value)
+    centre_world = float(np.asarray(transform.map_coordinates(data_point))[world_axis])
+    if not np.isfinite(centre_world):
+        # Belt and braces.  The position is confined to samples that exist
+        # before it gets here, so this should be unreachable -- but a nan
+        # reaching the bounding box below surfaces as a pydantic validation
+        # error several frames deep, which is a poor way to learn that an
+        # axis had no answer.  A zero window selects nothing, which is the
+        # honest result when there is no position to centre one on.
+        return (0.0, 0.0)
+
+    lower = np.full(transform.output_ndim, -np.inf)
+    upper = np.full(transform.output_ndim, np.inf)
+    lower[world_axis] = centre_world - float(before)
+    upper[world_axis] = centre_world + float(after)
+    pulled = transform.imap_bounding_box(
+        AxisAlignedBoundingBox(
+            coordinate_system=world.id,
+            min_coordinate=lower,
+            max_coordinate=upper,
+        )
+    )
+    low = float(pulled.min_coordinate[axis])
+    high = float(pulled.max_coordinate[axis])
+    if not (np.isfinite(low) and np.isfinite(high)):
+        return (float(before), float(after))
+    return (max(0.0, position - low), max(0.0, high - position))
 
 
 def _node_id_for_row(data_store, row: int):
@@ -152,7 +239,7 @@ class GFXGraphMemoryVisual:
         Associated model-layer visual.
     render_modes : set[str]
         ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
-    transform : AffineTransform
+    transform : BaseTransform
         Data-to-world transform. Must cover all data axes.
     """
 
@@ -163,7 +250,7 @@ class GFXGraphMemoryVisual:
         self,
         visual_model: GraphVisual,
         render_modes: set[str],
-        transform: AffineTransform,
+        transform: BaseTransform,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -174,7 +261,7 @@ class GFXGraphMemoryVisual:
 
         self.visual_model_id: UUID = visual_model.id
         self.render_modes: set[str] = render_modes
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
         # The systems this visual's geometry is placed with, pushed by
         # the controller.  ``None`` until the scene has a canvas.
         self._spaces: RenderSpaces | None = None
@@ -482,7 +569,14 @@ class GFXGraphMemoryVisual:
         positions = data_slice_positions(
             selection.region, self._transform, self._spaces.world
         )
-        scales = axis_scales(self._transform)
+        # On a discrete axis the window is anchored at the sample the slider
+        # currently selects, not at the raw slider position -- so a trail is
+        # "the last N seconds ending at the displayed frame", and the graph
+        # changes frame at the same instant the image does.  Without this the
+        # markers lag the image by up to half a sampling interval.
+        positions = snap_discrete_positions(
+            positions, self._spaces.data, self._transform
+        )
         self._last_data_positions = positions
         sliced = self._spaces.collapsed_axes
         displayed = set(dims_state.selection.displayed_axes)
@@ -490,28 +584,50 @@ class GFXGraphMemoryVisual:
         extents: dict[int, tuple[float, float]] = {}
         fades: dict[int, tuple[float, float, float]] = {}
 
-        # World units per data unit on each axis.
-        def _to_data(axis: int, value: float) -> float:
-            return float(value) / scales.get(axis, 1.0)
+        def _half_extents(
+            axis: int, before: float, after: float
+        ) -> tuple[float, float]:
+            """Convert a world-unit window into data-unit half-extents.
+
+            **The window's two endpoints are pulled back, rather than its
+            width divided by a scale.**  On a non-uniform axis there is no
+            single world-units-per-data-unit for a division to use, so
+            ``axis_scales`` has no answer to give there; pulling the
+            endpoints through the transform is exact for any monotonic axis
+            and is algebraically identical to ``value / scale`` on an affine
+            one, which is what keeps every existing scene unchanged.
+
+            It also produces the right *shape*: a symmetric world window
+            around an unevenly sampled position gives **asymmetric** data
+            extents, which a scalar scale cannot express at all.
+
+            The pull-back goes through ``imap_bounding_box`` -- interval
+            semantics -- and not ``imap_coordinates``.  A trail window
+            legitimately reaches off the start of an axis, and it must clamp
+            to the first sample there rather than report no preimage.
+            """
+            return _window_half_extents(
+                self._transform,
+                self._spaces.world,
+                positions,
+                axis,
+                before,
+                after,
+            )
 
         for axis in sliced:
             config = self._trail.get(axis)
             if config is None:
-                extents[axis] = (
-                    _to_data(axis, DEFAULT_HALF_THICKNESS),
-                    _to_data(axis, DEFAULT_HALF_THICKNESS),
+                extents[axis] = _half_extents(
+                    axis, DEFAULT_HALF_THICKNESS, DEFAULT_HALF_THICKNESS
                 )
                 continue
-            extents[axis] = (
-                _to_data(axis, config.before),
-                _to_data(axis, config.after),
-            )
+            extents[axis] = _half_extents(axis, config.before, config.after)
             if config.fade:
-                fades[axis] = (
-                    _to_data(axis, config.resolved_fade_before),
-                    _to_data(axis, config.resolved_fade_after),
-                    config.min_alpha,
+                fade_before, fade_after = _half_extents(
+                    axis, config.resolved_fade_before, config.resolved_fade_after
                 )
+                fades[axis] = (fade_before, fade_after, config.min_alpha)
 
         for axis in self._trail:
             if axis in displayed and axis not in self._warned_displayed_axes:

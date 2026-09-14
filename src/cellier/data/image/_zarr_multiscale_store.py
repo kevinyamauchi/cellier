@@ -24,7 +24,7 @@ import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, PrivateAttr, model_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -32,6 +32,7 @@ from cellier.data._dataset_info import (
     format_shape,
     source_label,
 )
+from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
@@ -145,6 +146,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
     # ── Public pydantic fields ──────────────────────────────────────────
     store_type: Literal["multiscale_zarr"] = "multiscale_zarr"
     DATASET_INFO_LABEL: ClassVar[str] = "multiscale zarr"
+    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     zarr_path: str
     scale_names: list[str]
     name: str = "multiscale zarr data store"
@@ -254,6 +256,16 @@ class MultiscaleZarrDataStore(BaseDataStore):
     def level_shapes(self) -> list[tuple[int, ...]]:
         """Shape for each scale level, finest first."""
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     @property
     def dtype(self) -> np.dtype:

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     )
     from cellier.transform import (
         AffineTransform,
+        BaseTransform,
         RegionSelection,
         WorldCoordinateSystem,
     )
@@ -205,7 +206,7 @@ def _plan_from_region(
     ----------
     selection : RegionSelection
         The region this canvas is showing, in world coordinates.
-    transform : AffineTransform
+    transform : BaseTransform
         The visual's ``data -> world`` transform.
     world : WorldCoordinateSystem
         The transform's output system.  Needed to resolve its
@@ -267,7 +268,7 @@ class GFXImageMemoryVisual:
         visual_model: ImageVisual,
         data_store: ImageMemoryStore,
         render_modes: set[str],
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -283,7 +284,7 @@ class GFXImageMemoryVisual:
         # The data -> world transform.  There is no coordinate-system-less
         # identity to fall back on (D18), so a visual reaching the render layer
         # without one cannot be placed until the controller supplies it.
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
 
         # The systems this visual's geometry is placed with, pushed by the
         # controller when displayed_axes changes.  ``None`` until the scene has

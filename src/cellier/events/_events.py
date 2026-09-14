@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from cellier._state import CameraState, DimsState
     from cellier.scene._background import BackgroundAppearance
-    from cellier.transform import AffineTransform
+    from cellier.transform import BaseTransform
 
 
 class DimsChangedEvent(NamedTuple):
@@ -367,7 +367,7 @@ class TransformChangedEvent(NamedTuple):
     source_id: UUID
     scene_id: UUID
     visual_id: UUID
-    transform: AffineTransform
+    transform: BaseTransform
 
 
 class SceneRemovedEvent(NamedTuple):

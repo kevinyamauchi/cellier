@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from cellier._rounding import round_half_up_clamped
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -36,6 +38,12 @@ def round_world_to_voxel(raw: float, size: int) -> int:
     deterministic and monotonic for slider scrubbing.  The result is clamped
     to the valid index range ``[0, size - 1]``.
 
+    The arithmetic itself lives in
+    :func:`cellier._rounding.round_half_up_clamped`, shared with the
+    non-uniform axis transform's nearest-neighbour lookup so the two cannot
+    drift apart.  This function keeps its name, its voxel-specific meaning
+    and every call site.
+
     Parameters
     ----------
     raw : float
@@ -49,8 +57,7 @@ def round_world_to_voxel(raw: float, size: int) -> int:
     int
         Voxel index in ``[0, size - 1]``.
     """
-    idx = int(np.floor(raw + 0.5))
-    return max(0, min(idx, size - 1))
+    return round_half_up_clamped(raw, size)
 
 
 def axis_selections_from_box(

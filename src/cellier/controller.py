@@ -112,6 +112,7 @@ from cellier.scene.scene import Scene
 from cellier.transform import (
     AffineTransform,
     CoordinateSystemType,
+    NonInvertibleTransformError,
     RegionSelection,
     RenderedCoordinateSystem,
     VisualCoordinateSystem,
@@ -5667,18 +5668,35 @@ class CellierController:
 
         # Fallback: the visual reported no plan, so derive the plane from the
         # dims state the way the selection assembler would have.
-        linear = np.asarray(transform.linear)
-        offsets = np.asarray(transform.translation)
+        #
+        # Pulled back through imap_coordinates rather than by reading
+        # .linear / .translation, so a non-affine data -> world transform
+        # works here too.  Mapping the whole world point at once is exact
+        # because axis_correspondence above already established that the
+        # transform is axis-aligned -- each data axis is fed by exactly one
+        # world axis, so the axes this loop does not fill cannot perturb the
+        # ones it reads.
+        world_point = np.zeros(transform.output_ndim, dtype=np.float64)
         for world_axis, world_position in slice_indices.items():
+            if 0 <= world_axis < world_point.size:
+                world_point[world_axis] = float(world_position)
+        try:
+            data_point = np.asarray(transform.imap_coordinates(world_point))
+        except NonInvertibleTransformError:
+            # No left inverse: there is no data coordinate to report, and a
+            # pick is not worth raising over.
+            return tuple(float(value) for value in coordinate)
+        for world_axis in slice_indices:
             data_axis = data_axis_of_world.get(world_axis)
             if data_axis is None:
                 # The visual broadcasts over this world axis: it exists at
                 # every position along it and has no coordinate of its own.
                 continue
-            scale = float(linear[world_axis, data_axis])
-            if scale == 0.0:
+            position = float(data_point[data_axis])
+            if not np.isfinite(position):
+                # Outside this visual's extent on a bounded axis: it has no
+                # data coordinate there at all.
                 continue
-            position = (float(world_position) - float(offsets[world_axis])) / scale
             coordinate[data_axis] = float(np.floor(position + 0.5)) + 0.5
         return tuple(float(value) for value in coordinate)
 

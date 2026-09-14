@@ -6,7 +6,7 @@ from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, ConfigDict, Field
 
 from cellier.render._config import MAX_OUTLINE_SLOT
-from cellier.transform import AffineTransform
+from cellier.transform import TransformType
 
 
 class AABBParams(EventedModel):
@@ -109,7 +109,7 @@ class BaseVisual(EventedModel):
     pick_write : bool
         If True, the visual can be picked in the canvas via the picking
         buffer. Default True.
-    transform : AffineTransform or None
+    transform : BaseTransform or None
         The ``data -> world`` affine transform, from the store's level-0
         coordinate system to the scene's world.  ``None`` (the default) means
         "not decided yet": ``CellierController.add_visual`` builds the
@@ -141,7 +141,7 @@ class BaseVisual(EventedModel):
     name: str
     data_store_id: str
     pick_write: bool = True
-    transform: AffineTransform | None = None
+    transform: TransformType | None = None
     requires_camera_reslice: bool = Field(default=False, frozen=True)
     aabb: AABBParams = Field(default_factory=AABBParams)
     outline: VisualOutline = Field(default_factory=VisualOutline)

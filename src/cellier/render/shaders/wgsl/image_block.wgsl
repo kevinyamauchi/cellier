@@ -41,6 +41,8 @@ fn get_tile_scale(level: i32) -> vec2<f32> {
     }
 }
 
+{$ include 'cellier.tile_rule.wgsl' $}
+
 fn sample_im_lut(texcoord: vec2<f32>) -> vec4<f32> {
     let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
     let cache_size = vec2<f32>(u_lut_params.cache_size_x, u_lut_params.cache_size_y);
@@ -70,9 +72,16 @@ fn sample_im_lut(texcoord: vec2<f32>) -> vec4<f32> {
     let tile_origin = vec2<f32>(lutv.x, lutv.y) * padded_size;
 
     // LOD scale correction: remap within-tile position for coarser levels.
+    // The tile corner comes from the LUT cell (tile_corner_from_cell), the same
+    // rule that wrote the LUT; only the offset inside the tile uses the float
+    // scale.  Clamp to the padded tile, less half a texel for linear filtering,
+    // so a sample just outside its tile repeats the edge texel rather than
+    // blending into the neighbouring atlas slot.
     let sj = get_tile_scale(level);
-    let scaled_pos = pos * sj;
-    let within_tile = scaled_pos - floor(scaled_pos / block_size) * block_size;
+    let corner_k = tile_corner_from_cell(tile_idx, level);
+    let within_tile = clamp(pos * sj - corner_k,
+                            vec2<f32>(0.5 - overlap),
+                            block_size - vec2<f32>(0.5) + vec2<f32>(overlap));
 
     // Final cache sample coordinate (normalised).
     let cache_pos   = tile_origin + within_tile + vec2<f32>(overlap);

@@ -944,7 +944,21 @@ class RenderManager:
             Current displayed axes from the scene's dims selection.  Passed to
             ``SceneManager.add_visual`` to select the initial node.
         """
-        self._scenes[scene_id].add_visual(visual, displayed_axes)
+        # Extents are passed only for **gridded** stores, and that scoping is
+        # deliberate.  The out-of-domain check exists to replace *clamping*,
+        # and clamping only happens where a world position becomes a scalar
+        # index into a grid (``round_world_to_voxel``).  A geometry store
+        # selects by proximity and already reports ``is_empty`` when nothing
+        # is near, so it never pins a stale plane and needs no short-circuit;
+        # skipping it early would only suppress the per-visual bookkeeping its
+        # planner does on the way.
+        self._scenes[scene_id].add_visual(
+            visual,
+            displayed_axes,
+            axis_extents=(
+                data_store.axis_extents if hasattr(data_store, "level_shapes") else None
+            ),
+        )
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
 

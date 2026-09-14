@@ -98,7 +98,11 @@ def test_center_slices_sets_integer_midpoints(image_store):
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
     ranges = axis_ranges_from_ortho(viewer)
-    assert ranges == {0: (0.0, 7.0), 1: (0.0, 15.0), 2: (0.0, 23.0)}
+    # The edge convention: a (8, 16, 24) store spans half a voxel beyond its
+    # first and last voxel centres, because a voxel is centred on its index.
+    # The midpoints asserted below are unaffected -- the widening is
+    # symmetric -- which is what this test is actually about.
+    assert ranges == {0: (-0.5, 7.5), 1: (-0.5, 15.5), 2: (-0.5, 23.5)}
 
     viewer.center_slices()
     assert dict(viewer.scenes["xy"].dims.selection.slice_indices) == {0: 4}

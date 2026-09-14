@@ -15,9 +15,10 @@ if TYPE_CHECKING:
     import tensorstore as ts
 
 from cellier.data._axes import install_level_systems
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
 from cellier.data.image._ome_zarr_image_store import _validate_uri_scheme
+from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 _ACCEPTED_LABEL_DTYPES = {np.int8, np.int16, np.int32}
 
@@ -65,6 +66,7 @@ class OMEZarrLabelDataStore(BaseDataStore):
 
     store_type: Literal["ome_zarr_label"] = "ome_zarr_label"
     DATASET_INFO_LABEL: ClassVar[str] = "OME-Zarr labels"
+    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
@@ -228,6 +230,16 @@ class OMEZarrLabelDataStore(BaseDataStore):
     def level_shapes(self) -> list[tuple[int, ...]]:
         """Full-rank shape per level (all axes), finest first."""
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     @property
     def dtype(self) -> np.dtype:

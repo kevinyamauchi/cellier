@@ -14,10 +14,13 @@ from uuid import uuid4
 
 import numpy as np
 
+from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.events._events import (
     AppearanceChangedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.scene import spatial_axes
+from cellier.transform import Axis, ByDimensionTransform
 from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
@@ -78,6 +81,73 @@ def test_construction_3d_scene_builds_3d_node(controller, multiscale_labels_stor
     assert gfx.node_3d is not None
     assert gfx._inner_node_3d is not None
     assert gfx._block_cache_3d is not None
+
+
+def test_construction_with_a_broadcast_transform_does_not_misindex_the_store(
+    controller, multiscale_labels_store
+):
+    """A ``zyx`` store broadcast over a leading world ``t`` axis builds cleanly.
+
+    Regression test: ``GFXMultiscaleLabelVisual.from_cellier_model`` used to
+    index the store's own (data-space) ``level_shapes`` with **world** axis
+    indices directly (``select_axes(level_shapes[k], displayed_axes)``),
+    which only worked by coincidence when the store and the world had equal
+    rank.  Here the store is ``zyx`` but the world is ``tzyx``, so the
+    default 3D ``displayed_axes`` is ``(1, 2, 3)`` -- out of range for a
+    3-element store shape -- and this raised ``IndexError`` before the data
+    axes were translated via the transform's own
+    ``axis_correspondence`` (see ``_world_axes_to_data_axes`` in
+    ``render/visuals/_image.py``).
+    """
+    store = MultiscaleZarrDataStore(
+        zarr_path=multiscale_labels_store.zarr_path,
+        scale_names=multiscale_labels_store.scale_names,
+        level_scales=multiscale_labels_store.level_scales,
+        level_translations=multiscale_labels_store.level_translations,
+        name="broadcast_labels_store",
+    )
+    scene = controller.add_scene(
+        dim="3d",
+        name="scene",
+        coordinate_system=(
+            Axis(name="t", axis_type="time"),
+            *spatial_axes("z", "y", "x"),
+        ),
+    )
+    world = scene.dims.world_coordinate_system
+    # No axis_names= at construction: that shorthand only builds a level-0
+    # system (it explicitly does not cover multi-level stores), which would
+    # leave install_level_transforms with too few systems for this store's 2
+    # levels.  _ensure_data_coordinate_systems is what add_labels_multiscale
+    # calls internally, and -- since the store is empty -- takes the world's
+    # trailing axes (z, y, x) for every level, which is what a real call
+    # through the controller would also do.
+    controller._ensure_data_coordinate_systems(scene.id, store)
+    store_cs = store.data_coordinate_systems[0]
+    transform = ByDimensionTransform.from_axis_map(
+        store_cs,
+        world,
+        axis_map={
+            store_cs.axis_by_name(name).id: world.axis_by_name(name).id
+            for name in ("z", "y", "x")
+        },
+        broadcast_output_axes=[world.axis_by_name("t").id],
+        name="to_world",
+    )
+
+    visual = controller.add_labels_multiscale(
+        data=store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+        transform=transform,
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    assert gfx.node_3d is not None
+    # The level-0 shape is the store's own zyx shape, not a wrongly indexed slice
+    # of it -- confirming the translation, not just the absence of a crash.
+    assert gfx._volume_geometry.level_shapes[0] == (16, 16, 16)
 
 
 # ---------------------------------------------------------------------------

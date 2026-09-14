@@ -13,8 +13,9 @@ integration.
 """
 
 from cellier.transform._affine import AffineTransform
-from cellier.transform._axis import Axis, AxisRef, AxisType
+from cellier.transform._axis import Axis, AxisRef, AxisSampling, AxisType
 from cellier.transform._base import BaseTransform
+from cellier.transform._by_dimension import ByDimensionTransform, TransformBlock
 from cellier.transform._coordinate_system import (
     CoordinateSystem,
     CoordinateSystemType,
@@ -26,28 +27,41 @@ from cellier.transform._coordinate_system import (
 from cellier.transform._geometry import AxisAlignedBoundingBox, Plane
 from cellier.transform._geometry_ops import (
     DegenerateNormalError,
+    NonAffineTransformError,
     NonInvertibleTransformError,
+)
+from cellier.transform._nonuniform import (
+    AxisCoordinates,
+    NonUniformAxisTransform,
 )
 from cellier.transform._region import ConvexRegion, HalfSpace
 from cellier.transform._selection import RegionSelection
+from cellier.transform._types import TransformType
 
 __all__ = [
     "AffineTransform",
     "Axis",
     "AxisAlignedBoundingBox",
+    "AxisCoordinates",
     "AxisRef",
+    "AxisSampling",
     "AxisType",
     "BaseTransform",
+    "ByDimensionTransform",
     "ConvexRegion",
     "CoordinateSystem",
     "CoordinateSystemType",
     "DataCoordinateSystem",
     "DegenerateNormalError",
     "HalfSpace",
+    "NonAffineTransformError",
     "NonInvertibleTransformError",
+    "NonUniformAxisTransform",
     "Plane",
     "RegionSelection",
     "RenderedCoordinateSystem",
+    "TransformBlock",
+    "TransformType",
     "VisualCoordinateSystem",
     "WorldCoordinateSystem",
 ]

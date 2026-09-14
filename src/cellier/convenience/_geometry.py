@@ -19,10 +19,26 @@ def _axis_ranges_from_scene(
 ) -> dict[int, tuple[float, float]]:
     """Compute world-space axis ranges from the visuals in a single scene.
 
-    Transforms the axis-aligned bounding box corners of each visual's backing
-    data store from data space to world space and returns the per-axis union.
-    Only stores exposing ``level_shapes`` (image and label stores) contribute;
-    mesh, points, and lines visuals are skipped.
+    Maps each visual's backing store's per-axis extents from data space to
+    world space and returns the per-axis union.
+
+    Every store contributes, gridded or geometry alike, because every store
+    answers :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+    That was not true before: this function used to read ``level_shapes``,
+    which only image and label stores have, so a scene built solely from
+    points, graph, mesh or lines visuals raised rather than returning a
+    range.
+
+    The extents use the **edge** convention -- a gridded axis of ``size``
+    voxels spans ``[-0.5, size - 0.5]`` -- matching
+    :func:`~cellier.render.visuals._slicing.round_world_to_voxel` and the
+    rest of the render layer.  Reading the corner *centres* ``(0, size - 1)``,
+    as this function used to, understated every gridded axis by half a voxel
+    at each end.
+
+    The union across visuals is what makes a mixed-extent scene work: one
+    visual's data may end before another's, and the slider still has to
+    cover both.
 
     Parameters
     ----------
@@ -39,7 +55,8 @@ def _axis_ranges_from_scene(
     Raises
     ------
     ValueError
-        If no qualifying visuals are found in the scene.
+        If no visual in the scene has any extent -- an empty scene, or one
+        whose stores all hold zero vertices.
     """
     ndim = len(scene.dims.axis_labels)
 
@@ -50,18 +67,19 @@ def _axis_ranges_from_scene(
     for visual_model in scene.visuals:
         store = controller.get_data_store(UUID(str(visual_model.data_store_id)))
 
-        if not hasattr(store, "level_shapes"):
+        extents = store.axis_extents
+        if extents is None:
+            # An empty store occupies nothing, so it must not pull the
+            # union anywhere -- skip it rather than contributing zeros.
             continue
 
-        shape = store.level_shapes[0]
-        data_ndim = len(shape)
-
-        origin = np.zeros((1, data_ndim), dtype=np.float64)
-        far = np.array([[s - 1 for s in shape]], dtype=np.float64)
-        corners = np.vstack([origin, far])
-        world_corners = visual_model.transform.map_coordinates(
-            corners.astype(np.float32)
-        )
+        # The two opposite corners of the extent box.  Mapping only these
+        # is exact for the axis-aligned transforms the slicing path
+        # supports, and is what this function has always done.
+        lows = np.array([[low for low, _ in extents]], dtype=np.float64)
+        highs = np.array([[high for _, high in extents]], dtype=np.float64)
+        corners = np.vstack([lows, highs])
+        world_corners = visual_model.transform.map_coordinates(corners)
 
         world_mins = np.minimum(world_mins, world_corners.min(axis=0))
         world_maxs = np.maximum(world_maxs, world_corners.max(axis=0))
@@ -69,8 +87,8 @@ def _axis_ranges_from_scene(
 
     if not found:
         raise ValueError(
-            "No visuals with known shapes found. "
-            "Only image and label visuals contribute to axis ranges."
+            "No visuals with extents found.  Every visual's data store "
+            "reported no data at all, or the scene has no visuals."
         )
 
     return {i: (float(world_mins[i]), float(world_maxs[i])) for i in range(ndim)}

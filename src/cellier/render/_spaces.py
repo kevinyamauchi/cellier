@@ -25,8 +25,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
+from transformnd.transforms.affine import Affine
 
-from cellier.transform import AffineTransform, ConvexRegion
+from cellier._rounding import round_half_up
+from cellier.transform import AffineTransform, BaseTransform, ConvexRegion
+from cellier.transform._geometry_ops import NonAffineTransformError
 from cellier.transform._region import half_spaces_from_arrays
 
 if TYPE_CHECKING:
@@ -182,18 +185,20 @@ class RenderSpaces:
         return tuple(index for index in range(self.data.ndim) if index not in retained)
 
 
-def axis_correspondence(transform: AffineTransform) -> dict[int, int]:
-    """Read ``{input axis: output axis}`` off an axis-aligned transform.
+def axis_correspondence(transform: BaseTransform) -> dict[int, int]:
+    """Read ``{input axis: output axis}`` off a transform.
 
-    The correspondence is not stored -- the matrix encodes it and keeping both
-    would be a second source of truth (D23) -- so it is read back when the
-    render layer needs to know which world axis a data axis became.
+    A thin delegation to :meth:`BaseTransform.axis_correspondence`, kept as a
+    function so this module's callers are unchanged.  The body moved onto the
+    transform because the question is structural: a ``ByDimensionTransform``
+    answers it from its block declarations, with no matrix, which is what
+    lets a non-affine ``data -> world`` transform be asked at all.
 
     Parameters
     ----------
-    transform : AffineTransform
-        A ``data -> world`` transform whose linear block has at most one
-        non-zero entry per row and per column.
+    transform : BaseTransform
+        A ``data -> world`` transform that is axis-aligned -- at most one
+        output axis per input axis and vice versa.
 
     Returns
     -------
@@ -204,36 +209,10 @@ def axis_correspondence(transform: AffineTransform) -> dict[int, int]:
     Raises
     ------
     ValueError
-        If any input axis feeds more than one output axis, or any output axis
-        is fed by more than one input axis.  That is a shear or a rotation,
-        which the slicing path cannot express -- see
-        ``_check_transform_no_rotation``, which imposes the same restriction
-        on the multiscale brick shader.
+        If the transform is a shear or a rotation, which the slicing path
+        cannot express.
     """
-    linear = np.asarray(transform.linear)
-    correspondence: dict[int, int] = {}
-    for column in range(linear.shape[1]):
-        rows = np.flatnonzero(linear[:, column])
-        if rows.size == 0:
-            continue
-        if rows.size > 1:
-            raise ValueError(
-                f"Input axis {column} of this transform feeds output axes "
-                f"{rows.tolist()}.  An axis-aligned slicing path needs at most "
-                f"one output axis per input axis; a shear or rotation is not "
-                f"yet supported."
-            )
-        correspondence[column] = int(rows[0])
-    claimed: dict[int, int] = {}
-    for column, row in correspondence.items():
-        if row in claimed:
-            raise ValueError(
-                f"Output axis {row} of this transform is fed by input axes "
-                f"{claimed[row]} and {column}.  An axis-aligned slicing path "
-                f"needs at most one input axis per output axis."
-            )
-        claimed[row] = column
-    return correspondence
+    return transform.axis_correspondence()
 
 
 def build_render_spaces(
@@ -520,9 +499,81 @@ def pygfx_matrix(transform: AffineTransform) -> np.ndarray:
     return m
 
 
+def affine_for_node(
+    data_to_world: BaseTransform,
+    constants: Mapping[int, float],
+) -> AffineTransform:
+    """Reduce a ``data -> world`` transform to the affine the GPU needs.
+
+    **This is the one structural boundary in the codebase.**  A pygfx node
+    transform is a 4x4 matrix, so a non-affine ``data -> world`` has to
+    become one here or fail loudly; there is nothing to approximate.
+
+    The question asked is deliberately weaker than "is this transform
+    affine".  Every collapsed axis is pinned to *this request's* value
+    first, and evaluating any transform at a fixed input gives a constant
+    that affine algebra can fold into a translation.  So a non-uniform axis
+    that is **sliced** costs nothing here, and only a non-uniform axis that
+    is **displayed** raises -- which is the honest outcome, since no matrix
+    expresses it.
+
+    An already-affine transform is returned untouched, so nothing about an
+    existing scene changes.
+
+    Parameters
+    ----------
+    data_to_world : BaseTransform
+        The visual's own transform.
+    constants : Mapping[int, float]
+        ``{collapsed data axis: voxel index}`` for this request.
+
+    Returns
+    -------
+    AffineTransform
+        A full-rank ``data -> world`` affine that agrees with
+        *data_to_world* wherever the collapsed axes hold their pinned
+        values.  The collapsed axes get zero columns: their contribution is
+        already a constant in the translation, and the caller feeds them
+        those same values.
+
+    Raises
+    ------
+    NonAffineTransformError
+        If what remains after pinning is still not affine -- i.e. a
+        non-affine block sits on a displayed axis.  The message names it.
+    """
+    affine = data_to_world.to_affine()
+    if affine is not None:
+        return affine
+
+    # restrict() raises NonAffineTransformError naming the axis when a
+    # non-affine block is free, which is exactly this boundary's error.
+    restricted = data_to_world.restrict(dict(constants)).to_affine()
+    if restricted is None:
+        raise NonAffineTransformError(
+            "This visual's data -> world transform is not affine even with "
+            "every collapsed axis pinned, so there is no 4x4 matrix to give "
+            "pygfx.  The fix is to stop displaying the non-affine axis."
+        )
+
+    input_ndim = data_to_world.input_ndim
+    free_axes = [axis for axis in range(input_ndim) if axis not in constants]
+    matrix = np.zeros((restricted.matrix.shape[0], input_ndim + 1))
+    for column, axis in enumerate(free_axes):
+        matrix[:-1, axis] = restricted.linear[:, column]
+    matrix[:-1, -1] = restricted.translation
+    matrix[-1, -1] = 1.0
+    return AffineTransform(
+        name=getattr(data_to_world, "name", None),
+        input_coordinate_system=data_to_world.input_coordinate_system,
+        output_coordinate_system=data_to_world.output_coordinate_system,
+        transform=Affine(matrix),
+    )
+
+
 def node_matrix(
     spaces: RenderSpaces,
-    data_to_world: AffineTransform,
+    data_to_world: BaseTransform,
     constants: Mapping[int, float],
     scale: Mapping[int, float] | None = None,
     translation: Mapping[int, float] | None = None,
@@ -556,7 +607,7 @@ def node_matrix(
     return pygfx_matrix(
         node_transform(
             spaces,
-            data_to_world,
+            affine_for_node(data_to_world, constants),
             visual_to_data_transform(spaces, constants, scale, translation),
         )
     )
@@ -633,6 +684,138 @@ def with_minimum_thickness(
     )
 
 
+def snap_discrete_positions(
+    positions: Mapping[int, float],
+    data_coordinate_system: DataCoordinateSystem,
+    transform: BaseTransform | None = None,
+) -> dict[int, float]:
+    """Snap positions on **discrete** data axes to the nearest sample.
+
+    **Why a geometry visual needs this at all.**  An image resolves a slice
+    position by *snapping to the nearest sample* -- that is what
+    ``round_world_to_voxel`` does -- while a geometry visual resolves it by
+    *containment in a window*.  Those two flip at different instants: a snap
+    flips at the midpoint between two samples, a window flips when the
+    position reaches the sample.  With both sharing one world axis, the
+    markers visibly lag the image by up to half a sampling interval, and the
+    lag is worst exactly where the sampling is coarsest.
+
+    Widening the window cannot fix it: the tolerance required is half the
+    *local* gap, which on an irregularly sampled axis is the one thing that
+    varies.  Snapping the window's anchor does fix it, exactly, because it
+    reuses the same rule -- round half up -- that the image already applies.
+
+    Only axes declared ``sampling="discrete"`` are touched, so a store whose
+    time column holds genuine continuous measurements keeps pure containment
+    semantics.  A non-finite position is left alone: it means the transform
+    reported no preimage, which the caller handles.
+
+    **Rounding is confined to the samples that exist.**  The position handed
+    in has already been clamped into the transform's domain by the interval
+    semantics of ``imap_bounding_box``, but rounding can push it back out:
+    the last sample's cell ends half a unit past its centre, and round-half-up
+    sends that boundary *upward*, to a sample one past the end.  Mapping that
+    index forward again then has no answer.  So the snapped value is confined
+    to the whole samples inside :meth:`BaseTransform.input_domain`.
+
+    This is emphatically **not** "pin an out-of-range position to the edge" --
+    that decision was made one layer up and is not revisited here.  It is
+    only that rounding must land on a sample that exists.
+
+    Parameters
+    ----------
+    positions : Mapping[int, float]
+        ``{collapsed data axis: position}``, from
+        :func:`data_slice_positions`.
+    data_coordinate_system : DataCoordinateSystem
+        The visual's own data system, which carries the per-axis
+        ``sampling``.
+    transform : BaseTransform or None
+        The visual's ``data -> world`` transform, consulted for the axis's
+        domain.  ``None`` skips the confinement, which is right for an axis
+        with no intrinsic domain -- an affine one maps every real coordinate,
+        so rounding cannot leave anything.
+
+    Returns
+    -------
+    dict[int, float]
+        The same mapping with discrete axes snapped to whole samples.
+    """
+    domain = {} if transform is None else transform.input_domain()
+    snapped = dict(positions)
+    axes = data_coordinate_system.axes
+    for axis, position in positions.items():
+        if not 0 <= axis < len(axes):
+            continue
+        if axes[axis].sampling != "discrete":
+            continue
+        if not np.isfinite(position):
+            continue
+        index = round_half_up(position)
+        bounds = domain.get(axis)
+        if bounds is not None:
+            low, high = bounds
+            # The whole samples inside the domain: a span of (-0.5, N - 0.5)
+            # holds samples 0 .. N - 1.
+            index = max(int(np.ceil(low)), min(index, int(np.floor(high))))
+        snapped[axis] = float(index)
+    return snapped
+
+
+def visual_covers_position(
+    axis_extents: Sequence[tuple[float, float]] | None,
+    data_positions: Mapping[int, float],
+) -> bool:
+    """Whether a visual has data at the given per-axis **data** positions.
+
+    **Where "out of range means nothing, not the edge sample" is decided.**
+    Before this check, a visual whose data ended before the scene's would
+    pin its last plane and redraw it forever -- an acquisition ending at 9 s
+    re-showing its 9 s frame at 10, 11 and 12 s as though it were data.
+    Skipping the request leaves the visual empty instead.
+
+    Both arguments are in the visual's own **data** coordinates, which is
+    what keeps this honest: the positions come from
+    :func:`data_slice_positions`, which has already pulled the world
+    selection back through this visual's own transform, and the extents come
+    from its store.  Nothing here maps anything, so there is no opportunity
+    to compare a world number against a data one -- the defect this whole
+    design exists to prevent.
+
+    Only **collapsed** axes are checked, because those are the only ones
+    ``data_slice_positions`` returns: a displayed axis is a range the camera
+    looks at, not a position, and a visual partly off-screen still draws the
+    part that is on.
+
+    Parameters
+    ----------
+    axis_extents : Sequence[tuple[float, float]] or None
+        The store's per-axis ``(low, high)`` in level-0 data coordinates.
+        ``None`` -- an empty store -- covers nothing.
+    data_positions : Mapping[int, float]
+        ``{collapsed data axis: position}``, from
+        :func:`data_slice_positions`.
+
+    Returns
+    -------
+    bool
+        ``False`` when some collapsed position lies outside this visual's
+        extent, so the caller should issue no request.
+    """
+    if axis_extents is None:
+        return False
+    for axis, position in data_positions.items():
+        if not 0 <= axis < len(axis_extents):
+            continue
+        low, high = axis_extents[axis]
+        if not np.isfinite(position):
+            # A bounded axis reported no preimage at all for this position.
+            return False
+        if not (low <= float(position) <= high):
+            return False
+    return True
+
+
 def geometry_data_region(
     selection: RegionSelection,
     data_to_world: AffineTransform,
@@ -677,10 +860,20 @@ def axis_scales(data_to_world: AffineTransform) -> dict[int, float]:
     convert a thickness stated in world units into the data units a store's
     own slab arithmetic works in.
 
+    **Stays `AffineTransform`-only, deliberately.**  On a non-uniform axis
+    there is no single world-units-per-data-unit -- the spacing is what
+    varies -- so this function has no answer to give and must not pretend to
+    by returning some average.  A caller that needs to convert a world
+    window on a possibly-non-affine axis pulls the window's two **endpoints**
+    back through the transform instead of dividing its width; that is exact
+    for a monotonic axis and algebraically identical to dividing by the
+    scale on an affine one.  See ``render/visuals/_graph_memory.py``, which
+    is the only caller that ever needed it.
+
     Parameters
     ----------
     data_to_world : AffineTransform
-        The visual's transform.
+        The visual's transform.  Affine specifically, not ``BaseTransform``.
 
     Returns
     -------

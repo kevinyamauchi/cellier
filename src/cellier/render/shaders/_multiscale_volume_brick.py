@@ -11,6 +11,7 @@ render function for ``(Volume, MultiscaleVolumeBrickMaterial)`` pairs via the
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -26,6 +27,12 @@ from pygfx.renderers.wgpu import (
 )
 from pygfx.renderers.wgpu.shaders.volumeshader import BaseVolumeShader
 from pygfx.resources import Buffer
+
+from cellier.render.lut_indirection._cell_brick_rule import (
+    UNBOUNDED_BRICK_COUNT,
+    level_brick_counts,
+    level_cell_spans,
+)
 
 if TYPE_CHECKING:
     from cellier.render.block_cache import BlockCacheParameters3D
@@ -72,7 +79,14 @@ VOL_PARAMS_DTYPE = np.dtype(
     ]
 )
 
-BLOCK_SCALES_DTYPE = np.dtype([(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)])
+# Per level: the float downscale factor, then the integer cell -> brick rule
+# (base cells per brick, brick count) as exact small floats.  Shared by the
+# image and label brick shaders; see cellier.brick_rule.wgsl.
+BLOCK_SCALES_DTYPE = np.dtype(
+    [(f"scale_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)]
+    + [(f"span_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)]
+    + [(f"bricks_{i}", "<f4", (4,)) for i in range(MAX_LEVELS)]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +172,8 @@ def build_vol_params_buffer(
 
 def build_brick_scales_buffer(
     level_scale_vecs_data: list[np.ndarray],
+    level_shapes: list[tuple[int, ...]] | None = None,
+    block_size: int | None = None,
 ) -> Buffer:
     """Build the block-scales uniform buffer.
 
@@ -166,6 +182,12 @@ def build_brick_scales_buffer(
 
     Level 0 (1-indexed in the LUT) stores ``[1, 1, 1]``.
     Level k stores the per-axis downscale factor relative to finest.
+
+    The buffer also carries the cell -> brick rule from ``_cell_brick_rule``:
+    ``span_k`` is base cells per level-k brick and ``bricks_k`` the level-k
+    brick count.  The LUT writer uses the same numbers, which keeps the
+    shader's brick lookup in step with the LUT on pyramids whose level ratio
+    is not an integer.
 
     Input vectors are in data-axis order ``(sz, sy, sx)``; shader
     fields ``[0], [1], [2]`` are ``(x=W, y=H, z=D)`` so the
@@ -176,6 +198,11 @@ def build_brick_scales_buffer(
     level_scale_vecs_data : list[np.ndarray]
         Per-level scale vectors in data order, e.g.
         ``[array([1,1,1]), array([1,2,2]), array([1,4,4])]``.
+    level_shapes : list of tuple of int or None
+        Per-level voxel shapes in data order.  Without them the brick counts
+        are left unbounded, which matches the LUT writer's own fallback.
+    block_size : int or None
+        Brick side length in voxels.  Required with ``level_shapes``.
 
     Returns
     -------
@@ -183,8 +210,12 @@ def build_brick_scales_buffer(
         Uniform buffer bound as ``u_block_scales`` in the shader.
     """
     data = np.zeros((), dtype=BLOCK_SCALES_DTYPE)
+    for k in range(MAX_LEVELS):
+        data[f"span_{k}"][:3] = 1.0
+        data[f"bricks_{k}"][:3] = float(UNBOUNDED_BRICK_COUNT)
 
-    for k in range(1, min(len(level_scale_vecs_data) + 1, MAX_LEVELS)):
+    n_levels = min(len(level_scale_vecs_data), MAX_LEVELS - 1)
+    for k in range(1, n_levels + 1):
         sv = level_scale_vecs_data[k - 1]  # data order: [sz, sy, sx]
         # shader x = W = data axis 2 (sx)
         data[f"scale_{k}"][0] = float(sv[2])
@@ -193,6 +224,17 @@ def build_brick_scales_buffer(
         # shader z = D = data axis 0 (sz)
         data[f"scale_{k}"][2] = float(sv[0])
         data[f"scale_{k}"][3] = 0.0  # padding
+
+    spans = level_cell_spans(n_levels, 3, level_scale_vecs_data)
+    counts = None
+    if level_shapes is not None and block_size is not None:
+        grid_dims = tuple(math.ceil(int(size) / block_size) for size in level_shapes[0])
+        counts = level_brick_counts(spans, grid_dims, block_size, level_shapes)
+    for k in range(1, n_levels + 1):
+        # Shader order (x, y, z) is the reverse of data order (z, y, x).
+        data[f"span_{k}"][:3] = spans[k - 1][::-1]
+        if counts is not None:
+            data[f"bricks_{k}"][:3] = counts[k - 1][::-1]
 
     return Buffer(data, force_contiguous=True)
 

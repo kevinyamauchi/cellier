@@ -31,6 +31,22 @@ class DegenerateNormalError(RuntimeError):
     """Raised when a normal or plane maps to the zero vector (D32)."""
 
 
+class NonAffineTransformError(RuntimeError):
+    """Raised where a transform must be affine and is not.
+
+    Two kinds of place raise it.  The first is the GPU boundary: a pygfx
+    node transform is a 4x4 matrix, and there is no matrix that expresses a
+    non-uniform axis, so a non-affine block on a *displayed* axis has no
+    honest answer -- the message names the axis, because the fix is to stop
+    displaying it.  The second is an operation that needs a spatially
+    constant Jacobian -- a direction, a normal, a plane, a half-space --
+    which an irregularly spaced axis does not have.
+
+    It is deliberately one error rather than two: the underlying reason is
+    the same in both, that there is no affine answer to hand back.
+    """
+
+
 # ---------------------------------------------------------------------
 # input handling (D12)
 # ---------------------------------------------------------------------

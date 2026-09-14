@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from cellier.events import DimsChangedEvent
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
-    from cellier.transform import AffineTransform, WorldCoordinateSystem
+    from cellier.transform import BaseTransform, WorldCoordinateSystem
     from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
@@ -812,7 +812,7 @@ class OrthoViewer(RenderSettingsMixin):
         data: LabelMemoryStore | UUID,
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -829,7 +829,7 @@ class OrthoViewer(RenderSettingsMixin):
             Defaults to ``InMemoryLabelsAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : LabelsControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -874,7 +874,7 @@ class OrthoViewer(RenderSettingsMixin):
         data: MeshMemoryStore | UUID,
         appearance: MeshAppearance,
         name: str = "mesh",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MeshControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -890,7 +890,7 @@ class OrthoViewer(RenderSettingsMixin):
             ``appearance_type`` key (``"flat"`` or ``"phong"``).
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MeshControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -930,7 +930,7 @@ class OrthoViewer(RenderSettingsMixin):
         data: PointsMemoryStore | UUID,
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: PointsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -946,7 +946,7 @@ class OrthoViewer(RenderSettingsMixin):
             Defaults to ``PointsMarkerAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : PointsControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -986,7 +986,7 @@ class OrthoViewer(RenderSettingsMixin):
         data: GraphMemoryStore | UUID,
         appearance: GraphAppearance | None = None,
         name: str = "graph",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
         controls: GraphControlsConfig | None = None,
         outline: VisualOutline | None = None,
@@ -1003,7 +1003,7 @@ class OrthoViewer(RenderSettingsMixin):
             to ``GraphAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Falls back to the store's own transform,
             then to identity.
         trail : dict[int, TrailConfig] or None
@@ -1047,7 +1047,7 @@ class OrthoViewer(RenderSettingsMixin):
         data: LinesMemoryStore | UUID,
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LinesControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -1063,7 +1063,7 @@ class OrthoViewer(RenderSettingsMixin):
             Defaults to ``LinesMemoryAppearance()`` when ``None``.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : LinesControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -1104,7 +1104,7 @@ class OrthoViewer(RenderSettingsMixin):
         appearance: MultiscaleImageAppearance,
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleImageControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -1121,7 +1121,7 @@ class OrthoViewer(RenderSettingsMixin):
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         render_config : MultiscaleImageRenderConfig or None
             LOD and rendering configuration.  Uses defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MultiscaleImageControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -1163,7 +1163,7 @@ class OrthoViewer(RenderSettingsMixin):
         appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleLabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
@@ -1181,7 +1181,7 @@ class OrthoViewer(RenderSettingsMixin):
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         render_config : MultiscaleLabelRenderConfig or None
             LOD and rendering configuration.  Uses defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MultiscaleLabelsControlsConfig or None
             Appearance controls configuration shared across all four panels:
@@ -1291,7 +1291,7 @@ class OrthoViewer(RenderSettingsMixin):
         channels: dict[int, ChannelAppearance],
         name: str = "multichannel_image",
         render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         max_channels_2d: int = 8,
         max_channels_3d: int = 4,
         controls: ChannelControlsConfig | None = None,
@@ -1312,7 +1312,7 @@ class OrthoViewer(RenderSettingsMixin):
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         render_config : MultiscaleImageRenderConfig or None
             LOD and rendering configuration.  Uses defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         max_channels_2d : int
             Maximum simultaneous 2D channel nodes.

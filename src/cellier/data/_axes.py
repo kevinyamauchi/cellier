@@ -28,6 +28,7 @@ import numpy as np
 from cellier.transform import (
     AffineTransform,
     Axis,
+    AxisSampling,
     AxisType,
     DataCoordinateSystem,
 )
@@ -73,6 +74,7 @@ def build_axes(
     names: Sequence[str],
     types: Sequence[AxisType] | None = None,
     units: Sequence[str | None] | None = None,
+    sampling: AxisSampling | Sequence[AxisSampling] = "continuous",
 ) -> tuple[Axis, ...]:
     """Build axes from names, with types and units where they are known.
 
@@ -85,6 +87,12 @@ def build_axes(
         :func:`axis_types_from_names`.
     units : Sequence[str | None] or None
         Physical units, one per name.  ``None`` leaves every unit unset.
+    sampling : AxisSampling or Sequence[AxisSampling]
+        Whether each axis's coordinates are sample indices.  A single value
+        applies to every axis, which is what a voxel grid wants; a sequence
+        gives one per axis, which is what a geometry store wants when its
+        ``t`` column holds frame numbers while ``zyx`` hold measured
+        positions.
 
     Returns
     -------
@@ -112,8 +120,19 @@ def build_axes(
             f"axis_units must have one entry per axis name; got "
             f"{len(resolved_units)} units for {len(names)} names {list(names)}."
         )
+    resolved_sampling: tuple[AxisSampling, ...] = (
+        (sampling,) * len(names) if isinstance(sampling, str) else tuple(sampling)
+    )
+    if len(resolved_sampling) != len(names):
+        raise ValueError(
+            f"axis_sampling must have one entry per axis name; got "
+            f"{len(resolved_sampling)} entries for {len(names)} names "
+            f"{list(names)}."
+        )
     axes: list[Axis] = []
-    for name, axis_type, unit in zip(names, resolved_types, resolved_units):
+    for name, axis_type, unit, axis_sampling in zip(
+        names, resolved_types, resolved_units, resolved_sampling
+    ):
         if not axis_type:
             raise ValueError(
                 f"Axis '{name}' has an empty axis_type.  OME-NGFF has a slot "
@@ -121,7 +140,14 @@ def build_axes(
                 f"default among {AxisType.__args__}.  Fix the metadata, or "
                 f"pass axis_types= explicitly when constructing the store."
             )
-        axes.append(Axis(name=name, axis_type=axis_type, unit=unit or None))
+        axes.append(
+            Axis(
+                name=name,
+                axis_type=axis_type,
+                unit=unit or None,
+                sampling=axis_sampling,
+            )
+        )
     return tuple(axes)
 
 
@@ -387,6 +413,7 @@ def install_level_systems(
     names: Sequence[str],
     types: Sequence[AxisType] | None = None,
     units: Sequence[str | None] | None = None,
+    sampling: AxisSampling | Sequence[AxisSampling] = "discrete",
 ) -> None:
     """Give a multi-level store one coordinate system per resolution level.
 
@@ -409,9 +436,13 @@ def install_level_systems(
         Axis types.  ``None`` applies :func:`axis_types_from_names`.
     units : Sequence[str | None] or None
         Physical units.
+    sampling : AxisSampling or Sequence[AxisSampling]
+        Whether each axis is sample-indexed.  Defaults to ``"discrete"``
+        because the only callers are the OME-Zarr readers, whose data is a
+        voxel grid.
     """
     if not store.data_coordinate_systems:
-        axes = build_axes(names, types, units)
+        axes = build_axes(names, types, units, sampling)
         store.data_coordinate_systems = level_coordinate_systems(
             store.id, axes, int(getattr(store, "n_levels", 1)), store.name
         )

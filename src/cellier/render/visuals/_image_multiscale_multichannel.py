@@ -24,7 +24,7 @@ if TYPE_CHECKING:
         TransformChangedEvent,
         VisualVisibilityChangedEvent,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import BaseTransform, RegionSelection
     from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._image import MultichannelMultiscaleImageVisual
 
@@ -48,7 +48,7 @@ class GFXMultichannelMultiscaleImageVisual:
         Which nodes to build: ``{"2d"}``, ``{"3d"}``, or ``{"2d", "3d"}``.
     displayed_axes : tuple[int, ...]
         Initially displayed data axes.
-    transform : AffineTransform or None
+    transform : BaseTransform or None
         Spatial (non-channel) data-to-world transform.  Will be expanded to
         match ``len(level_shapes[0])`` dimensions.
 
@@ -68,7 +68,7 @@ class GFXMultichannelMultiscaleImageVisual:
         level_shapes: list[tuple[int, ...]],
         render_modes: set[str],
         displayed_axes: tuple[int, ...],
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
     ) -> None:
         invalid = render_modes - {"2d", "3d"}
         if invalid or not render_modes:
@@ -160,7 +160,7 @@ class GFXMultichannelMultiscaleImageVisual:
         level_shapes: list[tuple[int, ...]],
         render_modes: set[str],
         displayed_axes: tuple[int, ...],
-        transform: AffineTransform | None,
+        transform: BaseTransform | None,
         gpu_budget_bytes_3d: int,
         gpu_budget_bytes_2d: int,
     ) -> GFXMultiscaleImageVisual:

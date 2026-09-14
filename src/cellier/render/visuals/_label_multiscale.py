@@ -75,6 +75,7 @@ from cellier.render.visuals._image import (
     _fetch_order,
     _norm_size_from_transform,
     _norm_to_data_params_for,
+    _world_axes_to_data_axes,
 )
 from cellier.render.visuals._image_memory import (
     _box_wireframe_positions,
@@ -106,7 +107,7 @@ if TYPE_CHECKING:
     from cellier.render.block_cache._tile_manager_2d import (
         TileSlot as TileSlot2D,
     )
-    from cellier.transform import AffineTransform, RegionSelection
+    from cellier.transform import AffineTransform, BaseTransform, RegionSelection
     from cellier.visuals._labels import MultiscaleLabelVisual
 
 # Importing this module registers the shader classes with pygfx.
@@ -161,7 +162,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         render_mode: str = "iso_categorical",
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         full_level_transforms: list[AffineTransform] | None = None,
         full_level_shapes: list[tuple[int, ...]] | None = None,
         aabb_enabled: bool = False,
@@ -184,7 +185,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
 
         # The data -> world transform.  There is no coordinate-system-less
         # identity to fall back on (D18); the controller supplies one.
-        self._transform: AffineTransform | None = transform
+        self._transform: BaseTransform | None = transform
         # The systems this visual's geometry is placed with, pushed by the
         # controller.  ``None`` until the scene has a canvas.
         self._spaces: RenderSpaces | None = None
@@ -270,6 +271,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 base_layout=volume_geometry.base_layout,
                 n_levels=volume_geometry.n_levels,
                 level_scale_vecs_data=volume_geometry._scale_vecs_data,
+                level_shapes=volume_geometry.level_shapes,
+                border=cache_parameters_3d.overlap,
             )
 
         # ── 2D GPU resources ──────────────────────────────────────────────
@@ -294,12 +297,16 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 base_layout=image_geometry_2d.base_layout,
                 n_levels=image_geometry_2d.n_levels,
                 scale_vecs_data=image_geometry_2d._scale_vecs_data,
+                level_shapes=image_geometry_2d.level_shapes,
+                border=cache_parameters_2d.overlap,
             )
             self._lut_params_buffer_2d = build_lut_params_buffer_2d(
                 image_geometry_2d.base_layout, cache_parameters_2d
             )
             self._block_scales_buffer_2d = build_block_scales_buffer_2d(
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
+                level_shapes=image_geometry_2d.level_shapes,
+                block_size=image_geometry_2d.block_size,
             )
             self._allocate_paint_resources_2d()
 
@@ -332,7 +339,9 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 cache_info=self._block_cache_3d.info,
             )
             self._brick_scales_buffer = build_brick_scales_buffer(
-                volume_geometry._scale_vecs_data
+                volume_geometry._scale_vecs_data,
+                level_shapes=volume_geometry.level_shapes,
+                block_size=volume_geometry.block_size,
             )
 
         # Which label values the selection layer outlines.  Held here so a
@@ -404,7 +413,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
 
         volume_geometry: MultiscaleBrickLayout3D | None = None
         if "3d" in render_modes and axes_3d is not None:
-            fetch_3d = _fetch_order(axes_3d)
+            fetch_3d = _fetch_order(_world_axes_to_data_axes(model.transform, axes_3d))
             shapes_3d = [select_axes(s, fetch_3d) for s in level_shapes]
             volume_geometry = MultiscaleBrickLayout3D(
                 level_shapes=shapes_3d,
@@ -415,7 +424,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
 
         image_geometry_2d: ImageGeometry3D | None = None
         if "2d" in render_modes:
-            fetch_2d = _fetch_order(axes_2d)
+            fetch_2d = _fetch_order(_world_axes_to_data_axes(model.transform, axes_2d))
             shapes_2d = [select_axes(s, fetch_2d) for s in level_shapes]
             image_geometry_2d = ImageGeometry3D(
                 level_shapes=shapes_2d,
@@ -527,10 +536,10 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
             if self._volume_geometry is not None:
-                shapes_3d = [
-                    tuple(s[ax] for ax in _fetch_order(displayed_axes))
-                    for s in level_shapes
-                ]
+                fetch_3d = _fetch_order(
+                    _world_axes_to_data_axes(self._transform, displayed_axes)
+                )
+                shapes_3d = [tuple(s[ax] for ax in fetch_3d) for s in level_shapes]
                 if shapes_3d != self._volume_geometry.level_shapes:
                     self._volume_geometry.update(shapes_3d)
                     self._rebuild_3d_resources()
@@ -539,10 +548,10 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         if "2d" in self.render_modes and len(displayed_axes) == 2:
             old_node = self.node_2d
             if self._image_geometry_2d is not None:
-                shapes_2d_full = [
-                    tuple(s[ax] for ax in _fetch_order(displayed_axes))
-                    for s in level_shapes
-                ]
+                fetch_2d = _fetch_order(
+                    _world_axes_to_data_axes(self._transform, displayed_axes)
+                )
+                shapes_2d_full = [tuple(s[ax] for ax in fetch_2d) for s in level_shapes]
                 shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
                 if shapes_2d != self._image_geometry_2d.level_shapes:
                     self._image_geometry_2d.update(shapes_2d)
@@ -558,6 +567,14 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             base_layout=geo.base_layout,
             n_levels=geo.n_levels,
             level_scale_vecs_data=geo._scale_vecs_data,
+            level_shapes=geo.level_shapes,
+            border=self._block_cache_3d.info.overlap,
+        )
+        # The brick counts in the scales buffer follow the level shapes.
+        self._brick_scales_buffer = build_brick_scales_buffer(
+            geo._scale_vecs_data,
+            level_shapes=geo.level_shapes,
+            block_size=geo.block_size,
         )
         if self.node_3d is not None:
             inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node()
@@ -578,12 +595,16 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             base_layout=geo2d.base_layout,
             n_levels=geo2d.n_levels,
             scale_vecs_data=geo2d._scale_vecs_data,
+            level_shapes=geo2d.level_shapes,
+            border=self._block_cache_2d.info.overlap,
         )
         self._lut_params_buffer_2d = build_lut_params_buffer_2d(
             geo2d.base_layout, self._block_cache_2d.info
         )
         self._block_scales_buffer_2d = build_block_scales_buffer_2d(
             level_scale_vecs_data=geo2d._scale_vecs_data,
+            level_shapes=geo2d.level_shapes,
+            block_size=geo2d.block_size,
         )
         self._allocate_paint_resources_2d()
         if self.node_2d is not None:
