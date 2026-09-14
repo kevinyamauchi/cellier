@@ -138,6 +138,36 @@ def test_line_alpha_ramps_along_segment(offscreen_renderer):
     assert samples[-1] - samples[0] > 100, f"ramp is flat: {samples}"
 
 
+def test_line_segments_are_drawn_disconnected(offscreen_renderer):
+    """Vertex pairs are independent segments, not one connected polyline.
+
+    ``AlphaLineSegmentShader`` used to derive from pygfx's base
+    ``LineShader``, whose ``line_type`` is ``"line"``: registering it for the
+    material replaced pygfx's segment shader, so every lines visual and
+    graph drew a connector from each segment's end to the next one's start.
+    Here the two segments sit on opposite corners; only that connector
+    passes through the empty centre of the frame.
+    """
+    positions = np.array(
+        [[-140, 20, 0], [-20, 20, 0], [20, -20, 0], [140, -20, 0]], dtype=np.float32
+    )
+    material = AlphaLineSegmentMaterial(thickness=6, color=(1.0, 0.0, 0.0, 1.0))
+    material.color_mode = "uniform"
+    geometry = gfx.Geometry(positions=positions, alphas=np.ones(4, dtype=np.float32))
+    scene = _scene()
+    scene.add(gfx.Line(geometry, material))
+
+    image = offscreen_renderer(scene, _camera(), _SIZE)
+    red = image[..., 0]
+
+    # Orthographic 320x80 around the origin, y up: world (x, y) is pixel
+    # row 40 - y, column 160 + x.
+    assert red[20, 80] > 200, "first segment missing"
+    assert red[60, 240] > 200, "second segment missing"
+    centre = int(red[30:51, 150:171].max())
+    assert centre < 5, f"a connector joins the two segments (centre={centre})"
+
+
 def test_color_change_preserves_alpha_ramp(offscreen_renderer):
     """Changing the uniform colour leaves the ramp identical in the new channel.
 

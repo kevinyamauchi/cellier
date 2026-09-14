@@ -1548,7 +1548,15 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)
-        vol = NormSizedVolume(geometry, material, norm_size=self._norm_size)
+        # dataset_size is what lets NormSizedVolume report the voxel extent;
+        # without it the bounding box falls back to the 2x2x2 proxy texture,
+        # which throws off the camera fit and the auto occlusion radius.
+        vol = NormSizedVolume(
+            geometry,
+            material,
+            norm_size=self._norm_size,
+            dataset_size=self._dataset_size,
+        )
         return vol, material, proxy_tex
 
     def _build_2d_node(
