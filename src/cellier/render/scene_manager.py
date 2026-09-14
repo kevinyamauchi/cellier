@@ -352,6 +352,8 @@ class SceneManager:
                 continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
+            if not cfg.slicing_enabled:
+                continue
 
             frustum_corners_world = (
                 request.frustum_corners if cfg.frustum_cull else None
@@ -401,6 +403,8 @@ class SceneManager:
                 continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
+            if not cfg.slicing_enabled:
+                continue
 
             chunk_requests = visual.build_slice_request_2d(
                 camera_pos_world=request.camera_pos,

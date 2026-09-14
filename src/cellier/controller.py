@@ -184,6 +184,39 @@ if TYPE_CHECKING:
 # Appearance fields that require a reslice (not just a GPU material update).
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
 
+#: Image visuals that load nothing while hidden; showing one reslices it.
+#: Multichannel images are absent on purpose: they already skip every channel
+#: whose own ``visible`` is off, and showing a channel reslices the visual.
+_SKIP_WHEN_HIDDEN = (ImageVisual, MultiscaleImageVisual)
+
+
+def _visual_render_config(visual: BaseVisual) -> VisualRenderConfig:
+    """Build the render settings one reslice passes for *visual*.
+
+    Parameters
+    ----------
+    visual : BaseVisual
+        The visual model.
+
+    Returns
+    -------
+    VisualRenderConfig
+        LOD settings from a multiscale visual's appearance, and
+        ``slicing_enabled=False`` for a hidden image visual.
+    """
+    slicing_enabled = not (
+        isinstance(visual, _SKIP_WHEN_HIDDEN) and not visual.appearance.visible
+    )
+    if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual)):
+        return VisualRenderConfig(
+            lod_bias=visual.appearance.lod_bias,
+            force_level=visual.appearance.force_level,
+            frustum_cull=visual.appearance.frustum_cull,
+            slicing_enabled=slicing_enabled,
+        )
+    return VisualRenderConfig(slicing_enabled=slicing_enabled)
+
+
 # Context variable used by update_slice_indices / update_appearance_field to
 # thread a caller-supplied source_id through the synchronous psygnal bridge.
 # Default None means the bridge falls back to the controller's own ID.
@@ -2765,14 +2798,7 @@ class CellierController:
         scene = self._model.scenes[scene_id]
         configs: dict[UUID, VisualRenderConfig] = {}
         for visual in scene.visuals:
-            if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual)):
-                configs[visual.id] = VisualRenderConfig(
-                    lod_bias=visual.appearance.lod_bias,
-                    force_level=visual.appearance.force_level,
-                    frustum_cull=visual.appearance.frustum_cull,
-                )
-            else:
-                configs[visual.id] = VisualRenderConfig()
+            configs[visual.id] = _visual_render_config(visual)
         return configs
 
     # ------------------------------------------------------------------
@@ -3512,6 +3538,14 @@ class CellierController:
                     new_value=new_value,
                 )
             )
+            # A hidden channel is left out of every slice request, so showing
+            # it needs a load.
+            if (
+                field_name == "visible"
+                and new_value
+                and visual_id in self._visual_to_scene
+            ):
+                self.reslice_visual(visual_id)
 
         return _on_channel_appearance_psygnal
 
@@ -3879,6 +3913,14 @@ class CellierController:
                         visible=new_value,
                     )
                 )
+                # A hidden image skipped every reslice while hidden, so what
+                # it holds is from its last visible slice.
+                if (
+                    new_value
+                    and visual_id in self._visual_to_scene
+                    and isinstance(self.get_visual_model(visual_id), _SKIP_WHEN_HIDDEN)
+                ):
+                    self.reslice_visual(visual_id)
             else:
                 self._outgoing_events.emit(
                     AppearanceChangedEvent(
@@ -4052,15 +4094,7 @@ class CellierController:
         """Trigger a data load for one visual."""
         scene_id = self._visual_to_scene[visual_id]
         dims_state = self._dims_state_for_scene(scene_id)
-        visual = self.get_visual_model(visual_id)
-        if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual)):
-            cfg = VisualRenderConfig(
-                lod_bias=visual.appearance.lod_bias,
-                force_level=visual.appearance.force_level,
-                frustum_cull=visual.appearance.frustum_cull,
-            )
-        else:
-            cfg = VisualRenderConfig()
+        cfg = _visual_render_config(self.get_visual_model(visual_id))
         self._render_manager.reslice_visual(
             visual_id, dims_state, cfg, selections=self._selections_for_scene(scene_id)
         )

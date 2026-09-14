@@ -42,6 +42,6 @@ class ChannelAppearance(BaseAppearance):
     clim: tuple[float, float] = (0.0, 1.0)
     render_mode_3d: Literal["mip", "iso"] = "mip"
     iso_threshold: float = 0.5
-    transparency_mode: Literal["blend", "add", "weighted_blend", "weighted_solid"] = (
-        "add"
-    )
+    transparency_mode: Literal[
+        "blend", "add", "multiply", "weighted_blend", "weighted_solid"
+    ] = "add"

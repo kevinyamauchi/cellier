@@ -1070,3 +1070,86 @@ def test_remove_data_store_raises_when_referenced(small_zarr_store):
     msg = str(exc_info.value)
     assert visual.name in msg
     assert str(visual.id) in msg
+
+
+# ---------------------------------------------------------------------------
+# Hidden image visuals skip slicing
+# ---------------------------------------------------------------------------
+
+
+def _capture_scene_configs(controller) -> dict:
+    captured: dict = {}
+
+    def capturing_reslice(s_id, dims_state, visual_configs=None, **_):
+        captured.update(visual_configs or {})
+
+    controller._render_manager.reslice_scene = capturing_reslice
+    return captured
+
+
+def _capture_visual_reslices(controller) -> list:
+    calls: list = []
+
+    def capturing_reslice(visual_id, dims_state, visual_config=None, **_):
+        calls.append((visual_id, visual_config))
+
+    controller._render_manager.reslice_visual = capturing_reslice
+    return calls
+
+
+def test_hidden_image_visual_disables_slicing(small_zarr_store):
+    """A hidden multiscale image is planned with slicing_enabled=False."""
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    visual = controller.add_image_multiscale(
+        data=_make_store(small_zarr_store),
+        scene_id=scene.id,
+        appearance=_make_appearance(visible=False),
+        name="vol",
+    )
+    captured = _capture_scene_configs(controller)
+
+    controller.reslice_scene(scene.id)
+    assert captured[visual.id].slicing_enabled is False
+
+    visual.appearance.visible = True
+    controller.reslice_scene(scene.id)
+    assert captured[visual.id].slicing_enabled is True
+
+
+def test_showing_image_visual_reslices_it(small_zarr_store):
+    """Showing a hidden image reslices it; hiding one does not."""
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    visual = controller.add_image_multiscale(
+        data=_make_store(small_zarr_store),
+        scene_id=scene.id,
+        appearance=_make_appearance(),
+        name="vol",
+    )
+    calls = _capture_visual_reslices(controller)
+
+    visual.appearance.visible = False
+    assert calls == []
+
+    visual.appearance.visible = True
+    assert len(calls) == 1
+    visual_id, cfg = calls[0]
+    assert visual_id == visual.id
+    assert cfg.slicing_enabled is True
+
+
+def test_hidden_non_image_visual_keeps_slicing():
+    """The hidden-visual gate only applies to image visuals."""
+    controller = CellierController()
+    scene = controller.add_scene(dim="3d", coordinate_system=_make_cs(), name="main")
+    visual = controller.add_lines(
+        data=_make_lines_store(),
+        scene_id=scene.id,
+        appearance=LinesMemoryAppearance(visible=False),
+        name="lines",
+    )
+    captured = _capture_scene_configs(controller)
+
+    controller.reslice_scene(scene.id)
+    assert captured[visual.id].slicing_enabled is True

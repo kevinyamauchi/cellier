@@ -509,3 +509,51 @@ def test_multichannel_3d_iso_threshold_change_updates_material():
     )
 
     assert visual._pool_3d[visual._channel_to_slot_3d[0]].material.threshold == 0.9
+
+
+# ---------------------------------------------------------------------------
+# Channel visibility reslices; multiply blending
+# ---------------------------------------------------------------------------
+
+
+def test_showing_channel_reslices_visual():
+    """A hidden channel is not planned, so showing it must reslice the visual."""
+    controller, scene = _make_controller_with_scene()
+    visual = controller.add_multichannel_image(
+        data=_make_4d_store(),
+        scene_id=scene.id,
+        channel_axis=1,
+        channels={0: _make_channel_appearance(), 1: _make_channel_appearance()},
+    )
+    calls = []
+    controller._render_manager.reslice_visual = lambda visual_id, *a, **k: calls.append(
+        visual_id
+    )
+
+    visual.channels[0].visible = False
+    assert calls == []
+
+    visual.channels[0].visible = True
+    assert calls == [visual.id]
+
+
+def test_channel_appearance_accepts_multiply():
+    ap = _make_channel_appearance(transparency_mode="multiply")
+    assert ap.transparency_mode == "multiply"
+
+
+def test_multiply_transparency_mode_reaches_channel_materials():
+    """``transparency_mode="multiply"`` is forwarded to the pygfx alpha_mode."""
+    controller, scene = _make_controller_with_scene()
+    visual = controller.add_multichannel_image(
+        data=_make_4d_store(),
+        scene_id=scene.id,
+        channel_axis=1,
+        channels={0: _make_channel_appearance(), 1: _make_channel_appearance()},
+    )
+    gfx = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+
+    visual.channels[1].transparency_mode = "multiply"
+
+    slot = gfx._channel_to_slot_2d[1]
+    assert gfx._pool_2d[slot].material.alpha_mode == "multiply"
