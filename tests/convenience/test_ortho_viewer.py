@@ -95,7 +95,7 @@ def test_add_image_fans_out_to_all_panels(image_store):
         assert len(scene.visuals) == 1
 
 
-def test_center_slices_sets_integer_midpoints(image_store):
+def test_center_slices_sets_unrounded_midpoints(image_store):
     viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     viewer.controller.add_data_store(image_store)
     viewer.add_image(
@@ -114,9 +114,11 @@ def test_center_slices_sets_integer_midpoints(image_store):
     }
 
     viewer.center_slices()
-    assert dict(viewer.scenes["xy"].dims.selection.slice_indices) == {0: 4}
-    assert dict(viewer.scenes["xz"].dims.selection.slice_indices) == {1: 8}
-    assert dict(viewer.scenes["yz"].dims.selection.slice_indices) == {2: 12}
+    # Slice positions are floats (D3): the midpoint of an even-length axis
+    # sits between its two middle voxels and is kept there, not rounded.
+    assert dict(viewer.scenes["xy"].dims.selection.slice_indices) == {0: 3.5}
+    assert dict(viewer.scenes["xz"].dims.selection.slice_indices) == {1: 7.5}
+    assert dict(viewer.scenes["yz"].dims.selection.slice_indices) == {2: 11.5}
     # vol displays all spatial axes, so it has nothing to center.
     assert dict(viewer.scenes["vol"].dims.selection.slice_indices) == {}
 

@@ -732,8 +732,10 @@ class OrthoViewer(RenderSettingsMixin):
             for axis in self._spatial_axes:
                 if axis in new_slices and axis in ranges:
                     low, high = ranges[axis].min, ranges[axis].max
-                    # slice_indices are integer world coordinates.
-                    new_slices[axis] = round((low + high) / 2.0)
+                    # A slice position is a float world coordinate (D3), so
+                    # the midpoint is not rounded -- the same value the dims
+                    # panel seeds a displayed axis to (initial_slice_indices).
+                    new_slices[axis] = (low + high) / 2.0
                     updated = True
             if updated:
                 self._controller.update_slice_indices(scene.id, new_slices)
