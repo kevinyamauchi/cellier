@@ -157,11 +157,16 @@ def _make_dummy_anywidget():
 
 
 def _make_dims_panel(*, with_toggle=False):
+    from cellier.gui._axis_values import ContinuousAxisValues
     from cellier.gui.anywidget import AnywidgetDimsPanel
 
     return AnywidgetDimsPanel(
         scene_id=uuid4(),
-        axis_ranges={0: (0.0, 99.0), 1: (0.0, 511.0), 2: (0.0, 511.0)},
+        axis_values={
+            0: ContinuousAxisValues(min=0.0, max=99.0),
+            1: ContinuousAxisValues(min=0.0, max=511.0),
+            2: ContinuousAxisValues(min=0.0, max=511.0),
+        },
         axis_labels={0: "z", 1: "y", 2: "x"},
         slice_indices={0: 0},
         displayed_axes=(1, 2),
@@ -372,7 +377,7 @@ def _image_viewer():
     """A small anywidget Viewer with one in-memory image and a data store."""
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
@@ -380,14 +385,14 @@ def _image_viewer():
     store = ImageMemoryStore(data=blobs, name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
-    return viewer, axis_ranges_from_viewer(viewer)
+    return viewer, axis_values_from_viewer(viewer)
 
 
 def _image_viewer_with_controls():
     """A small anywidget Viewer with one in-memory image and an appearance panel."""
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
@@ -399,7 +404,7 @@ def _image_viewer_with_controls():
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
         controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
-    return viewer, axis_ranges_from_viewer(viewer)
+    return viewer, axis_values_from_viewer(viewer)
 
 
 def test_build_canvas_widget_anywidget_returns_view():
@@ -469,7 +474,7 @@ def test_build_ortho_grid_anywidget_returns_canvases():
     """build_ortho_grid_widget(gui='anywidget') returns a composable grid."""
     import numpy as np
 
-    from cellier.convenience import OrthoViewer, axis_ranges_from_ortho
+    from cellier.convenience import OrthoViewer, axis_values_from_ortho
     from cellier.convenience._hosts import JupyterHost
     from cellier.convenience.gui import OrthoAnywidgetCanvases, build_ortho_grid_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -479,7 +484,7 @@ def test_build_ortho_grid_anywidget_returns_canvases():
     store = ImageMemoryStore(data=np.zeros((8, 8, 8), dtype=np.float32), name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
-    ranges = axis_ranges_from_ortho(viewer)
+    ranges = axis_values_from_ortho(viewer)
 
     grid = build_ortho_grid_widget(viewer, ranges, gui="anywidget")
     assert isinstance(grid, OrthoAnywidgetCanvases)
@@ -1032,7 +1037,7 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     """The anywidget renderer creates the split appearance widgets in the left dock."""
     import numpy as np
 
-    from cellier.convenience import Viewer, _hosts, _launch, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, _hosts, _launch, axis_values_from_viewer
     from cellier.convenience.gui import build_canvas_widget
     from cellier.convenience.layout import AppearanceControls, Layout
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -1052,7 +1057,7 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
         controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
-    ranges = axis_ranges_from_viewer(viewer)
+    ranges = axis_values_from_viewer(viewer)
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
     # The canvas view is canvas + dims only: the in-canvas controls column was
     # unreachable through the public API and is gone (section 7.2).

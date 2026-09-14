@@ -41,7 +41,7 @@ def _():
     from cellier.convenience import (
         Layout,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         display,
     )
     from cellier.convenience.gui import build_canvas_widget
@@ -53,7 +53,7 @@ def _():
         InMemoryImageAppearance,
         Layout,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         binary_blobs,
         build_canvas_widget,
         display,
@@ -90,11 +90,11 @@ def _(ImageMemoryStore, InMemoryImageAppearance, Viewer, blobs_3d):
 
 
 @app.cell
-def _(axis_ranges_from_viewer, build_canvas_widget, viewer):
-    axis_ranges = axis_ranges_from_viewer(viewer)
+def _(axis_values_from_viewer, build_canvas_widget, viewer):
+    axis_values = axis_values_from_viewer(viewer)
     canvas_widget = build_canvas_widget(
         viewer,
-        axis_ranges,
+        axis_values,
         canvas_size=(520, 420),
     )
     return (canvas_widget,)

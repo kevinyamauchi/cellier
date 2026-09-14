@@ -1,8 +1,8 @@
 """Utilities to make it easier to construct Cellier viewers."""
 
 from cellier.convenience._geometry import (
-    axis_ranges_from_ortho,
-    axis_ranges_from_viewer,
+    axis_values_from_ortho,
+    axis_values_from_viewer,
 )
 from cellier.convenience._launch import DisplayHandle, display, launch, run, show
 from cellier.convenience._ortho_viewer import OrthoViewer
@@ -31,6 +31,7 @@ from cellier.convenience.layout import (
     RenderControls,
     VStack,
 )
+from cellier.gui._axis_values import ContinuousAxisValues, DiscreteAxisValues
 from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 __all__ = [
@@ -38,6 +39,8 @@ __all__ = [
     "BaseControlsConfig",
     "ChannelControls",
     "ChannelControlsConfig",
+    "ContinuousAxisValues",
+    "DiscreteAxisValues",
     "DisplayHandle",
     "GraphControlsConfig",
     "Grid",
@@ -56,8 +59,8 @@ __all__ = [
     "StartupState",
     "VStack",
     "Viewer",
-    "axis_ranges_from_ortho",
-    "axis_ranges_from_viewer",
+    "axis_values_from_ortho",
+    "axis_values_from_viewer",
     "display",
     "launch",
     "run",

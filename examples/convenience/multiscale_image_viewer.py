@@ -38,7 +38,7 @@ from cellier.convenience import (
     AppearanceControls,
     Layout,
     Viewer,
-    axis_ranges_from_viewer,
+    axis_values_from_viewer,
     run,
 )
 from cellier.convenience.gui import MultiscaleImageControlsConfig, build_canvas_widget
@@ -166,8 +166,8 @@ viewer.add_image_multiscale(
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_viewer(viewer)
-canvas_view = build_canvas_widget(viewer, axis_ranges)
+axis_values = axis_values_from_viewer(viewer)
+canvas_view = build_canvas_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Run

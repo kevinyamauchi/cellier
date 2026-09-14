@@ -10,6 +10,7 @@ pytest.importorskip("anywidget")
 
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.events import DimsChangedEvent
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
 
 
@@ -17,7 +18,11 @@ def _make_panel(*, with_toggle=True, displayed_axes=(1, 2)):
     scene_id = uuid4()
     kwargs = {
         "scene_id": scene_id,
-        "axis_ranges": {0: (0, 9), 1: (0, 99), 2: (0, 99)},
+        "axis_values": {
+            0: ContinuousAxisValues(min=0, max=9),
+            1: ContinuousAxisValues(min=0, max=99),
+            2: ContinuousAxisValues(min=0, max=99),
+        },
         "axis_labels": {0: "z", 1: "y", 2: "x"},
         "slice_indices": {0: 0, 1: 0, 2: 0},
         "displayed_axes": displayed_axes,
@@ -48,8 +53,8 @@ def test_construction_without_toggle():
     assert panel.label == ""
     # dict/tuple keys and values are coerced for the JS-sync boundary.
     assert set(panel.slice_indices) == {"0", "1", "2"}
-    assert panel.axis_ranges["0"] == [0.0, 9.0]
-    assert isinstance(panel.axis_ranges["0"][0], float)
+    assert panel.axis_values["0"] == {"kind": "continuous", "min": 0.0, "max": 9.0}
+    assert isinstance(panel.axis_values["0"]["min"], float)
 
 
 def test_construction_with_toggle_2d():

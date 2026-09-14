@@ -43,7 +43,7 @@ def _():
     from cellier.convenience import (
         Layout,
         OrthoViewer,
-        axis_ranges_from_ortho,
+        axis_values_from_ortho,
         display,
     )
     from cellier.convenience.gui import build_ortho_grid_widget
@@ -55,7 +55,7 @@ def _():
         InMemoryImageAppearance,
         Layout,
         OrthoViewer,
-        axis_ranges_from_ortho,
+        axis_values_from_ortho,
         binary_blobs,
         build_ortho_grid_widget,
         display,
@@ -95,10 +95,10 @@ def _(ImageMemoryStore, InMemoryImageAppearance, OrthoViewer, blobs_3d):
 
 
 @app.cell
-def _(axis_ranges_from_ortho, build_ortho_grid_widget, viewer):
-    axis_ranges = axis_ranges_from_ortho(viewer)
+def _(axis_values_from_ortho, build_ortho_grid_widget, viewer):
+    axis_values = axis_values_from_ortho(viewer)
     canvas_widgets = build_ortho_grid_widget(
-        viewer, axis_ranges, canvas_size=(200, 200)
+        viewer, axis_values, canvas_size=(200, 200)
     )
     return (canvas_widgets,)
 

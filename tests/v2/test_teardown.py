@@ -17,6 +17,7 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.events._events import AppearanceChangedEvent
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 _POS = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
@@ -287,7 +288,7 @@ def _mesh_store():
     )
 
 
-_RANGES = {0: (0.0, 2.0), 1: (0.0, 2.0), 2: (0.0, 2.0)}
+_RANGES = dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=2.0))
 
 
 def test_closing_a_displayed_viewer_releases_every_widget():

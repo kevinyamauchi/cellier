@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from cellier.controller import CellierController
     from cellier.convenience._hosts import LayoutHost
     from cellier.convenience._viewer import Viewer
+    from cellier.gui._axis_values import AxisValues
     from cellier.gui._constants import GuiName
     from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
     from cellier.gui.qt import QtCanvasWidget
@@ -81,7 +84,7 @@ class AnywidgetCanvasView:
 def build_canvas_view(
     controller: CellierController,
     scene: Scene,
-    axis_ranges: dict[int, tuple[float, float]],
+    axis_values: Mapping[int, AxisValues],
     *,
     backend,
     render_modes: set[str] | None = None,
@@ -106,8 +109,8 @@ def build_canvas_view(
         The controller owning *scene*.
     scene : Scene
         The scene whose canvas this leaf controls.
-    axis_ranges : dict[int, tuple[float, float]]
-        Axis index to ``(world_min, world_max)``, for the slider ranges.
+    axis_values : Mapping[int, AxisValues]
+        Axis index to the values that axis's slider can take.
     backend : GuiBackend
         Supplies the toolkit's canvas widget.
     render_modes : set[str] or None
@@ -124,6 +127,11 @@ def build_canvas_view(
     non_displayed : tuple[int, ...]
         Axes to exclude from the sliders regardless of dims state.
     """
+    from cellier.gui._axis_values import coerce_axis_values
+
+    # Validated here, before a canvas is created, so a bad mapping fails
+    # without leaving a half-built canvas on the scene.
+    axis_values = coerce_axis_values(axis_values)
     canvas_ids = controller.get_canvas_ids(scene.id)
     if not canvas_ids:
         controller.add_canvas(
@@ -142,7 +150,7 @@ def build_canvas_view(
     view = backend.canvas_view(
         scene,
         controller.get_canvas_view(canvas_ids[-1]),
-        axis_ranges,
+        axis_values,
         canvas_size=canvas_size,
         non_displayed=non_displayed,
     )
@@ -155,7 +163,7 @@ def build_canvas_view(
 
 def build_canvas_widget(
     viewer: Viewer,
-    axis_ranges: dict[int, tuple[float, float]],
+    axis_values: Mapping[int, AxisValues],
     *,
     gui: GuiName | None = None,
     render_modes: set[str] | None = None,
@@ -177,10 +185,13 @@ def build_canvas_widget(
     ----------
     viewer : Viewer
         The viewer to attach the canvas to.
-    axis_ranges : dict[int, tuple[float, float]]
-        Mapping of axis index to ``(world_min, world_max)`` used to set the
-        slider ranges.  Typically obtained from
-        :func:`cellier.convenience.axis_ranges_from_viewer`.
+    axis_values : Mapping[int, AxisValues]
+        Axis index to the values that axis's slider can take: a
+        ``ContinuousAxisValues`` for a free slider or a
+        ``DiscreteAxisValues`` for one that steps through listed values.
+        Typically obtained from
+        :func:`cellier.convenience.axis_values_from_viewer`, with any
+        discrete axes replaced by the caller.
     gui : "qt", "anywidget", or None
         GUI toolkit.  Defaults to ``viewer.gui`` when ``None``; raises if it
         conflicts with ``viewer.gui``.
@@ -226,7 +237,7 @@ def build_canvas_widget(
     return build_canvas_view(
         viewer.controller,
         viewer.scene,
-        axis_ranges,
+        axis_values,
         backend=backend,
         render_modes=render_modes,
         initial_dim=initial_dim,

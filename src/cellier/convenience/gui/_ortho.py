@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from cellier.convenience._hosts import LayoutHost
     from cellier.convenience._ortho_viewer import OrthoViewer
+    from cellier.gui._axis_values import AxisValues
     from cellier.gui._constants import GuiName
 
 #: ``(row, column, panel key, header)`` for the 2x2 ortho layout.
@@ -76,7 +79,7 @@ OrthoAnywidgetCanvases = OrthoCanvasGrid
 
 def build_ortho_grid_widget(
     ortho: OrthoViewer,
-    axis_ranges: dict[int, tuple[float, float]],
+    axis_values: Mapping[int, AxisValues],
     *,
     gui: GuiName | None = None,
     fov: float = 70.0,
@@ -94,9 +97,9 @@ def build_ortho_grid_widget(
     ----------
     ortho : OrthoViewer
         The orthoviewer whose four scenes are attached.
-    axis_ranges : dict[int, tuple[float, float]]
-        Axis index to ``(world_min, world_max)`` for the slider ranges,
-        typically from :func:`cellier.convenience.axis_ranges_from_ortho`.
+    axis_values : Mapping[int, AxisValues]
+        Axis index to the values that axis's slider can take, typically
+        from :func:`cellier.convenience.axis_values_from_ortho`.
     gui : "qt", "anywidget", or None
         Defaults to ``ortho.gui``; raises if it conflicts with it.
     fov : float
@@ -134,7 +137,7 @@ def build_ortho_grid_widget(
             key: build_canvas_view(
                 ortho.controller,
                 scene,
-                axis_ranges,
+                axis_values,
                 backend=backend,
                 fov=fov,
                 depth_range_3d=depth_range_3d,

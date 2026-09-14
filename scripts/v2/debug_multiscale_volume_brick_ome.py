@@ -503,10 +503,15 @@ async def async_main(zarr_uri: str):
     # These use voxel indices (not world coords) because slice_indices in this
     # script are in voxel space.
     level0_shape = data_store.level_shapes[0]
-    axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
+    from cellier.gui._axis_values import ContinuousAxisValues
+
+    axis_values = {
+        i: ContinuousAxisValues(min=0, max=level0_shape[i] - 1)
+        for i in range(len(level0_shape))
+    }
 
     canvas_widget = QtCanvasWidget.from_scene_and_canvas(
-        scene, canvas_view, axis_ranges=axis_ranges
+        scene, canvas_view, axis_values=axis_values
     )
     controller.connect_widget(
         canvas_widget.dims_control,

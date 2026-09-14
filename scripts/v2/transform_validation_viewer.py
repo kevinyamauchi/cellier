@@ -30,6 +30,7 @@ from cellier.controller import CellierController
 from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
 from cellier.data._axes import scale_and_translation_transform
 from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.gui.qt import QtCanvasWidget, QtDimsControl
 from cellier.scene import Canvas, spatial_axes, world_coordinate_system
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
@@ -762,7 +763,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     )
 
     # ── Build canvas widgets ──────────────────────────────────────────────────
-    axis_ranges = {0: (0, 300), 1: (0, 300), 2: (0, 300)}
+    axis_values = dict.fromkeys(range(3), ContinuousAxisValues(min=0, max=300))
 
     def _get_canvas_view(scene_id):
         return controller.get_canvas_view(controller.get_canvas_ids(scene_id)[0])
@@ -772,7 +773,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         axis_labels = dict(enumerate(scene.dims.axis_labels))
         dims_control = QtDimsControl(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
             initial_slice_indices=dict(scene.dims.selection.slice_indices),
             initial_displayed_axes=scene.dims.selection.displayed_axes,
@@ -795,7 +796,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     _vol_cw = QtCanvasWidget.from_scene_and_canvas(
         vol_scene,
         _get_canvas_view(vol_scene.id),
-        axis_ranges=axis_ranges,
+        axis_values=axis_values,
     )
     controller.connect_widget(
         _vol_cw.dims_control,

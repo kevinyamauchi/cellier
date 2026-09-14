@@ -57,7 +57,7 @@ class GuiBackend(Protocol):
         """Build the panel for one render-config section."""
         ...
 
-    def canvas_view(self, scene, canvas_view, axis_ranges: dict, **kwargs) -> object:
+    def canvas_view(self, scene, canvas_view, axis_values: dict, **kwargs) -> object:
         """Wrap an **already-created** ``CanvasView`` in a toolkit widget.
 
         Takes a canvas rather than making one: creating the render surface is
@@ -112,7 +112,7 @@ class _QtBackend:
         }
         return panel_types[section](config, **kwargs)
 
-    def canvas_view(self, scene, canvas_view, axis_ranges: dict, **kwargs) -> object:
+    def canvas_view(self, scene, canvas_view, axis_values: dict, **kwargs) -> object:
         """Wrap the canvas in a ``QtCanvasWidget``.
 
         ``canvas_size`` and ``non_displayed`` are accepted and ignored: Qt
@@ -121,7 +121,7 @@ class _QtBackend:
         """
         from cellier.gui.qt import QtCanvasWidget
 
-        return QtCanvasWidget.from_scene_and_canvas(scene, canvas_view, axis_ranges)
+        return QtCanvasWidget.from_scene_and_canvas(scene, canvas_view, axis_values)
 
 
 class _AnywidgetBackend:
@@ -163,13 +163,13 @@ class _AnywidgetBackend:
         }
         return panel_types[section](config, **kwargs)
 
-    def canvas_view(self, scene, canvas_view, axis_ranges: dict, **kwargs) -> object:
+    def canvas_view(self, scene, canvas_view, axis_values: dict, **kwargs) -> object:
         """Build the canvas + dims leaf pair."""
         from cellier.convenience.gui._canvas import AnywidgetCanvasView
         from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
 
         dims = AnywidgetDimsPanel.from_scene(
-            scene, axis_ranges, non_displayed=kwargs.get("non_displayed", ())
+            scene, axis_values, non_displayed=kwargs.get("non_displayed", ())
         )
         return AnywidgetCanvasView(
             canvas=canvas_view.widget,

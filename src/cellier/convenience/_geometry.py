@@ -7,6 +7,8 @@ from uuid import UUID
 
 import numpy as np
 
+from cellier.gui._axis_values import ContinuousAxisValues
+
 if TYPE_CHECKING:
     from cellier.controller import CellierController
     from cellier.convenience._ortho_viewer import OrthoViewer
@@ -14,9 +16,9 @@ if TYPE_CHECKING:
     from cellier.scene.scene import Scene
 
 
-def _axis_ranges_from_scene(
+def _axis_values_from_scene(
     controller: CellierController, scene: Scene
-) -> dict[int, tuple[float, float]]:
+) -> dict[int, ContinuousAxisValues]:
     """Compute world-space axis ranges from the visuals in a single scene.
 
     Maps each visual's backing store's per-axis extents from data space to
@@ -49,8 +51,8 @@ def _axis_ranges_from_scene(
 
     Returns
     -------
-    dict[int, tuple[float, float]]
-        Mapping of axis index to ``(world_min, world_max)``.
+    dict[int, ContinuousAxisValues]
+        Mapping of axis index to that axis's world extent.
 
     Raises
     ------
@@ -91,10 +93,13 @@ def _axis_ranges_from_scene(
             "reported no data at all, or the scene has no visuals."
         )
 
-    return {i: (float(world_mins[i]), float(world_maxs[i])) for i in range(ndim)}
+    return {
+        i: ContinuousAxisValues(min=float(world_mins[i]), max=float(world_maxs[i]))
+        for i in range(ndim)
+    }
 
 
-def axis_ranges_from_viewer(viewer: Viewer) -> dict[int, tuple[float, float]]:
+def axis_values_from_viewer(viewer: Viewer) -> dict[int, ContinuousAxisValues]:
     """Compute world-space axis ranges by transforming each visual's bounding box.
 
     Walks every visual registered in the viewer's scene, transforms the
@@ -114,18 +119,18 @@ def axis_ranges_from_viewer(viewer: Viewer) -> dict[int, tuple[float, float]]:
 
     Returns
     -------
-    dict[int, tuple[float, float]]
-        Mapping of axis index to ``(world_min, world_max)``.
+    dict[int, ContinuousAxisValues]
+        Mapping of axis index to that axis's world extent.
 
     Raises
     ------
     ValueError
         If no qualifying visuals are found.
     """
-    return _axis_ranges_from_scene(viewer.controller, viewer.scene)
+    return _axis_values_from_scene(viewer.controller, viewer.scene)
 
 
-def axis_ranges_from_ortho(ortho: OrthoViewer) -> dict[int, tuple[float, float]]:
+def axis_values_from_ortho(ortho: OrthoViewer) -> dict[int, ContinuousAxisValues]:
     """Compute world-space axis ranges for an :class:`OrthoViewer`.
 
     The four panels share their data stores, so the ranges are identical across
@@ -139,8 +144,8 @@ def axis_ranges_from_ortho(ortho: OrthoViewer) -> dict[int, tuple[float, float]]
 
     Returns
     -------
-    dict[int, tuple[float, float]]
-        Mapping of axis index to ``(world_min, world_max)``.
+    dict[int, ContinuousAxisValues]
+        Mapping of axis index to that axis's world extent.
 
     Raises
     ------
@@ -149,7 +154,7 @@ def axis_ranges_from_ortho(ortho: OrthoViewer) -> dict[int, tuple[float, float]]
     """
     for scene in ortho.scenes.values():
         try:
-            return _axis_ranges_from_scene(ortho.controller, scene)
+            return _axis_values_from_scene(ortho.controller, scene)
         except ValueError:
             continue
     raise ValueError(

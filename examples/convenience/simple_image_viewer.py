@@ -30,7 +30,7 @@ from skimage.data import binary_blobs
 from cellier.convenience import (
     Layout,
     Viewer,
-    axis_ranges_from_viewer,
+    axis_values_from_viewer,
     run,
 )
 from cellier.convenience.gui import build_canvas_widget
@@ -68,8 +68,8 @@ viewer.add_image(
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_viewer(viewer)
-canvas_widget = build_canvas_widget(viewer, axis_ranges)
+axis_values = axis_values_from_viewer(viewer)
+canvas_widget = build_canvas_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Launch

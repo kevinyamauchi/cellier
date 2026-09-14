@@ -227,7 +227,7 @@ async def test_a_viewer_that_never_connects_reports_stalled(qtbot):
     pytest.importorskip("qtpy")
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.convenience._launch import _init_view
     from cellier.convenience.gui import build_canvas_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -238,7 +238,7 @@ async def test_a_viewer_that_never_connects_reports_stalled(qtbot):
         ImageMemoryStore(data=np.random.rand(4, 4, 4).astype(np.float32)),
         appearance=InMemoryImageAppearance(color_map="viridis"),
     )
-    build_canvas_widget(viewer, axis_ranges_from_viewer(viewer))
+    build_canvas_widget(viewer, axis_values_from_viewer(viewer))
 
     stalled: list[dict] = []
     _init_view(viewer, fit="none", stall_timeout=0.2)

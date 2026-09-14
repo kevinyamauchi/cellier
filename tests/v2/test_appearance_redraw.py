@@ -23,9 +23,10 @@ import pytest
 from cellier.convenience import Viewer
 from cellier.convenience.gui import build_canvas_widget
 from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.scene.dims import spatial_axes
 
-_RANGES = {0: (0.0, 4.0), 1: (0.0, 4.0), 2: (0.0, 4.0)}
+_RANGES = dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=4.0))
 
 
 @pytest.fixture

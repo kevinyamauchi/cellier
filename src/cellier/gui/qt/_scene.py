@@ -37,32 +37,50 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from psygnal import Signal
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 from superqt import QLabeledDoubleSlider
 
 from cellier.events import DimsChangedEvent, DimsUpdateEvent, SubscriptionSpec
+from cellier.gui._axis_values import (
+    DiscreteAxisValues,
+    coerce_axis_values,
+    nearest_value_index,
+)
 from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
 from cellier.gui._dims import initial_slice_indices as seed_slice_indices
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from cellier.gui._axis_values import AxisValues
+
+#: Styles the continuous sliders only.  A styled groove stops Qt drawing
+#: native tick marks, and a discrete axis's integer slider relies on those
+#: ticks to show where its values are, so the rules are scoped to the
+#: ``QLabeledDoubleSlider`` a continuous axis uses.
 SLIDER_STYLE = """
-QSlider::groove:horizontal {
+QLabeledDoubleSlider QSlider::groove:horizontal {
     border: 1px solid #bbb;
     background: white;
     height: 10px;
     border-radius: 4px;
 }
 
-QSlider::handle:horizontal {
+QLabeledDoubleSlider QSlider::handle:horizontal {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 #eee, stop:1 #ccc);
     border: 1px solid #777;
@@ -72,14 +90,14 @@ QSlider::handle:horizontal {
     border-radius: 4px;
 }
 
-QSlider::add-page:horizontal {
+QLabeledDoubleSlider QSlider::add-page:horizontal {
     background: #fff;
     border: 1px solid #777;
     height: 10px;
     border-radius: 4px;
 }
 
-QSlider::sub-page:horizontal {
+QLabeledDoubleSlider QSlider::sub-page:horizontal {
     background: qlineargradient(x1: 0, y1: 0,    x2: 0, y2: 1,
         stop: 0 #66e, stop: 1 #bbf);
     background: qlineargradient(x1: 0, y1: 0.2, x2: 1, y2: 1,
@@ -89,7 +107,7 @@ QSlider::sub-page:horizontal {
     border-radius: 4px;
 }
 
-QSlider::handle:horizontal:hover {
+QLabeledDoubleSlider QSlider::handle:horizontal:hover {
 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
     stop:0 #fff, stop:1 #ddd);
 border: 1px solid #444;
@@ -104,7 +122,7 @@ class QtDimsControl:
     """Bidirectional dims slider panel + 2D/3D toggle wired to the cellier v2 bus.
 
     Composes a ``QWidget`` container (with a ``QFormLayout``) holding one
-    ``QLabeledDoubleSlider`` per axis, plus (when *axes_2d*/*axes_3d* are given) a
+    slider per axis, plus (when *axes_2d*/*axes_3d* are given) a
     toggle button that switches the scene between its 2D and 3D axis sets.
     Sliders for displayed axes are hidden; only sliced (non-displayed) axes
     are shown.
@@ -122,7 +140,7 @@ class QtDimsControl:
 
     Wire to the controller after construction::
 
-        control = QtDimsControl(scene_id, axis_ranges=..., axis_labels=...)
+        control = QtDimsControl(scene_id, axis_values=..., axis_labels=...)
         controller.connect_widget(
             control, subscription_specs=control.subscription_specs()
         )
@@ -131,10 +149,13 @@ class QtDimsControl:
     ----------
     scene_id :
         UUID of the scene whose slice indices this widget controls.
-    axis_ranges :
-        Mapping of axis index to ``(min, max)`` for each slider, in world
-        units.  A slice position is a world position, not a voxel index, so
-        the sliders are double-valued (D3).
+    axis_values :
+        Mapping of axis index to that axis's slider values, in world units.
+        A ``ContinuousAxisValues`` axis gets a double-valued slider over
+        ``[min, max]`` -- a slice position is a world position, not a voxel
+        index (D3).  A ``DiscreteAxisValues`` axis gets an integer slider
+        over the positions of its values, with a readout showing the value
+        or its label; it emits the world value, never the position.
     axis_labels :
         Mapping of axis index to display label, e.g. ``{0: "z", 1: "y", 2: "x"}``.
     initial_slice_indices :
@@ -157,7 +178,7 @@ class QtDimsControl:
     def __init__(
         self,
         scene_id,
-        axis_ranges: dict[int, tuple[float, float]],
+        axis_values: Mapping[int, AxisValues],
         axis_labels: dict[int, str],
         *,
         initial_slice_indices: dict[int, float] | None = None,
@@ -197,20 +218,31 @@ class QtDimsControl:
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._sliders: dict[int, QLabeledDoubleSlider] = {}
+        self._axis_values = coerce_axis_values(axis_values)
+        # The slider itself, per axis.  A continuous axis's slider is also its
+        # form row; a discrete axis's sits in a row widget beside its readout.
+        self._sliders: dict[int, QLabeledDoubleSlider | QSlider] = {}
+        self._rows: dict[int, QWidget] = {}
+        self._readouts: dict[int, QLabel] = {}
         self._displayed_axes: tuple[int, ...] = initial_displayed_axes
         _initial = initial_slice_indices or {}
 
-        for axis, (min_val, max_val) in axis_ranges.items():
-            sld = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
-            sld.setRange(min_val, max_val)
-            sld.setValue(_initial.get(axis, min_val))
-            # Capture `axis` by value in the default-argument closure.
-            sld.valueChanged.connect(
-                lambda value, ax=axis: self._on_slider_changed(ax, value)
-            )
-            layout.addRow(axis_labels.get(axis, str(axis)), sld)
-            self._sliders[axis] = sld
+        for axis, spec in self._axis_values.items():
+            if isinstance(spec, DiscreteAxisValues):
+                row = self._build_discrete_row(axis, spec)
+                self._set_value(axis, _initial.get(axis, spec.values[0]))
+            else:
+                sld = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
+                sld.setRange(spec.min, spec.max)
+                sld.setValue(_initial.get(axis, spec.min))
+                # Capture `axis` by value in the default-argument closure.
+                sld.valueChanged.connect(
+                    lambda value, ax=axis: self._on_slider_changed(ax, value)
+                )
+                self._sliders[axis] = sld
+                row = sld
+            layout.addRow(axis_labels.get(axis, str(axis)), row)
+            self._rows[axis] = row
 
         self._toggle_button: QPushButton | None = None
         if axes_2d is not None and axes_3d is not None:
@@ -253,8 +285,12 @@ class QtDimsControl:
         self._update_visibility(self._displayed_axes)
 
     def current_index(self) -> dict[int, float]:
-        """Return the current value of every slider regardless of visibility."""
-        return {axis: sld.value() for axis, sld in self._sliders.items()}
+        """Return the current world value of every slider regardless of visibility.
+
+        A discrete axis reports the world value at its slider position, not
+        the position itself.
+        """
+        return {axis: self._world_value(axis) for axis in self._sliders}
 
     def close(self) -> None:
         """Emit ``closed`` to trigger bus unsubscription via the controller."""
@@ -318,8 +354,8 @@ class QtDimsControl:
         """Submit current slider values for all sliced (non-displayed) axes."""
         self._slider_dirty = False
         updates = {
-            axis: sld.value()
-            for axis, sld in self._sliders.items()
+            axis: self._world_value(axis)
+            for axis in self._sliders
             if axis not in self._displayed_axes
             and axis not in self._non_displayed_sliders
             and axis not in self._stacked_axes
@@ -366,13 +402,71 @@ class QtDimsControl:
             )
         )
 
+    # ── Discrete axes ────────────────────────────────────────────────────────
+
+    def _build_discrete_row(self, axis: int, spec: DiscreteAxisValues) -> QWidget:
+        """Build an integer slider over *spec*'s positions plus a readout."""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+
+        sld = QSlider(Qt.Orientation.Horizontal)
+        sld.setRange(0, len(spec.values) - 1)
+        sld.setSingleStep(1)
+        sld.setPageStep(1)
+        sld.setTickPosition(QSlider.TickPosition.TicksBelow)
+        sld.setTickInterval(1)
+        readout = QLabel()
+        readout.setMinimumWidth(40)
+
+        sld.valueChanged.connect(
+            lambda _position, ax=axis: self._on_discrete_slider_changed(ax)
+        )
+        row_layout.addWidget(sld, stretch=1)
+        row_layout.addWidget(readout)
+        self._sliders[axis] = sld
+        self._readouts[axis] = readout
+        return row
+
+    def _on_discrete_slider_changed(self, axis: int) -> None:
+        self._update_readout(axis)
+        self._on_slider_changed(axis, self._world_value(axis))
+
+    def _update_readout(self, axis: int) -> None:
+        spec = self._axis_values[axis]
+        position = self._sliders[axis].value()
+        if spec.labels is not None:
+            text = spec.labels[position]
+        else:
+            text = f"{spec.values[position]:g}"
+        self._readouts[axis].setText(text)
+
+    def _world_value(self, axis: int) -> float:
+        """The world position the slider for *axis* currently selects."""
+        spec = self._axis_values[axis]
+        if isinstance(spec, DiscreteAxisValues):
+            return spec.values[self._sliders[axis].value()]
+        return self._sliders[axis].value()
+
     # ── Qt seam 2: push value without re-firing valueChanged ─────────────────
 
     def _set_value(self, axis: int, value: float) -> None:
+        """Show world position *value* on *axis*'s slider.
+
+        A discrete axis shows the nearest listed value.  Nothing is written
+        back when *value* falls between two: the renderer resolves it with
+        the same rule, so the slider and the view already agree.
+        """
+        spec = self._axis_values[axis]
         sld = self._sliders[axis]
         sld.blockSignals(True)
-        sld.setValue(value)
+        if isinstance(spec, DiscreteAxisValues):
+            sld.setValue(nearest_value_index(spec.values, value))
+        else:
+            sld.setValue(value)
         sld.blockSignals(False)
+        if isinstance(spec, DiscreteAxisValues):
+            self._update_readout(axis)
 
     # ── Visibility helper ────────────────────────────────────────────────────
 
@@ -384,13 +478,13 @@ class QtDimsControl:
         self._displayed_axes = displayed_axes
         self._stacked_axes = stacked_axes
         layout: QFormLayout = self._container.layout()
-        for axis, sld in self._sliders.items():
+        for axis, row in self._rows.items():
             visible = (
                 axis not in displayed_axes
                 and axis not in self._non_displayed_sliders
                 and axis not in stacked_axes
             )
-            layout.setRowVisible(sld, visible)
+            layout.setRowVisible(row, visible)
 
 
 class QtCanvasWidget:
@@ -445,14 +539,14 @@ class QtCanvasWidget:
         cls,
         scene,
         canvas_view,
-        axis_ranges: dict[int, tuple[float, float]],
+        axis_values: Mapping[int, AxisValues],
         *,
         parent: QWidget | None = None,
     ) -> QtCanvasWidget:
         """Construct from live scene and canvas objects.
 
         Derives axis labels and the initial dims state from *scene* so that
-        callers only need to supply *axis_ranges* (which requires data-store
+        callers only need to supply *axis_values* (which requires data-store
         knowledge not available on the dims model itself).  The 2D/3D toggle
         is included automatically when the scene has 3 or more axes: 3D
         displays the last three axis labels, 2D the last two.
@@ -466,17 +560,18 @@ class QtCanvasWidget:
             The live ``Scene`` object whose dims this panel controls.
         canvas_view :
             The ``CanvasView`` whose ``.widget`` is the render surface.
-        axis_ranges :
-            Mapping of axis index to ``(min, max)``, e.g.
-            ``{0: (0, 99), 1: (0, 511), 2: (0, 511)}``.
+        axis_values :
+            Mapping of axis index to that axis's slider values, e.g.
+            ``{0: ContinuousAxisValues(min=0, max=99)}``.
         parent :
             Optional Qt parent widget.
         """
+        axis_values = coerce_axis_values(axis_values)
         axis_labels_list = scene.dims.axis_labels
         axis_labels = dict(enumerate(axis_labels_list))
 
         selection = scene.dims.selection
-        initial_slice_indices = seed_slice_indices(selection, axis_ranges)
+        initial_slice_indices = seed_slice_indices(selection, axis_values)
         initial_displayed_axes = getattr(selection, "displayed_axes", ())
         initial_stacked_axes = getattr(selection, "stacked_axes", ())
 
@@ -497,7 +592,7 @@ class QtCanvasWidget:
 
         dims_control = QtDimsControl(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
             initial_slice_indices=initial_slice_indices,
             initial_displayed_axes=initial_displayed_axes,

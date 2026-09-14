@@ -1,6 +1,6 @@
 """World-space axis ranges from store extents (implementation plan, Phase 1).
 
-``_axis_ranges_from_scene`` used to read ``level_shapes``, which only image
+``_axis_values_from_scene`` used to read ``level_shapes``, which only image
 and label stores have.  Now every store answers ``axis_extents``, so the
 geometry-only scene below -- which raised before this phase -- works.
 """
@@ -8,7 +8,7 @@ geometry-only scene below -- which raised before this phase -- works.
 import numpy as np
 import pytest
 
-from cellier.convenience import Viewer, axis_ranges_from_viewer
+from cellier.convenience import ContinuousAxisValues, Viewer, axis_values_from_viewer
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.scene.dims import spatial_axes
@@ -42,10 +42,10 @@ def test_points_only_scene_has_ranges():
     viewer = _viewer()
     _add_points(viewer, np.array([[0.0, 1.0, 2.0], [10.0, 5.0, 3.0]]))
 
-    assert axis_ranges_from_viewer(viewer) == {
-        0: (0.0, 10.0),
-        1: (1.0, 5.0),
-        2: (2.0, 3.0),
+    assert axis_values_from_viewer(viewer) == {
+        0: ContinuousAxisValues(min=0.0, max=10.0),
+        1: ContinuousAxisValues(min=1.0, max=5.0),
+        2: ContinuousAxisValues(min=2.0, max=3.0),
     }
 
 
@@ -54,10 +54,10 @@ def test_image_ranges_use_the_edge_convention():
     viewer = _viewer()
     _add_image(viewer, np.zeros((8, 16, 24), dtype=np.float32))
 
-    assert axis_ranges_from_viewer(viewer) == {
-        0: (-0.5, 7.5),
-        1: (-0.5, 15.5),
-        2: (-0.5, 23.5),
+    assert axis_values_from_viewer(viewer) == {
+        0: ContinuousAxisValues(min=-0.5, max=7.5),
+        1: ContinuousAxisValues(min=-0.5, max=15.5),
+        2: ContinuousAxisValues(min=-0.5, max=23.5),
     }
 
 
@@ -67,12 +67,12 @@ def test_mixed_scene_takes_the_union():
     _add_image(viewer, np.zeros((8, 16, 24), dtype=np.float32))
     _add_points(viewer, np.array([[-4.0, 1.0, 2.0], [20.0, 5.0, 3.0]]))
 
-    ranges = axis_ranges_from_viewer(viewer)
+    ranges = axis_values_from_viewer(viewer)
     # Axis 0: points reach further at both ends than the 8-voxel image.
-    assert ranges[0] == (-4.0, 20.0)
+    assert ranges[0] == ContinuousAxisValues(min=-4.0, max=20.0)
     # Axes 1 and 2: the image is wider, so its edges win.
-    assert ranges[1] == (-0.5, 15.5)
-    assert ranges[2] == (-0.5, 23.5)
+    assert ranges[1] == ContinuousAxisValues(min=-0.5, max=15.5)
+    assert ranges[2] == ContinuousAxisValues(min=-0.5, max=23.5)
 
 
 def test_an_empty_store_does_not_drag_the_union_to_zero():
@@ -81,10 +81,10 @@ def test_an_empty_store_does_not_drag_the_union_to_zero():
     _add_image(viewer, np.ones((8, 16, 24), dtype=np.float32))
     _add_points(viewer, np.zeros((0, 3), dtype=np.float32), name="empty")
 
-    assert axis_ranges_from_viewer(viewer) == {
-        0: (-0.5, 7.5),
-        1: (-0.5, 15.5),
-        2: (-0.5, 23.5),
+    assert axis_values_from_viewer(viewer) == {
+        0: ContinuousAxisValues(min=-0.5, max=7.5),
+        1: ContinuousAxisValues(min=-0.5, max=15.5),
+        2: ContinuousAxisValues(min=-0.5, max=23.5),
     }
 
 
@@ -93,4 +93,4 @@ def test_a_scene_with_nothing_to_measure_raises():
     _add_points(viewer, np.zeros((0, 3), dtype=np.float32), name="empty")
 
     with pytest.raises(ValueError, match="No visuals with extents"):
-        axis_ranges_from_viewer(viewer)
+        axis_values_from_viewer(viewer)

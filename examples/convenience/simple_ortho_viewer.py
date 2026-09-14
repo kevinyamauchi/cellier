@@ -23,7 +23,7 @@ from skimage.data import binary_blobs
 from cellier.convenience import (
     Layout,
     OrthoViewer,
-    axis_ranges_from_ortho,
+    axis_values_from_ortho,
     run,
 )
 from cellier.convenience.gui import build_ortho_grid_widget
@@ -64,8 +64,8 @@ viewer.center_slices()
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_ortho(viewer)
-canvas_widgets = build_ortho_grid_widget(viewer, axis_ranges)
+axis_values = axis_values_from_ortho(viewer)
+canvas_widgets = build_ortho_grid_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Launch

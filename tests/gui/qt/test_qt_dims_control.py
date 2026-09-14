@@ -10,6 +10,7 @@ pytest.importorskip("superqt")
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.controller import CellierController
 from cellier.events import DimsChangedEvent
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.gui.qt._scene import QtDimsControl
 from cellier.scene.dims import spatial_axes, world_coordinate_system
 
@@ -25,7 +26,11 @@ def _make_control(scene, qtbot, *, with_toggle=True) -> QtDimsControl:
     selection = scene.dims.selection
     control = QtDimsControl(
         scene_id=scene.id,
-        axis_ranges={0: (0, 9), 1: (0, 99), 2: (0, 99)},
+        axis_values={
+            0: ContinuousAxisValues(min=0, max=9),
+            1: ContinuousAxisValues(min=0, max=99),
+            2: ContinuousAxisValues(min=0, max=99),
+        },
         axis_labels={0: "z", 1: "y", 2: "x"},
         initial_slice_indices=dict(selection.slice_indices),
         initial_displayed_axes=selection.displayed_axes,

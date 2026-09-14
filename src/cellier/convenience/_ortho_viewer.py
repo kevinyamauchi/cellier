@@ -723,15 +723,15 @@ class OrthoViewer(RenderSettingsMixin):
         ValueError
             If no visuals with known shapes have been added yet.
         """
-        from cellier.convenience._geometry import axis_ranges_from_ortho
+        from cellier.convenience._geometry import axis_values_from_ortho
 
-        ranges = axis_ranges_from_ortho(self)
+        ranges = axis_values_from_ortho(self)
         for scene in self._scenes.values():
             new_slices = dict(scene.dims.selection.slice_indices)
             updated = False
             for axis in self._spatial_axes:
                 if axis in new_slices and axis in ranges:
-                    low, high = ranges[axis]
+                    low, high = ranges[axis].min, ranges[axis].max
                     # slice_indices are integer world coordinates.
                     new_slices[axis] = round((low + high) / 2.0)
                     updated = True

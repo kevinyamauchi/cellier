@@ -15,13 +15,20 @@ from cellier.events import (
     DimsUpdateEvent,
     SubscriptionSpec,
 )
+from cellier.gui._axis_values import (
+    DiscreteAxisValues,
+    coerce_axis_values,
+    nearest_value_index,
+)
 from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
 from cellier.gui._dims import initial_slice_indices
 from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
+    from cellier.gui._axis_values import AxisValues
     from cellier.scene.scene import Scene
 
 _STATIC = Path(__file__).parent / "static"
@@ -38,7 +45,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
     Construct via :meth:`from_scene`, then wire with::
 
-        dims = AnywidgetDimsPanel.from_scene(scene, axis_ranges)
+        dims = AnywidgetDimsPanel.from_scene(scene, axis_values)
         controller.connect_widget(dims, subscription_specs=dims.subscription_specs())
     """
 
@@ -50,7 +57,18 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
     slice_indices = traitlets.Dict().tag(sync=True)
     axis_labels = traitlets.Dict().tag(sync=True)
-    axis_ranges = traitlets.Dict().tag(sync=True)
+    axis_values = traitlets.Dict().tag(sync=True)
+    """Axis index (str) to that axis's serialised ``AxisValues``."""
+
+    discrete_index = traitlets.Dict().tag(sync=True)
+    """Axis index (str) to the slider position of each discrete axis.
+
+    Derived here from ``slice_indices`` whenever it changes, so the rule for
+    which listed value a between-values position shows lives in Python
+    (:func:`~cellier.gui._axis_values.nearest_value_index`) rather than being
+    copied into ``dims_panel.js``.
+    """
+
     displayed_axes = traitlets.List().tag(sync=True)
     stacked_axes = traitlets.List().tag(sync=True)
     non_displayed = traitlets.List().tag(sync=True)
@@ -72,7 +90,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         self,
         *,
         scene_id: UUID,
-        axis_ranges: dict,
+        axis_values: Mapping[int, AxisValues],
         axis_labels: dict,
         slice_indices: dict,
         displayed_axes: list | tuple = (),
@@ -84,12 +102,15 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     ) -> None:
         has_toggle = axes_2d is not None and axes_3d is not None
         is_3d = len(displayed_axes) == 3
+        coerced = coerce_axis_values(axis_values)
+        slices = {str(k): float(v) for k, v in slice_indices.items()}
         super().__init__(
-            slice_indices={str(k): float(v) for k, v in slice_indices.items()},
+            slice_indices=slices,
             axis_labels={str(k): str(v) for k, v in axis_labels.items()},
-            axis_ranges={
-                str(k): [float(lo), float(hi)] for k, (lo, hi) in axis_ranges.items()
+            axis_values={
+                str(k): spec.model_dump(mode="json") for k, spec in coerced.items()
             },
+            discrete_index=_discrete_positions(coerced, slices),
             displayed_axes=[int(a) for a in displayed_axes],
             stacked_axes=[int(a) for a in stacked_axes],
             non_displayed=[int(a) for a in non_displayed],
@@ -99,6 +120,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         )
         self._id = uuid4()
         self._scene_id = scene_id
+        self._axis_values = coerced
         self._applying = False
         self._axes_2d = axes_2d
         self._axes_3d = axes_3d
@@ -110,7 +132,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     def from_scene(
         cls,
         scene: Scene,
-        axis_ranges: dict[int, tuple[float, float]],
+        axis_values: Mapping[int, AxisValues],
         *,
         non_displayed: tuple[int, ...] = (),
     ) -> AnywidgetDimsPanel:
@@ -122,6 +144,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         an ``OrthoViewer`` -- gets no toggle, because there is nothing to
         switch to.
         """
+        axis_values = coerce_axis_values(axis_values)
         axis_labels_list = scene.dims.axis_labels
         axis_labels = dict(enumerate(axis_labels_list))
         selection = scene.dims.selection
@@ -143,9 +166,9 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
         return cls(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
-            slice_indices=initial_slice_indices(selection, axis_ranges),
+            slice_indices=initial_slice_indices(selection, axis_values),
             displayed_axes=getattr(selection, "displayed_axes", ()),
             stacked_axes=getattr(selection, "stacked_axes", ()),
             non_displayed=non_displayed,
@@ -218,6 +241,9 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     # ------------------------------------------------------------------
 
     def _on_slice_indices(self, change) -> None:
+        # Refreshed for every change, from JS or from the bus, so a discrete
+        # slider always shows the value nearest to the current position.
+        self.discrete_index = _discrete_positions(self._axis_values, self.slice_indices)
         if self._applying:
             return
         self._emit_dims()
@@ -248,8 +274,11 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         # self.slice_indices already holds a live, correct value for every
         # axis (including hidden ones) -- no separate "saved position"
         # bookkeeping needed.
+        # A discrete axis hands over the value its slider shows, not a
+        # between-values position something else set -- the same value the
+        # Qt control's current_index() reports.
         new_slices = {
-            int(axis): float(value)
+            int(axis): self._shown_value(int(axis), float(value))
             for axis, value in self.slice_indices.items()
             if int(axis) not in target_set and int(axis) not in set(self.stacked_axes)
         }
@@ -273,3 +302,21 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
                 displayed_axes=target_displayed,
             )
         )
+
+    def _shown_value(self, axis: int, value: float) -> float:
+        """The world value the slider for *axis* shows for position *value*."""
+        spec = self._axis_values.get(axis)
+        if isinstance(spec, DiscreteAxisValues):
+            return spec.values[nearest_value_index(spec.values, value)]
+        return value
+
+
+def _discrete_positions(
+    axis_values: Mapping[int, AxisValues], slice_indices: Mapping[str, float]
+) -> dict[str, int]:
+    """Slider position of every discrete axis that has a slice value."""
+    return {
+        str(axis): nearest_value_index(spec.values, float(slice_indices[str(axis)]))
+        for axis, spec in axis_values.items()
+        if isinstance(spec, DiscreteAxisValues) and str(axis) in slice_indices
+    }

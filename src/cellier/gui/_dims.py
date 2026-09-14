@@ -9,12 +9,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cellier.gui._axis_values import DiscreteAxisValues, nearest_value_index
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from cellier.gui._axis_values import AxisValues
+
 
 def initial_slice_indices(
-    selection: object, axis_ranges: Mapping[int, tuple[float, float]]
+    selection: object, axis_values: Mapping[int, AxisValues]
 ) -> dict[int, float]:
     """Return a slice index for **every** axis, not only the hidden ones.
 
@@ -33,19 +37,24 @@ def initial_slice_indices(
     blank, and never the slice anyone wanted (``plans/gui_backend_seam.md``
     D16).
 
+    A discrete axis is different: it has no meaningful middle, and a
+    channel axis's midpoint is a tie between two channels.  It starts on its
+    **first** value, and a value the scene already holds is moved to the
+    nearest listed value so the slider and the renderer agree.
+
     Parameters
     ----------
     selection :
         The scene's ``AxisAlignedSelection``; its ``slice_indices`` are used
         where present.
-    axis_ranges :
-        Axis index to ``(world_min, world_max)``.  Its keys define which axes
+    axis_values :
+        Axis index to that axis's slider values.  Its keys define which axes
         get an index.
 
     Returns
     -------
     dict[int, float]
-        One entry per axis in *axis_ranges*.  World positions, not voxel
+        One entry per axis in *axis_values*.  World positions, not voxel
         indices: since D3 a slice position is a float, so the midpoint is no
         longer rounded and a fine axis's odd-numbered planes are reachable.
     """
@@ -54,11 +63,18 @@ def initial_slice_indices(
         for axis, value in getattr(selection, "slice_indices", {}).items()
     }
     seeded: dict[int, float] = {}
-    for axis, bounds in axis_ranges.items():
+    for axis, spec in axis_values.items():
         axis = int(axis)
+        if isinstance(spec, DiscreteAxisValues):
+            if axis in known:
+                seeded[axis] = spec.values[
+                    nearest_value_index(spec.values, known[axis])
+                ]
+            else:
+                seeded[axis] = spec.values[0]
+            continue
         if axis in known:
             seeded[axis] = known[axis]
             continue
-        low, high = float(bounds[0]), float(bounds[1])
-        seeded[axis] = (low + high) / 2.0
+        seeded[axis] = (spec.min + spec.max) / 2.0
     return seeded

@@ -1601,15 +1601,18 @@ async def async_main(zarr_uri: str) -> None:
     clim_range = (0.0, initial_clim_max)
 
     level0_shape = data_store.level_shapes[0]
-    # axis_ranges must be in world coordinates because slice_indices are
+    # axis_values must be in world coordinates because slice_indices are
     # world coordinates (the rendering pipeline maps them through the
     # voxel-to-world inverse transform to get voxel indices).
     # World extent for axis i = (N_i - 1) * physical_scale_i.
     # QLabeledSlider is integer-only, so we round to the nearest integer.
     # Slider steps of 1 world unit → 1/scale_i voxels per step.
     world_max_zyx = (np.array(level0_shape, dtype=np.float64) - 1) * level_0_scale_zyx
-    axis_ranges = {
-        i: (0, round(float(world_max_zyx[i]))) for i in range(len(level0_shape))
+    from cellier.gui._axis_values import ContinuousAxisValues
+
+    axis_values = {
+        i: ContinuousAxisValues(min=0, max=round(float(world_max_zyx[i])))
+        for i in range(len(level0_shape))
     }
 
     # Initial slice positions at mid-volume, in world coordinates (rounded to int).
@@ -1700,7 +1703,7 @@ async def async_main(zarr_uri: str) -> None:
         selection = scene.dims.selection
         dims_control = QtDimsControl(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
             initial_slice_indices=dict(getattr(selection, "slice_indices", {})),
             initial_displayed_axes=getattr(selection, "displayed_axes", ()),
@@ -1712,7 +1715,7 @@ async def async_main(zarr_uri: str) -> None:
         return QtCanvasWidget(canvas_view=canvas_view, dims_control=dims_control)
 
     _vol_cw = QtCanvasWidget.from_scene_and_canvas(
-        vol_scene, _canvas_view(vol_scene.id), axis_ranges=axis_ranges
+        vol_scene, _canvas_view(vol_scene.id), axis_values=axis_values
     )
     controller.connect_widget(
         _vol_cw.dims_control,
