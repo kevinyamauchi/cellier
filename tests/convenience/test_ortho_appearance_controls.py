@@ -22,7 +22,7 @@ from cellier.convenience.gui._controls_config import (
     InMemoryImageControlsConfig,
     MultiscaleImageControlsConfig,
 )
-from cellier.convenience.layout._shared import select_appearance_target
+from cellier.convenience.layout._shared import appearance_targets
 from cellier.convenience.layout._walk import build_appearance_widgets, render_dock
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.scene.dims import spatial_axes
@@ -89,16 +89,15 @@ def test_controls_none_records_nothing():
 
 
 # ---------------------------------------------------------------------------
-# select_appearance_target: the ortho cases (pure, no toolkit fixtures)
+# appearance_targets: the ortho cases (pure, no toolkit fixtures)
 # ---------------------------------------------------------------------------
 
 
 def test_target_expands_to_all_four_panels():
     ortho, visuals = _ortho_with_controls()
 
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
-    assert target is not None
     # The representative is the first panel; the controls are seeded from it
     # and written to all four.
     assert target.visual is visuals["xy"]
@@ -113,17 +112,17 @@ def test_target_on_a_single_scene_viewer_is_one_id():
         controls=InMemoryImageControlsConfig(appearance=["clim"]),
     )
 
-    target = select_appearance_target(viewer)
+    (target,) = appearance_targets(viewer)
 
     assert target.visual is visual
     assert target.visual_ids == [visual.id]
 
 
-def test_target_is_none_on_an_unconfigured_ortho():
+def test_no_targets_on_an_unconfigured_ortho():
     ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     ortho.add_image(_store(), appearance=_appearance())
 
-    assert select_appearance_target(ortho) is None
+    assert appearance_targets(ortho) == []
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +140,7 @@ def test_qt_edit_reaches_all_four_panels(qtbot):
     from cellier.gui.qt.visuals import QtClimRangeSlider
 
     ortho, visuals = _ortho_with_controls()
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
     widget = QtClimRangeSlider(
         target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
@@ -161,7 +160,7 @@ def test_aabb_edit_reaches_all_four_panels(qtbot):
     from cellier.gui.qt.visuals import QtAABBWidget
 
     ortho, visuals = _ortho_with_controls()
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
     widget = QtAABBWidget(target.visual_ids)
     ortho.controller.connect_widget(
@@ -187,7 +186,7 @@ def test_a_foreign_write_to_one_panel_reaches_the_widget(qtbot):
     from cellier.gui.qt.visuals import QtClimRangeSlider
 
     ortho, visuals = _ortho_with_controls()
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
     widget = QtClimRangeSlider(
         target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
@@ -212,7 +211,7 @@ def test_the_widgets_own_echoes_are_all_dropped(qtbot):
     from cellier.gui.qt.visuals import QtClimRangeSlider
 
     ortho, _visuals = _ortho_with_controls()
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
     widget = QtClimRangeSlider(
         target.visual_ids, clim_range=(0.0, 1.0), initial_clim=(0.0, 1.0)
@@ -280,7 +279,7 @@ def test_appearance_dock_renders_on_an_ortho_viewer_anywidget():
         appearance=_appearance(),
         controls=InMemoryImageControlsConfig(appearance=["clim"]),
     )
-    target = select_appearance_target(ortho)
+    (target,) = appearance_targets(ortho)
 
     built = build_appearance_widgets(
         target.visual,

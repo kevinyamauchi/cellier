@@ -30,7 +30,7 @@ from cellier.convenience.gui._controls_config import (
 )
 from cellier.convenience.layout._shared import (
     appearance_specs,
-    select_appearance_target,
+    appearance_targets,
 )
 from cellier.convenience.layout._walk import build_appearance_widgets, render_dock
 from cellier.scene.dims import spatial_axes
@@ -207,7 +207,7 @@ def test_appearance_true_builds_the_same_anywidget_dock(kind, stores):
 
     viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=True))
-    target = select_appearance_target(viewer)
+    (target,) = appearance_targets(viewer)
 
     built = build_appearance_widgets(
         target.visual,
@@ -256,7 +256,7 @@ def test_dataset_info_reaches_both_docks(qtbot, multiscale_image_store):
             appearance=["color_map"], dataset_info=rows
         ),
     )
-    target = select_appearance_target(any_viewer)
+    (target,) = appearance_targets(any_viewer)
     built = build_appearance_widgets(
         target.visual,
         target.config,
@@ -291,11 +291,18 @@ def test_dataset_info_rows_reach_each_front_end_as_data(qtbot):
 
 @pytest.mark.parametrize("kind", list(CONFIGS))
 def test_appearance_false_still_hides_the_panel(qtbot, kind, stores):
+    """``appearance=False`` asks for no panel, so the visual is not offered."""
+    from qtpy.QtWidgets import QLabel
+
+    from cellier.convenience.layout._controls_dock import APPEARANCE_PLACEHOLDER
 
     viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     _add(viewer, kind, stores, controls=CONFIGS[kind](appearance=False))
 
-    assert render_dock(AppearanceControls(), viewer, QtLayoutHost(), []) is None
+    assert appearance_targets(viewer) == []
+    container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
+    labels = [label.text() for label in container.findChildren(QLabel)]
+    assert APPEARANCE_PLACEHOLDER in labels
 
 
 def test_a_phong_mesh_gets_its_own_fields_from_the_same_config(qtbot, mesh_store):

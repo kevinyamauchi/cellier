@@ -57,6 +57,17 @@ class GuiBackend(Protocol):
         """Build the panel for one render-config section."""
         ...
 
+    def target_selector(
+        self, labels: list[str], index: int = 0, *, title: str = "Visual"
+    ) -> object:
+        """Build the selector a controls dock shows over several visuals.
+
+        Not a ``WidgetView``: it is local UI state with nothing on the bus.  It
+        exposes ``widget``, a psygnal ``selected(int)``, ``set_choices(labels,
+        index)``, ``select(index)`` and ``close()``.
+        """
+        ...
+
     def canvas_view(self, scene, canvas_view, axis_values: dict, **kwargs) -> object:
         """Wrap an **already-created** ``CanvasView`` in a toolkit widget.
 
@@ -97,6 +108,13 @@ class _QtBackend:
         from cellier.gui.qt.visuals import QtChannelList
 
         return QtChannelList(visual_ids, channels, **kwargs)
+
+    def target_selector(
+        self, labels: list[str], index: int = 0, *, title: str = "Visual"
+    ) -> object:
+        from cellier.gui.qt._target_selector import QtTargetSelector
+
+        return QtTargetSelector(labels, index, title=title)
 
     def render_panel(self, section: str, config: Any, **kwargs) -> WidgetView:
         from cellier.gui.qt.render import (
@@ -148,6 +166,13 @@ class _AnywidgetBackend:
         from cellier.gui.anywidget.visuals import AnywidgetChannelList
 
         return AnywidgetChannelList(visual_ids, channels, **kwargs)
+
+    def target_selector(
+        self, labels: list[str], index: int = 0, *, title: str = "Visual"
+    ) -> object:
+        from cellier.gui.anywidget._target_selector import AnywidgetTargetSelector
+
+        return AnywidgetTargetSelector(labels, index, title=title)
 
     def render_panel(self, section: str, config: Any, **kwargs) -> WidgetView:
         from cellier.gui.anywidget.render import (

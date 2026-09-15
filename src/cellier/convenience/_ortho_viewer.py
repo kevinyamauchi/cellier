@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from cellier.controller import CellierController
+from cellier.convenience._controls_registry import (
+    ControlsRegistryMixin,
+    check_channel_cap,
+)
 from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
 from cellier.render._capture import write_png
@@ -186,7 +190,7 @@ def _resolve_spatial_axes(
     return (resolved[0], resolved[1], resolved[2])
 
 
-class OrthoViewer(RenderSettingsMixin):
+class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
     """Four-panel orthoviewer wrapping a single CellierController.
 
     Creates a controller and four pre-wired scenes that share one world
@@ -245,8 +249,7 @@ class OrthoViewer(RenderSettingsMixin):
         # visual id; _visual_groups maps that id to every panel's sibling
         # visual id so one widget can drive them all.  Not channel-specific:
         # any fanned-out add_* records its group here (design section 8.3).
-        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
-        self._visual_groups: dict[UUID, list[UUID]] = {}
+        self._init_controls_registry()
         # Callbacks fired once all panel scenes' startup data is on the GPU;
         # consumed by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
@@ -701,8 +704,7 @@ class OrthoViewer(RenderSettingsMixin):
         obj._ndim = ndim
         obj._extra_axes = {i for i in range(ndim) if i not in vol_displayed}
         obj._syncer = None
-        obj._controls_configs = {}
-        obj._visual_groups = {}
+        obj._init_controls_registry()
         if link_extra_axes and obj._extra_axes:
             obj._wire_extra_axis_sync()
         return obj
@@ -1269,6 +1271,8 @@ class OrthoViewer(RenderSettingsMixin):
         -------
         dict[str, MultichannelImageVisual]
         """
+        if controls is not None:
+            check_channel_cap(channels, max_channels_2d, max_channels_3d)
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image(
@@ -1337,6 +1341,8 @@ class OrthoViewer(RenderSettingsMixin):
         -------
         dict[str, MultichannelMultiscaleImageVisual]
         """
+        if controls is not None:
+            check_channel_cap(channels, max_channels_2d, max_channels_3d)
         store = self._resolve_data_store(data)
         visuals = self._fan_out(
             lambda key, scene: self._controller.add_multichannel_image_multiscale(
@@ -1367,15 +1373,9 @@ class OrthoViewer(RenderSettingsMixin):
         and maps that id to every panel's sibling visual id so one widget can
         drive all four panels (design section 7.4).
 
-        Channel-agnostic: the appearance path resolves the same record through
-        ``select_appearance_target`` that the channel path resolves through
-        ``_resolve_channel_visual_ids``, which is what makes
-        ``AppearanceControls()`` work on an ``OrthoViewer`` at all (section
-        4.1).
+        Channel-agnostic: the appearance docks resolve the same record through
+        ``appearance_targets`` that the channel docks resolve through
+        ``channel_targets``, which is what makes ``AppearanceControls()`` work
+        on an ``OrthoViewer`` at all (section 4.1).
         """
-        if controls is None or not visuals:
-            return
-        panel_ids = [v.id for v in visuals.values()]
-        rep_id = panel_ids[0]
-        self._controls_configs[rep_id] = controls
-        self._visual_groups[rep_id] = panel_ids
+        self._store_controls([v.id for v in visuals.values()], controls)

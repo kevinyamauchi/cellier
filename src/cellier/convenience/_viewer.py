@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
+from cellier.convenience._controls_registry import (
+    ControlsRegistryMixin,
+    check_channel_cap,
+)
 from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
 from cellier.render._capture import write_png
@@ -18,7 +22,6 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.convenience.gui._controls_config import (
-        BaseControlsConfig,
         ChannelControlsConfig,
         GraphControlsConfig,
         InMemoryImageControlsConfig,
@@ -68,7 +71,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T", bound="BaseDataStore")
 
 
-class Viewer(RenderSettingsMixin):
+class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
     """Single-scene viewer wrapping a CellierController.
 
     Creates a controller and a single scene pre-wired and ready to receive
@@ -130,8 +133,9 @@ class Viewer(RenderSettingsMixin):
         # Callbacks fired once the scene's startup data is on the GPU; consumed
         # by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
-        # Controls configs keyed by visual id; set by add_image / add_image_multiscale.
-        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
+        # Controls configs recorded by the add_* methods, read by the layout
+        # docks; kept current as visuals are removed.
+        self._init_controls_registry()
 
     # ------------------------------------------------------------------
     # Public properties
@@ -467,7 +471,7 @@ class Viewer(RenderSettingsMixin):
         obj._scene = scene
         obj._saved_slice_positions: dict[int, float] = {}
         obj._ready_callbacks: list[Callable[[], None]] = []
-        obj._controls_configs: dict[UUID, BaseControlsConfig] = {}
+        obj._init_controls_registry()
         return obj
 
     # ------------------------------------------------------------------
@@ -653,8 +657,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_labels(
@@ -712,8 +715,7 @@ class Viewer(RenderSettingsMixin):
             ambient_occlusion=ambient_occlusion,
             outline_selected_labels=outline_selected_labels,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_mesh(
@@ -764,8 +766,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_points(
@@ -817,8 +818,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_graph(
@@ -878,8 +878,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_lines(
@@ -931,8 +930,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_image_multiscale(
@@ -988,8 +986,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_labels_multiscale(
@@ -1051,8 +1048,7 @@ class Viewer(RenderSettingsMixin):
             ambient_occlusion=ambient_occlusion,
             outline_selected_labels=outline_selected_labels,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_multichannel_image(
@@ -1100,6 +1096,8 @@ class Viewer(RenderSettingsMixin):
         -------
         MultichannelImageVisual
         """
+        if controls is not None:
+            check_channel_cap(channels, max_channels_2d, max_channels_3d)
         visual = self._controller.add_multichannel_image(
             self._resolve_data_store(data),
             self._scene.id,
@@ -1111,8 +1109,7 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_multichannel_image_multiscale(
@@ -1167,6 +1164,8 @@ class Viewer(RenderSettingsMixin):
         -------
         MultichannelMultiscaleImageVisual
         """
+        if controls is not None:
+            check_channel_cap(channels, max_channels_2d, max_channels_3d)
         visual = self._controller.add_multichannel_image_multiscale(
             self._resolve_data_store(data),
             self._scene.id,
@@ -1180,6 +1179,5 @@ class Viewer(RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual

@@ -87,6 +87,11 @@ def render_dock(
 ) -> object | None:
     """Render one dock spec, or ``None`` when it builds nothing.
 
+    ``AppearanceControls`` and ``ChannelControls`` always build something:
+    they follow the viewer, so they render a placeholder until a configured
+    visual exists.  Only a ``RenderControls`` with no sections, or a stack of
+    nothing but those, builds nothing.
+
     Which controls a dock contains is decided in ``_shared.py`` and is the same
     on every toolkit; *which widget class* serves each one comes from
     ``host.backend``; how the column is shaped comes from ``host.dock_panel``.
@@ -176,53 +181,78 @@ def build_appearance_widgets(
 
 def _render_appearance_dock(
     viewer: object, host: LayoutHost, closeables: list
-) -> object | None:
-    """The appearance controls for the first configured visual."""
-    from cellier.convenience.layout._shared import select_appearance_target
+) -> object:
+    """Appearance controls for one configured visual at a time.
 
-    target = select_appearance_target(viewer)
-    if target is None:
-        return None
-
-    widgets = build_appearance_widgets(
-        target.visual,
-        target.config,
-        viewer.controller,
-        target.visual_ids,
-        backend=host.backend,
+    A selector chooses among the configured visuals, and the dock follows the
+    viewer as visuals are added and removed (see ``_controls_dock.py``).
+    """
+    from cellier.convenience.layout._controls_dock import (
+        APPEARANCE_PLACEHOLDER,
+        ControlsDock,
     )
-    if not widgets:
-        return None
-    closeables.extend(widget for widget in widgets if hasattr(widget, "close"))
-    return host.dock_panel([host.leaf(widget) for widget in widgets])
+    from cellier.convenience.layout._shared import appearance_targets
+
+    controller = viewer.controller
+
+    def build(target) -> list:
+        return build_appearance_widgets(
+            target.visual,
+            target.config,
+            controller,
+            target.visual_ids,
+            backend=host.backend,
+        )
+
+    dock = ControlsDock(
+        viewer,
+        host,
+        resolve=appearance_targets,
+        build=build,
+        placeholder=APPEARANCE_PLACEHOLDER,
+    )
+    closeables.append(dock)
+    return dock.root
 
 
-def _render_channel_dock(
-    viewer: object, host: LayoutHost, closeables: list
-) -> object | None:
-    """Per-channel controls for the configured multichannel visual(s).
+def _render_channel_dock(viewer: object, host: LayoutHost, closeables: list) -> object:
+    """Per-channel controls for one configured multichannel visual at a time.
 
     Multi-scene aware: on an ``OrthoViewer`` the one widget drives every
     panel's sibling visual through the fan-out ``visual_ids``.
     """
+    from cellier.convenience.layout._controls_dock import (
+        CHANNEL_PLACEHOLDER,
+        ControlsDock,
+    )
     from cellier.convenience.layout._shared import (
-        _resolve_channel_visual_ids,
+        channel_targets,
         channel_widget_kwargs,
     )
 
-    resolved = _resolve_channel_visual_ids(viewer)
-    if resolved is None:
-        return None
-    config, visual_ids, channels = resolved
+    controller = viewer.controller
 
-    widget = host.backend.channel_list(
-        visual_ids, channels, **channel_widget_kwargs(config, channels)
+    def build(target) -> list:
+        channels = target.visual.channels
+        widget = host.backend.channel_list(
+            target.visual_ids,
+            channels,
+            **channel_widget_kwargs(target.config, channels),
+        )
+        controller.connect_widget(
+            widget, subscription_specs=widget.subscription_specs()
+        )
+        return [widget]
+
+    dock = ControlsDock(
+        viewer,
+        host,
+        resolve=channel_targets,
+        build=build,
+        placeholder=CHANNEL_PLACEHOLDER,
     )
-    viewer.controller.connect_widget(
-        widget, subscription_specs=widget.subscription_specs()
-    )
-    closeables.append(widget)
-    return host.leaf(widget)
+    closeables.append(dock)
+    return dock.root
 
 
 def _render_render_dock(

@@ -26,7 +26,10 @@ from cellier.convenience.gui._controls_config import (
 )
 from cellier.convenience.layout._shared import (
     appearance_specs,
-    select_appearance_target,
+    appearance_targets,
+    channel_targets,
+    next_selection,
+    unique_labels,
 )
 from cellier.visuals._base_visual import AABBParams
 from cellier.visuals._image import MultiscaleImageAppearance
@@ -36,10 +39,11 @@ from cellier.visuals._image_memory import InMemoryImageAppearance
 class _FakeVisual:
     """The two attributes ``appearance_specs`` reads, and an id."""
 
-    def __init__(self, appearance, aabb=None, visual_id="v0"):
+    def __init__(self, appearance, aabb=None, visual_id="v0", name="image"):
         self.appearance = appearance
         self.aabb = AABBParams() if aabb is None else aabb
         self.id = visual_id
+        self.name = name
 
 
 def _in_memory(**kwargs) -> _FakeVisual:
@@ -324,60 +328,173 @@ def test_the_same_field_name_can_mean_different_controls_per_config():
     }
 
 
-# ── select_appearance_target ─────────────────────────────────────────────────
+# ── appearance_targets / channel_targets ─────────────────────────────────────
 
 
-class _FakeScene:
+class _FakeController:
     def __init__(self, visuals):
-        self.visuals = visuals
+        self._visuals = {visual.id: visual for visual in visuals}
+
+    def get_visual_model(self, visual_id):
+        return self._visuals[visual_id]
 
 
 class _FakeViewer:
-    def __init__(self, scene, configs):
-        self.scene = scene
+    def __init__(self, visuals, configs, groups=None):
+        self.controller = _FakeController(visuals)
         self._controls_configs = configs
+        self._visual_groups = groups or {}
 
 
-def test_select_returns_the_first_configured_visual():
-    first, second = _FakeVisual(None, visual_id="a"), _FakeVisual(None, visual_id="b")
+def test_targets_are_every_configured_visual_in_registration_order():
+    first = _FakeVisual(None, visual_id="a", name="first")
+    second = _FakeVisual(None, visual_id="b", name="second")
     config_a = InMemoryImageControlsConfig(appearance=["clim"])
     config_b = InMemoryImageControlsConfig(appearance=["color_map"])
-    viewer = _FakeViewer(_FakeScene([first, second]), {"a": config_a, "b": config_b})
+    # Registered b before a: the order the user added them, not id or scene order.
+    viewer = _FakeViewer([first, second], {"b": config_b, "a": config_a})
 
-    target = select_appearance_target(viewer)
+    targets = appearance_targets(viewer)
 
-    # First-match-wins in scene.visuals order, preserved exactly from before
-    # the refactor; supporting two configured visuals is section 4.4.
-    assert target.visual is first
-    assert target.config is config_a
-
-
-def test_select_skips_visuals_with_no_config():
-    unconfigured, configured = (
-        _FakeVisual(None, visual_id="a"),
-        _FakeVisual(None, visual_id="b"),
-    )
-    config = InMemoryImageControlsConfig(appearance=["clim"])
-    viewer = _FakeViewer(_FakeScene([unconfigured, configured]), {"b": config})
-
-    assert select_appearance_target(viewer).visual is configured
+    assert [t.key for t in targets] == ["b", "a"]
+    assert [t.visual for t in targets] == [second, first]
+    assert [t.config for t in targets] == [config_b, config_a]
+    assert [t.label for t in targets] == ["second", "first"]
+    assert [t.visual_ids for t in targets] == [["b"], ["a"]]
 
 
-def test_select_skips_channel_configs():
-    """Channel controls are resolved by ``_resolve_channel_visual_ids``."""
-    visual = _FakeVisual(None, visual_id="a")
+def test_appearance_and_channel_targets_partition_the_configs():
+    image = _FakeVisual(None, visual_id="a", name="image")
+    channel = _FakeVisual(None, visual_id="b", name="cells")
     viewer = _FakeViewer(
-        _FakeScene([visual]), {"a": ChannelControlsConfig(fields=["visible"])}
+        [image, channel],
+        {
+            "a": InMemoryImageControlsConfig(appearance=["clim"]),
+            "b": ChannelControlsConfig(fields=["visible"]),
+        },
     )
 
-    assert select_appearance_target(viewer) is None
+    assert [t.key for t in appearance_targets(viewer)] == ["a"]
+    assert [t.key for t in channel_targets(viewer)] == ["b"]
 
 
-def test_select_returns_none_without_a_scene_or_a_config():
+def test_a_config_asking_for_no_panel_is_not_a_target():
+    visuals = [_FakeVisual(None, visual_id=key) for key in ("a", "b", "c")]
+    viewer = _FakeViewer(
+        visuals,
+        {
+            "a": InMemoryImageControlsConfig(appearance=False),
+            "b": InMemoryImageControlsConfig(appearance=["clim"]),
+            "c": InMemoryImageControlsConfig(appearance=True),
+        },
+    )
+
+    assert [t.key for t in appearance_targets(viewer)] == ["b", "c"]
+
+
+def test_targets_expand_a_group_and_name_it_by_the_add():
+    panels = [
+        _FakeVisual(None, visual_id=key, name=f"cells_{key}")
+        for key in ("xy", "xz", "yz", "vol")
+    ]
+    config = InMemoryImageControlsConfig(appearance=["clim"])
+    viewer = _FakeViewer(
+        panels, {"xy": config}, groups={"xy": ["xy", "xz", "yz", "vol"]}
+    )
+
+    (target,) = appearance_targets(viewer)
+
+    assert target.visual is panels[0]
+    assert target.visual_ids == ["xy", "xz", "yz", "vol"]
+    assert target.label == "cells"
+
+
+def test_targets_skip_ids_the_controller_does_not_know():
+    known = _FakeVisual(None, visual_id="a")
+    config = InMemoryImageControlsConfig(appearance=["clim"])
+    viewer = _FakeViewer([known], {"gone": config, "a": config})
+
+    assert [t.key for t in appearance_targets(viewer)] == ["a"]
+
+
+def test_targets_are_empty_without_a_controller_or_a_config():
     visual = _FakeVisual(None, visual_id="a")
-    assert select_appearance_target(_FakeViewer(_FakeScene([visual]), {})) is None
-    assert select_appearance_target(_FakeViewer(None, {"a": object()})) is None
-    assert select_appearance_target(object()) is None
+    assert appearance_targets(_FakeViewer([visual], {})) == []
+    assert appearance_targets(object()) == []
+    assert channel_targets(object()) == []
+
+
+def test_duplicate_names_are_numbered_in_order():
+    assert unique_labels(["image", "image", "mesh", "image"]) == [
+        "image",
+        "image (2)",
+        "mesh",
+        "image (3)",
+    ]
+
+
+def test_a_numbered_label_does_not_collide_with_a_real_name():
+    assert unique_labels(["image (2)", "image", "image"]) == [
+        "image (2)",
+        "image",
+        "image (3)",
+    ]
+
+
+def test_an_empty_name_is_called_visual():
+    assert unique_labels(["", ""]) == ["visual", "visual (2)"]
+
+
+# ── next_selection ───────────────────────────────────────────────────────────
+
+
+def _targets(*keys, configs=None):
+    visuals = [_FakeVisual(None, visual_id=key, name=key) for key in keys]
+    configs = configs or {
+        key: InMemoryImageControlsConfig(appearance=["clim"]) for key in keys
+    }
+    return appearance_targets(_FakeViewer(visuals, configs))
+
+
+def test_selection_starts_on_the_first_target():
+    targets = _targets("a", "b")
+    assert next_selection(None, targets).key == "a"
+
+
+def test_selection_is_kept_while_its_visual_exists():
+    before = _targets("a", "b")
+    selected = before[1]
+    after = _targets("a", "b", "c", configs=None)
+    # A fresh resolve: new tuples, but the same key.
+    assert next_selection(selected, after).key == "b"
+
+
+def test_a_new_visual_does_not_take_the_selection():
+    configs = {key: InMemoryImageControlsConfig(appearance=["clim"]) for key in "ab"}
+    selected = _targets("a", "b", configs=configs)[0]
+    configs["c"] = InMemoryImageControlsConfig(appearance=["clim"])
+    assert next_selection(selected, _targets("a", "b", "c", configs=configs)).key == "a"
+
+
+def test_selection_falls_back_to_the_first_when_its_visual_goes():
+    selected = _targets("a", "b")[1]
+    assert next_selection(selected, _targets("a")).key == "a"
+
+
+def test_selection_follows_a_rekeyed_group_by_config():
+    """An ortho group whose representative was removed is re-keyed, not gone."""
+    config = InMemoryImageControlsConfig(appearance=["clim"])
+    other = InMemoryImageControlsConfig(appearance=["clim"])
+    selected = _targets("a", "xy", configs={"a": other, "xy": config})[1]
+
+    after = _targets("a", "xz", configs={"a": other, "xz": config})
+
+    assert next_selection(selected, after).key == "xz"
+
+
+def test_no_targets_selects_nothing():
+    assert next_selection(None, []) is None
+    assert next_selection(_targets("a")[0], []) is None
 
 
 # ── dataset_info: the three forms of the setting ─────────────────────────────

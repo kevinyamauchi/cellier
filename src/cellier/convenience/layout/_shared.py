@@ -14,70 +14,6 @@ if TYPE_CHECKING:
     from cellier.visuals._channel_appearance import ChannelAppearance
 
 
-class ResolvedChannelControls(NamedTuple):
-    """The data needed to build a channel-controls widget for one viewer."""
-
-    config: ChannelControlsConfig
-    visual_ids: list[UUID]
-    channels: dict[int, ChannelAppearance]
-
-
-def _resolve_channel_visual_ids(viewer: object) -> ResolvedChannelControls | None:
-    """Resolve the configured channel visual(s) for *viewer*.
-
-    Finds the first ``ChannelControlsConfig`` recorded on
-    ``viewer._controls_configs`` and returns its config, the visual ids the
-    channel widget should drive, and the channel appearances to seed it.
-
-    For a single-panel ``Viewer`` the entry maps directly to one visual id.
-    For an ``OrthoViewer`` the entry's key is a representative (first-panel)
-    visual id and ``viewer._visual_groups`` maps it to the sibling
-    visual ids across the four panels (design section 7.3).
-
-    Returns ``None`` when no channel controls are configured.
-
-    Raises
-    ------
-    ValueError
-        When ``len(channels) > min(max_channels_2d, max_channels_3d)`` on the
-        resolved visual -- over-cap channels would become silent render no-ops,
-        so this fails loudly at widget-build time (design section 7.3 / 11.4).
-    """
-    controller = getattr(viewer, "controller", None)
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    if controller is None or not controls_configs:
-        return None
-
-    rep_id = None
-    config = None
-    for visual_id, cfg in controls_configs.items():
-        if isinstance(cfg, ChannelControlsConfig):
-            rep_id = visual_id
-            config = cfg
-            break
-    if config is None:
-        return None
-
-    groups: dict | None = getattr(viewer, "_visual_groups", None)
-    if groups is not None and rep_id in groups:
-        visual_ids = list(groups[rep_id])
-    else:
-        visual_ids = [rep_id]
-
-    visual = controller.get_visual_model(rep_id)
-    channels = visual.channels
-
-    cap = min(int(visual.max_channels_2d), int(visual.max_channels_3d))
-    if len(channels) > cap:
-        raise ValueError(
-            f"Channel controls require len(channels) <= min(max_channels_2d, "
-            f"max_channels_3d) = {cap}; got {len(channels)}. Raise the caps on "
-            f"add_multichannel_image* if you need more simultaneous channels."
-        )
-
-    return ResolvedChannelControls(config, visual_ids, channels)
-
-
 def channel_widget_kwargs(
     config: ChannelControlsConfig,
     channels: dict[int, ChannelAppearance],
@@ -541,11 +477,18 @@ def warn_skipped_appearance_fields(
     )
 
 
-class AppearanceTarget(NamedTuple):
-    """What an appearance dock drives.
+class ControlTarget(NamedTuple):
+    """One configured visual a controls dock can drive.
 
     Parameters
     ----------
+    key : UUID
+        The representative visual id the config is recorded under.  Stable
+        for as long as the visual exists, so it is what a dock's selection
+        is kept by.
+    label : str
+        What the dock's visual selector calls this target.  Unique among the
+        targets of one dock.
     visual : BaseVisual
         The representative visual.  Its appearance model is what the controls
         are seeded from; on an ``OrthoViewer`` it is the first panel's visual
@@ -559,50 +502,142 @@ class AppearanceTarget(NamedTuple):
         the spec walk is identical either way and only the id list differs.
     """
 
+    key: UUID
+    label: str
     visual: object
     config: object
     visual_ids: list
 
 
-def select_appearance_target(viewer: object) -> AppearanceTarget | None:
-    """Find the visual(s) whose appearance controls a dock should render.
+def appearance_targets(viewer: object) -> list[ControlTarget]:
+    """Every visual an ``AppearanceControls()`` dock can drive, in add order.
 
-    First-match-wins in visual order, matching the pre-stage-1 behaviour
-    exactly -- supporting two independently configured visuals is design
-    section 4.4 and is deferred.  Channel configs are skipped: they are
-    resolved by :func:`_resolve_channel_visual_ids` instead.
-
-    **Multi-scene aware.**  A ``Viewer`` exposes ``scene``; an ``OrthoViewer``
-    exposes ``scenes`` and nothing else, which is why ``AppearanceControls()``
-    used to be a silent no-op on it -- both renderers read ``viewer.scene``,
-    got ``None``, and produced no dock and no error (section 4.1).  Walking
-    ``scenes`` and expanding the group through ``_visual_groups`` is the whole
-    fix; the renderers are unchanged.
-
-    Returns ``None`` when the viewer has no scenes or nothing is configured.
+    Channel configs are left to :func:`channel_targets`, and a config whose
+    ``appearance`` is falsy (``False``, ``None``, ``[]``) is skipped: it asks
+    for no panel, and :func:`appearance_specs` would build none, so offering it
+    in the selector would only lead to an empty dock.  Multi-scene aware:
+    an ``OrthoViewer`` records one config per fanned-out add, keyed by the
+    first panel's visual, and ``_visual_groups`` expands it to all four.
     """
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    if not controls_configs:
-        return None
+    return _control_targets(viewer, channels=False)
 
-    scene = getattr(viewer, "scene", None)
-    if scene is not None:
-        scenes = [scene]
-    else:
-        scenes_map = getattr(viewer, "scenes", None)
-        if not scenes_map:
-            return None
-        scenes = list(scenes_map.values())
 
+def channel_targets(viewer: object) -> list[ControlTarget]:
+    """Every visual a ``ChannelControls()`` dock can drive, in add order."""
+    return _control_targets(viewer, channels=True)
+
+
+def _control_targets(viewer: object, *, channels: bool) -> list[ControlTarget]:
+    """Resolve the recorded configs of one kind into labelled targets.
+
+    Registration order, not scene order: it is the order the user added
+    things in, and it is the same on a ``Viewer`` and an ``OrthoViewer``.  An
+    id the controller no longer knows is skipped rather than raised on; the
+    viewer prunes removed visuals, so reaching one means a stale read, and a
+    dock should show what exists.
+    """
+    controller = getattr(viewer, "controller", None)
+    controls_configs: dict = getattr(viewer, "_controls_configs", {}) or {}
+    if controller is None or not controls_configs:
+        return []
     groups: dict = getattr(viewer, "_visual_groups", {}) or {}
-    for candidate_scene in scenes:
-        for visual in candidate_scene.visuals:
-            config = controls_configs.get(visual.id)
-            if config is None or isinstance(config, ChannelControlsConfig):
-                continue
-            visual_ids = list(groups.get(visual.id, [visual.id]))
-            return AppearanceTarget(visual, config, visual_ids)
-    return None
+
+    resolved = []
+    for rep_id, config in controls_configs.items():
+        if isinstance(config, ChannelControlsConfig) is not channels:
+            continue
+        if not channels and not getattr(config, "appearance", False):
+            continue
+        try:
+            visual = controller.get_visual_model(rep_id)
+        except KeyError:
+            continue
+        visual_ids = list(groups.get(rep_id, [rep_id]))
+        resolved.append(
+            (
+                rep_id,
+                _group_name(controller, visual, visual_ids),
+                visual,
+                config,
+                visual_ids,
+            )
+        )
+
+    labels = unique_labels([name for _, name, _, _, _ in resolved])
+    return [
+        ControlTarget(rep_id, label, visual, config, visual_ids)
+        for (rep_id, _, visual, config, visual_ids), label in zip(resolved, labels)
+    ]
+
+
+def _group_name(controller: object, visual: object, visual_ids: list) -> str:
+    """The name a visual group goes by.
+
+    An ``OrthoViewer`` names each panel's visual ``f"{name}_{panel}"``, so a
+    group whose members all share the part before the last underscore is
+    called by that part.  Anything else is called by its representative.
+    """
+    name = str(getattr(visual, "name", "") or "")
+    if len(visual_ids) < 2:
+        return name
+    names = []
+    for visual_id in visual_ids:
+        try:
+            names.append(str(controller.get_visual_model(visual_id).name))
+        except KeyError:
+            continue
+    bases = {sibling.rsplit("_", 1)[0] for sibling in names if "_" in sibling}
+    if len(bases) == 1 and len(names) == sum("_" in n for n in names):
+        return bases.pop()
+    return name
+
+
+def unique_labels(names: list[str]) -> list[str]:
+    """Make *names* unique, keeping the first of each as it is.
+
+    ``["image", "image", "mesh"]`` becomes ``["image", "image (2)", "mesh"]``.
+    Visual names are not unique -- every ``add_image`` defaults to
+    ``"image"`` -- and a selector offering two identical entries cannot be
+    used.  An empty name is called ``"visual"``.
+    """
+    taken: set[str] = set()
+    seen: dict[str, int] = {}
+    labels = []
+    for raw in names:
+        base = raw or "visual"
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        label = base if count == 1 else f"{base} ({count})"
+        while label in taken:
+            count += 1
+            seen[base] = count
+            label = f"{base} ({count})"
+        taken.add(label)
+        labels.append(label)
+    return labels
+
+
+def next_selection(
+    previous: ControlTarget | None, targets: list[ControlTarget]
+) -> ControlTarget | None:
+    """Which target a dock shows after its targets change.
+
+    The previous selection is kept while it exists -- matched by key, or by
+    config when an ``OrthoViewer`` re-keyed its group after the
+    representative panel's visual was removed.  A newly added visual does not
+    take the selection.  When the selection is gone, or there was none, the
+    first target is shown; with no targets, nothing is.
+    """
+    if not targets:
+        return None
+    if previous is not None:
+        for target in targets:
+            if target.key == previous.key:
+                return target
+        for target in targets:
+            if target.config is previous.config:
+                return target
+    return targets[0]
 
 
 def render_panel_kwargs(section: str, controller: object) -> dict:

@@ -618,25 +618,20 @@ def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
     assert direction == "h"
     assert len(leaves) == 2
     panel_node, center_node = leaves
-    # Two appearance fields (color_map, clim) plus the always-on AABB widget
-    # -> three sub-widgets composed into a v-stack, mirroring how the Qt
-    # renderer groups multiple per-field widgets in one QVBoxLayout.
-    assert panel_node.kind == "stack"
-    (
-        panel_direction,
-        panel_leaves,
-        _panel_align,
-        _panel_min_width,
-        panel_gap,
-    ) = panel_node.payload
-    assert panel_direction == "v"
-    assert len(panel_leaves) == 3
-    assert all(leaf.kind == "leaf" for leaf in panel_leaves)
+    # The dock is a live slot, leafed once, so it can follow the viewer; the
+    # controls are the slot's children rather than a host stack.  Two
+    # appearance fields (color_map, clim) plus the always-on AABB widget.
+    from cellier.gui.anywidget import AnywidgetSlot
+
+    assert panel_node.kind == "leaf"
+    slot = panel_node.payload
+    assert isinstance(slot, AnywidgetSlot)
+    assert len(slot.children) == 3
     # An explicit gap groups the split sub-widgets, distinct from the host's
-    # default macro-layout spacing (see compose_appearance_leaf).  Read from
-    # the shared constant rather than restated: it is the same number the Qt
-    # dock column spaces by, which is the point of it living there.
-    assert panel_gap == APPEARANCE_DOCK_GAP_PX
+    # default macro-layout spacing.  Read from the shared constant rather than
+    # restated: it is the same number the Qt dock column spaces by, which is
+    # the point of it living there.
+    assert slot.gap == APPEARANCE_DOCK_GAP_PX
     assert center_node.kind == "stack"  # canvas+dims v-stack
 
 
@@ -1075,16 +1070,10 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     presented = fake.presented
     _direction, leaves, _align, _min_width, _gap = presented.payload
     panel_node = leaves[0]
-    assert panel_node.kind == "stack"
-    (
-        _panel_direction,
-        panel_leaves,
-        _panel_align,
-        _panel_min_width,
-        panel_gap,
-    ) = panel_node.payload
-    assert panel_gap == APPEARANCE_DOCK_GAP_PX  # shared with the Qt dock column
-    widgets = [leaf.payload for leaf in panel_leaves]
+    assert panel_node.kind == "leaf"
+    slot = panel_node.payload
+    assert slot.gap == APPEARANCE_DOCK_GAP_PX  # shared with the Qt dock column
+    widgets = list(slot.children)
     assert any(isinstance(w, AnywidgetColormapCombo) for w in widgets)
     assert any(isinstance(w, AnywidgetClimRangeSlider) for w in widgets)
     assert any(isinstance(w, AnywidgetAABBWidget) for w in widgets)

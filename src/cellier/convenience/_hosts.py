@@ -19,6 +19,31 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+class LiveSlot(Protocol):
+    """A dock region whose contents can be replaced after it is presented.
+
+    Everything else a host composes is fixed once presented -- on marimo
+    literally, since ``mo.vstack`` output is static.  A controls dock has to
+    follow its viewer, so it composes into one of these instead.
+    """
+
+    #: The host item to place in the layout, once.
+    root: object
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        """Show *widgets* top to bottom, replacing what was shown.
+
+        *widgets* are backend widgets (not host leaves); the slot composes them
+        itself.  With no widgets, *placeholder* is shown instead.  The slot does
+        not close the widgets it stops showing.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release the slot."""
+        ...
+
+
 @runtime_checkable
 class LayoutHost(Protocol):
     """Composition + presentation seam for one front end.
@@ -81,6 +106,10 @@ class LayoutHost(Protocol):
         anywidget wants neither.  *title* names the whole column when the dock
         needs to say what its contents are scoped to.
         """
+        ...
+
+    def live_slot(self) -> LiveSlot:
+        """Return a dock region whose contents can be replaced later."""
         ...
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
@@ -233,6 +262,10 @@ class QtLayoutHost:
         container.setMinimumWidth(260)
         return container
 
+    def live_slot(self) -> _QtLiveSlot:
+        """A ``QWidget`` whose content column ``set`` replaces."""
+        return _QtLiveSlot(self)
+
     def assemble(self, center: object, docks: dict, closeables: list) -> object:
         """Build the ``QMainWindow``: center plus a ``QDockWidget`` per area."""
         from qtpy.QtCore import Qt
@@ -282,6 +315,77 @@ class QtLayoutHost:
         return None
 
 
+class _QtLiveSlot:
+    """``LiveSlot`` on Qt: a container holding one ``dock_panel`` at a time."""
+
+    def __init__(self, host: QtLayoutHost) -> None:
+        from qtpy.QtWidgets import QVBoxLayout, QWidget
+
+        self._host = host
+        self.root = QWidget()
+        self._box = QVBoxLayout(self.root)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._content = None
+        self._leaves: list = []
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        leaves = [self._host.leaf(widget) for widget in widgets]
+        shown = list(leaves)
+        if not leaves and placeholder:
+            from qtpy.QtWidgets import QLabel
+
+            leaves = [QLabel(placeholder)]
+        # Built before the old content goes: ``addWidget`` reparents a widget
+        # carried over from the old column (the selector, or controls kept
+        # across a relabel), so deleting the old column cannot take it along.
+        content = self._host.dock_panel(leaves)
+        self._box.addWidget(content)
+        # A widget shown before and not now is still owned by its caller (a
+        # dock keeps every target's controls built), so it is detached rather
+        # than deleted with the old column.  Parentless, Qt hides it.
+        for leaf in self._leaves:
+            if not any(leaf is kept for kept in shown):
+                leaf.setParent(None)
+        self._leaves = shown
+        old, self._content = self._content, content
+        if old is not None:
+            self._box.removeWidget(old)
+            old.setParent(None)
+            old.deleteLater()
+
+    def close(self) -> None:
+        """Nothing to do: the window that holds the slot deletes it."""
+
+
+class _AnywidgetLiveSlot:
+    """``LiveSlot`` on the anywidget hosts: an ``AnywidgetSlot``, leafed once.
+
+    ``AnywidgetSlot`` mounts its children through anywidget's composition API,
+    which Jupyter and marimo both implement, so the same slot serves both.
+    """
+
+    def __init__(self, host: _AnywidgetDockPanel) -> None:
+        from cellier.convenience.layout._shared import APPEARANCE_DOCK_GAP_PX
+        from cellier.gui.anywidget._container import AnywidgetSlot
+
+        self._slot = AnywidgetSlot(gap=APPEARANCE_DOCK_GAP_PX)
+        self.root = host.leaf(self._slot)
+
+    @property
+    def slot(self) -> object:
+        """The ``AnywidgetSlot`` behind ``root``."""
+        return self._slot
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        children = [getattr(widget, "widget", widget) for widget in widgets]
+        with self._slot.hold_sync():
+            self._slot.title = "" if children else (placeholder or "")
+            self._slot.children = children
+
+    def close(self) -> None:
+        self._slot.close()
+
+
 class _AnywidgetDockPanel:
     """``dock_panel`` for the anywidget hosts, which compose it from ``stack``.
 
@@ -328,6 +432,10 @@ class _AnywidgetDockPanel:
         return self.stack(
             widgets, direction="v", gap=APPEARANCE_DOCK_GAP_PX, title=title
         )
+
+    def live_slot(self) -> _AnywidgetLiveSlot:
+        """An ``AnywidgetSlot`` whose children ``set`` replaces."""
+        return _AnywidgetLiveSlot(self)
 
 
 class MarimoHost(_AnywidgetDockPanel):

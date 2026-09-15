@@ -4,7 +4,7 @@ Importing this package requires the optional ``anywidget`` dependency
 (``pip install 'cellier[anywidget]'``).
 """
 
-from cellier.gui.anywidget._container import AnywidgetBox
+from cellier.gui.anywidget._container import AnywidgetBox, AnywidgetSlot
 from cellier.gui.anywidget._dataset_info import (
     AnywidgetDatasetInfo,
     DatasetInfo,
@@ -25,6 +25,7 @@ __all__ = [
     "AnywidgetDimsPanel",
     "AnywidgetOutlineControls",
     "AnywidgetRenderConfigPanel",
+    "AnywidgetSlot",
     "AnywidgetTemporalControls",
     "DatasetInfo",
     "dataset_info_from_path",

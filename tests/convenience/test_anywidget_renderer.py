@@ -90,7 +90,23 @@ def test_render_channel_controls_builds_and_registers_widget():
     assert len(closeables) == 1  # the AnywidgetChannelList is tracked for teardown
 
 
-def test_render_channel_controls_none_without_config():
+def _assert_placeholder(spec, viewer, placeholder):
+    """The dock renders with nothing in it but *placeholder*.
+
+    It is not ``None``: a dock follows its viewer, so it has to exist before
+    anything is configured for a later add to fill it.
+    """
+    closeables: list = []
+    root = render_dock(spec, viewer, JupyterHost(), closeables)
+    (dock,) = closeables
+    assert dock.targets == []
+    assert list(root.children) == []
+    assert root.title == placeholder
+
+
+def test_render_channel_controls_placeholder_without_config():
+    from cellier.convenience.layout._controls_dock import CHANNEL_PLACEHOLDER
+
     data = np.random.default_rng(0).random((3, 2, 16, 16)).astype(np.float32)
     store = ImageMemoryStore(data=data)
     viewer = Viewer(
@@ -103,7 +119,7 @@ def test_render_channel_controls_none_without_config():
         channel_axis=1,
         channels={0: ChannelAppearance(color_map="red", clim=(0.0, 1.0))},
     )  # no controls=
-    assert render_dock(ChannelControls(), viewer, JupyterHost(), []) is None
+    _assert_placeholder(ChannelControls(), viewer, CHANNEL_PLACEHOLDER)
 
 
 # ---------------------------------------------------------------------------
@@ -111,21 +127,25 @@ def test_render_channel_controls_none_without_config():
 # ---------------------------------------------------------------------------
 
 
-def test_appearance_controls_none_without_any_config():
+def test_appearance_controls_placeholder_without_any_config():
+    from cellier.convenience.layout._controls_dock import APPEARANCE_PLACEHOLDER
+
     store = ImageMemoryStore(data=np.zeros((8, 16, 16), dtype=np.float32))
     viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     viewer.add_image(
         store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
     )  # no controls=
-    assert render_dock(AppearanceControls(), viewer, JupyterHost(), []) is None
+    _assert_placeholder(AppearanceControls(), viewer, APPEARANCE_PLACEHOLDER)
 
 
-def test_appearance_controls_none_when_only_channel_config():
+def test_appearance_controls_placeholder_when_only_channel_config():
     # A multichannel visual records a ChannelControlsConfig, which the
-    # appearance builder must skip -> no appearance panel.
+    # appearance dock must skip -> nothing to drive.
+    from cellier.convenience.layout._controls_dock import APPEARANCE_PLACEHOLDER
+
     viewer = _multichannel_viewer()
-    assert render_dock(AppearanceControls(), viewer, JupyterHost(), []) is None
+    _assert_placeholder(AppearanceControls(), viewer, APPEARANCE_PLACEHOLDER)
 
 
 # ---------------------------------------------------------------------------

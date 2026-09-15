@@ -233,24 +233,29 @@ class _LabelLeaf:
 
 
 def test_a_dock_stack_that_builds_nothing_produces_no_dock(qtbot):
-    """``AppearanceControls`` on an unconfigured viewer builds nothing.
+    """A dock stack whose contents all build nothing produces no dock.
 
     Bare, both renderers already agreed -- the spec resolves to ``None`` and
     the dock is skipped.  Wrapped in a stack they did not: the Qt branch
     returned its container unconditionally, so an empty ``QDockWidget``
     titled "Left" appeared beside the canvas.
+
+    A ``RenderControls`` with no sections is the spec that builds nothing.
+    ``AppearanceControls`` no longer does: it follows its viewer, so it
+    renders a placeholder until a configured visual is added.
     """
     pytest.importorskip("qtpy")
     pytest.importorskip("superqt")
     from qtpy.QtWidgets import QDockWidget
 
-    from cellier.convenience import AppearanceControls, Layout, VStack
+    from cellier.convenience import Layout, VStack
     from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.layout import RenderControls
     from cellier.convenience.layout._qt_renderer import render_qt
 
-    spec = VStack(items=[AppearanceControls()])
+    spec = VStack(items=[RenderControls(sections=())])
 
-    qt_viewer = _viewer("qt")  # no controls= -> nothing to build
+    qt_viewer = _viewer("qt")
     window = render_qt(
         Layout(center=build_canvas_widget(qt_viewer, _RANGES), left_dock=spec),
         qt_viewer,

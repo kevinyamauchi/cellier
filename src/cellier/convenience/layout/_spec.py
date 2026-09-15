@@ -40,16 +40,23 @@ class Grid:
 
 @dataclass
 class AppearanceControls:
-    """Dock spec: appearance control panel for the first configured visual."""
+    """Dock spec: appearance controls for the viewer's configured visuals.
+
+    Shows one visual's controls at a time.  With two or more visuals configured
+    through ``controls=`` a selector above the controls chooses which, and the
+    dock follows the viewer as configured visuals are added and removed.
+    """
 
 
 @dataclass
 class ChannelControls:
-    """Dock spec: per-channel controls for the first configured channel visual.
+    """Dock spec: per-channel controls for the viewer's multichannel visuals.
 
     Renders a channel-controls widget (Qt ``QtChannelList`` / anywidget
-    ``AnywidgetChannelList``) for the multichannel visual configured via
-    ``controls=`` on ``add_multichannel_image[_multiscale]``.  For an
+    ``AnywidgetChannelList``) for a multichannel visual configured via
+    ``controls=`` on ``add_multichannel_image[_multiscale]``.  Like
+    :class:`AppearanceControls` it shows one visual at a time, with a selector
+    when several are configured, and follows the viewer.  For an
     ``OrthoViewer`` the one widget drives every panel's sibling visual.
     """
 
@@ -126,16 +133,22 @@ class Layout:
             Where to place the renderer settings panels (outlines, ambient
             occlusion, temporal accumulation).  ``False`` (default) omits
             them.
+
+        Controls placed in the same dock stack top to bottom in the order
+        appearance, channels, render.
         """
-        docks: dict[str, object] = {}
-        if appearance:
-            docks[f"{appearance}_dock"] = AppearanceControls()
-        if channels:
-            docks[f"{channels}_dock"] = ChannelControls()
-        if render:
-            existing = docks.get(f"{render}_dock")
-            panel = RenderControls()
-            docks[f"{render}_dock"] = (
-                VStack(items=[existing, panel]) if existing is not None else panel
-            )
-        return cls(center=canvas, **docks)
+        docks: dict[str, list] = {}
+        for where, spec in (
+            (appearance, AppearanceControls),
+            (channels, ChannelControls),
+            (render, RenderControls),
+        ):
+            if where:
+                docks.setdefault(f"{where}_dock", []).append(spec())
+        return cls(
+            center=canvas,
+            **{
+                name: specs[0] if len(specs) == 1 else VStack(items=specs)
+                for name, specs in docks.items()
+            },
+        )

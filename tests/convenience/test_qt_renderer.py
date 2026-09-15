@@ -107,13 +107,21 @@ def test_appearance_controls_multiscale_render_and_lod(qtbot, multiscale_image_s
     assert {"Render mode", "LOD bias"} <= _control_names(container)
 
 
-def test_appearance_controls_none_without_configs(qtbot, image_store):
+def test_appearance_controls_placeholder_without_configs(qtbot, image_store):
+    """A dock with nothing to drive still renders, so a later add can fill it."""
+    from qtpy.QtWidgets import QLabel
+
+    from cellier.convenience.layout._controls_dock import APPEARANCE_PLACEHOLDER
+
     viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
         appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
-    assert render_dock(AppearanceControls(), viewer, QtLayoutHost(), []) is None
+    container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
+
+    labels = [label.text() for label in container.findChildren(QLabel)]
+    assert APPEARANCE_PLACEHOLDER in labels
 
 
 # ---------------------------------------------------------------------------
