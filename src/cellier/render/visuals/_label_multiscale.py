@@ -503,9 +503,15 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         level_shapes: list[tuple[int, ...]],
         level_transforms: list,
     ) -> gfx.Group | None:
-        # Label multiscale builds both nodes at construction when both render
-        # modes are requested; lazy-init is not currently supported.
-        return self.node_3d if mode == "3d" else self.node_2d
+        # The 2D node is always built at construction, the 3D node only when
+        # the visual starts in 3D -- so a first entry into 3D builds it here.
+        if level_shapes:
+            self._full_level_shapes = list(level_shapes)
+        if mode == "3d":
+            if self._volume_geometry is None and "3d" in self.render_modes:
+                self._lazy_init_3d(displayed_axes, visual_model)
+            return self.node_3d
+        return self.node_2d
 
     def rebuild_node_geometry(
         self,
@@ -535,7 +541,9 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
 
         if "3d" in self.render_modes and len(displayed_axes) == 3:
             old_node = self.node_3d
-            if self._volume_geometry is not None:
+            if self._volume_geometry is None:
+                self._lazy_init_3d(displayed_axes)
+            else:
                 fetch_3d = _fetch_order(
                     _world_axes_to_data_axes(self._transform, displayed_axes)
                 )
@@ -587,6 +595,119 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 self._update_node_matrix(self._last_displayed_axes)
             self._apply_outline_selection()
         self._pending_slot_map = {}
+
+    def _lazy_init_3d(self, displayed_axes: tuple[int, ...], visual_model=None) -> None:
+        """Build the 3D GPU resources and node on first entry into 3D.
+
+        A visual constructed with 2D displayed axes skips every 3D resource,
+        so without this a 2D -> 3D switch swapped the 2D node out for ``None``
+        and the 3D planner then read a missing geometry.  Mirrors the 3D half
+        of ``__init__`` (int32 cache, ``overlap=2`` for the shader's
+        ``BORDER=2``) and ``GFXMultiscaleImageVisual._lazy_init_3d``.
+
+        When *visual_model* is given (the controller path) appearance, block
+        size and ``pick_write`` are read from it at call time and not stored.
+        Otherwise they are carried over from the 2D node, which shares them.
+        """
+        if visual_model is not None:
+            app = visual_model.appearance
+            block_size = visual_model.render_config.block_size
+            pick_write = visual_model.pick_write
+            self._render_mode = app.render_mode
+            material_fields = {
+                "opacity": app.opacity,
+                "depth_test": app.depth_test,
+                "depth_write": app.depth_write,
+                "depth_compare": app.depth_compare,
+                "alpha_mode": app.transparency_mode,
+            }
+            visible, render_order = app.visible, app.render_order
+        else:
+            block_size = self._image_geometry_2d.block_size
+            if self.material_2d is not None and self.node_2d is not None:
+                pick_write = self.material_2d.pick_write
+                material_fields = {
+                    name: getattr(self.material_2d, name)
+                    for name in (
+                        "opacity",
+                        "depth_test",
+                        "depth_write",
+                        "depth_compare",
+                        "alpha_mode",
+                    )
+                }
+                visible = self.node_2d.visible
+                render_order = self.node_2d.render_order
+            else:
+                pick_write, material_fields, visible, render_order = True, {}, True, 0
+
+        fetch_3d = _fetch_order(
+            _world_axes_to_data_axes(self._transform, displayed_axes)
+        )
+        shapes_3d = [select_axes(s, fetch_3d) for s in self._full_level_shapes]
+        geo = MultiscaleBrickLayout3D(
+            level_shapes=shapes_3d,
+            level_transforms=list(self._level_transforms),
+            block_size=block_size,
+            fetch_axes=fetch_3d,
+        )
+        self._volume_geometry = geo
+
+        cache_parameters_3d = compute_block_cache_parameters_3d(
+            block_size=geo.block_size,
+            gpu_budget_bytes=self._gpu_budget_bytes,
+            overlap=2,
+            dtype=np.int32,
+        )
+        self._block_cache_3d = BlockCache3D(
+            cache_parameters=cache_parameters_3d, dtype=np.int32
+        )
+        self._lut_manager_3d = LutIndirectionManager3D(
+            base_layout=geo.base_layout,
+            n_levels=geo.n_levels,
+            level_scale_vecs_data=geo._scale_vecs_data,
+            level_shapes=geo.level_shapes,
+            border=cache_parameters_3d.overlap,
+        )
+
+        self._dataset_size = np.asarray(
+            swap_axes(tuple(float(s) for s in geo.level_shapes[0]), (2, 1, 0)),
+            dtype=np.float64,
+        )
+        _check_transform_no_rotation(self._transform)
+        self._norm_size = _norm_size_from_transform(
+            self._transform, displayed_axes, self._dataset_size
+        )
+        self._norm_size_axes = displayed_axes
+        self._vol_params_buffer = build_vol_params_buffer(
+            norm_size=self._norm_size,
+            dataset_size=self._dataset_size,
+            base_layout=geo.base_layout,
+            cache_info=self._block_cache_3d.info,
+        )
+        self._brick_scales_buffer = build_brick_scales_buffer(
+            geo._scale_vecs_data,
+            level_shapes=geo.level_shapes,
+            block_size=geo.block_size,
+        )
+
+        inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
+            pick_write=pick_write,
+        )
+        self._inner_node_3d = inner
+        self._aabb_line_3d = self._build_aabb_line_3d()
+        self.node_3d = gfx.Group()
+        self.node_3d.add(inner)
+        self.node_3d.add(self._aabb_line_3d)
+        for name, value in material_fields.items():
+            setattr(self.material_3d, name, value)
+        self.node_3d.visible = visible
+        self.node_3d.render_order = render_order
+        self._pending_slot_map = {}
+        self._data_ready_3d = False
+
+        self._update_node_matrix(displayed_axes)
+        self._apply_outline_selection()
 
     def _rebuild_2d_resources(self) -> None:
         geo2d = self._image_geometry_2d
@@ -1234,6 +1355,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 self.material_2d.label_colors_texture = colors_tex
                 self.material_2d.n_entries = n_entries
         elif field == "render_mode":
+            # Recorded as well, so a 3D material built later starts in it.
+            self._render_mode = val
             if self.material_3d is not None:
                 self.material_3d.render_mode = val
         # LOD fields — these affect planning, not GPU state; nothing to push.

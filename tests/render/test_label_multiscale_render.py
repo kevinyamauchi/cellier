@@ -15,6 +15,7 @@ from uuid import uuid4
 import numpy as np
 
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.events import DimsUpdateEvent
 from cellier.events._events import (
     AppearanceChangedEvent,
     VisualVisibilityChangedEvent,
@@ -450,3 +451,77 @@ def test_the_selection_is_recorded_on_the_model(controller, multiscale_labels_st
     controller.set_label_selection(visual.id, {3: 1})
 
     assert visual.outline_selected_labels == {3: 1}
+
+
+# ---------------------------------------------------------------------------
+# A visual that starts in 2D can switch to 3D
+# ---------------------------------------------------------------------------
+
+
+def _toggle(controller, scene_id, displayed_axes, slice_indices) -> None:
+    """Switch dims the way the Qt and anywidget 2D/3D toggles do."""
+    controller._on_dims_update(
+        DimsUpdateEvent(
+            source_id=controller._id,
+            scene_id=scene_id,
+            displayed_axes=displayed_axes,
+            slice_indices=slice_indices,
+        )
+    )
+
+
+async def test_a_2d_start_switches_to_3d_and_back(
+    controller, render_scene, reslice, multiscale_labels_store
+):
+    """Entering 3D builds the volume the 2D construction skipped.
+
+    Regression test: a visual constructed with 2D displayed axes had no 3D
+    geometry, and ``build_node`` never built one, so the toggle swapped the
+    2D node out for ``None`` and the 3D planner raised ``AttributeError`` on
+    the missing geometry.  Starting in 3D was unaffected.
+    """
+    scene = controller.add_scene(dim="2d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    active = controller._render_manager._scenes[scene.id]._active_nodes
+
+    _toggle(controller, scene.id, (0, 1, 2), {})
+    await reslice(controller, scene.id)
+
+    assert gfx.node_3d is not None
+    assert active[visual.id] is gfx.node_3d
+    assert np.count_nonzero(render_scene(controller, scene.id)[..., 3]) > 0
+
+    _toggle(controller, scene.id, (1, 2), {0: 7.5})
+    await reslice(controller, scene.id)
+
+    assert active[visual.id] is gfx.node_2d
+    assert np.count_nonzero(render_scene(controller, scene.id)[..., 3]) > 0
+
+
+async def test_the_3d_node_built_on_switch_takes_the_current_state(
+    controller, reslice, multiscale_labels_store
+):
+    """The late 3D material carries the appearance and selection set in 2D."""
+    scene = controller.add_scene(dim="2d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(opacity=0.5),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    selection = {3: 1}
+    controller.set_label_selection(visual.id, selection)
+
+    _toggle(controller, scene.id, (0, 1, 2), {})
+
+    assert gfx.material_3d.opacity == 0.5
+    assert _selection_in_texture(gfx.material_3d) == selection
