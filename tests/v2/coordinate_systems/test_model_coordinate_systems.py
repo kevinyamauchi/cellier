@@ -16,12 +16,14 @@ would otherwise be discovered much later:
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import numpy as np
 import pytest
 
 from cellier._state import AxisAlignedSelectionState
 from cellier.controller import CellierController
-from cellier.data._axes import axis_types_from_names, data_axes_from_world
+from cellier.data._axes import axis_types_from_names, build_axes, data_axes_from_world
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.label._label_memory_store import LabelMemoryStore
 from cellier.data.lines._lines_memory_store import LinesMemoryStore
@@ -46,7 +48,7 @@ from cellier.transform import (
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
-from tests._v2 import systems
+from tests._v2 import data_system, systems
 
 # ---------------------------------------------------------------------------
 # The world: types are stated
@@ -175,22 +177,40 @@ def test_a_store_has_no_coordinate_systems_until_it_is_told():
     store with no metadata has nowhere to get one from on its own."""
     store = ImageMemoryStore(data=np.zeros((4, 5, 6), dtype=np.float32))
     assert store.data_coordinate_systems == []
-    with pytest.raises(ValueError, match="axis_names"):
+    with pytest.raises(ValueError, match="data_coordinate_systems"):
         _ = store.data_coordinate_system
 
 
-def test_the_axis_name_shorthand_builds_a_system():
+def test_a_store_adopts_the_id_its_system_names():
+    """The system is built before the store, so the store takes its id."""
+    system = data_system(("z", "y", "x"))
     store = ImageMemoryStore(
-        data=np.zeros((4, 5, 6), dtype=np.float32), axis_names=("z", "y", "x")
+        data=np.zeros((4, 5, 6), dtype=np.float32), data_coordinate_systems=[system]
     )
-    system = store.data_coordinate_system
-    assert system.axis_names() == ("z", "y", "x")
-    assert system.datastore_id == store.id
-    assert [axis.axis_type for axis in system.axes] == ["space"] * 3
+    assert store.id == system.datastore_id
+    assert store.data_coordinate_system.id == system.id
     assert store.level_transforms[0].matrix.shape == (4, 4)
 
 
-def test_the_shorthand_types_the_conventional_names():
+def test_a_system_naming_another_store_is_refused():
+    with pytest.raises(ValueError, match="belongs to datastore"):
+        ImageMemoryStore(
+            data=np.zeros((4, 5, 6), dtype=np.float32),
+            id=uuid4(),
+            data_coordinate_systems=[data_system(("z", "y", "x"))],
+        )
+
+
+def test_a_system_of_the_wrong_rank_is_refused():
+    """One axis per data dimension, checked when the store is built."""
+    with pytest.raises(ValueError, match="has 2 axes"):
+        PointsMemoryStore(
+            positions=np.zeros((4, 3), dtype=np.float32),
+            data_coordinate_systems=[data_system(("y", "x"))],
+        )
+
+
+def test_the_name_rule_types_the_conventional_names():
     assert axis_types_from_names(("t", "c", "z", "y", "x")) == (
         "time",
         "channel",
@@ -201,29 +221,14 @@ def test_the_shorthand_types_the_conventional_names():
 
 
 def test_explicit_axis_types_win_over_the_name_rule():
-    store = ImageMemoryStore(
-        data=np.zeros((2, 4, 4), dtype=np.float32),
-        axis_names=("c", "y", "x"),
-        axis_types=("space", "space", "space"),
-    )
-    assert [a.axis_type for a in store.data_coordinate_system.axes] == ["space"] * 3
-
-
-def test_axis_types_without_axis_names_is_refused():
-    with pytest.raises(ValueError, match="axis_names"):
-        ImageMemoryStore(
-            data=np.zeros((4, 4), dtype=np.float32), axis_types=("space", "space")
-        )
+    axes = build_axes(("c", "y", "x"), types=("space", "space", "space"))
+    assert [a.axis_type for a in axes] == ["space"] * 3
 
 
 def test_an_empty_axis_type_raises_and_names_the_axis():
     """A blank ``type`` in NGFF is a dataset defect, not a default (F1.4)."""
     with pytest.raises(ValueError, match="'y' has an empty axis_type"):
-        ImageMemoryStore(
-            data=np.zeros((4, 4), dtype=np.float32),
-            axis_names=("y", "x"),
-            axis_types=("", "space"),
-        )
+        build_axes(("y", "x"), types=("", "space"))
 
 
 def test_a_store_added_to_a_scene_takes_the_worlds_trailing_axes():
@@ -252,7 +257,8 @@ def test_a_store_that_already_knows_its_axes_is_left_alone():
     controller = CellierController(gui="offscreen")
     scene = controller.add_scene(coordinate_system=spatial_axes("z", "y", "x"))
     store = ImageMemoryStore(
-        data=np.zeros((4, 5, 6), dtype=np.float32), axis_names=("depth", "row", "col")
+        data=np.zeros((4, 5, 6), dtype=np.float32),
+        data_coordinate_systems=[data_system(("depth", "row", "col"))],
     )
     before = store.data_coordinate_system.id
     controller.add_image(
@@ -296,17 +302,23 @@ def _viewer_model_with_every_memory_store() -> ViewerModel:
     positions = np.zeros((4, 3), dtype=np.float32)
     stores = [
         ImageMemoryStore(
-            data=np.zeros((4, 5, 6), dtype=np.float32), axis_names=("z", "y", "x")
+            data=np.zeros((4, 5, 6), dtype=np.float32),
+            data_coordinate_systems=[data_system(("z", "y", "x"))],
         ),
         LabelMemoryStore(
-            data=np.zeros((4, 5, 6), dtype=np.int32), axis_names=("z", "y", "x")
+            data=np.zeros((4, 5, 6), dtype=np.int32),
+            data_coordinate_systems=[data_system(("z", "y", "x"))],
         ),
-        PointsMemoryStore(positions=positions, axis_names=("z", "y", "x")),
-        LinesMemoryStore(positions=positions, axis_names=("z", "y", "x")),
+        PointsMemoryStore(
+            positions=positions, data_coordinate_systems=[data_system(("z", "y", "x"))]
+        ),
+        LinesMemoryStore(
+            positions=positions, data_coordinate_systems=[data_system(("z", "y", "x"))]
+        ),
         MeshMemoryStore(
             positions=positions,
             indices=np.zeros((1, 3), dtype=np.int32),
-            axis_names=("z", "y", "x"),
+            data_coordinate_systems=[data_system(("z", "y", "x"))],
         ),
     ]
     image_visual = ImageVisual(

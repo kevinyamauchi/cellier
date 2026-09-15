@@ -13,7 +13,6 @@ from cellier.data._dataset_info import (
     format_bytes,
     format_shape,
 )
-from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
@@ -34,11 +33,26 @@ class ImageMemoryStore(BaseDataStore):
         3-D, (H, W) for 2-D, (T, C, D, H, W) for 5-D.
     name : str
         Human-readable label. Default ``"image_memory_store"``.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per array dimension.  A voxel grid is
+        sample-indexed, so build its axes with ``sampling="discrete"``.
+        Empty by default, in which case the store takes the scene's world
+        axes when it is added to a scene.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["image_memory"] = "image_memory"
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory image"
-    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     name: str = "image_memory_store"
     data: np.ndarray
 

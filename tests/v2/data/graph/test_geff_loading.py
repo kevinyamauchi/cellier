@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from cellier.data.graph import GraphMemoryStore
+from tests._v2 import data_system
 
 try:  # pragma: no cover - import probe
     import geff as _geff
@@ -30,6 +31,7 @@ def _write_lineage(
     scales=None,
     offsets=None,
     directed=True,
+    axis_types=("time", "space", "space", "space"),
 ):
     """Write a small 4-D tzyx lineage and return ``(path, positions, edges)``.
 
@@ -58,7 +60,7 @@ def _write_lineage(
         graph,
         path,
         axis_names=["t", "z", "y", "x"],
-        axis_types=["time", "space", "space", "space"],
+        axis_types=None if axis_types is None else list(axis_types),
         **kwargs,
     )
     return (
@@ -103,6 +105,59 @@ def test_from_geff_axis_names_override(tmp_path):
     assert store.ndim == 3
     assert [axis.name for axis in store.axes] == ["z", "y", "x"]
     assert np.allclose(store.positions, positions[:, 1:])
+
+
+@requires_geff
+def test_from_geff_builds_a_system_from_the_file_axes(tmp_path):
+    """Names and types come from the file, and the store owns the system."""
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    store = GraphMemoryStore.from_geff(path)
+
+    system = store.data_coordinate_system
+    assert system.axis_names() == ("t", "z", "y", "x")
+    assert [axis.axis_type for axis in system.axes] == [
+        "time",
+        "space",
+        "space",
+        "space",
+    ]
+    assert [axis.sampling for axis in system.axes] == ["continuous"] * 4
+    assert system.datastore_id == store.id
+    assert len(store.level_transforms) == 1
+
+
+@requires_geff
+def test_from_geff_system_follows_the_selected_axes(tmp_path):
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    store = GraphMemoryStore.from_geff(path, axis_names=["z", "y", "x"])
+    assert store.data_coordinate_system.axis_names() == ("z", "y", "x")
+
+
+@requires_geff
+def test_from_geff_untyped_axes_take_the_name_rule(tmp_path):
+    """geff makes ``type`` optional; an unset one is typed from its name."""
+    path, _, _ = _write_lineage(tmp_path / "untyped.geff", axis_types=None)
+    store = GraphMemoryStore.from_geff(path)
+    assert [axis.axis_type for axis in store.data_coordinate_system.axes] == [
+        "time",
+        "space",
+        "space",
+        "space",
+    ]
+
+
+@requires_geff
+def test_from_geff_uses_a_passed_system(tmp_path):
+    """A caller-built system replaces the metadata-derived one outright."""
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    system = data_system(("t", "z", "y", "x"), sampling="discrete", name="tracks")
+    store = GraphMemoryStore.from_geff(path, data_coordinate_system=system)
+
+    assert store.data_coordinate_system.id == system.id
+    assert store.id == system.datastore_id
+    assert [axis.sampling for axis in store.data_coordinate_system.axes] == [
+        "discrete"
+    ] * 4
 
 
 @requires_geff

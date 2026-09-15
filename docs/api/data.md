@@ -12,7 +12,6 @@ slice-result types used to fetch data for the current view.
 ::: cellier.data.image.ImageMemoryStore
 ::: cellier.data.image.MultiscaleZarrDataStore
 ::: cellier.data.image.OMEZarrImageDataStore
-::: cellier.data.image.AxisInfo
 ::: cellier.data.image.ChunkRequest
 
 ## Labels

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from uuid import uuid4
 
 import numpy as np
 from pydantic import (
@@ -13,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from cellier.data._axes import data_coordinate_system as build_data_coordinate_system
 from cellier.data._base_data_store import BaseDataStore, geometry_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
@@ -22,6 +24,9 @@ from cellier.data._dataset_info import (
     array_extent_row,
 )
 from cellier.data.graph._graph_requests import GraphData, GraphSliceRequest
+
+if TYPE_CHECKING:
+    from cellier.transform import DataCoordinateSystem
 
 #: Placeholder vertex counts for an empty slice.  pygfx forbids empty
 #: geometry buffers, so a single invisible node / a single degenerate segment
@@ -129,6 +134,23 @@ class GraphMemoryStore(BaseDataStore):
         a silent fallback.
     name : str
         Human-readable label.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per ``positions`` column.  Mark an axis
+        ``sampling="discrete"`` when its column holds sample indices, such
+        as a tracking graph's frame numbers.  Empty by default, in which
+        case the store takes the scene's world axes when it is added to a
+        scene.  :meth:`from_geff` builds it from the file's axis metadata.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["graph_memory"] = "graph_memory"
@@ -247,6 +269,7 @@ class GraphMemoryStore(BaseDataStore):
         axis_offsets: tuple[float, ...] | None = None,
         directed: bool = False,
         slice_strategy: Literal["mask", "roi"] = "mask",
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "graph_memory_store",
     ) -> GraphMemoryStore:
         """Build a store from raw arrays -- the dependency-free path.
@@ -271,6 +294,10 @@ class GraphMemoryStore(BaseDataStore):
             Whether the graph is directed.
         slice_strategy : str
             ``"mask"`` or ``"roi"`` (D17).
+        data_coordinate_system : DataCoordinateSystem | None
+            The store's coordinate system, one axis per ``positions`` column.
+            The store adopts its ``datastore_id`` as its ``id``.  ``None``
+            leaves the store without one until it is added to a scene.
         name : str
             Human-readable label.
 
@@ -289,6 +316,9 @@ class GraphMemoryStore(BaseDataStore):
             axis_offsets=axis_offsets,
             directed=directed,
             slice_strategy=slice_strategy,
+            data_coordinate_systems=(
+                [data_coordinate_system] if data_coordinate_system is not None else []
+            ),
             name=name,
         )
 
@@ -302,6 +332,7 @@ class GraphMemoryStore(BaseDataStore):
         node_size_prop: str | None = None,
         directed: bool | None = None,
         slice_strategy: Literal["mask", "roi"] = "mask",
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "graph_memory_store",
     ) -> GraphMemoryStore:
         """Build a store from a geff file.
@@ -312,8 +343,35 @@ class GraphMemoryStore(BaseDataStore):
         when passed explicitly, as it does for every other visual.
 
         See :mod:`cellier.data.graph._geff_io` for the reader details.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Path to the geff store.
+        axis_names : list[str] | None
+            Which of the file's axes to load as position columns, and in what
+            order.  ``None`` loads every axis in file order.  This selects
+            columns; it does not build a coordinate system.
+        node_color_prop, node_size_prop : str | None
+            Node properties to use as ``node_colors`` / ``node_sizes``.
+        directed : bool | None
+            Overrides the file's ``directed`` flag when not ``None``.
+        slice_strategy : str
+            ``"mask"`` or ``"roi"`` (D17).
+        data_coordinate_system : DataCoordinateSystem | None
+            The store's coordinate system.  ``None`` builds one from the
+            loaded axes' geff metadata; see
+            :func:`~cellier.data.graph._geff_io.data_axes_from_geff`.  A
+            system that is passed is used as-is, and the store adopts its
+            ``datastore_id`` as its ``id``.
+        name : str
+            Human-readable label, and the name of a generated system.
+
+        Returns
+        -------
+        GraphMemoryStore
         """
-        from cellier.data.graph._geff_io import read_geff
+        from cellier.data.graph._geff_io import data_axes_from_geff, read_geff
 
         payload = read_geff(
             path,
@@ -321,6 +379,10 @@ class GraphMemoryStore(BaseDataStore):
             node_color_prop=node_color_prop,
             node_size_prop=node_size_prop,
         )
+        if data_coordinate_system is None:
+            data_coordinate_system = build_data_coordinate_system(
+                uuid4(), data_axes_from_geff(payload.axes), name
+            )
         store = cls(
             positions=payload.positions,
             edges=payload.edges,
@@ -331,6 +393,7 @@ class GraphMemoryStore(BaseDataStore):
             axis_offsets=payload.axis_offsets,
             directed=payload.directed if directed is None else directed,
             slice_strategy=slice_strategy,
+            data_coordinate_systems=[data_coordinate_system],
             name=name,
         )
         store._axes = payload.axes

@@ -10,17 +10,12 @@ import numpy as np
 from psygnal import EventedModel
 from pydantic import UUID4, AfterValidator, Field, model_validator
 
-from cellier.data._axes import (
-    build_axes,
-    data_coordinate_system,
-    identity_transform,
-)
+from cellier.data._axes import identity_transform, install_level_transforms
 from cellier.data._dataset_info import DatasetInfo, RowSection
 from cellier.transform import (  # noqa: TC001
     AffineTransform,
     DataCoordinateSystem,
 )
-from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -100,14 +95,21 @@ class BaseDataStore(EventedModel):
     Parameters
     ----------
     id : UUID4
-        The unique identifier for the data store.
-        The default value is a UUID4 generated hex string.
+        The unique identifier for the data store.  When not given it is
+        taken from the first entry of ``data_coordinate_systems`` (its
+        ``datastore_id``), or generated when that is empty too.
     name : str
         The name of the data store.
     data_coordinate_systems : list[DataCoordinateSystem]
         The store's intrinsic (voxel) coordinate systems, one per resolution
         level, index ``0`` being the finest.  A single-resolution store has
         one entry.
+
+        **Constructed by the caller.**  There is no shorthand: pass built
+        ``DataCoordinateSystem`` objects.  Every system's ``datastore_id``
+        must equal the store's ``id``, and a mismatch raises.  A caller
+        building the system before the store exists gives it
+        ``datastore_id=uuid4()`` and omits ``id``; the store adopts it.
 
         **Stored, not derived.**  Transforms serialize their endpoints as
         UUIDs, so a system rebuilt on load would mint fresh ids and every
@@ -116,10 +118,9 @@ class BaseDataStore(EventedModel):
         The default is an **empty list**: a store with no axis metadata does
         not invent one, because ``Axis.axis_type`` has no honest default.
         Concrete stores that can say -- the OME-Zarr readers -- populate it at
-        construction, and the in-memory stores take the ``axis_names`` /
-        ``axis_types`` shorthand.  A store that reaches
-        ``CellierController.add_visual`` still empty has one derived from the
-        scene's world axes; see ``CellierController._ensure_data_coordinate_systems``.
+        construction.  A store that reaches ``CellierController.add_visual``
+        still empty has one derived from the scene's world axes; see
+        ``CellierController._ensure_data_coordinate_systems``.
     level_scales : list[tuple[float, ...]]
         Per-level, per-axis scale of level ``k`` voxels in level ``0`` voxels.
         ``level_scales[0]`` is all ones.  Empty for a single-level store.
@@ -137,8 +138,9 @@ class BaseDataStore(EventedModel):
 
         **Derived, not authored.**  Built from ``level_scales`` /
         ``level_translations`` by ``install_level_transforms`` as soon as the
-        store has its coordinate systems -- from its own axis metadata, or
-        from the scene's world.  It is stored rather than recomputed on read
+        store has its coordinate systems -- at construction when they are
+        passed, or from the scene's world.  It is stored rather than
+        recomputed on read
         because a transform serializes its endpoints as ids, and a rebuilt
         one would name systems that no longer exist.
 
@@ -158,67 +160,87 @@ class BaseDataStore(EventedModel):
     level_translations: list[tuple[float, ...]] = Field(default_factory=list)
     level_transforms: list[AffineTransform] = Field(default_factory=list)
 
-    AXIS_SAMPLING: ClassVar[AxisSampling] = "continuous"
-    """Whether this kind of store's axes are sample-indexed.
-
-    A voxel grid is sample-indexed by construction, so the gridded stores
-    override this to ``"discrete"`` and their callers never have to say so.
-    Geometry stores keep ``"continuous"``: a vertex coordinate is a measured
-    position in general, and a store whose column happens to hold acquisition
-    frame numbers says so per axis when it is constructed.
-
-    Read only by :meth:`_expand_axis_shorthand`, i.e. by the ``axis_names=``
-    shorthand.  A caller who builds ``data_coordinate_systems`` by hand sets
-    ``Axis.sampling`` there instead, and this is not consulted.
-    """
-
     @model_validator(mode="before")
     @classmethod
-    def _expand_axis_shorthand(cls, data: Any) -> Any:
-        """Turn the ``axis_*`` shorthand into a coordinate system.
+    def _adopt_datastore_id(cls, data: Any) -> Any:
+        """Take the store's ``id`` from its coordinate systems when none is given.
 
-        The ergonomic path for a single-level store: naming the axes is one
-        keyword rather than a hand-built ``DataCoordinateSystem`` and a UUID.
-        Multi-level stores are not covered -- their level transforms carry a
-        downsampling factor that no shorthand can supply -- and neither are
-        the stores that already declare ``axis_names`` as a field of their
-        own (the OME-Zarr readers, which build their systems from NGFF
-        metadata in ``from_path``).
+        A ``DataCoordinateSystem`` has to name its store's id, but a caller
+        builds the system before the store exists.  Adopting the system's
+        ``datastore_id`` lets the system be written first without also
+        threading the same UUID through ``id=``.
         """
-        if not isinstance(data, dict) or "axis_names" in cls.model_fields:
+        if not isinstance(data, dict) or data.get("id") is not None:
             return data
-        names = data.pop("axis_names", None)
-        types = data.pop("axis_types", None)
-        units = data.pop("axis_units", None)
-        sampling = data.pop("axis_sampling", None)
-        if names is None:
-            if types is not None or units is not None or sampling is not None:
-                raise ValueError(
-                    "axis_types / axis_units / axis_sampling need axis_names "
-                    "alongside them; there is nothing to attach them to."
-                )
+        systems = data.get("data_coordinate_systems")
+        if not systems:
             return data
-        if data.get("data_coordinate_systems"):
-            raise ValueError(
-                "Pass either axis_names or data_coordinate_systems, not both."
-            )
-        store_id = data.get("id")
-        if store_id is None:
-            store_id = uuid4()
-        elif isinstance(store_id, str):
-            store_id = uuid.UUID(store_id, version=4)
-        data["id"] = store_id
-        name = data.get("name") or cls.model_fields["name"].default
-        axes = build_axes(
-            names,
-            types,
-            units,
-            cls.AXIS_SAMPLING if sampling is None else sampling,
+        first = systems[0]
+        datastore_id = (
+            first.get("datastore_id")
+            if isinstance(first, dict)
+            else getattr(first, "datastore_id", None)
         )
-        system = data_coordinate_system(store_id, axes, name)
-        data["data_coordinate_systems"] = [system]
-        data["level_transforms"] = [identity_transform(system, system)]
-        return data
+        if datastore_id is None:
+            return data
+        return {**data, "id": datastore_id}
+
+    @model_validator(mode="after")
+    def _check_datastore_ids(self) -> BaseDataStore:
+        """Require every coordinate system to name this store."""
+        for system in self.data_coordinate_systems:
+            if system.datastore_id != self.id:
+                raise ValueError(
+                    f"Coordinate system '{system.name}' belongs to datastore "
+                    f"{system.datastore_id}, but this store's id is {self.id}.  "
+                    f"Build the system with datastore_id equal to the store's "
+                    f"id, or omit id= and the store adopts it."
+                )
+        return self
+
+    def model_post_init(self, __context: Any) -> None:
+        """Check the systems passed at construction and install their transforms.
+
+        Stores that open array handles in their own ``model_post_init`` call
+        this after opening them: the level count and rank it checks against
+        are read off the handles.
+        """
+        super().model_post_init(__context)
+        if self.data_coordinate_systems:
+            self._check_coordinate_system_shapes(self.data_coordinate_systems)
+        install_level_transforms(self)
+
+    def _check_coordinate_system_shapes(
+        self, systems: Sequence[DataCoordinateSystem]
+    ) -> None:
+        """Require one system per resolution level and one axis per dimension.
+
+        Reads ``n_levels`` and ``ndim`` where the concrete store defines them;
+        a check whose quantity the store does not define is skipped.
+
+        Raises
+        ------
+        ValueError
+            If the number of systems differs from ``n_levels``, or a system's
+            rank differs from ``ndim``.
+        """
+        n_levels = getattr(self, "n_levels", None)
+        if n_levels is not None and len(systems) != n_levels:
+            raise ValueError(
+                f"Data store '{self.name}' has {n_levels} resolution level(s) "
+                f"but {len(systems)} coordinate system(s); pass one per level, "
+                f"finest first."
+            )
+        ndim = getattr(self, "ndim", None)
+        if ndim is None:
+            return
+        for system in systems:
+            if system.ndim != ndim:
+                raise ValueError(
+                    f"Coordinate system '{system.name}' has {system.ndim} axes "
+                    f"{system.axis_names()}, but data store '{self.name}' has "
+                    f"{ndim} dimensions; build one axis per dimension."
+                )
 
     @property
     def data_coordinate_system(self) -> DataCoordinateSystem:
@@ -239,7 +261,7 @@ class BaseDataStore(EventedModel):
         if not self.data_coordinate_systems:
             raise ValueError(
                 f"Data store '{self.name}' has no data_coordinate_systems.  "
-                f"Pass axis_names= (and axis_types= for any non-spatial axis) "
+                f"Pass data_coordinate_systems=[DataCoordinateSystem(...)] "
                 f"when constructing it, or add it to a scene, which derives "
                 f"them from the scene's world axes."
             )
@@ -269,12 +291,15 @@ class BaseDataStore(EventedModel):
         ValueError
             If *systems* is empty, if *level_transforms* has a different
             length, or if a multi-level store is given no level transforms --
-            there is no downsampling factor to infer them from here.
+            there is no downsampling factor to infer them from here.  Also if
+            the systems are not one per resolution level with one axis per
+            data dimension.
         """
         if not systems:
             raise ValueError(
                 "set_data_coordinate_systems needs at least the level-0 system."
             )
+        self._check_coordinate_system_shapes(systems)
         if level_transforms is None:
             if len(systems) > 1:
                 raise ValueError(

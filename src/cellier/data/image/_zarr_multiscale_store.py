@@ -24,6 +24,7 @@ import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, PrivateAttr, model_validator
 
+from cellier.data._axes import level_systems
 from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
@@ -32,10 +33,10 @@ from cellier.data._dataset_info import (
     format_shape,
     source_label,
 )
-from cellier.transform._axis import AxisSampling  # noqa: TC001
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
+    from cellier.transform import DataCoordinateSystem
 
 # ---------------------------------------------------------------------------
 # Zarr format detection helpers (private)
@@ -131,6 +132,20 @@ class MultiscaleZarrDataStore(BaseDataStore):
         ``scale_names``.
     level_translations :
         The offset half of the same, in level-0 voxels.
+    id :
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems :
+        One system per resolution level, finest first.  The store reads no
+        axis metadata, so these come from the caller --
+        :meth:`from_scale_and_translation` builds them from a level-0
+        system -- or, when left empty, from the scene's world axes once the
+        store is added to a scene.  Each system's ``datastore_id`` must equal
+        ``id``.
+    level_transforms :
+        Level ``k`` voxels -> level ``0`` voxels, one per system, built from
+        ``level_scales`` and ``level_translations`` once the systems exist.
+        Not normally passed.
     name :
         Human-readable name for the store (inherited from
         ``BaseDataStore``; defaults to ``"multiscale zarr data store"``).
@@ -146,7 +161,6 @@ class MultiscaleZarrDataStore(BaseDataStore):
     # ── Public pydantic fields ──────────────────────────────────────────
     store_type: Literal["multiscale_zarr"] = "multiscale_zarr"
     DATASET_INFO_LABEL: ClassVar[str] = "multiscale zarr"
-    AXIS_SAMPLING: ClassVar[AxisSampling] = "discrete"
     zarr_path: str
     scale_names: list[str]
     name: str = "multiscale zarr data store"
@@ -188,6 +202,9 @@ class MultiscaleZarrDataStore(BaseDataStore):
             pathlib.Path(self.zarr_path),
             self.scale_names,
         )
+        # After the handles: the base checks the systems against the level
+        # count and rank, which are read off them.
+        super().model_post_init(__context)
 
     # ── Convenience constructor ─────────────────────────────────────────
 
@@ -199,6 +216,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
         scale_names: list[str],
         level_scales: list[tuple[float, ...]],
         level_translations: list[tuple[float, ...]],
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "multiscale zarr data store",
     ) -> MultiscaleZarrDataStore:
         """Construct from per-level scale and translation vectors.
@@ -214,6 +232,12 @@ class MultiscaleZarrDataStore(BaseDataStore):
         level_translations :
             Per-level translation vectors. ``level_translations[0]``
             should be all 0s.
+        data_coordinate_system :
+            The level-0 coordinate system, one axis per data dimension.  The
+            coarser levels copy its axes (names, types, units and sampling)
+            with fresh ids, and the store adopts its ``datastore_id`` as its
+            ``id``.  ``None`` leaves the store without systems until it is
+            added to a scene.
         name :
             Human-readable name for the store.
         """
@@ -230,6 +254,11 @@ class MultiscaleZarrDataStore(BaseDataStore):
             level_translations=[
                 tuple(float(v) for v in tr) for tr in level_translations
             ],
+            data_coordinate_systems=(
+                []
+                if data_coordinate_system is None
+                else level_systems(data_coordinate_system, len(scale_names), name)
+            ),
             name=name,
         )
 
@@ -244,11 +273,10 @@ class MultiscaleZarrDataStore(BaseDataStore):
     def ndim(self) -> int:
         """Number of data dimensions, read off the level-0 handle.
 
-        This store carries no axis metadata -- unlike the OME-Zarr readers it
-        is constructed from bare scale and translation vectors, and there is
-        nowhere for a name, type or unit to live.  So it cannot build its own
-        ``data_coordinate_systems``; it reports its rank and takes the axes of
-        the scene it is added to.
+        This store reads no axis metadata -- unlike the OME-Zarr readers it
+        is constructed from bare scale and translation vectors.  Its axes
+        come from a caller's ``data_coordinate_system`` or from the scene it
+        is added to, and this rank is what either must match.
         """
         return len(self._ts_stores[0].domain.shape)
 

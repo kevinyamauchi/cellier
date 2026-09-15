@@ -19,8 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from cellier.data._axes import axis_types_from_names, build_axes
+
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
+
+    from cellier.transform import Axis
 
 
 @dataclass(frozen=True)
@@ -217,3 +222,31 @@ def _require_prop(props: dict, name: str, kind: str) -> dict:
             f"{kind} property '{name}' is not in the file; it carries {sorted(props)}"
         )
     return props[name]
+
+
+def data_axes_from_geff(axes: Sequence[Any]) -> tuple[Axis, ...]:
+    """Translate geff axis metadata into a store's axes.
+
+    ``name`` and ``unit`` carry over.  ``type`` carries over where the file
+    states it; geff makes it optional, so an unset one takes the name rule of
+    :func:`~cellier.data._axes.axis_types_from_names`.  Every axis is
+    ``sampling="continuous"``: the file does not say whether a column holds
+    sample indices, so a caller whose ``t`` column is frame numbers builds
+    the system themselves.
+
+    Parameters
+    ----------
+    axes : Sequence
+        geff ``Axis`` objects, in position-column order.
+
+    Returns
+    -------
+    tuple[Axis, ...]
+        One axis per geff axis, each with a fresh id.
+    """
+    names = [axis.name for axis in axes]
+    types = [
+        axis.type or by_name
+        for axis, by_name in zip(axes, axis_types_from_names(names), strict=True)
+    ]
+    return build_axes(names, types, [axis.unit for axis in axes])

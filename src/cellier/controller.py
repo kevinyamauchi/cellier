@@ -2860,10 +2860,10 @@ class CellierController:
         """Give *data_store* coordinate systems if it does not have its own.
 
         A store that can say what its axes are -- an OME-Zarr reader, or any
-        store built with ``axis_names=`` -- already carries them, and this is
-        a no-op.  A bare ``ImageMemoryStore(data=arr)`` cannot say, so it
-        takes the trailing axes of the scene's world: their names, types and
-        units, with fresh ids.
+        store constructed with ``data_coordinate_systems=`` -- already carries
+        them, and this is a no-op.  A bare ``ImageMemoryStore(data=arr)``
+        cannot say, so it takes the trailing axes of the scene's world: their
+        names, types and units, with fresh ids.
 
         That is not the silent default D3 forbids.  The world was declared
         explicitly by the caller, axis types included; inheriting from it is

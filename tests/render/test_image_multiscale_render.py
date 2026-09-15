@@ -243,12 +243,9 @@ def _tzyx_store_with_a_nonuniform_t(controller, scene_id, tmp_path):
         level_translations=[(0.0, 0.0, 0.0, 0.0), (0.0, 0.5, 0.5, 0.5)],
         name="tzyx_store",
     )
-    # No axis_names= at construction: that shorthand only builds a level-0
-    # system, which would leave install_level_transforms with too few
-    # systems for this store's 2 levels (see the labels regression test's
-    # comment for the fuller explanation).  The world already has (t, z, y,
-    # x), so the store's own empty data_coordinate_systems inherits exactly
-    # those trailing axes, names and types included.
+    # The store is constructed without data_coordinate_systems.  The world
+    # already has (t, z, y, x), so _ensure_data_coordinate_systems gives
+    # every level exactly those trailing axes, names and types included.
     controller._ensure_data_coordinate_systems(scene_id, store)
     data = store.data_coordinate_systems[0]
     world = controller._model.scenes[scene_id].dims.world_coordinate_system

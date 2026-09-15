@@ -22,6 +22,7 @@ from cellier.render.render_manager import _ImageDisplayedDataCoord
 from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.transform import AffineTransform, Axis
 from cellier.visuals._image_memory import InMemoryImageAppearance
+from tests._v2 import data_system
 
 CHANNEL_SHAPE = (4, 8, 10, 12)  # (c, z, y, x)
 
@@ -40,7 +41,13 @@ def _channel_viewer():
     # One marked voxel per channel, so a wrong channel reads zero.
     for channel in range(CHANNEL_SHAPE[0]):
         array[channel, 3, 4, 5] = channel + 1.0
-    store = ImageMemoryStore(data=array, name="img", axis_names=("c", "z", "y", "x"))
+    store = ImageMemoryStore(
+        data=array,
+        name="img",
+        data_coordinate_systems=[
+            data_system(("c", "z", "y", "x"), sampling="discrete")
+        ],
+    )
     data = store.data_coordinate_systems[0]
     world = scene.dims.world_coordinate_system
     transform = AffineTransform.from_axis_map(

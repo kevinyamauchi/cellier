@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from cellier.data.graph import GraphMemoryStore
+from tests._v2 import data_system
 
 try:  # pragma: no cover - import probe
     import spatial_graph as _spatial_graph
@@ -27,6 +28,18 @@ def test_from_arrays_basic_shape():
     assert store.node_color_mode == "uniform"
     assert store.node_size_mode == "uniform"
     assert store.edge_color_mode == "uniform"
+
+
+def test_from_arrays_without_a_system_has_none():
+    """The store waits for a scene rather than inventing axis types."""
+    assert _store().data_coordinate_systems == []
+
+
+def test_from_arrays_takes_a_coordinate_system():
+    system = data_system(("z", "y", "x"))
+    store = _store(data_coordinate_system=system)
+    assert store.data_coordinate_system.id == system.id
+    assert store.id == system.datastore_id
 
 
 def test_edges_out_of_range_raises():

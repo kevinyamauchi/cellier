@@ -31,6 +31,7 @@ from cellier.transform import AffineTransform, Axis
 from cellier.visuals import LinesMemoryAppearance, MeshFlatAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 from cellier.visuals._points_memory import PointsMarkerAppearance
+from tests._v2 import data_system
 
 
 def _raw_2d(
@@ -539,7 +540,7 @@ def _image_visual_with_transform(
     store = ImageMemoryStore(
         data=np.zeros(shape, dtype=np.float32),
         name="img",
-        axis_names=data_axis_names,
+        data_coordinate_systems=[data_system(data_axis_names, sampling="discrete")],
     )
     data_cs = store.data_coordinate_systems[0]
     world = scene.dims.world_coordinate_system

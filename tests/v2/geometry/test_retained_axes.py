@@ -23,7 +23,7 @@ from cellier.data.points._points_requests import PointsSliceRequest
 from cellier.scene.dims import spatial_axes
 from cellier.transform import AffineTransform, Axis
 from cellier.visuals._points_memory import PointsMarkerAppearance
-from tests._v2 import data_region
+from tests._v2 import data_region, data_system
 
 _POSITIONS = np.array(
     [[1.0, 10.0, 20.0], [2.0, 12.0, 22.0], [3.0, 14.0, 24.0]], dtype=np.float32
@@ -40,7 +40,9 @@ def _viewer(world_axes, *, dim="3d"):
     scene = controller.add_scene(coordinate_system=world_axes, dim=dim)
     controller.add_canvas(scene.id)
     store = PointsMemoryStore(
-        positions=_POSITIONS.copy(), name="pts", axis_names=("z", "y", "x")
+        positions=_POSITIONS.copy(),
+        name="pts",
+        data_coordinate_systems=[data_system(("z", "y", "x"))],
     )
     return controller, scene, store
 
@@ -115,7 +117,9 @@ def test_an_order_preserving_transform_is_unchanged():
 async def test_the_store_uploads_the_columns_the_request_names():
     """``retained_axes`` is what indexes the position array."""
     store = PointsMemoryStore(
-        positions=_POSITIONS.copy(), name="pts", axis_names=("z", "y", "x")
+        positions=_POSITIONS.copy(),
+        name="pts",
+        data_coordinate_systems=[data_system(("z", "y", "x"))],
     )
     request = PointsSliceRequest(
         slice_request_id=(request_id := uuid4()),

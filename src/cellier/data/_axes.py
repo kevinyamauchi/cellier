@@ -6,13 +6,14 @@
 guesses a type out of nothing.  There are exactly three ways it gets one, in
 descending order of authority:
 
-1. **The dataset says.**  The OME-Zarr readers pass ``axis_types`` straight
+1. **The dataset says.**  The OME-Zarr readers take axis types straight
    from the NGFF metadata, and an empty ``type`` there raises rather than
    defaulting -- the metadata had a slot for it and left it blank, which is a
-   defect in the dataset.
-2. **The caller says.**  ``axis_names=`` plus ``axis_types=`` on an in-memory
-   store.  With ``axis_names`` alone, :func:`axis_types_from_names` applies one
-   small documented rule.
+   defect in the dataset.  A geff file's axes are read the same way, except
+   that geff makes ``type`` optional, so an unset one takes the name rule of
+   :func:`axis_types_from_names`.
+2. **The caller says.**  A ``DataCoordinateSystem`` the caller built, passed
+   as ``data_coordinate_systems=``.  Its axes carry their own types.
 3. **The scene says.**  A store added to a scene with no systems of its own
    takes the world's trailing axes, name, type and unit alike.  That is not a
    guess: the world was declared explicitly by the caller, and inheriting from
@@ -53,8 +54,9 @@ def axis_types_from_names(names: Sequence[str]) -> tuple[AxisType, ...]:
     """Apply the name-based type rule to a sequence of axis names.
 
     ``t`` / ``time`` are time, ``c`` / ``channel`` are channel, everything
-    else is space.  Case-insensitive.  This is used **only** when a caller
-    supplies ``axis_names`` without ``axis_types``; it is a convenience for
+    else is space.  Case-insensitive.  This is used **only** where a type
+    slot is optional and left unset -- :func:`build_axes` called with
+    ``types=None``, and a geff axis with no ``type``; it is a convenience for
     the conventional names, not a fallback for the general case.
 
     Parameters
@@ -138,7 +140,8 @@ def build_axes(
                 f"Axis '{name}' has an empty axis_type.  OME-NGFF has a slot "
                 f"for it and this dataset left it blank; there is no honest "
                 f"default among {AxisType.__args__}.  Fix the metadata, or "
-                f"pass axis_types= explicitly when constructing the store."
+                f"build the DataCoordinateSystem yourself and pass it as "
+                f"data_coordinate_system= to the store's from_* constructor."
             )
         axes.append(
             Axis(
@@ -183,10 +186,8 @@ def level_coordinate_systems(
 ) -> list[DataCoordinateSystem]:
     """Build one coordinate system per resolution level.
 
-    Every level shares the axis *names*, *types* and *units* -- they describe
-    the same physical quantities -- but each is a distinct system with fresh
-    axis ids, because a level-2 voxel is not a level-0 voxel and a transform
-    between them is exactly what says so.
+    The level-0 system is built from *axes*; the coarser levels follow from
+    it by :func:`level_systems`.
 
     Parameters
     ----------
@@ -204,14 +205,51 @@ def level_coordinate_systems(
     list[DataCoordinateSystem]
         One system per level, finest first.
     """
-    systems = [data_coordinate_system(datastore_id, axes, f"{name}_level0")]
+    level_zero = data_coordinate_system(datastore_id, axes, f"{name}_level0")
+    return level_systems(level_zero, n_levels, name)
+
+
+def level_systems(
+    level_zero: DataCoordinateSystem,
+    n_levels: int,
+    name: str,
+) -> list[DataCoordinateSystem]:
+    """Extend a level-0 coordinate system to one system per resolution level.
+
+    Every coarser level copies the level-0 axes' *names*, *types*, *units*
+    and *sampling* -- they describe the same physical quantities, sampled the
+    same way -- but is a distinct system with fresh axis ids, because a
+    level-2 voxel is not a level-0 voxel and a transform between them is
+    exactly what says so.  ``datastore_id`` carries over, so every level
+    names the same store.
+
+    Parameters
+    ----------
+    level_zero : DataCoordinateSystem
+        The finest level's system.  Returned unchanged as the first entry.
+    n_levels : int
+        How many levels the pyramid has.
+    name : str
+        Base name; level ``k >= 1`` is named ``f"{name}_level{k}"``.
+
+    Returns
+    -------
+    list[DataCoordinateSystem]
+        One system per level, finest first.
+    """
+    systems = [level_zero]
     for level in range(1, n_levels):
         systems.append(
             data_coordinate_system(
-                datastore_id,
+                level_zero.datastore_id,
                 tuple(
-                    Axis(name=axis.name, axis_type=axis.axis_type, unit=axis.unit)
-                    for axis in axes
+                    Axis(
+                        name=axis.name,
+                        axis_type=axis.axis_type,
+                        unit=axis.unit,
+                        sampling=axis.sampling,
+                    )
+                    for axis in level_zero.axes
                 ),
                 f"{name}_level{level}",
             )
@@ -321,7 +359,7 @@ def data_axes_from_world(
             f"cannot take the rest from a world with only "
             f"{world_coordinate_system.ndim} axes "
             f"({world_coordinate_system.axis_names()}).  Give the scene more "
-            f"axes, or construct the store with explicit axis_names."
+            f"axes, or construct the store with its own data_coordinate_systems."
         )
     window = list(
         world_coordinate_system.axes[world_coordinate_system.ndim - inherited :]
@@ -406,47 +444,6 @@ def install_level_transforms(store: object) -> None:
             )
         )
     store.level_transforms = transforms
-
-
-def install_level_systems(
-    store: object,
-    names: Sequence[str],
-    types: Sequence[AxisType] | None = None,
-    units: Sequence[str | None] | None = None,
-    sampling: AxisSampling | Sequence[AxisSampling] = "discrete",
-) -> None:
-    """Give a multi-level store one coordinate system per resolution level.
-
-    A no-op when the store already has systems, so it is safe to call from
-    ``model_post_init``: a store restored from JSON keeps the ids its stored
-    transforms name, and only a freshly read one mints new ones.
-
-    ``level_transforms`` is built alongside, by
-    :func:`install_level_transforms`, from the store's ``level_scales`` and
-    ``level_translations`` -- the systems are exactly what those numbers were
-    missing to be transforms.
-
-    Parameters
-    ----------
-    store : object
-        The datastore.  Must expose ``id``, ``name`` and ``n_levels``.
-    names : Sequence[str]
-        Axis names in data order.
-    types : Sequence[AxisType] or None
-        Axis types.  ``None`` applies :func:`axis_types_from_names`.
-    units : Sequence[str | None] or None
-        Physical units.
-    sampling : AxisSampling or Sequence[AxisSampling]
-        Whether each axis is sample-indexed.  Defaults to ``"discrete"``
-        because the only callers are the OME-Zarr readers, whose data is a
-        voxel grid.
-    """
-    if not store.data_coordinate_systems:
-        axes = build_axes(names, types, units, sampling)
-        store.data_coordinate_systems = level_coordinate_systems(
-            store.id, axes, int(getattr(store, "n_levels", 1)), store.name
-        )
-    install_level_transforms(store)
 
 
 def default_data_to_world(

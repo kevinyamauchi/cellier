@@ -7,15 +7,13 @@ the position reaches the sample -- so without this annotation a graph's
 markers lag the image it is drawn over.
 """
 
+from uuid import uuid4
+
 import numpy as np
 import pytest
 
-from cellier.data._axes import build_axes
+from cellier.data._axes import build_axes, data_coordinate_system
 from cellier.data.graph._graph_memory_store import GraphMemoryStore
-from cellier.data.image._image_memory_store import ImageMemoryStore
-from cellier.data.label._label_memory_store import LabelMemoryStore
-from cellier.data.lines._lines_memory_store import LinesMemoryStore
-from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.transform import Axis
 
 # -- the field ---------------------------------------------------------------
@@ -44,55 +42,21 @@ def test_an_unknown_value_is_rejected():
 # -- who sets it -------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "store",
-    [
-        ImageMemoryStore(
-            data=np.zeros((2, 3, 4), dtype=np.float32), axis_names=("z", "y", "x")
-        ),
-        LabelMemoryStore(
-            data=np.zeros((2, 3, 4), dtype=np.int32), axis_names=("z", "y", "x")
-        ),
-    ],
-    ids=["image", "labels"],
-)
-def test_a_gridded_store_declares_itself_discrete(store):
-    """A voxel grid is sample-indexed by construction, so callers never say so."""
-    axes = store.data_coordinate_systems[0].axes
-    assert [axis.sampling for axis in axes] == ["discrete"] * 3
-
-
-@pytest.mark.parametrize(
-    "store",
-    [
-        PointsMemoryStore(positions=np.zeros((2, 3)), axis_names=("z", "y", "x")),
-        LinesMemoryStore(positions=np.zeros((2, 3)), axis_names=("z", "y", "x")),
-        GraphMemoryStore(
-            positions=np.zeros((2, 3)),
-            edges=np.array([[0, 1]]),
-            axis_names=("z", "y", "x"),
-        ),
-    ],
-    ids=["points", "lines", "graph"],
-)
-def test_a_geometry_store_defaults_to_continuous(store):
-    """A vertex coordinate is a measured position unless stated otherwise."""
-    axes = store.data_coordinate_systems[0].axes
-    assert [axis.sampling for axis in axes] == ["continuous"] * 3
-
-
-def test_a_geometry_store_can_declare_one_axis_discrete():
+def test_a_store_keeps_the_sampling_its_system_declares():
     """The motivating case: t holds frame numbers, zyx hold positions.
 
     Per-axis rather than per-store, because a tracking graph is genuinely
-    mixed.
+    mixed.  The caller states it on the system; the store never overrides it.
     """
+    axes = build_axes(
+        ("t", "z", "y", "x"),
+        types=("time", "space", "space", "space"),
+        sampling=("discrete", "continuous", "continuous", "continuous"),
+    )
     store = GraphMemoryStore(
         positions=np.zeros((2, 4)),
         edges=np.array([[0, 1]]),
-        axis_names=("t", "z", "y", "x"),
-        axis_types=("time", "space", "space", "space"),
-        axis_sampling=("discrete", "continuous", "continuous", "continuous"),
+        data_coordinate_systems=[data_coordinate_system(uuid4(), axes, "graph")],
     )
     axes = store.data_coordinate_systems[0].axes
     assert [axis.sampling for axis in axes] == [
@@ -101,11 +65,6 @@ def test_a_geometry_store_can_declare_one_axis_discrete():
         "continuous",
         "continuous",
     ]
-
-
-def test_axis_sampling_without_axis_names_raises():
-    with pytest.raises(ValueError, match="need axis_names"):
-        PointsMemoryStore(positions=np.zeros((2, 3)), axis_sampling=("discrete",))
 
 
 # -- build_axes ---------------------------------------------------------------

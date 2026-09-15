@@ -115,13 +115,10 @@ def test_construction_with_a_broadcast_transform_does_not_misindex_the_store(
         ),
     )
     world = scene.dims.world_coordinate_system
-    # No axis_names= at construction: that shorthand only builds a level-0
-    # system (it explicitly does not cover multi-level stores), which would
-    # leave install_level_transforms with too few systems for this store's 2
-    # levels.  _ensure_data_coordinate_systems is what add_labels_multiscale
-    # calls internally, and -- since the store is empty -- takes the world's
-    # trailing axes (z, y, x) for every level, which is what a real call
-    # through the controller would also do.
+    # The store is constructed without data_coordinate_systems, so
+    # _ensure_data_coordinate_systems -- what add_labels_multiscale calls
+    # internally -- takes the world's trailing axes (z, y, x) for every
+    # level, which is what a real call through the controller would also do.
     controller._ensure_data_coordinate_systems(scene.id, store)
     store_cs = store.data_coordinate_systems[0]
     transform = ByDimensionTransform.from_axis_map(

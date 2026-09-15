@@ -31,6 +31,8 @@ from cellier.transform import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from cellier.transform import AxisSampling
+
 _AXIS_TYPE = {"t": "time", "c": "channel"}
 
 
@@ -46,6 +48,31 @@ def axes(labels: Sequence[str]) -> tuple[Axis, ...]:
     """Build axes, typing ``t`` and ``c`` and calling everything else spatial."""
     return tuple(
         Axis(name=label, axis_type=_AXIS_TYPE.get(label, "space")) for label in labels
+    )
+
+
+def data_system(
+    labels: Sequence[str],
+    *,
+    sampling: AxisSampling = "continuous",
+    name: str = "data",
+) -> DataCoordinateSystem:
+    """A store's coordinate system, for ``data_coordinate_systems=[...]``.
+
+    Axes are typed as :func:`axes` types them.  The ``datastore_id`` is fresh,
+    and the store the system is passed to adopts it as its own id.
+    """
+    return DataCoordinateSystem(
+        name=name,
+        axes=tuple(
+            Axis(
+                name=label,
+                axis_type=_AXIS_TYPE.get(label, "space"),
+                sampling=sampling,
+            )
+            for label in labels
+        ),
+        datastore_id=uuid4(),
     )
 
 

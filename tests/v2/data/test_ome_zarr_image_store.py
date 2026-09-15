@@ -12,7 +12,6 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
-from cellier.data.image._axis_info import AxisInfo
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
 
@@ -147,17 +146,23 @@ def test_scale_names(ome_zarr_5d: str) -> None:
 
 def test_axis_names_all_axes(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_names == ["t", "c", "z", "y", "x"]
+    assert store.data_coordinate_system.axis_names() == ("t", "c", "z", "y", "x")
 
 
 def test_axis_types(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_types == ["time", "channel", "space", "space", "space"]
+    assert [axis.axis_type for axis in store.data_coordinate_system.axes] == [
+        "time",
+        "channel",
+        "space",
+        "space",
+        "space",
+    ]
 
 
 def test_axis_units(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_units == [
+    assert [axis.unit for axis in store.data_coordinate_system.axes] == [
         "second",
         None,
         "micrometer",
@@ -166,27 +171,9 @@ def test_axis_units(ome_zarr_5d: str) -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Tests: axes property
-# ---------------------------------------------------------------------------
-
-
-def test_axes_property_length(ome_zarr_5d: str) -> None:
+def test_ndim(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert len(store.axes) == 5
-
-
-def test_axes_property_array_dim(ome_zarr_5d: str) -> None:
-    store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axes[2].array_dim == 2
-    assert store.axes[2].name == "z"
-    assert store.axes[2].type == "space"
-
-
-def test_axes_returns_axis_info(ome_zarr_5d: str) -> None:
-    store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    for ax in store.axes:
-        assert isinstance(ax, AxisInfo)
+    assert store.ndim == 5
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +278,10 @@ def test_serialisation_roundtrip(ome_zarr_5d: str) -> None:
     restored = OMEZarrImageDataStore.model_validate_json(json_str)
     assert restored.zarr_path == store.zarr_path
     assert restored.scale_names == store.scale_names
-    assert restored.axis_names == store.axis_names
+    assert (
+        restored.data_coordinate_system.axis_names()
+        == store.data_coordinate_system.axis_names()
+    )
     assert restored.n_levels == store.n_levels
     assert restored.level_shapes == store.level_shapes
 
@@ -459,7 +449,7 @@ def test_bf2raw_from_path_returns_store(bf2raw_store: str) -> None:
 
 def test_bf2raw_axis_names(bf2raw_store: str) -> None:
     store = OMEZarrImageDataStore.from_path(bf2raw_store)
-    assert store.axis_names == ["z", "y", "x"]
+    assert store.data_coordinate_system.axis_names() == ("z", "y", "x")
 
 
 def test_bf2raw_level_shapes(bf2raw_store: str) -> None:
@@ -541,6 +531,9 @@ def test_bf2raw_serialisation_roundtrip(bf2raw_store: str) -> None:
     restored = OMEZarrImageDataStore.model_validate_json(json_str)
     assert restored.zarr_path == store.zarr_path
     assert restored.scale_names == store.scale_names
-    assert restored.axis_names == store.axis_names
+    assert (
+        restored.data_coordinate_system.axis_names()
+        == store.data_coordinate_system.axis_names()
+    )
     assert restored.n_levels == store.n_levels
     assert restored.level_shapes == store.level_shapes

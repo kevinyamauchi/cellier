@@ -55,6 +55,22 @@ class LinesMemoryStore(BaseDataStore):
         Pass None for uniform-color rendering.
     name : str
         Human-readable label.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per ``positions`` column.  Mark an axis
+        ``sampling="discrete"`` when its column holds sample indices, such
+        as frame numbers.  Empty by default, in which case the store takes
+        the scene's world axes when it is added to a scene.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["lines_memory"] = "lines_memory"
