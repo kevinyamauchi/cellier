@@ -146,13 +146,11 @@ def test_mesh_reports_vertices_and_faces():
 
 
 def test_graph_reports_structure_and_transform_section():
-    from cellier.transform import AffineTransform
-
     store = GraphMemoryStore(
         positions=np.zeros((4, 3), dtype=np.float32),
         edges=np.array([[0, 1], [1, 2]], dtype=np.int32),
         directed=True,
-        transform=AffineTransform.from_scale((2.0, 2.0, 2.0)),
+        axis_scales=(2.0, 2.0, 2.0),
     )
     info = store.dataset_info()
     rows = _row_dict(info)

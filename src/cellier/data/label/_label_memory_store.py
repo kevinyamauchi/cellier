@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -14,6 +14,7 @@ from cellier.data._dataset_info import (
 )
 
 if TYPE_CHECKING:
+    from cellier.data._changes import StoreChangeKind
     from cellier.data.image._image_requests import ChunkRequest
 
 _ACCEPTED_DTYPE_TYPES = {np.int8, np.int16, np.int32}
@@ -36,9 +37,29 @@ class LabelMemoryStore(BaseDataStore):
         coerced, so it has to survive the round trip.
     name : str
         Human-readable label. Default ``"label_memory_store"``.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per array dimension.  A voxel grid is
+        sample-indexed, so build its axes with ``sampling="discrete"``.
+        Empty by default, in which case the store takes the scene's world
+        axes when it is added to a scene.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["label_memory"] = "label_memory"
+    # ``data`` announces a change on ``data_changed`` when reassigned:
+    # ``extent`` if its shape changed, ``contents`` otherwise
+    # (plans/store_change_events.md).
+    _CONTENTS_FIELDS: ClassVar[frozenset[str]] = frozenset({"data"})
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory labels"
     name: str = "label_memory_store"
     data: np.ndarray
@@ -106,6 +127,12 @@ class LabelMemoryStore(BaseDataStore):
         """
         return {"dtype": array.dtype.name, "values": array.tolist()}
 
+    def _change_kind(self, name: str, old: Any, new: Any) -> StoreChangeKind | None:
+        """``data`` of a new shape moves the extent; the same shape does not."""
+        if name == "data" and np.shape(old) != np.shape(new):
+            return "extent"
+        return super()._change_kind(name, old, new)
+
     @property
     def ndim(self) -> int:
         return self.data.ndim
@@ -125,6 +152,16 @@ class LabelMemoryStore(BaseDataStore):
     @property
     def level_shapes(self) -> list[tuple[int, ...]]:
         return [self.shape]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     def dataset_info(self) -> DatasetInfo:
         """Describe the array, including how many distinct labels it holds.

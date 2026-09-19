@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
     import numpy as np
 
+    from cellier.transform import ConvexRegion
+
 
 class MeshSliceRequest(NamedTuple):
     """Request for one slab-filtered slice of mesh data.
@@ -29,22 +31,33 @@ class MeshSliceRequest(NamedTuple):
         Always 0 — no LOD levels.  Present for slicer logging compat.
     displayed_axes : tuple[int, ...]
         Axis indices rendered in the canvas.
-    slice_indices : dict[int, int]
-        Collapsed axis → world-space integer slice position.
-        Empty when all axes are displayed (full 3D view).
-    thickness : float
-        Half-thickness of the slab in data-space units.  Faces whose
-        at least one vertex satisfies
-        ``slice_index - thickness <= coord <= slice_index + thickness``
-        on every sliced axis are included.  Default 0.5.
+    retained_axes : tuple[int, ...]
+        The **data** axes this visual's geometry keeps, ascending.
+
+        Not the same list as ``displayed_axes``, which indexes the **world**:
+        a ``zyx`` store in a ``czyx`` world retains ``(0, 1, 2)`` while the
+        world displays ``(1, 2, 3)``, and a transform that permutes its axes
+        retains a different set again.  Indexing the position array with
+        world axes raises on the first and silently uploads the wrong columns
+        on the second.
+    region : ConvexRegion
+        The selected region, already pulled back into **data** coordinates
+        (design 3.12).  It is the whole filter -- one ``contains`` call
+        instead of a per-axis mask loop.
+
+        Until v1 was retired this was optional, and a request without one
+        fell back to comparing a **world** position from ``slice_indices``
+        against **data** coordinates -- the latent bug D4 exists to fix: on a
+        2 um z spacing it could show a vertex 24 um off the slice plane and
+        hide the ones that are on it.  There is no second path now (R8.3).
     """
 
     slice_request_id: UUID
     chunk_request_id: UUID
     scale_index: int
     displayed_axes: tuple[int, ...]
-    slice_indices: dict[int, int]
-    thickness: float = 0.5
+    retained_axes: tuple[int, ...]
+    region: ConvexRegion
 
 
 @dataclass(frozen=True)
@@ -92,4 +105,4 @@ class MeshData:
     @property
     def shape(self) -> str:
         """Summary string consumed by AsyncSlicer DEBUG logging."""
-        return f"positions={self.positions.shape} " f"indices={self.indices.shape}"
+        return f"positions={self.positions.shape} indices={self.indices.shape}"

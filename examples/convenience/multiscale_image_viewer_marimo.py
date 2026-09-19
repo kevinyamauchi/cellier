@@ -57,7 +57,7 @@ def _():
         AppearanceControls,
         Layout,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         display,
     )
     from cellier.convenience.gui import (
@@ -65,19 +65,21 @@ def _():
         build_canvas_widget,
     )
     from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-    from cellier.transform import AffineTransform
-    from cellier.visuals import MultiscaleImageAppearance
+    from cellier.visuals import (
+        MultiscaleImageAppearance,
+        MultiscaleImageSingleAppearance,
+    )
 
     return (
-        AffineTransform,
         AppearanceControls,
         Layout,
         MultiscaleImageAppearance,
         MultiscaleImageControlsConfig,
+        MultiscaleImageSingleAppearance,
         MultiscaleZarrDataStore,
         Path,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         build_canvas_widget,
         display,
         np,
@@ -159,9 +161,9 @@ def _(Path, block_average, concentric_shells, tempfile, write_zarr3):
 
 @app.cell
 def _(
-    AffineTransform,
     MultiscaleImageAppearance,
     MultiscaleImageControlsConfig,
+    MultiscaleImageSingleAppearance,
     MultiscaleZarrDataStore,
     Viewer,
     tmpdir,
@@ -169,28 +171,25 @@ def _(
     store = MultiscaleZarrDataStore(
         zarr_path=str(tmpdir),
         scale_names=["s0", "s1", "s2"],
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-            AffineTransform.from_scale_and_translation(
-                (4.0, 4.0, 4.0), (1.5, 1.5, 1.5)
-            ),
-        ],
+        level_scales=[(1.0, 1.0, 1.0), (2.0, 2.0, 2.0), (4.0, 4.0, 4.0)],
+        level_translations=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (1.5, 1.5, 1.5)],
     )
 
-    viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d", gui="anywidget")
+    from cellier.scene.dims import spatial_axes
+
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
 
     viewer.add_image_multiscale(
         store,
         appearance=MultiscaleImageAppearance(
+            lod_bias=1.0,
+            attenuation=1.0,
+        ),
+        single=MultiscaleImageSingleAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             render_mode="iso",
             iso_threshold=0.45,
-            lod_bias=1.0,
-            attenuation=1.0,
         ),
         controls=MultiscaleImageControlsConfig(
             appearance=[
@@ -226,12 +225,12 @@ def _(
 
 
 @app.cell
-def _(axis_ranges_from_viewer, build_canvas_widget, viewer):
-    axis_ranges = axis_ranges_from_viewer(viewer)
+def _(axis_values_from_viewer, build_canvas_widget, viewer):
+    axis_values = axis_values_from_viewer(viewer)
 
     canvas_view = build_canvas_widget(
         viewer,
-        axis_ranges,
+        axis_values,
         canvas_size=(400, 400),
     )
     return (canvas_view,)

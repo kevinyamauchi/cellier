@@ -9,20 +9,29 @@ from __future__ import annotations
 import pathlib
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, Field, PrivateAttr
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._axes import build_axes, level_systems
+from cellier.data._axes import data_coordinate_system as build_data_coordinate_system
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import DatasetInfo, ome_zarr_dataset_info
-from cellier.data.image._axis_info import AxisInfo
-from cellier.transform import AffineTransform
+from cellier.data._tensorstore_cache import (
+    DEFAULT_CACHE_POOL_BYTES,
+    TensorStoreCacheMixin,
+    build_context,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from yaozarrs import v05
 
     from cellier.data.image._image_requests import ChunkRequest
+    from cellier.transform import DataCoordinateSystem
 
 # ---------------------------------------------------------------------------
 # URI helpers
@@ -155,6 +164,7 @@ def _open_ome_ts_stores(
     zarr_path: str,
     scale_names: list[str],
     anonymous: bool = False,
+    cache_pool_bytes: int = DEFAULT_CACHE_POOL_BYTES,
 ) -> list[ts.TensorStore]:
     """Open one TensorStore per scale level (synchronous, read-only).
 
@@ -169,7 +179,12 @@ def _open_ome_ts_stores(
     anonymous : bool
         When True, use anonymous credentials for S3/GCS access
         (for public buckets). Default False.
+    cache_pool_bytes : int
+        Chunk cache cap in bytes, shared by every level opened here --
+        one context serves them all, so a chunk read for one level is not
+        re-decompressed for the next.  ``0`` disables caching.
     """
+    context = build_context(cache_pool_bytes)
     stores: list[ts.TensorStore] = []
     scheme = urlparse(zarr_path).scheme
     for name in scale_names:
@@ -186,7 +201,7 @@ def _open_ome_ts_stores(
                 }
             else:
                 spec.setdefault("context", {})["gcs_user_project"] = ""
-        store = ts.open(spec).result()
+        store = ts.open(spec, context=context).result()
         stores.append(store)
     return stores
 
@@ -219,59 +234,124 @@ def _extract_global_transform(
     return global_scale, global_translation
 
 
-def _level0_physical_transform(
-    ms: v05.Multiscale,
-    global_scale: list[float],
-    global_translation: list[float],
-) -> tuple[list[float], list[float]]:
-    """Return the level-0 data-to-world scale and translation.
+def _level_geometry(
+    global_scale: Sequence[float],
+    global_translation: Sequence[float],
+    dataset_scales: Sequence[Sequence[float]],
+    dataset_translations: Sequence[Sequence[float]],
+) -> tuple[list[tuple[float, ...]], list[tuple[float, ...]], list[float], list[float]]:
+    """Compose NGFF scales and translations into the store's pyramid numbers.
 
-    The same composition ``_derive_level_transforms`` performs for level 0,
-    kept before it is normalised away: that function expresses every level
-    relative to level-0 voxels, which by construction makes level 0 the
-    identity and discards where the array actually sits in world space.
+    Implements the math from section 3.2 of the design document over all
+    axes.  Shared by both OME-Zarr readers: the image reader pulls the
+    per-dataset numbers out of yaozarrs models, the label reader out of raw
+    dicts.
+
+    Returns numbers rather than transforms: a transform names the two
+    coordinate systems it sits between, and those are minted once the store
+    has its axes (see ``install_level_transforms``).
+
+    Parameters
+    ----------
+    global_scale, global_translation : Sequence[float]
+        The multiscale's own ``coordinateTransformations``, per axis.
+    dataset_scales, dataset_translations : Sequence[Sequence[float]]
+        Each dataset's scale and translation, finest first.
+
+    Returns
+    -------
+    level_scales : list[tuple[float, ...]]
+        Level-k voxels in level-0 voxels; level 0 is all ones.
+    level_translations : list[tuple[float, ...]]
+        The offset half of the same, in level-0 voxels.
+    physical_scale : list[float]
+        The level-0 data-to-world scale.  The normalisation above divides it
+        out, so it is returned for the store to keep; without it the store
+        cannot say where it sits in world space.
+    physical_translation : list[float]
+        The level-0 data-to-world translation.
     """
-    n_axes = len(ms.axes)
-    ds0 = ms.datasets[0]
-    scale = [g * s for g, s in zip(global_scale, ds0.scale_transform.scale)]
-    tr_raw = ds0.translation_transform
-    tr_ds = list(tr_raw.translation) if tr_raw is not None else [0.0] * n_axes
-    translation = [
-        gs * t + gt for gs, t, gt in zip(global_scale, tr_ds, global_translation)
+    per_level_scale = [
+        [g * s for g, s in zip(global_scale, scale)] for scale in dataset_scales
     ]
-    return scale, translation
+    per_level_translation = [
+        [
+            gs * t + gt
+            for gs, t, gt in zip(global_scale, translation, global_translation)
+        ]
+        for translation in dataset_translations
+    ]
+    s0, t0 = per_level_scale[0], per_level_translation[0]
+    n_axes = len(s0)
+    level_scales = [
+        tuple(scale[i] / s0[i] for i in range(n_axes)) for scale in per_level_scale
+    ]
+    level_translations = [
+        tuple((translation[i] - t0[i]) / s0[i] for i in range(n_axes))
+        for translation in per_level_translation
+    ]
+    return level_scales, level_translations, list(s0), list(t0)
 
 
-def _derive_level_transforms(
-    ms: v05.Multiscale,
-    global_scale: list[float],
-    global_translation: list[float],
-) -> list[AffineTransform]:
-    """Compute per-level voxel-level-k → voxel-level-0 AffineTransforms.
+def _ngff_coordinate_systems(
+    names: Sequence[str],
+    types: Sequence[str],
+    units: Sequence[str | None],
+    n_levels: int,
+    name: str,
+    data_coordinate_system: DataCoordinateSystem | None,
+) -> list[DataCoordinateSystem]:
+    """One coordinate system per pyramid level, for both OME-Zarr readers.
 
-    Implements the math from §3.2 of the design document over all axes.
+    From the NGFF axes when *data_coordinate_system* is ``None``: names,
+    units and types as the file states them.  An empty ``type`` raises
+    rather than defaulting to ``"space"`` -- the metadata had a slot for it
+    and left it blank, which is a defect in the dataset.  Every axis is
+    ``sampling="discrete"``, because the data is a voxel grid.
+
+    A caller's level-0 system replaces the metadata outright, which is also
+    the way past a blank ``type``.  Either way the coarser levels are copied
+    from level 0 by :func:`~cellier.data._axes.level_systems`.
+
+    Parameters
+    ----------
+    names, types, units : Sequence
+        The NGFF axis metadata, in data order.
+    n_levels : int
+        How many datasets the multiscale has.
+    name : str
+        The store's name, the base of each system's name.
+    data_coordinate_system : DataCoordinateSystem or None
+        The caller's level-0 system, or ``None`` to build one.
+
+    Returns
+    -------
+    list[DataCoordinateSystem]
+        One system per level, finest first.
     """
-    n_axes = len(ms.axes)
-
-    per_level: list[tuple[list[float], list[float]]] = []
-    for ds in ms.datasets:
-        sc = [g * s for g, s in zip(global_scale, ds.scale_transform.scale)]
-        tr_raw = ds.translation_transform
-        tr_ds = list(tr_raw.translation) if tr_raw is not None else [0.0] * n_axes
-        tr = [gs * t + gt for gs, t, gt in zip(global_scale, tr_ds, global_translation)]
-        per_level.append((sc, tr))
-
-    s0, t0 = per_level[0]
-    transforms: list[AffineTransform] = []
-    for sc_k, tr_k in per_level:
-        cellier_scale = tuple(sc_k[i] / s0[i] for i in range(n_axes))
-        cellier_trans = tuple((tr_k[i] - t0[i]) / s0[i] for i in range(n_axes))
-        transforms.append(
-            AffineTransform.from_scale_and_translation(
-                scale=cellier_scale, translation=cellier_trans
-            )
+    if data_coordinate_system is None:
+        axes = build_axes(names, types, units, "discrete")
+        data_coordinate_system = build_data_coordinate_system(
+            uuid4(), axes, f"{name}_level0"
         )
-    return transforms
+    return level_systems(data_coordinate_system, n_levels, name)
+
+
+def _omero_channel_labels(metadata: Any) -> list[str] | None:
+    """The channel labels an image's ``omero`` block names, or ``None``.
+
+    ``omero`` is transitional NGFF metadata, but it is where OME-Zarr writers
+    put channel names.  A channel listed without a label is called by its
+    index, so the result has one entry per listed channel.
+    """
+    omero = getattr(metadata, "omero", None)
+    channels = getattr(omero, "channels", None)
+    if not channels:
+        return None
+    return [
+        str(channel.label) if getattr(channel, "label", None) else str(index)
+        for index, channel in enumerate(channels)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +359,7 @@ def _derive_level_transforms(
 # ---------------------------------------------------------------------------
 
 
-class OMEZarrImageDataStore(BaseDataStore):
+class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
     """Data store for an OME-Zarr v0.5 image read via tensorstore.
 
     Use the :meth:`from_path` class method to construct from an OME-Zarr URI.
@@ -295,25 +375,37 @@ class OMEZarrImageDataStore(BaseDataStore):
         Index into ``multiscales[]``. Defaults to 0.
     scale_names : list[str]
         Per-level relative array paths, finest to coarsest.
-    level_transforms : list[AffineTransform]
-        Full-rank (all axes) AffineTransform per level:
-        voxel-level-k to voxel-level-0.
-    axis_names : list[str]
-        All axis names in data order.
-    axis_units : list[str | None]
-        Physical units per axis (``None`` if unspecified).
-    axis_types : list[str]
-        OME axis type per axis.
+    level_scales : list[tuple[float, ...]]
+        Full-rank (all axes) per-level scale: level-k voxels in level-0
+        voxels.  Level 0 is all ones by construction.
+    level_translations : list[tuple[float, ...]]
+        The offset half of the same, in level-0 voxels.
     physical_scale : list[float]
         Level-0 data-to-world scale per axis, i.e. the OME global scale
-        composed with the level-0 dataset scale.  ``level_transforms`` is
+        composed with the level-0 dataset scale.  ``level_scales`` is
         normalised to level-0 voxels and so has this divided out; it is kept
         here for display.  Empty when not known.
     physical_translation : list[float]
         Level-0 data-to-world translation per axis, the companion to
         ``physical_scale``.  Empty when not known.
+    channel_labels : list[str] or None
+        One name per channel, in channel-index order, from the image's
+        ``omero`` metadata.  ``None`` when the image has no ``omero`` block.
+        ``axis_values_from_viewer`` uses them to label a channel slider.
     name : str
         Human-readable name for the store.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        One system per resolution level, finest first, and the store's only
+        record of its axis names, types and units.  :meth:`from_path` builds
+        them from the NGFF axis metadata (every axis ``sampling="discrete"``)
+        or from a caller's level-0 system.  Each system's ``datastore_id``
+        must equal ``id``.
+    level_transforms : list[AffineTransform]
+        Level ``k`` voxels -> level ``0`` voxels, one per system, built from
+        ``level_scales`` and ``level_translations``.  Not normally passed.
     """
 
     store_type: Literal["ome_zarr_image"] = "ome_zarr_image"
@@ -321,12 +413,9 @@ class OMEZarrImageDataStore(BaseDataStore):
     zarr_path: str
     multiscale_index: int = 0
     scale_names: list[str]
-    level_transforms: list[AffineTransform]
-    axis_names: list[str]
-    axis_units: list[str | None]
-    axis_types: list[str]
     physical_scale: list[float] = Field(default_factory=list)
     physical_translation: list[float] = Field(default_factory=list)
+    channel_labels: list[str] | None = None
     anonymous: bool = False
     name: str = "ome zarr image data store"
 
@@ -339,7 +428,22 @@ class OMEZarrImageDataStore(BaseDataStore):
     def model_post_init(self, __context: Any) -> None:
         """Open all TensorStore handles (synchronous, before QtAsyncio)."""
         self._ts_stores = _open_ome_ts_stores(
-            self.zarr_path, self.scale_names, anonymous=self.anonymous
+            self.zarr_path,
+            self.scale_names,
+            anonymous=self.anonymous,
+            cache_pool_bytes=self.cache_pool_bytes,
+        )
+        # After the handles: the base checks the systems against the level
+        # count and rank, which are read off them.
+        super().model_post_init(__context)
+
+    def _reopen_ts_stores(self) -> None:
+        """Reopen every level against the store's current cache budget."""
+        self._ts_stores = _open_ome_ts_stores(
+            self.zarr_path,
+            self.scale_names,
+            anonymous=self.anonymous,
+            cache_pool_bytes=self.cache_pool_bytes,
         )
 
     # ── Convenience constructor ─────────────────────────────────────────
@@ -352,6 +456,8 @@ class OMEZarrImageDataStore(BaseDataStore):
         multiscale_index: int = 0,
         series_index: int = 0,
         anonymous: bool = False,
+        cache_pool_bytes: int = DEFAULT_CACHE_POOL_BYTES,
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "ome zarr image data store",
     ) -> OMEZarrImageDataStore:
         """Construct from an OME-Zarr v0.5 URI.
@@ -374,14 +480,24 @@ class OMEZarrImageDataStore(BaseDataStore):
         anonymous : bool
             When True, use anonymous credentials for S3/GCS access
             (for public buckets). Default False.
+        cache_pool_bytes : int
+            Chunk cache cap for this store, in bytes, shared by all of its
+            resolution levels.  ``0`` disables caching.
+        data_coordinate_system : DataCoordinateSystem or None
+            The level-0 coordinate system, one axis per array dimension.
+            ``None`` builds it from the NGFF axis metadata.  A passed system
+            replaces that metadata outright; the coarser levels copy its axes
+            with fresh ids, and the store adopts its ``datastore_id``.
         name : str
             Human-readable name for the store.
 
         Raises
         ------
         ValueError
-            If the URI scheme is not supported or the series index is
-            out of range.
+            If the URI scheme is not supported, the series index is out of
+            range, an NGFF axis has an empty type and no
+            *data_coordinate_system* is passed, or the passed system does not
+            have one axis per array dimension.
         TypeError
             If the OME metadata is neither Image nor Bf2Raw (e.g. a Plate).
         """
@@ -412,40 +528,51 @@ class OMEZarrImageDataStore(BaseDataStore):
         # 5. Select multiscale entry.
         ms = metadata.multiscales[multiscale_index]
 
-        # 6. Collect axis metadata.
-        axis_names = [ax.name for ax in ms.axes]
-        axis_units = [getattr(ax, "unit", None) for ax in ms.axes]
-        axis_types = [ax.type or "" for ax in ms.axes]
-
-        # 7. Extract global coordinateTransformations.
+        # 6. Extract global coordinateTransformations.
         global_scale, global_translation = _extract_global_transform(ms)
 
-        # 8. Derive per-level AffineTransforms (full rank, all axes).
-        level_transforms = _derive_level_transforms(
-            ms, global_scale, global_translation
+        # 7. Derive the per-level geometry (full rank, all axes) and the
+        #    level-0 physical transform it normalises away.  The level
+        #    transforms themselves are built once the store has its level
+        #    coordinate systems, in ``install_level_transforms``.
+        n_axes = len(ms.axes)
+        level_scales, level_translations, physical_scale, physical_translation = (
+            _level_geometry(
+                global_scale,
+                global_translation,
+                [list(ds.scale_transform.scale) for ds in ms.datasets],
+                [
+                    list(ds.translation_transform.translation)
+                    if ds.translation_transform is not None
+                    else [0.0] * n_axes
+                    for ds in ms.datasets
+                ],
+            )
         )
 
-        # 9. Collect scale_names.
-        scale_names = [ds.path for ds in ms.datasets]
-
-        # 10. Retain the level-0 physical transform.  ``level_transforms``
-        #     divides it out, so without this the store cannot say where it
-        #     sits in world space.
-        physical_scale, physical_translation = _level0_physical_transform(
-            ms, global_scale, global_translation
+        # 8. One coordinate system per level, from the NGFF axes unless the
+        #    caller supplied the level-0 system.
+        data_coordinate_systems = _ngff_coordinate_systems(
+            [ax.name for ax in ms.axes],
+            [ax.type or "" for ax in ms.axes],
+            [getattr(ax, "unit", None) for ax in ms.axes],
+            len(ms.datasets),
+            name,
+            data_coordinate_system,
         )
 
         return cls(
             zarr_path=zarr_path,
             multiscale_index=multiscale_index,
-            scale_names=scale_names,
-            level_transforms=level_transforms,
-            axis_names=axis_names,
-            axis_units=axis_units,
-            axis_types=axis_types,
+            channel_labels=_omero_channel_labels(metadata),
+            scale_names=[ds.path for ds in ms.datasets],
+            level_scales=level_scales,
+            level_translations=level_translations,
+            data_coordinate_systems=data_coordinate_systems,
             physical_scale=physical_scale,
             physical_translation=physical_translation,
             anonymous=anonymous,
+            cache_pool_bytes=cache_pool_bytes,
             name=name,
         )
 
@@ -528,25 +655,19 @@ class OMEZarrImageDataStore(BaseDataStore):
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
 
     @property
-    def axes(self) -> list[AxisInfo]:
-        """All axes in data order as AxisInfo descriptors.
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
 
-        Use ``array_dim`` and ``type`` to configure ``dims.displayed_axes``
-        and ``dims.selection.slice_indices`` before rendering. Example::
-
-            scene.dims.displayed_axes = [
-                ax.array_dim for ax in store.axes if ax.type == "space"
-            ]
-            scene.dims.selection.slice_indices = {
-                ax.array_dim: 0 for ax in store.axes if ax.type != "space"
-            }
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
         """
-        return [
-            AxisInfo(name=n, unit=u, type=t, array_dim=i)
-            for i, (n, u, t) in enumerate(
-                zip(self.axis_names, self.axis_units, self.axis_types)
-            )
-        ]
+        return gridded_axis_extents(self.level_shapes[0])
+
+    @property
+    def ndim(self) -> int:
+        """Number of data dimensions, read off the level-0 handle."""
+        return len(self._ts_stores[0].domain.shape)
 
     @property
     def dtype(self) -> np.dtype:

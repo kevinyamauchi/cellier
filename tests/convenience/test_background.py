@@ -4,6 +4,7 @@ import numpy as np
 
 from cellier.convenience import OrthoViewer, Viewer
 from cellier.scene import BackgroundAppearance
+from cellier.scene.dims import spatial_axes
 
 
 def _top_color(viewer_controller, scene_id) -> np.ndarray:
@@ -12,12 +13,12 @@ def _top_color(viewer_controller, scene_id) -> np.ndarray:
 
 
 def test_viewer_background_property_is_the_scene_model():
-    viewer = Viewer(axis_labels=("y", "x"), dim="2d")
+    viewer = Viewer(spatial_axes("y", "x"), dim="2d")
     assert viewer.background is viewer.scene.background
 
 
 def test_viewer_background_field_change_reaches_the_render_layer():
-    viewer = Viewer(axis_labels=("y", "x"), dim="2d")
+    viewer = Viewer(spatial_axes("y", "x"), dim="2d")
 
     viewer.background.top_color = (1.0, 0.0, 0.0, 1.0)
 
@@ -29,7 +30,7 @@ def test_viewer_background_field_change_reaches_the_render_layer():
 
 
 def test_viewer_background_can_be_replaced():
-    viewer = Viewer(axis_labels=("y", "x"), dim="2d")
+    viewer = Viewer(spatial_axes("y", "x"), dim="2d")
 
     viewer.background = BackgroundAppearance(mode="uniform", color=(0.0, 1.0, 0.0, 1.0))
 
@@ -49,7 +50,7 @@ def test_viewer_background_can_be_replaced():
 
 
 def test_ortho_set_background_applies_to_all_panels():
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
 
     viewer.set_background(
         BackgroundAppearance(mode="uniform", color=(1.0, 0.0, 0.0, 1.0))
@@ -63,7 +64,7 @@ def test_ortho_set_background_applies_to_all_panels():
 
 def test_ortho_panels_get_independent_copies():
     """Editing one panel's background afterwards leaves the others alone."""
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"))
     viewer.set_background(
         BackgroundAppearance(mode="uniform", color=(1.0, 0.0, 0.0, 1.0))
     )

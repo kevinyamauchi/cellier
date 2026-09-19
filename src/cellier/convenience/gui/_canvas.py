@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from cellier.controller import CellierController
     from cellier.convenience._hosts import LayoutHost
     from cellier.convenience._viewer import Viewer
+    from cellier.gui._axis_values import AxisValues
     from cellier.gui._constants import GuiName
     from cellier.gui.anywidget._dims_panel import AnywidgetDimsPanel
     from cellier.gui.qt import QtCanvasWidget
@@ -81,7 +84,7 @@ class AnywidgetCanvasView:
 def build_canvas_view(
     controller: CellierController,
     scene: Scene,
-    axis_ranges: dict[int, tuple[float, float]],
+    axis_values: Mapping[int, AxisValues],
     *,
     backend,
     render_modes: set[str] | None = None,
@@ -90,7 +93,6 @@ def build_canvas_view(
     depth_range_3d: tuple[float, float] = (1.0, 8000.0),
     depth_range_2d: tuple[float, float] = (-500.0, 500.0),
     canvas_size: tuple[int, int] | None = None,
-    non_displayed: tuple[int, ...] = (),
 ):
     """Build a wired canvas leaf for *scene*, reusing any existing canvas.
 
@@ -106,8 +108,8 @@ def build_canvas_view(
         The controller owning *scene*.
     scene : Scene
         The scene whose canvas this leaf controls.
-    axis_ranges : dict[int, tuple[float, float]]
-        Axis index to ``(world_min, world_max)``, for the slider ranges.
+    axis_values : Mapping[int, AxisValues]
+        Axis index to the values that axis's slider can take.
     backend : GuiBackend
         Supplies the toolkit's canvas widget.
     render_modes : set[str] or None
@@ -121,9 +123,22 @@ def build_canvas_view(
         ``(near, far)`` clip distances for a new 3D / 2D camera.
     canvas_size : tuple[int, int] or None
         Initial CSS pixel size.  Meaningful to the anywidget backend only.
-    non_displayed : tuple[int, ...]
-        Axes to exclude from the sliders regardless of dims state.
+
+    Notes
+    -----
+    A **new** canvas on a scene that renders both ways also moves the scene's
+    displayed axes to the middle of their slider range.  Every axis keeps a
+    slice position while displayed (D36), and a scene starts every one at 0 --
+    the edge of the data, where a first switch from 3D to 2D would land on a
+    blank plane (``plans/gui_backend_seam.md`` D16).  A scene that renders one
+    way (an ``OrthoViewer`` panel) has no toggle, so nothing is moved; nor is
+    anything moved on a reused canvas, so a restored session stays put.
     """
+    from cellier.gui._axis_values import coerce_axis_values
+
+    # Validated here, before a canvas is created, so a bad mapping fails
+    # without leaving a half-built canvas on the scene.
+    axis_values = coerce_axis_values(axis_values)
     canvas_ids = controller.get_canvas_ids(scene.id)
     if not canvas_ids:
         controller.add_canvas(
@@ -138,13 +153,13 @@ def build_canvas_view(
             canvas_size=canvas_size,
         )
         canvas_ids = controller.get_canvas_ids(scene.id)
+        _center_displayed_axes(controller, scene, axis_values)
 
     view = backend.canvas_view(
         scene,
         controller.get_canvas_view(canvas_ids[-1]),
-        axis_ranges,
+        axis_values,
         canvas_size=canvas_size,
-        non_displayed=non_displayed,
     )
     controller.connect_widget(
         view.dims_control,
@@ -153,9 +168,35 @@ def build_canvas_view(
     return view
 
 
+def _center_displayed_axes(
+    controller: CellierController,
+    scene: Scene,
+    axis_values: Mapping[int, AxisValues],
+) -> None:
+    """Move each displayed continuous axis's stored position to its midpoint.
+
+    Only for a scene with a 2D/3D toggle, which is what would slice at the
+    stored position.  A discrete axis has no meaningful middle and is left
+    where it is, as is an axis with no slider values.
+    """
+    from cellier.gui._axis_values import ContinuousAxisValues
+
+    if not {"2d", "3d"} <= {str(mode) for mode in scene.render_modes}:
+        return
+    selection = scene.dims.selection
+    updates = {
+        int(axis): (spec.min + spec.max) / 2.0
+        for axis, spec in axis_values.items()
+        if int(axis) in selection.displayed_axes
+        and isinstance(spec, ContinuousAxisValues)
+    }
+    if updates:
+        controller.update_slice_indices(scene.id, updates)
+
+
 def build_canvas_widget(
     viewer: Viewer,
-    axis_ranges: dict[int, tuple[float, float]],
+    axis_values: Mapping[int, AxisValues],
     *,
     gui: GuiName | None = None,
     render_modes: set[str] | None = None,
@@ -177,10 +218,13 @@ def build_canvas_widget(
     ----------
     viewer : Viewer
         The viewer to attach the canvas to.
-    axis_ranges : dict[int, tuple[float, float]]
-        Mapping of axis index to ``(world_min, world_max)`` used to set the
-        slider ranges.  Typically obtained from
-        :func:`cellier.convenience.axis_ranges_from_viewer`.
+    axis_values : Mapping[int, AxisValues]
+        Axis index to the values that axis's slider can take: a
+        ``ContinuousAxisValues`` for a free slider or a
+        ``DiscreteAxisValues`` for one that steps through listed values.
+        Typically obtained from
+        :func:`cellier.convenience.axis_values_from_viewer`, with any
+        discrete axes replaced by the caller.
     gui : "qt", "anywidget", or None
         GUI toolkit.  Defaults to ``viewer.gui`` when ``None``; raises if it
         conflicts with ``viewer.gui``.
@@ -226,7 +270,7 @@ def build_canvas_widget(
     return build_canvas_view(
         viewer.controller,
         viewer.scene,
-        axis_ranges,
+        axis_values,
         backend=backend,
         render_modes=render_modes,
         initial_dim=initial_dim,

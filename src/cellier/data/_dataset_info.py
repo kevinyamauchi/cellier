@@ -272,9 +272,9 @@ def ome_zarr_dataset_info(store: object, dtype: object) -> DatasetInfo:
     store : object
         Duck-typed: any object with the OME-Zarr store fields
         (``zarr_path``, ``scale_names``, ``level_transforms``,
-        ``axis_names``, ``axis_units``, ``axis_types``, ``multiscale_index``,
-        ``anonymous``, ``physical_scale``, ``physical_translation``) and the
-        ``n_levels`` / ``level_shapes`` properties.
+        ``data_coordinate_systems``, ``multiscale_index``, ``anonymous``,
+        ``physical_scale``, ``physical_translation``) and the ``n_levels`` /
+        ``level_shapes`` properties.
     dtype : object
         Rendered into the ``Data type`` row.  Passed in rather than read off
         the store so the label store can report both its on-disk dtype and
@@ -298,16 +298,30 @@ def ome_zarr_dataset_info(store: object, dtype: object) -> DatasetInfo:
     if store.anonymous:
         identity.append(("Anonymous access", "yes"))
 
-    sections: list[Section] = [
-        RowSection(None, identity),
-        RowSection(
-            "Axes",
-            axis_rows(store.axis_names, store.axis_units, store.axis_types),
-        ),
-    ]
+    sections: list[Section] = [RowSection(None, identity)]
+
+    # The level-0 system is the store's only record of its axes.  A store
+    # constructed without one has no axis rows to show, and its matrix is
+    # labelled by axis position instead.
+    systems = store.data_coordinate_systems
+    axes = systems[0].axes if systems else ()
+    if axes:
+        sections.append(
+            RowSection(
+                "Axes",
+                axis_rows(
+                    [axis.name for axis in axes],
+                    [axis.unit for axis in axes],
+                    [axis.axis_type for axis in axes],
+                ),
+            )
+        )
 
     if store.physical_scale:
-        headers = [*store.axis_names, "1"]
+        axis_labels = [axis.name for axis in axes] or [
+            str(index) for index in range(len(store.physical_scale))
+        ]
+        headers = [*axis_labels, "1"]
         sections.append(
             MatrixSection(
                 "World to data",
@@ -321,7 +335,7 @@ def ome_zarr_dataset_info(store: object, dtype: object) -> DatasetInfo:
     for index, (level_name, shape) in enumerate(
         zip(store.scale_names, store.level_shapes)
     ):
-        level_scale = np.diag(store.level_transforms[index].matrix)[:-1]
+        level_scale = np.asarray(store.level_scales[index], dtype=float)
         level_rows.append(
             (level_name, f"{format_shape(shape)}  ({format_scale(level_scale)})")
         )

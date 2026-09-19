@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("anywidget")
 
-from cellier.events import AABBChangedEvent  # noqa: E402
-from cellier.gui.anywidget.visuals._aabb import AnywidgetAABBWidget  # noqa: E402
+from cellier.events import AABBChangedEvent
+from cellier.gui.anywidget.visuals._aabb import AnywidgetAABBWidget
 
 
 def _make_widget(**kwargs):

@@ -16,7 +16,6 @@ import tensorstore as ts
 
 from cellier.paint import MultiscalePaintController, TensorStoreWriteBuffer
 from cellier.paint._write_layer import WriteLayer
-from cellier.transform._affine import AffineTransform
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,13 +40,6 @@ def _open_zarr(path: Path, shape: tuple[int, int], chunk: int) -> ts.TensorStore
     ).result()
 
 
-def _scale_transform(ndim: int, scale: float) -> AffineTransform:
-    m = np.eye(ndim + 1)
-    for i in range(ndim):
-        m[i, i] = scale
-    return AffineTransform(matrix=m)
-
-
 def _make_controller(
     tmp_path: Path,
     level_shapes: list[tuple[int, int]],
@@ -64,13 +56,13 @@ def _make_controller(
         store_path = tmp_path / f"s{i}.zarr"
         stores.append(_open_zarr(store_path, shape, block_size))
 
-    level_transforms = [_scale_transform(2, s) for s in level_scales]
-
     data_store = SimpleNamespace(
         id=uuid4(),
         n_levels=len(level_shapes),
         level_shapes=[list(s) for s in level_shapes],
-        level_transforms=level_transforms,
+        # Phase 8: the pyramid rebuild reads the per-level scale directly,
+        # rather than the diagonal of a transform built from it.
+        level_scales=[(float(s), float(s)) for s in level_scales],
         _ts_stores=stores,
     )
 

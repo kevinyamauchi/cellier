@@ -8,6 +8,7 @@ import numpy as np
 
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.data.points._points_requests import PointsSliceRequest
+from tests._v2 import data_region
 
 
 def _simple_store() -> PointsMemoryStore:
@@ -19,9 +20,15 @@ def _simple_store() -> PointsMemoryStore:
 
 def _req(
     displayed: tuple[int, ...] = (0, 1, 2),
-    sliced: dict[int, int] | None = None,
+    sliced: dict[int, float] | None = None,
     thickness: float = 0.5,
 ) -> PointsSliceRequest:
+    """One request, with the filter as the region the store now takes.
+
+    ``sliced`` maps axis to a **data**-space position; each becomes a slab of
+    half-width *thickness*, which is exactly what ``slice_indices`` plus
+    ``thickness`` meant before Phase 8 deleted them (R8.3).
+    """
     if sliced is None:
         sliced = {}
     sid = uuid4()
@@ -30,8 +37,10 @@ def _req(
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=displayed,
-        slice_indices=sliced,
-        thickness=thickness,
+        retained_axes=tuple(sorted(displayed)),
+        region=data_region(
+            3, {axis: (position, thickness) for axis, position in sliced.items()}
+        ),
     )
 
 

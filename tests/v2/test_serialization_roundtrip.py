@@ -3,7 +3,12 @@
 import numpy as np
 
 from cellier.data.points._points_memory_store import PointsMemoryStore
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals._image import (
@@ -11,13 +16,16 @@ from cellier.visuals._image import (
     MultiscaleImageRenderConfig,
 )
 from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
+from tests._v2 import level_transforms
 
 
 def _make_minimal_model() -> ViewerModel:
-    coordinate_system = CoordinateSystem(name="world", axis_labels=["z", "y", "x"])
+    world = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     dims = DimsManager(
-        coordinate_system=coordinate_system,
-        selection=AxisAlignedSelection(displayed_axes=(1, 2), slice_indices={0: 0}),
+        world_coordinate_system=world,
+        selection=AxisAlignedSelection(
+            displayed_axes=(1, 2), slice_indices={0: 0, 1: 0, 2: 0}
+        ),
     )
     positions = np.zeros((4, 3), dtype=np.float32)
     colors = np.ones((4, 4), dtype=np.float32)
@@ -71,7 +79,6 @@ def test_multiscale_render_config_roundtrip():
     """
     from cmap import Colormap
 
-    from cellier.transform import AffineTransform
     from cellier.visuals import MultiscaleImageVisual
 
     render_config = MultiscaleImageRenderConfig(
@@ -84,7 +91,10 @@ def test_multiscale_render_config_roundtrip():
     visual = MultiscaleImageVisual(
         name="img",
         data_store_id="00000000-0000-0000-0000-000000000001",
-        level_transforms=[AffineTransform.identity(ndim=3)],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0]],
+            [[0.0, 0.0, 0.0]],
+        ),
         appearance=appearance,
         render_config=render_config,
     )

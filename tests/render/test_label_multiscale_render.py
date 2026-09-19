@@ -14,10 +14,14 @@ from uuid import uuid4
 
 import numpy as np
 
+from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
+from cellier.events import DimsUpdateEvent
 from cellier.events._events import (
     AppearanceChangedEvent,
     VisualVisibilityChangedEvent,
 )
+from cellier.scene import spatial_axes
+from cellier.transform import Axis, ByDimensionTransform
 from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
@@ -78,6 +82,70 @@ def test_construction_3d_scene_builds_3d_node(controller, multiscale_labels_stor
     assert gfx.node_3d is not None
     assert gfx._inner_node_3d is not None
     assert gfx._block_cache_3d is not None
+
+
+def test_construction_with_a_broadcast_transform_does_not_misindex_the_store(
+    controller, multiscale_labels_store
+):
+    """A ``zyx`` store broadcast over a leading world ``t`` axis builds cleanly.
+
+    Regression test: ``GFXMultiscaleLabelVisual.from_cellier_model`` used to
+    index the store's own (data-space) ``level_shapes`` with **world** axis
+    indices directly (``select_axes(level_shapes[k], displayed_axes)``),
+    which only worked by coincidence when the store and the world had equal
+    rank.  Here the store is ``zyx`` but the world is ``tzyx``, so the
+    default 3D ``displayed_axes`` is ``(1, 2, 3)`` -- out of range for a
+    3-element store shape -- and this raised ``IndexError`` before the data
+    axes were translated via the transform's own
+    ``axis_correspondence`` (see ``_world_axes_to_data_axes`` in
+    ``render/visuals/_image.py``).
+    """
+    store = MultiscaleZarrDataStore(
+        zarr_path=multiscale_labels_store.zarr_path,
+        scale_names=multiscale_labels_store.scale_names,
+        level_scales=multiscale_labels_store.level_scales,
+        level_translations=multiscale_labels_store.level_translations,
+        name="broadcast_labels_store",
+    )
+    scene = controller.add_scene(
+        dim="3d",
+        name="scene",
+        coordinate_system=(
+            Axis(name="t", axis_type="time"),
+            *spatial_axes("z", "y", "x"),
+        ),
+    )
+    world = scene.dims.world_coordinate_system
+    # The store is constructed without data_coordinate_systems, so
+    # _ensure_data_coordinate_systems -- what add_labels_multiscale calls
+    # internally -- takes the world's trailing axes (z, y, x) for every
+    # level, which is what a real call through the controller would also do.
+    controller._ensure_data_coordinate_systems(scene.id, store)
+    store_cs = store.data_coordinate_systems[0]
+    transform = ByDimensionTransform.from_axis_map(
+        store_cs,
+        world,
+        axis_map={
+            store_cs.axis_by_name(name).id: world.axis_by_name(name).id
+            for name in ("z", "y", "x")
+        },
+        broadcast_output_axes=[world.axis_by_name("t").id],
+        name="to_world",
+    )
+
+    visual = controller.add_labels_multiscale(
+        data=store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+        transform=transform,
+    )
+    controller.add_canvas(scene_id=scene.id)
+
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    assert gfx.node_3d is not None
+    # The level-0 shape is the store's own zyx shape, not a wrongly indexed slice
+    # of it -- confirming the translation, not just the absence of a crash.
+    assert gfx._volume_geometry.level_shapes[0] == (16, 16, 16)
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +451,77 @@ def test_the_selection_is_recorded_on_the_model(controller, multiscale_labels_st
     controller.set_label_selection(visual.id, {3: 1})
 
     assert visual.outline_selected_labels == {3: 1}
+
+
+# ---------------------------------------------------------------------------
+# A visual that starts in 2D can switch to 3D
+# ---------------------------------------------------------------------------
+
+
+def _toggle(controller, scene_id, displayed_axes, slice_indices) -> None:
+    """Switch dims the way the Qt and anywidget 2D/3D toggles do."""
+    controller._on_dims_update(
+        DimsUpdateEvent(
+            source_id=controller._id,
+            scene_id=scene_id,
+            displayed_axes=displayed_axes,
+            slice_indices=slice_indices,
+        )
+    )
+
+
+async def test_a_2d_start_switches_to_3d_and_back(
+    controller, render_scene, reslice, multiscale_labels_store
+):
+    """Entering 3D builds the volume the 2D construction skipped.
+
+    Regression test: a visual constructed with 2D displayed axes had no 3D
+    geometry, and ``build_node`` never built one, so the toggle swapped the
+    2D node out for ``None`` and the 3D planner raised ``AttributeError`` on
+    the missing geometry.  Starting in 3D was unaffected.
+    """
+    scene = controller.add_scene(dim="2d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    active = controller._render_manager._scenes[scene.id]._active_nodes
+
+    _toggle(controller, scene.id, (0, 1, 2), {})
+    await reslice(controller, scene.id)
+
+    assert gfx.node_3d is not None
+    assert active[visual.id] is gfx.node_3d
+    assert np.count_nonzero(render_scene(controller, scene.id)[..., 3]) > 0
+
+    _toggle(controller, scene.id, (1, 2), {0: 7.5})
+    await reslice(controller, scene.id)
+
+    assert active[visual.id] is gfx.node_2d
+    assert np.count_nonzero(render_scene(controller, scene.id)[..., 3]) > 0
+
+
+async def test_the_3d_node_built_on_switch_takes_the_current_state(
+    controller, reslice, multiscale_labels_store
+):
+    """The late 3D material carries the appearance and selection set in 2D."""
+    scene = controller.add_scene(dim="2d", name="scene")
+    visual = controller.add_labels_multiscale(
+        data=multiscale_labels_store,
+        scene_id=scene.id,
+        appearance=MultiscaleLabelsAppearance(opacity=0.5),
+    )
+    controller.add_canvas(scene_id=scene.id)
+    await reslice(controller, scene.id)
+    gfx = _gfx_visual(controller, scene.id, visual.id)
+    selection = {3: 1}
+    controller.set_label_selection(visual.id, selection)
+
+    _toggle(controller, scene.id, (0, 1, 2), {})
+
+    assert gfx.material_3d.opacity == 0.5
+    assert _selection_in_texture(gfx.material_3d) == selection

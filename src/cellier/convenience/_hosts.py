@@ -19,6 +19,31 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+class LiveSlot(Protocol):
+    """A dock region whose contents can be replaced after it is presented.
+
+    Everything else a host composes is fixed once presented -- on marimo
+    literally, since ``mo.vstack`` output is static.  A controls dock has to
+    follow its viewer, so it composes into one of these instead.
+    """
+
+    #: The host item to place in the layout, once.
+    root: object
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        """Show *widgets* top to bottom, replacing what was shown.
+
+        *widgets* are backend widgets (not host leaves); the slot composes them
+        itself.  With no widgets, *placeholder* is shown instead.  The slot does
+        not close the widgets it stops showing.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release the slot."""
+        ...
+
+
 @runtime_checkable
 class LayoutHost(Protocol):
     """Composition + presentation seam for one front end.
@@ -83,6 +108,10 @@ class LayoutHost(Protocol):
         """
         ...
 
+    def live_slot(self) -> LiveSlot:
+        """Return a dock region whose contents can be replaced later."""
+        ...
+
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Arrange *rows* (a list of rows of items) as a grid.
 
@@ -93,7 +122,14 @@ class LayoutHost(Protocol):
         """
         ...
 
-    def assemble(self, center: object, docks: dict, closeables: list) -> object:
+    def assemble(
+        self,
+        center: object,
+        docks: dict,
+        closeables: list,
+        *,
+        dock_min_widths: dict | None = None,
+    ) -> object:
         """Compose the center and the four docks into one root.
 
         The genuinely different half of a layout: Qt builds a ``QMainWindow``
@@ -104,7 +140,10 @@ class LayoutHost(Protocol):
         *docks* is keyed ``"left"``, ``"right"``, ``"top"``, ``"bottom"``,
         with ``None`` for a dock that built nothing.  *closeables* is handed
         over so a host whose root owns teardown -- Qt's window does -- can take
-        the list with it.
+        the list with it.  *dock_min_widths* maps ``"left"`` / ``"right"`` to
+        the narrowest that dock may be, in logical pixels; a missing or
+        ``None`` entry keeps the host default.  Sizing is placement, so it
+        happens here rather than in ``dock_panel``.
         """
         ...
 
@@ -230,11 +269,33 @@ class QtLayoutHost:
         container.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
-        container.setMinimumWidth(260)
+        # No minimum width here: the floor belongs to the whole dock (see
+        # ``assemble``), where a caller's smaller ``*_dock_min_width`` can
+        # replace it.  A floor on this column would outvote that.
         return container
 
-    def assemble(self, center: object, docks: dict, closeables: list) -> object:
-        """Build the ``QMainWindow``: center plus a ``QDockWidget`` per area."""
+    def live_slot(self) -> _QtLiveSlot:
+        """A ``QWidget`` whose content column ``set`` replaces."""
+        return _QtLiveSlot(self)
+
+    #: The narrowest a dock may be when the layout does not say.  What every
+    #: dock column was floored at before the width became configurable.
+    DEFAULT_DOCK_MIN_WIDTH = 260
+
+    def assemble(
+        self,
+        center: object,
+        docks: dict,
+        closeables: list,
+        *,
+        dock_min_widths: dict | None = None,
+    ) -> object:
+        """Build the ``QMainWindow``: center plus a ``QDockWidget`` per area.
+
+        Each dock's content is floored at its ``dock_min_widths`` entry, or
+        :attr:`DEFAULT_DOCK_MIN_WIDTH`.  A minimum rather than a fixed width:
+        the dock separator can still drag it wider, never narrower.
+        """
         from qtpy.QtCore import Qt
         from qtpy.QtWidgets import QApplication, QDockWidget, QMainWindow
 
@@ -260,7 +321,11 @@ class QtLayoutHost:
             if widget is None:
                 continue
             dock = QDockWidget(name.capitalize(), window)
-            dock.setWidget(_wrap_dock_widget(widget, name))
+            content = _wrap_dock_widget(widget, name)
+            content.setMinimumWidth(
+                (dock_min_widths or {}).get(name) or self.DEFAULT_DOCK_MIN_WIDTH
+            )
+            dock.setWidget(content)
             dock.setFeatures(
                 QDockWidget.DockWidgetFeature.DockWidgetMovable
                 | QDockWidget.DockWidgetFeature.DockWidgetFloatable
@@ -282,6 +347,77 @@ class QtLayoutHost:
         return None
 
 
+class _QtLiveSlot:
+    """``LiveSlot`` on Qt: a container holding one ``dock_panel`` at a time."""
+
+    def __init__(self, host: QtLayoutHost) -> None:
+        from qtpy.QtWidgets import QVBoxLayout, QWidget
+
+        self._host = host
+        self.root = QWidget()
+        self._box = QVBoxLayout(self.root)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._content = None
+        self._leaves: list = []
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        leaves = [self._host.leaf(widget) for widget in widgets]
+        shown = list(leaves)
+        if not leaves and placeholder:
+            from qtpy.QtWidgets import QLabel
+
+            leaves = [QLabel(placeholder)]
+        # Built before the old content goes: ``addWidget`` reparents a widget
+        # carried over from the old column (the selector, or controls kept
+        # across a relabel), so deleting the old column cannot take it along.
+        content = self._host.dock_panel(leaves)
+        self._box.addWidget(content)
+        # A widget shown before and not now is still owned by its caller (a
+        # dock keeps every target's controls built), so it is detached rather
+        # than deleted with the old column.  Parentless, Qt hides it.
+        for leaf in self._leaves:
+            if not any(leaf is kept for kept in shown):
+                leaf.setParent(None)
+        self._leaves = shown
+        old, self._content = self._content, content
+        if old is not None:
+            self._box.removeWidget(old)
+            old.setParent(None)
+            old.deleteLater()
+
+    def close(self) -> None:
+        """Nothing to do: the window that holds the slot deletes it."""
+
+
+class _AnywidgetLiveSlot:
+    """``LiveSlot`` on the anywidget hosts: an ``AnywidgetSlot``, leafed once.
+
+    ``AnywidgetSlot`` mounts its children through anywidget's composition API,
+    which Jupyter and marimo both implement, so the same slot serves both.
+    """
+
+    def __init__(self, host: _AnywidgetDockPanel) -> None:
+        from cellier.convenience.layout._shared import APPEARANCE_DOCK_GAP_PX
+        from cellier.gui.anywidget._container import AnywidgetSlot
+
+        self._slot = AnywidgetSlot(gap=APPEARANCE_DOCK_GAP_PX)
+        self.root = host.leaf(self._slot)
+
+    @property
+    def slot(self) -> object:
+        """The ``AnywidgetSlot`` behind ``root``."""
+        return self._slot
+
+    def set(self, widgets: Sequence[object], *, placeholder: str | None = None) -> None:
+        children = [getattr(widget, "widget", widget) for widget in widgets]
+        with self._slot.hold_sync():
+            self._slot.title = "" if children else (placeholder or "")
+            self._slot.children = children
+
+    def close(self) -> None:
+        self._slot.close()
+
+
 class _AnywidgetDockPanel:
     """``dock_panel`` for the anywidget hosts, which compose it from ``stack``.
 
@@ -289,13 +425,26 @@ class _AnywidgetDockPanel:
     gap, and a single widget needs no container at all.
     """
 
-    def assemble(self, center: object, docks: dict, closeables: list) -> object:
+    def assemble(
+        self,
+        center: object,
+        docks: dict,
+        closeables: list,
+        *,
+        dock_min_widths: dict | None = None,
+    ) -> object:
         """Hand-assemble ``[left | center | right]`` inside the outer column.
 
         anywidget has no dock concept, so the arrangement is built from
         stacks.  *closeables* is unused here: on this toolkit the caller's
-        ``_RenderView`` owns teardown, not the root.
+        ``_RenderView`` owns teardown, not the root.  A side dock with a
+        ``dock_min_widths`` entry is floored at it; there is no splitter to
+        drag it wider, so it is otherwise as wide as its content.
         """
+        docks = dict(docks)
+        for side, width in (dock_min_widths or {}).items():
+            if width and docks.get(side) is not None:
+                docks[side] = self._min_width(docks[side], width)
         middle_items = [
             item
             for item in (docks.get("left"), center, docks.get("right"))
@@ -328,6 +477,10 @@ class _AnywidgetDockPanel:
         return self.stack(
             widgets, direction="v", gap=APPEARANCE_DOCK_GAP_PX, title=title
         )
+
+    def live_slot(self) -> _AnywidgetLiveSlot:
+        """An ``AnywidgetSlot`` whose children ``set`` replaces."""
+        return _AnywidgetLiveSlot(self)
 
 
 class MarimoHost(_AnywidgetDockPanel):
@@ -381,6 +534,10 @@ class MarimoHost(_AnywidgetDockPanel):
         # stack -- the same two elements the Jupyter box draws, composed with
         # marimo's own primitives.
         return self._mo.vstack([self._mo.md(f"**{title}**"), stacked])
+
+    def _min_width(self, item: object, width: int) -> object:
+        """Floor *item* at *width* pixels with a styled marimo wrapper."""
+        return self._mo.style(item, {"min-width": f"{width}px"})
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Arrange rows with nested ``vstack`` / ``hstack``.
@@ -443,6 +600,12 @@ class JupyterHost(_AnywidgetDockPanel):
             title=title or "",
             **kwargs,
         )
+
+    def _min_width(self, item: object, width: int) -> object:
+        """Floor *item* at *width* pixels inside an ``AnywidgetBox``."""
+        from cellier.gui.anywidget import AnywidgetBox
+
+        return AnywidgetBox(children=[item], min_width=width)
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Compose rows of ``AnywidgetBox`` (horizontal) inside an outer one.

@@ -19,10 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from cellier.transform import AffineTransform
+from cellier.data._axes import axis_types_from_names, build_axes
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Sequence
+
+    from cellier.transform import Axis
 
 
 @dataclass(frozen=True)
@@ -40,8 +43,13 @@ class GeffPayload:
         load time and never on the per-frame path (D18).
     node_ids : np.ndarray
         Original node ids, kept for pick payloads.
-    transform : AffineTransform
-        Built from the axes' ``scale`` / ``offset`` (D23).
+    axis_scales : tuple[float, ...]
+        The axes' ``scale``, one per axis in file order, defaulting to 1.0
+        (D23).  Raw numbers rather than a transform: a transform names the
+        two coordinate systems it maps between, and only the controller
+        knows the scene's world.
+    axis_offsets : tuple[float, ...]
+        The axes' ``offset``, defaulting to 0.0.
     directed : bool
         From ``metadata.directed``.
     axes : list
@@ -56,7 +64,8 @@ class GeffPayload:
     positions: np.ndarray
     edges: np.ndarray
     node_ids: np.ndarray
-    transform: AffineTransform
+    axis_scales: tuple[float, ...]
+    axis_offsets: tuple[float, ...]
     directed: bool
     axes: list = field(default_factory=list)
     node_props: dict = field(default_factory=dict)
@@ -167,7 +176,6 @@ def read_geff(
     # to pass.
     scales = tuple(1.0 if a.scale is None else float(a.scale) for a in axes)
     offsets = tuple(0.0 if a.offset is None else float(a.offset) for a in axes)
-    transform = AffineTransform.from_scale_and_translation(scales, offsets)
 
     axis_name_set = {axis.name for axis in axes}
     node_props = {
@@ -196,7 +204,8 @@ def read_geff(
         positions=positions,
         edges=edges,
         node_ids=node_ids,
-        transform=transform,
+        axis_scales=scales,
+        axis_offsets=offsets,
         directed=bool(metadata.directed),
         axes=axes,
         node_props=node_props,
@@ -213,3 +222,31 @@ def _require_prop(props: dict, name: str, kind: str) -> dict:
             f"{kind} property '{name}' is not in the file; it carries {sorted(props)}"
         )
     return props[name]
+
+
+def data_axes_from_geff(axes: Sequence[Any]) -> tuple[Axis, ...]:
+    """Translate geff axis metadata into a store's axes.
+
+    ``name`` and ``unit`` carry over.  ``type`` carries over where the file
+    states it; geff makes it optional, so an unset one takes the name rule of
+    :func:`~cellier.data._axes.axis_types_from_names`.  Every axis is
+    ``sampling="continuous"``: the file does not say whether a column holds
+    sample indices, so a caller whose ``t`` column is frame numbers builds
+    the system themselves.
+
+    Parameters
+    ----------
+    axes : Sequence
+        geff ``Axis`` objects, in position-column order.
+
+    Returns
+    -------
+    tuple[Axis, ...]
+        One axis per geff axis, each with a fresh id.
+    """
+    names = [axis.name for axis in axes]
+    types = [
+        axis.type or by_name
+        for axis, by_name in zip(axes, axis_types_from_names(names), strict=True)
+    ]
+    return build_axes(names, types, [axis.unit for axis in axes])

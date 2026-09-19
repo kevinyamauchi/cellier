@@ -31,6 +31,8 @@ fn get_tile_scale(level: i32) -> vec2<f32> {
     }
 }
 
+{$ include 'cellier.tile_rule.wgsl' $}
+
 // ── Label LUT indirection sample (returns integer label ID) ───────────────
 fn sample_im_lut(texcoord: vec2<f32>) -> i32 {
     let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
@@ -53,9 +55,13 @@ fn sample_im_lut(texcoord: vec2<f32>) -> i32 {
 
     let tile_origin = vec2<f32>(lutv.x, lutv.y) * padded_size;
 
+    // Tile corner from the LUT cell (same rule as the LUT writer); offset inside
+    // the tile from the float scale, clamped to the padded tile.
     let sj = get_tile_scale(level);
-    let scaled_pos  = pos * sj;
-    let within_tile = scaled_pos - floor(scaled_pos / block_size) * block_size;
+    let corner_k    = tile_corner_from_cell(tile_idx, level);
+    let within_tile = clamp(pos * sj - corner_k,
+                            vec2<f32>(-overlap),
+                            block_size - vec2<f32>(1.0) + vec2<f32>(overlap));
 
     // Nearest-neighbor: round to texel, no +0.5 offset.
     let cache_pos_f = tile_origin + within_tile + vec2<f32>(overlap);

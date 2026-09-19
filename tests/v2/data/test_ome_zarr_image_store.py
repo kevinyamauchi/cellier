@@ -12,7 +12,6 @@ import pytest
 if TYPE_CHECKING:
     import pathlib
 
-from cellier.data.image._axis_info import AxisInfo
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
 
@@ -147,17 +146,23 @@ def test_scale_names(ome_zarr_5d: str) -> None:
 
 def test_axis_names_all_axes(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_names == ["t", "c", "z", "y", "x"]
+    assert store.data_coordinate_system.axis_names() == ("t", "c", "z", "y", "x")
 
 
 def test_axis_types(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_types == ["time", "channel", "space", "space", "space"]
+    assert [axis.axis_type for axis in store.data_coordinate_system.axes] == [
+        "time",
+        "channel",
+        "space",
+        "space",
+        "space",
+    ]
 
 
 def test_axis_units(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axis_units == [
+    assert [axis.unit for axis in store.data_coordinate_system.axes] == [
         "second",
         None,
         "micrometer",
@@ -166,59 +171,42 @@ def test_axis_units(ome_zarr_5d: str) -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Tests: axes property
-# ---------------------------------------------------------------------------
-
-
-def test_axes_property_length(ome_zarr_5d: str) -> None:
+def test_ndim(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert len(store.axes) == 5
-
-
-def test_axes_property_array_dim(ome_zarr_5d: str) -> None:
-    store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    assert store.axes[2].array_dim == 2
-    assert store.axes[2].name == "z"
-    assert store.axes[2].type == "space"
-
-
-def test_axes_returns_axis_info(ome_zarr_5d: str) -> None:
-    store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    for ax in store.axes:
-        assert isinstance(ax, AxisInfo)
+    assert store.ndim == 5
 
 
 # ---------------------------------------------------------------------------
-# Tests: level_transforms
+# Tests: level_scales / level_translations
 # ---------------------------------------------------------------------------
 
 
-def test_level_transforms_level0_is_identity(ome_zarr_5d: str) -> None:
+def test_level_geometry_level0_is_the_identity(ome_zarr_5d: str) -> None:
+    """Phase 8: the store states the pyramid as numbers.  What makes them a
+    transform is the pair of level coordinate systems, which
+    ``install_level_transforms`` attaches once the axes are known."""
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
+    np.testing.assert_allclose(store.level_scales[0], [1.0] * 5, atol=1e-12)
+    np.testing.assert_allclose(store.level_translations[0], [0.0] * 5, atol=1e-12)
     t0 = store.level_transforms[0]
-    ndim = t0.ndim
+    ndim = t0.input_ndim
     np.testing.assert_allclose(t0.matrix, np.eye(ndim + 1), atol=1e-12)
 
 
-def test_level_transforms_level1(ome_zarr_5d: str) -> None:
+def test_level_geometry_level1(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    t1 = store.level_transforms[1]
-    ndim = t1.ndim
-    scale = np.diag(t1.matrix[:ndim, :ndim])
-    trans = t1.matrix[:ndim, ndim]
+    scale = np.asarray(store.level_scales[1])
+    trans = np.asarray(store.level_translations[1])
     # t=1, c=1, z=2, y=2, x=2
     np.testing.assert_allclose(scale, [1.0, 1.0, 2.0, 2.0, 2.0], atol=1e-12)
     # t=0, c=0, z=0.5, y=0.5, x=0.5
     np.testing.assert_allclose(trans, [0.0, 0.0, 0.5, 0.5, 0.5], atol=1e-12)
 
 
-def test_level_transforms_level2(ome_zarr_5d: str) -> None:
+def test_level_geometry_level2(ome_zarr_5d: str) -> None:
     store = OMEZarrImageDataStore.from_path(ome_zarr_5d)
-    t2 = store.level_transforms[2]
-    ndim = t2.ndim
-    scale = np.diag(t2.matrix[:ndim, :ndim])
-    trans = t2.matrix[:ndim, ndim]
+    scale = np.asarray(store.level_scales[2])
+    trans = np.asarray(store.level_translations[2])
     # t=1, c=1, z=4, y=4, x=4
     np.testing.assert_allclose(scale, [1.0, 1.0, 4.0, 4.0, 4.0], atol=1e-12)
     # t=0, c=0, z=1.5, y=2.5, x=2.5
@@ -290,7 +278,10 @@ def test_serialisation_roundtrip(ome_zarr_5d: str) -> None:
     restored = OMEZarrImageDataStore.model_validate_json(json_str)
     assert restored.zarr_path == store.zarr_path
     assert restored.scale_names == store.scale_names
-    assert restored.axis_names == store.axis_names
+    assert (
+        restored.data_coordinate_system.axis_names()
+        == store.data_coordinate_system.axis_names()
+    )
     assert restored.n_levels == store.n_levels
     assert restored.level_shapes == store.level_shapes
 
@@ -458,7 +449,7 @@ def test_bf2raw_from_path_returns_store(bf2raw_store: str) -> None:
 
 def test_bf2raw_axis_names(bf2raw_store: str) -> None:
     store = OMEZarrImageDataStore.from_path(bf2raw_store)
-    assert store.axis_names == ["z", "y", "x"]
+    assert store.data_coordinate_system.axis_names() == ("z", "y", "x")
 
 
 def test_bf2raw_level_shapes(bf2raw_store: str) -> None:
@@ -491,7 +482,7 @@ def test_bf2raw_series_index_out_of_range(bf2raw_store: str) -> None:
 def test_bf2raw_level_transforms_identity_at_0(bf2raw_store: str) -> None:
     store = OMEZarrImageDataStore.from_path(bf2raw_store)
     t0 = store.level_transforms[0]
-    np.testing.assert_allclose(t0.matrix, np.eye(t0.ndim + 1), atol=1e-12)
+    np.testing.assert_allclose(t0.matrix, np.eye(t0.input_ndim + 1), atol=1e-12)
 
 
 async def test_bf2raw_get_data(bf2raw_store: str) -> None:
@@ -540,6 +531,9 @@ def test_bf2raw_serialisation_roundtrip(bf2raw_store: str) -> None:
     restored = OMEZarrImageDataStore.model_validate_json(json_str)
     assert restored.zarr_path == store.zarr_path
     assert restored.scale_names == store.scale_names
-    assert restored.axis_names == store.axis_names
+    assert (
+        restored.data_coordinate_system.axis_names()
+        == store.data_coordinate_system.axis_names()
+    )
     assert restored.n_levels == store.n_levels
     assert restored.level_shapes == store.level_shapes

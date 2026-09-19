@@ -17,7 +17,8 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.events._events import AppearanceChangedEvent
-from cellier.scene.dims import CoordinateSystem
+from cellier.gui._axis_values import ContinuousAxisValues
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 _POS = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
 
@@ -26,7 +27,9 @@ def _controller_with_visual():
     controller = CellierController()
     scene = controller.add_scene(
         dim="3d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         name="s",
     )
     visual = controller.add_points(
@@ -285,7 +288,7 @@ def _mesh_store():
     )
 
 
-_RANGES = {0: (0.0, 2.0), 1: (0.0, 2.0), 2: (0.0, 2.0)}
+_RANGES = dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=2.0))
 
 
 def test_closing_a_displayed_viewer_releases_every_widget():
@@ -303,7 +306,7 @@ def test_closing_a_displayed_viewer_releases_every_widget():
 
     before = _widget_registry()
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
     viewer.add_mesh(
         _mesh_store(),
         appearance=MeshFlatAppearance(),
@@ -341,7 +344,7 @@ def test_closing_an_ortho_viewer_releases_every_widget():
 
     before = _widget_registry()
 
-    ortho = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     ortho.add_mesh(
         _mesh_store(),
         appearance=MeshFlatAppearance(),
@@ -425,7 +428,7 @@ def _qt_viewer_with_window():
     from cellier.convenience.layout._qt_renderer import render_qt
     from cellier.visuals._mesh_memory import MeshFlatAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
     viewer.add_mesh(
         _mesh_store(),
         appearance=MeshFlatAppearance(),

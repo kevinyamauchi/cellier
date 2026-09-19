@@ -12,31 +12,34 @@ import pytest
 pytest.importorskip("qtpy")
 pytest.importorskip("superqt")
 
-from cellier.convenience import (  # noqa: E402
+from cellier.convenience import (
     OrthoViewer,
-    axis_ranges_from_ortho,
+    axis_values_from_ortho,
 )
-from cellier.convenience.gui import (  # noqa: E402
+from cellier.convenience.gui import (
     OrthoCanvasWidgets,
     build_ortho_grid_widget,
 )
-from cellier.visuals._image_memory import InMemoryImageAppearance  # noqa: E402
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import InMemoryImageSingleAppearance
+from cellier.visuals._image_memory import InMemoryImageAppearance
 
 _PANELS = {"xy", "xz", "yz", "vol"}
 
 
 def _ortho_with_image(image_store, gui="qt"):
-    ortho = OrthoViewer(("z", "y", "x"), gui=gui)
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"), gui=gui)
     ortho.add_image(
         image_store,
-        appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
     return ortho
 
 
 def test_build_qt_ortho_grid_has_four_panels(qtbot, image_store):
     ortho = _ortho_with_image(image_store)
-    ranges = axis_ranges_from_ortho(ortho)
+    ranges = axis_values_from_ortho(ortho)
 
     widgets = build_ortho_grid_widget(ortho, ranges, gui="qt")
 
@@ -47,7 +50,7 @@ def test_build_qt_ortho_grid_has_four_panels(qtbot, image_store):
 
 def test_ortho_grid_defaults_gui_from_viewer(qtbot, image_store):
     ortho = _ortho_with_image(image_store)
-    ranges = axis_ranges_from_ortho(ortho)
+    ranges = axis_values_from_ortho(ortho)
 
     # gui=None -> resolves to ortho.gui ("qt").
     widgets = build_ortho_grid_widget(ortho, ranges)
@@ -56,7 +59,7 @@ def test_ortho_grid_defaults_gui_from_viewer(qtbot, image_store):
 
 def test_ortho_canvas_widgets_close(qtbot, image_store):
     ortho = _ortho_with_image(image_store)
-    ranges = axis_ranges_from_ortho(ortho)
+    ranges = axis_values_from_ortho(ortho)
     widgets = build_ortho_grid_widget(ortho, ranges, gui="qt")
 
     # Teardown unsubscribes every panel; should not raise.
@@ -65,7 +68,7 @@ def test_ortho_canvas_widgets_close(qtbot, image_store):
 
 def test_gui_conflict_raises(qtbot, image_store):
     ortho = _ortho_with_image(image_store, gui="qt")
-    ranges = axis_ranges_from_ortho(ortho)
+    ranges = axis_values_from_ortho(ortho)
 
     with pytest.raises(ValueError, match="conflicts with"):
         build_ortho_grid_widget(ortho, ranges, gui="anywidget")

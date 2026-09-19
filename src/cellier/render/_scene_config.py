@@ -28,8 +28,13 @@ class VisualRenderConfig:
         When ``True``, bricks outside the camera frustum are skipped.
         When ``False``, all bricks in the scene are submitted regardless
         of visibility.  Default ``True``.
+    slicing_enabled : bool
+        When ``False``, ``SceneManager`` plans no requests for the visual at
+        all, so it keeps showing whatever it last loaded.  The controller
+        turns this off for hidden image visuals.  Default ``True``.
     """
 
     lod_bias: float = 1.0
     force_level: int | None = None
     frustum_cull: bool = True
+    slicing_enabled: bool = True

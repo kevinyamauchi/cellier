@@ -16,8 +16,8 @@ from cellier.render.shaders._alpha_modulated import (
     AlphaPointsMaterial,
 )
 from cellier.render.visuals._graph_memory import GFXGraphMemoryVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import GraphAppearance, GraphVisual
+from tests._v2 import identity
 
 
 def _appearance_event(field, value):
@@ -47,7 +47,7 @@ def _visual(store, appearance=None, trail=None) -> GFXGraphMemoryVisual:
     return GFXGraphMemoryVisual(
         visual_model=model,
         render_modes={"2d", "3d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=identity(store.ndim),
     )
 
 
@@ -58,7 +58,8 @@ def _commit(visual, store, displayed=(0, 1, 2), sliced=None, extents=None, fades
         chunk_request_id=shared,
         scale_index=0,
         displayed_axes=displayed,
-        slice_indices=dict(sliced or {}),
+        retained_axes=tuple(sorted(displayed)),
+        slice_positions={a: float(v) for a, v in dict(sliced or {}).items()},
         extents=dict(extents or {}),
         fades=dict(fades or {}),
     )

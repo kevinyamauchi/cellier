@@ -21,12 +21,15 @@ import pytest
 from cellier.convenience._hosts import QtLayoutHost
 from cellier.convenience.layout._walk import render_dock
 from cellier.data._dataset_info import DatasetInfo, MatrixSection, RowSection
+from cellier.gui._axis_values import ContinuousAxisValues
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import InMemoryImageSingleAppearance
 
 _MESH_POSITIONS = np.array(
     [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32
 )
 _MESH_INDICES = np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int32)
-_RANGES = {0: (0.0, 2.0), 1: (0.0, 2.0), 2: (0.0, 2.0)}
+_RANGES = dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=2.0))
 
 
 def _mesh_store():
@@ -40,7 +43,7 @@ def _viewer(gui: str, *, configure_controls: bool = False):
     from cellier.convenience import MeshControlsConfig, Viewer
     from cellier.visuals._mesh_memory import MeshFlatAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui=gui)
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui=gui)
     viewer.add_mesh(
         _mesh_store(),
         appearance=MeshFlatAppearance(),
@@ -231,24 +234,29 @@ class _LabelLeaf:
 
 
 def test_a_dock_stack_that_builds_nothing_produces_no_dock(qtbot):
-    """``AppearanceControls`` on an unconfigured viewer builds nothing.
+    """A dock stack whose contents all build nothing produces no dock.
 
     Bare, both renderers already agreed -- the spec resolves to ``None`` and
     the dock is skipped.  Wrapped in a stack they did not: the Qt branch
     returned its container unconditionally, so an empty ``QDockWidget``
     titled "Left" appeared beside the canvas.
+
+    A ``RenderControls`` with no sections is the spec that builds nothing.
+    ``AppearanceControls`` no longer does: it follows its viewer, so it
+    renders a placeholder until a configured visual is added.
     """
     pytest.importorskip("qtpy")
     pytest.importorskip("superqt")
     from qtpy.QtWidgets import QDockWidget
 
-    from cellier.convenience import AppearanceControls, Layout, VStack
+    from cellier.convenience import Layout, VStack
     from cellier.convenience.gui import build_canvas_widget
+    from cellier.convenience.layout import RenderControls
     from cellier.convenience.layout._qt_renderer import render_qt
 
-    spec = VStack(items=[AppearanceControls()])
+    spec = VStack(items=[RenderControls(sections=())])
 
-    qt_viewer = _viewer("qt")  # no controls= -> nothing to build
+    qt_viewer = _viewer("qt")
     window = render_qt(
         Layout(center=build_canvas_widget(qt_viewer, _RANGES), left_dock=spec),
         qt_viewer,
@@ -362,14 +370,14 @@ def test_both_dims_panels_throttle_at_the_same_interval(qtbot):
 
     qt_dims = QtDimsControl(
         scene_id=uuid4(),
-        axis_ranges={0: (0.0, 4.0)},
+        axis_values={0: ContinuousAxisValues(min=0.0, max=4.0)},
         axis_labels={0: "z"},
         initial_slice_indices={0: 0},
     )
     qtbot.addWidget(qt_dims.widget)
     anywidget_dims = AnywidgetDimsPanel(
         scene_id=uuid4(),
-        axis_ranges={0: (0.0, 4.0)},
+        axis_values={0: ContinuousAxisValues(min=0.0, max=4.0)},
         axis_labels={0: "z"},
         slice_indices={0: 0},
     )
@@ -399,10 +407,11 @@ def _ortho_viewer(gui: str):
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = OrthoViewer(("z", "y", "x"), gui=gui)
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui=gui)
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(8, 8, 8).astype(np.float32)),
-        appearance=InMemoryImageAppearance(color_map=cmap.Colormap("gray")),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map=cmap.Colormap("gray")),
     )
     return viewer
 
@@ -426,7 +435,8 @@ def test_both_toolkits_label_the_ortho_panels(qtbot):
 
     QApplication.instance() or QApplication([])
     qt_grid = build_ortho_grid_widget(
-        _ortho_viewer("qt"), {0: (0.0, 8.0), 1: (0.0, 8.0), 2: (0.0, 8.0)}
+        _ortho_viewer("qt"),
+        dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=8.0)),
     )
     composed = qt_grid.compose(QtLayoutHost())
     qt_headers = sorted(
@@ -436,7 +446,8 @@ def test_both_toolkits_label_the_ortho_panels(qtbot):
     )
 
     anywidget_grid = build_ortho_grid_widget(
-        _ortho_viewer("anywidget"), {0: (0.0, 8.0), 1: (0.0, 8.0), 2: (0.0, 8.0)}
+        _ortho_viewer("anywidget"),
+        dict.fromkeys(range(3), ContinuousAxisValues(min=0.0, max=8.0)),
     )
     anywidget_headers = sorted(_box_titles(anywidget_grid.compose(JupyterHost())))
 
@@ -466,10 +477,11 @@ def _toggle_viewer(gui: str):
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui=gui)
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui=gui)
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(8, 8, 8).astype(np.float32)),
-        appearance=InMemoryImageAppearance(color_map=cmap.Colormap("gray")),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map=cmap.Colormap("gray")),
     )
     return viewer
 
@@ -479,19 +491,21 @@ def _toggled_to_2d(gui: str):
 
     Returns ``(selection, displayed, label, centre)`` -- the scene's selection
     after the toggle, what the panel believes it is showing, the button text,
-    and the index a centred slice on the hidden axis should have.
+    and the world position a centred slice on the hidden axis should have.
     """
-    from cellier.convenience import axis_ranges_from_viewer
+    from cellier.convenience import axis_values_from_viewer
     from cellier.convenience.gui import build_canvas_widget
 
     viewer = _toggle_viewer(gui)
-    axis_ranges = axis_ranges_from_viewer(viewer)
-    low, high = axis_ranges[0]
-    centre = round((low + high) / 2.0)
+    axis_values = axis_values_from_viewer(viewer)
+    low, high = axis_values[0].min, axis_values[0].max
+    # Not rounded: a slice position is a world coordinate, not a voxel
+    # index (D3), so the midpoint of an even-length axis is a half.
+    centre = (low + high) / 2.0
 
     # Held, not dropped: the canvas widget owns the Qt sliders, and letting it
     # be collected deletes them out from under the control.
-    canvas = build_canvas_widget(viewer, axis_ranges)
+    canvas = build_canvas_widget(viewer, axis_values)
     panel = canvas.dims_control
     if gui == "anywidget":
         viewer.controller.connect_widget(
@@ -507,13 +521,12 @@ def _toggled_to_2d(gui: str):
 
 @pytest.mark.parametrize("gui", ["qt", "anywidget"])
 async def test_the_toggle_hands_the_slicer_a_centred_index(qtbot, gui):
-    """Switching a 3D scene to 2D must name a slice for the axis it hides.
+    """Switching a 3D scene to 2D slices the hidden axis at its centre.
 
-    A scene showing all three axes carries no ``slice_indices`` at all, so the
-    toggle had nothing to carry forward.  Qt read its sliders and got their
-    unset minimum (the volume's edge); anywidget read the model and got
-    nothing, so the slicer raised ``KeyError``.  Both now seed every axis from
-    :func:`cellier.gui._dims.initial_slice_indices`.
+    Every axis keeps a position while displayed (D36), and the toggle sends
+    only ``displayed_axes``.  The position it slices at is the one the canvas
+    builder moved the displayed axes to when it made the canvas: the centre,
+    not the volume's edge.
     """
     pytest.importorskip("qtpy")
     if gui == "anywidget":
@@ -524,7 +537,7 @@ async def test_the_toggle_hands_the_slicer_a_centred_index(qtbot, gui):
     assert tuple(selection.displayed_axes) == (1, 2)
     # The centre of the hidden axis, not its edge -- derived from the axis
     # range rather than restated, so the volume's size stays a detail.
-    assert dict(selection.slice_indices) == {0: centre}
+    assert selection.slice_indices[0] == centre
 
 
 @pytest.mark.parametrize("gui", ["qt", "anywidget"])
@@ -559,11 +572,11 @@ def test_only_a_scene_that_renders_both_ways_offers_a_toggle(qtbot, gui):
     pytest.importorskip("qtpy")
     if gui == "anywidget":
         pytest.importorskip("ipywidgets")
-    from cellier.convenience import axis_ranges_from_ortho, axis_ranges_from_viewer
+    from cellier.convenience import axis_values_from_ortho, axis_values_from_viewer
     from cellier.convenience.gui import build_canvas_widget, build_ortho_grid_widget
 
     ortho = _ortho_viewer(gui)
-    grid = build_ortho_grid_widget(ortho, axis_ranges_from_ortho(ortho))
+    grid = build_ortho_grid_widget(ortho, axis_values_from_ortho(ortho))
     for key, view in grid.canvases.items():
         modes = {str(mode) for mode in ortho.scenes[key].render_modes}
         assert len(modes) == 1, f"sanity: {key} declares one render mode"
@@ -571,6 +584,6 @@ def test_only_a_scene_that_renders_both_ways_offers_a_toggle(qtbot, gui):
 
     # ...while a viewer whose scene renders both ways keeps its toggle.
     viewer = _toggle_viewer(gui)
-    canvas = build_canvas_widget(viewer, axis_ranges_from_viewer(viewer))
+    canvas = build_canvas_widget(viewer, axis_values_from_viewer(viewer))
     assert {"2d", "3d"} <= {str(m) for m in viewer.scene.render_modes}
     assert canvas.dims_control.has_toggle

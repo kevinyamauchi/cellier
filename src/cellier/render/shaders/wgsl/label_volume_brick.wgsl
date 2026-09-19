@@ -27,6 +27,8 @@ fn get_lod_scale(lut_w: u32) -> vec3<f32> {
     }
 }
 
+{$ include 'cellier.brick_rule.wgsl' $}
+
 // ── Coordinate conversions ────────────────────────────────────────────────
 
 fn norm_to_voxel(pos: vec3<f32>, norm_size: vec3<f32>, dataset_size: vec3<f32>) -> vec3<f32> {
@@ -160,7 +162,8 @@ fn lookup_brick_context(voxel_pos: vec3<f32>) -> BrickContext {
     if (ctx.valid) {
         ctx.lut_entry      = lut_entry;
         ctx.lod_scale      = get_lod_scale(lut_entry.w);
-        ctx.brick_corner_k = floor((voxel_pos / ctx.lod_scale) / block_size) * block_size;
+        // The brick the LUT says owns this cell (same rule as the writer).
+        ctx.brick_corner_k = brick_corner_from_cell(safe_idx, lut_entry.w);
     }
     return ctx;
 }
@@ -222,8 +225,8 @@ fn setup_brick(
 
     if (info.valid) {
         info.lod_scale      = get_lod_scale(lut_entry.w);
-        let voxel_k_bc      = voxel_pos / info.lod_scale;
-        info.brick_corner_k = floor(voxel_k_bc / block_size) * block_size;
+        // The brick the LUT says owns this cell (same rule as the writer).
+        info.brick_corner_k = brick_corner_from_cell(safe_idx, lut_entry.w);
         let brick_len       = max(info.t_end - t, 1e-6);
         let brick_world_len = length(brick_max_n - brick_min_n);
         let max_scale  = max(info.lod_scale.x, max(info.lod_scale.y, info.lod_scale.z));

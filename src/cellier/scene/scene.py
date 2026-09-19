@@ -12,7 +12,46 @@ from pydantic import UUID4, AfterValidator, Field, PrivateAttr, field_serializer
 from cellier.scene._background import BackgroundAppearance
 from cellier.scene.canvas import Canvas
 from cellier.scene.dims import DimsManager
+from cellier.visuals._overlay_types import SceneOverlayType
 from cellier.visuals._types import VisualType
+
+
+def _sliced_world_axes(visual: Any) -> set[int]:
+    """The world axes *visual* slices, and so wants a slider for.
+
+    The world axes its data axes map to, read off
+    ``visual.transform.axis_correspondence()``.  An image in composite mode
+    does not slice its channel axis, so that world axis is left out.  A world
+    axis the visual broadcasts over has no data axis and contributes nothing;
+    a visual with no transform yet contributes nothing at all.
+
+    Parameters
+    ----------
+    visual : Any
+        A visual model.
+
+    Returns
+    -------
+    set[int]
+        World axis indices.
+
+    Raises
+    ------
+    ValueError
+        If the transform has no axis correspondence (a shear or rotation).
+        Deliberately not caught: that case is not designed yet (D37).
+    """
+    transform = getattr(visual, "transform", None)
+    if transform is None:
+        return set()
+    correspondence = transform.axis_correspondence()
+    axes = set(correspondence.values())
+    channel_axis = getattr(visual, "channel_axis", None)
+    if channel_axis is not None and getattr(visual, "composite", False):
+        world_axis = correspondence.get(channel_axis)
+        if world_axis is not None:
+            axes.discard(world_axis)
+    return axes
 
 
 class Scene(EventedModel):
@@ -39,6 +78,13 @@ class Scene(EventedModel):
     background : BackgroundAppearance
         Appearance of the background drawn behind this scene's visuals.
         Mutating its fields updates the render layer at runtime.
+    overlays : list[SceneOverlayType]
+        World-space overlays attached to this scene, such as a
+        :class:`~cellier.visuals.SceneBoundingBox`.  Drawn by the scene
+        camera in the main pass.  Add and remove them through the controller
+        (``add_scene_overlay`` / ``remove_overlay``) so the render layer
+        follows; appending here directly only takes effect when the scene is
+        registered.
     """
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
@@ -54,6 +100,7 @@ class Scene(EventedModel):
     render_modes: set[Literal["2d", "3d"]] = Field(default_factory=lambda: {"2d", "3d"})
     lighting: Literal["none", "default"] = "none"
     background: BackgroundAppearance = Field(default_factory=BackgroundAppearance)
+    overlays: list[SceneOverlayType] = Field(default_factory=list)
 
     # The background model the relay below is currently attached to.  Needed
     # to tell a nested field change (which re-emits events.background) apart
@@ -79,6 +126,33 @@ class Scene(EventedModel):
             visual.events.all.connect(
                 lambda info, v=visual: self.events.visuals.emit(self.visuals)
             )
+
+    @property
+    def slider_axes(self) -> tuple[int, ...]:
+        """World axes that get a slider when they are not displayed.
+
+        Derived from the visuals -- hidden ones included -- and adjusted by
+        ``dims.slider_overrides``: ``True`` forces an axis in, ``False``
+        forces it out.  A plain property rather than a field, so it is never
+        serialized; the overrides are the only stored state (D23).
+
+        Returns
+        -------
+        tuple[int, ...]
+            Sorted world axis indices.
+
+        Raises
+        ------
+        ValueError
+            If a visual's transform has no axis correspondence (D37).
+        """
+        derived: set[int] = set()
+        for visual in self.visuals:
+            derived |= _sliced_world_axes(visual)
+        overrides = self.dims.slider_overrides
+        shown = {axis for axis in derived if overrides.get(axis, True)}
+        shown |= {axis for axis, force in overrides.items() if force}
+        return tuple(sorted(shown))
 
     def _on_dims_updated(self, info: Any) -> None:
         self.events.dims.emit(self.dims)

@@ -23,12 +23,13 @@ from skimage.data import binary_blobs
 from cellier.convenience import (
     Layout,
     OrthoViewer,
-    axis_ranges_from_ortho,
+    axis_values_from_ortho,
     run,
 )
 from cellier.convenience.gui import build_ortho_grid_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
-from cellier.visuals import InMemoryImageAppearance
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import InMemoryImageSingleAppearance
 
 # ---------------------------------------------------------------------------
 # Data
@@ -40,14 +41,14 @@ blobs_3d = binary_blobs(length=200, n_dim=3, rng=0).astype(np.float32)
 # Orthoviewer model
 # ---------------------------------------------------------------------------
 
-viewer = OrthoViewer(axis_labels=("z", "y", "x"))
+viewer = OrthoViewer(spatial_axes("z", "y", "x"))
 
 store = ImageMemoryStore(data=blobs_3d, name="blobs")
 viewer.controller.add_data_store(store)
 
 viewer.add_image(
     store,
-    appearance=InMemoryImageAppearance(
+    single=InMemoryImageSingleAppearance(
         color_map="viridis",
         clim=(0.0, 1.0),
         render_mode="iso",
@@ -63,8 +64,8 @@ viewer.center_slices()
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_ortho(viewer)
-canvas_widgets = build_ortho_grid_widget(viewer, axis_ranges)
+axis_values = axis_values_from_ortho(viewer)
+canvas_widgets = build_ortho_grid_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Launch

@@ -19,8 +19,8 @@ from cellier.events._events import (
     VisualVisibilityChangedEvent,
 )
 from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import LinesMemoryAppearance, LinesVisual
+from tests._v2 import Context, data_region, identity
 
 
 def _appearance_event(field, value):
@@ -43,7 +43,7 @@ def _dims_state(displayed=(0, 1, 2), sliced=None):
     return DimsState(
         axis_labels=tuple(str(i) for i in range(3)),
         selection=AxisAlignedSelectionState(
-            displayed_axes=displayed, slice_indices=sliced or {}
+            displayed_axes=displayed,
         ),
     )
 
@@ -61,14 +61,14 @@ def _store():
     return LinesMemoryStore(positions=positions)
 
 
-def _visual(store, appearance=None):
+def _visual(store, appearance=None, transform=None):
     if appearance is None:
         appearance = LinesMemoryAppearance()
     model = LinesVisual(name="test", data_store_id=str(store.id), appearance=appearance)
     return GFXLinesMemoryVisual(
         visual_model=model,
         render_modes={"2d", "3d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=transform if transform is not None else identity(store.ndim),
     )
 
 
@@ -81,7 +81,11 @@ def _make_batch(store, displayed=(0, 1, 2), sliced=None):
         chunk_request_id=sid,
         scale_index=0,
         displayed_axes=displayed,
-        slice_indices=sliced,
+        retained_axes=tuple(sorted(displayed)),
+        region=data_region(
+            store.ndim,
+            {axis: (position, 0.5) for axis, position in (sliced or {}).items()},
+        ),
     )
     data = asyncio.run(store.get_data(req))
     return [(req, data)]
@@ -112,7 +116,7 @@ def test_pick_write_follows_model_flag():
     v = GFXLinesMemoryVisual(
         visual_model=model,
         render_modes={"2d", "3d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=identity(store.ndim),
     )
     assert v._material.pick_write is False
 
@@ -180,7 +184,7 @@ def test_3d_positions_reordered_zyx_to_xyz():
     v = GFXLinesMemoryVisual(
         visual_model=model,
         render_modes={"3d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=identity(store.ndim),
     )
     v.on_data_ready(_make_batch(store, displayed=(0, 1, 2)))
     gpu_pos = v.node.geometry.positions.data
@@ -199,7 +203,7 @@ def test_2d_positions_padded_with_zero():
     v = GFXLinesMemoryVisual(
         visual_model=model,
         render_modes={"2d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=identity(store.ndim),
     )
     v.on_data_ready_2d(_make_batch(store, displayed=(1, 2), sliced={0: 0}))
     if not v._is_empty:
@@ -217,7 +221,7 @@ def test_invalid_render_modes_raises():
         GFXLinesMemoryVisual(
             visual_model=model,
             render_modes={"4d"},
-            transform=AffineTransform.identity(ndim=store.ndim),
+            transform=identity(store.ndim),
         )
 
 
@@ -246,24 +250,30 @@ def test_protocol_node_accessors():
     assert v.get_node("3d") is v.node
     assert v.build_node("3d", None, (0, 1, 2), None, None) is v.node
     assert v.rebuild_node_geometry("3d", (0, 1, 2), None, None) is v.node
-    v.on_stacked_axes_changed((0,))
 
 
 def test_build_slice_request_updates_matrix_on_axis_change():
-    v = _visual(_store())
+    store = _store()
+    ctx = Context(3, displayed_axes=(0, 1, 2))
+    v = _visual(store, transform=ctx.transform)
+    ctx.place(v)
     reqs = v.build_slice_request(
         camera_pos_world=np.zeros(3),
         frustum_corners_world=None,
         fov_y_rad=0.0,
         screen_height_px=100.0,
         dims_state=_dims_state(displayed=(0, 1, 2)),
+        selection=ctx.selection,
     )
     assert len(reqs) == 1
     assert v._last_displayed_axes == (0, 1, 2)
 
 
 def test_build_slice_request_2d_updates_matrix_on_axis_change():
-    v = _visual(_store())
+    store = _store()
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 0.0})
+    v = _visual(store, transform=ctx.transform)
+    ctx.place(v)
     reqs = v.build_slice_request_2d(
         camera_pos_world=np.zeros(3),
         viewport_width_px=100.0,
@@ -271,6 +281,7 @@ def test_build_slice_request_2d_updates_matrix_on_axis_change():
         view_min_world=None,
         view_max_world=None,
         dims_state=_dims_state(displayed=(1, 2), sliced={0: 0}),
+        selection=ctx.selection,
     )
     assert len(reqs) == 1
     assert v._last_displayed_axes == (1, 2)
@@ -411,7 +422,7 @@ def test_on_pick_write_changed():
 def test_on_transform_changed_updates_matrix():
     v = _visual(_store())
     v.get_node_for_dims((0, 1, 2))
-    new_tf = AffineTransform.identity(ndim=3)
+    new_tf = identity(3)
     v.on_transform_changed(
         TransformChangedEvent(
             source_id=uuid4(), scene_id=uuid4(), visual_id=uuid4(), transform=new_tf

@@ -38,7 +38,12 @@ def render_layout(layout: object, viewer: object, host: LayoutHost) -> RenderedV
         name: render_dock(getattr(layout, f"{name}_dock"), viewer, host, closeables)
         for name in ("left", "right", "top", "bottom")
     }
-    return RenderedView(host.assemble(center, docks, closeables), closeables)
+    return RenderedView(
+        host.assemble(
+            center, docks, closeables, dock_min_widths=layout.dock_min_widths()
+        ),
+        closeables,
+    )
 
 
 def render_center(node: object, host: LayoutHost, closeables: list) -> object:
@@ -87,6 +92,10 @@ def render_dock(
 ) -> object | None:
     """Render one dock spec, or ``None`` when it builds nothing.
 
+    ``AppearanceControls`` always builds something: it follows the viewer, so they
+    render a placeholder until a configured visual exists.  Only a ``RenderControls``
+    with no sections, or a stack of nothing but those, builds nothing.
+
     Which controls a dock contains is decided in ``_shared.py`` and is the same
     on every toolkit; *which widget class* serves each one comes from
     ``host.backend``; how the column is shaped comes from ``host.dock_panel``.
@@ -95,8 +104,8 @@ def render_dock(
     from cellier.convenience.layout._shared import unsupported_dock_node
     from cellier.convenience.layout._spec import (
         AppearanceControls,
-        ChannelControls,
         HStack,
+        OverlayControls,
         RenderControls,
         VStack,
     )
@@ -104,9 +113,9 @@ def render_dock(
     if spec is None:
         return None
     if isinstance(spec, AppearanceControls):
-        return _render_appearance_dock(viewer, host, closeables)
-    if isinstance(spec, ChannelControls):
-        return _render_channel_dock(viewer, host, closeables)
+        return _render_appearance_dock(spec, viewer, host, closeables)
+    if isinstance(spec, OverlayControls):
+        return _render_overlay_dock(spec, viewer, host, closeables)
     if isinstance(spec, RenderControls):
         return _render_render_dock(spec, viewer, host, closeables)
     if isinstance(spec, (HStack, VStack)):
@@ -175,54 +184,99 @@ def build_appearance_widgets(
 
 
 def _render_appearance_dock(
-    viewer: object, host: LayoutHost, closeables: list
-) -> object | None:
-    """The appearance controls for the first configured visual."""
-    from cellier.convenience.layout._shared import select_appearance_target
+    spec: object, viewer: object, host: LayoutHost, closeables: list
+) -> object:
+    """Appearance controls for the configured visuals.
 
-    target = select_appearance_target(viewer)
-    if target is None:
-        return None
-
-    widgets = build_appearance_widgets(
-        target.visual,
-        target.config,
-        viewer.controller,
-        target.visual_ids,
-        backend=host.backend,
-    )
-    if not widgets:
-        return None
-    closeables.extend(widget for widget in widgets if hasattr(widget, "close"))
-    return host.dock_panel([host.leaf(widget) for widget in widgets])
-
-
-def _render_channel_dock(
-    viewer: object, host: LayoutHost, closeables: list
-) -> object | None:
-    """Per-channel controls for the configured multichannel visual(s).
-
-    Multi-scene aware: on an ``OrthoViewer`` the one widget drives every
-    panel's sibling visual through the fan-out ``visual_ids``.
+    ``spec.presentation`` decides whether a selector chooses one visual at a
+    time or every visual gets a collapsible section.  Either way the dock
+    follows the viewer as visuals are added and removed (see
+    ``_controls_dock.py``).
     """
+    from cellier.convenience.layout._controls_dock import (
+        APPEARANCE_PLACEHOLDER,
+        ControlsDock,
+    )
+    from cellier.convenience.layout._shared import appearance_targets
+
+    controller = viewer.controller
+
+    def build(target) -> list:
+        return build_appearance_widgets(
+            target.visual,
+            target.config,
+            controller,
+            target.visual_ids,
+            backend=host.backend,
+        )
+
+    dock = ControlsDock(
+        viewer,
+        host,
+        resolve=appearance_targets,
+        build=build,
+        placeholder=APPEARANCE_PLACEHOLDER,
+        presentation=spec.presentation,
+    )
+    closeables.append(dock)
+    return dock.root
+
+
+def build_overlay_widgets(
+    overlay: object,
+    controller: object,
+    overlay_ids: list | None = None,
+    *,
+    backend: object,
+) -> list:
+    """Build and wire the controls for one overlay, on any backend.
+
+    Returns the widgets in display order, each ``connect_widget``-wired.
+    """
+    from cellier.convenience.layout._shared import overlay_control_specs
+
+    overlay_ids = [overlay.id] if overlay_ids is None else list(overlay_ids)
+    built: list = []
+    for spec in overlay_control_specs(overlay):
+        widget = backend.overlay_field_widget(spec, list(overlay_ids))
+        controller.connect_widget(
+            widget, subscription_specs=widget.subscription_specs()
+        )
+        built.append(widget)
+    return built
+
+
+def _render_overlay_dock(
+    spec: object, viewer: object, host: LayoutHost, closeables: list
+) -> object:
+    """Controls for every overlay on the viewer, following adds and removes."""
+    from cellier.convenience.layout._controls_dock import (
+        OVERLAY_SELECTOR_TITLE,
+        ControlsDock,
+    )
     from cellier.convenience.layout._shared import (
-        _resolve_channel_visual_ids,
-        channel_widget_kwargs,
+        OVERLAY_PLACEHOLDER,
+        overlay_targets,
     )
 
-    resolved = _resolve_channel_visual_ids(viewer)
-    if resolved is None:
-        return None
-    config, visual_ids, channels = resolved
+    controller = viewer.controller
 
-    widget = host.backend.channel_list(
-        visual_ids, channels, **channel_widget_kwargs(config, channels)
+    def build(target) -> list:
+        return build_overlay_widgets(
+            target.visual, controller, target.visual_ids, backend=host.backend
+        )
+
+    dock = ControlsDock(
+        viewer,
+        host,
+        resolve=overlay_targets,
+        build=build,
+        placeholder=OVERLAY_PLACEHOLDER,
+        presentation=spec.presentation,
+        selector_title=OVERLAY_SELECTOR_TITLE,
     )
-    viewer.controller.connect_widget(
-        widget, subscription_specs=widget.subscription_specs()
-    )
-    closeables.append(widget)
-    return host.leaf(widget)
+    closeables.append(dock)
+    return dock.root
 
 
 def _render_render_dock(

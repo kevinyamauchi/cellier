@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from uuid import uuid4
 
 import numpy as np
 from pydantic import (
@@ -13,7 +14,8 @@ from pydantic import (
     model_validator,
 )
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._axes import data_coordinate_system as build_data_coordinate_system
+from cellier.data._base_data_store import BaseDataStore, geometry_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     MatrixSection,
@@ -22,7 +24,10 @@ from cellier.data._dataset_info import (
     array_extent_row,
 )
 from cellier.data.graph._graph_requests import GraphData, GraphSliceRequest
-from cellier.transform import AffineTransform
+
+if TYPE_CHECKING:
+    from cellier.data._changes import StoreChangeKind
+    from cellier.transform import DataCoordinateSystem
 
 #: Placeholder vertex counts for an empty slice.  pygfx forbids empty
 #: geometry buffers, so a single invisible node / a single degenerate segment
@@ -110,11 +115,15 @@ class GraphMemoryStore(BaseDataStore):
     edge_colors : np.ndarray | None
         (n_edges, 4) float32 RGBA, row-matched to edges.  Expanded to two
         vertices per edge at slice time.
-    transform : AffineTransform | None
-        Data-to-world transform derived from a geff file's per-axis
-        ``scale`` / ``offset`` (D23).  ``None`` for a store built from raw
-        arrays.  ``Controller.add_graph`` uses it as the visual's default
-        transform when its own ``transform`` argument is None.
+    axis_scales : tuple[float, ...] | None
+        A geff file's per-axis ``scale`` (D23).  ``None`` for a store built
+        from raw arrays.  ``Controller.add_graph`` turns these into the
+        visual's default ``data -> world`` transform when its own
+        ``transform`` argument is None -- raw numbers here rather than a
+        transform, because a transform names the two coordinate systems it
+        maps between and the store does not know the scene's world.
+    axis_offsets : tuple[float, ...] | None
+        The per-axis ``offset`` companion.
     directed : bool
         Whether the graph is directed.  Decides which ``spatial_graph``
         class the lazy index builds, and nothing else: the slice path is
@@ -126,9 +135,42 @@ class GraphMemoryStore(BaseDataStore):
         a silent fallback.
     name : str
         Human-readable label.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per ``positions`` column.  Mark an axis
+        ``sampling="discrete"`` when its column holds sample indices, such
+        as a tracking graph's frame numbers.  Empty by default, in which
+        case the store takes the scene's world axes when it is added to a
+        scene.  :meth:`from_geff` builds it from the file's axis metadata.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["graph_memory"] = "graph_memory"
+    # Reassigning these announces a change on ``data_changed``
+    # (plans/store_change_events.md): positions move the extent.
+    _EXTENT_FIELDS: ClassVar[frozenset[str]] = frozenset({"positions"})
+    _CONTENTS_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "edges",
+            "node_ids",
+            "node_colors",
+            "node_sizes",
+            "edge_colors",
+            "axis_scales",
+            "axis_offsets",
+            "directed",
+            "slice_strategy",
+        }
+    )
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory graph"
     name: str = "graph_memory_store"
 
@@ -139,7 +181,8 @@ class GraphMemoryStore(BaseDataStore):
     node_sizes: np.ndarray | None = None
     edge_colors: np.ndarray | None = None
 
-    transform: AffineTransform | None = None
+    axis_scales: tuple[float, ...] | None = None
+    axis_offsets: tuple[float, ...] | None = None
     directed: bool = False
 
     slice_strategy: Literal["mask", "roi"] = "mask"
@@ -239,9 +282,11 @@ class GraphMemoryStore(BaseDataStore):
         node_colors: np.ndarray | None = None,
         node_sizes: np.ndarray | None = None,
         edge_colors: np.ndarray | None = None,
-        transform: AffineTransform | None = None,
+        axis_scales: tuple[float, ...] | None = None,
+        axis_offsets: tuple[float, ...] | None = None,
         directed: bool = False,
         slice_strategy: Literal["mask", "roi"] = "mask",
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "graph_memory_store",
     ) -> GraphMemoryStore:
         """Build a store from raw arrays -- the dependency-free path.
@@ -259,12 +304,17 @@ class GraphMemoryStore(BaseDataStore):
             Original node ids; defaults to ``arange(n_nodes)``.
         node_colors, node_sizes, edge_colors : np.ndarray | None
             Optional per-element appearance arrays.
-        transform : AffineTransform | None
-            Data-to-world transform, normally left None for raw arrays.
+        axis_scales, axis_offsets : tuple[float, ...] | None
+            Per-axis data-to-world scale and offset, normally left None for
+            raw arrays.
         directed : bool
             Whether the graph is directed.
         slice_strategy : str
             ``"mask"`` or ``"roi"`` (D17).
+        data_coordinate_system : DataCoordinateSystem | None
+            The store's coordinate system, one axis per ``positions`` column.
+            The store adopts its ``datastore_id`` as its ``id``.  ``None``
+            leaves the store without one until it is added to a scene.
         name : str
             Human-readable label.
 
@@ -279,9 +329,13 @@ class GraphMemoryStore(BaseDataStore):
             node_colors=node_colors,
             node_sizes=node_sizes,
             edge_colors=edge_colors,
-            transform=transform,
+            axis_scales=axis_scales,
+            axis_offsets=axis_offsets,
             directed=directed,
             slice_strategy=slice_strategy,
+            data_coordinate_systems=(
+                [data_coordinate_system] if data_coordinate_system is not None else []
+            ),
             name=name,
         )
 
@@ -295,18 +349,46 @@ class GraphMemoryStore(BaseDataStore):
         node_size_prop: str | None = None,
         directed: bool | None = None,
         slice_strategy: Literal["mask", "roi"] = "mask",
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "graph_memory_store",
     ) -> GraphMemoryStore:
         """Build a store from a geff file.
 
         There is deliberately **no** ``transform`` parameter (D23): the
-        file's axes are the sole source of the store's transform at
+        file's axes are the sole source of the store's scale and offset at
         construction.  ``Controller.add_graph(transform=...)`` still wins
         when passed explicitly, as it does for every other visual.
 
         See :mod:`cellier.data.graph._geff_io` for the reader details.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Path to the geff store.
+        axis_names : list[str] | None
+            Which of the file's axes to load as position columns, and in what
+            order.  ``None`` loads every axis in file order.  This selects
+            columns; it does not build a coordinate system.
+        node_color_prop, node_size_prop : str | None
+            Node properties to use as ``node_colors`` / ``node_sizes``.
+        directed : bool | None
+            Overrides the file's ``directed`` flag when not ``None``.
+        slice_strategy : str
+            ``"mask"`` or ``"roi"`` (D17).
+        data_coordinate_system : DataCoordinateSystem | None
+            The store's coordinate system.  ``None`` builds one from the
+            loaded axes' geff metadata; see
+            :func:`~cellier.data.graph._geff_io.data_axes_from_geff`.  A
+            system that is passed is used as-is, and the store adopts its
+            ``datastore_id`` as its ``id``.
+        name : str
+            Human-readable label, and the name of a generated system.
+
+        Returns
+        -------
+        GraphMemoryStore
         """
-        from cellier.data.graph._geff_io import read_geff
+        from cellier.data.graph._geff_io import data_axes_from_geff, read_geff
 
         payload = read_geff(
             path,
@@ -314,15 +396,21 @@ class GraphMemoryStore(BaseDataStore):
             node_color_prop=node_color_prop,
             node_size_prop=node_size_prop,
         )
+        if data_coordinate_system is None:
+            data_coordinate_system = build_data_coordinate_system(
+                uuid4(), data_axes_from_geff(payload.axes), name
+            )
         store = cls(
             positions=payload.positions,
             edges=payload.edges,
             node_ids=payload.node_ids,
             node_colors=payload.node_colors,
             node_sizes=payload.node_sizes,
-            transform=payload.transform,
+            axis_scales=payload.axis_scales,
+            axis_offsets=payload.axis_offsets,
             directed=payload.directed if directed is None else directed,
             slice_strategy=slice_strategy,
+            data_coordinate_systems=[data_coordinate_system],
             name=name,
         )
         store._axes = payload.axes
@@ -334,6 +422,20 @@ class GraphMemoryStore(BaseDataStore):
     _axes: list = PrivateAttr(default_factory=list)
     _node_props: dict = PrivateAttr(default_factory=dict)
     _edge_props: dict = PrivateAttr(default_factory=dict)
+
+    def _invalidate_caches(self, kind: StoreChangeKind) -> None:
+        """Drop the spatial index and edge caches on any data change.
+
+        They are built lazily from ``positions`` and ``edges`` (and the index
+        also from ``node_ids`` and ``directed``), and were never invalidated
+        before stores announced their changes: reassigning ``positions`` left
+        slicing on the old geometry.  Rebuilding is lazy, so clearing on
+        every change costs nothing until the next query.
+        """
+        super()._invalidate_caches(kind)
+        self._graph = None
+        self._edge_span = None
+        self._edge_row_lookup = None
 
     @property
     def axes(self) -> list:
@@ -358,6 +460,17 @@ class GraphMemoryStore(BaseDataStore):
     def ndim(self) -> int:
         """Number of spatial dimensions per node."""
         return self.positions.shape[1]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...] | None:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The bounding box of the nodes, with no padding -- a vertex is a point,
+        not a cell, so there is no half-voxel to add.  ``None`` when the
+        store is empty.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return self._cached_axis_extents(lambda: geometry_axis_extents(self.positions))
 
     @property
     def n_nodes(self) -> int:
@@ -421,12 +534,18 @@ class GraphMemoryStore(BaseDataStore):
 
         sections: list[Section] = [RowSection(None, structure)]
 
-        if self.transform is not None:
-            axis_labels = [str(index) for index in range(self.ndim)]
+        if self.axis_scales is not None:
+            ndim = self.ndim
+            offsets = self.axis_offsets or (0.0,) * ndim
+            matrix = np.eye(ndim + 1)
+            for index in range(ndim):
+                matrix[index, index] = float(self.axis_scales[index])
+                matrix[index, ndim] = float(offsets[index])
+            axis_labels = [str(index) for index in range(ndim)]
             sections.append(
                 MatrixSection(
                     "Transform",
-                    np.asarray(self.transform.matrix),
+                    matrix,
                     row_labels=[*axis_labels, "1"],
                     col_labels=[*axis_labels, "1"],
                 )
@@ -719,7 +838,7 @@ class GraphMemoryStore(BaseDataStore):
     def _window_mask(self, request: GraphSliceRequest) -> np.ndarray:
         """Boolean (n_nodes,) mask of nodes inside the slab on every axis."""
         mask = np.ones(self.n_nodes, dtype=bool)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             coord = self.positions[:, axis]
             mask &= (coord >= idx - before) & (coord <= idx + after)
@@ -770,7 +889,7 @@ class GraphMemoryStore(BaseDataStore):
         dtype = self.positions.dtype
         roi_min = np.full(self.ndim, -np.inf, dtype=dtype)
         roi_max = np.full(self.ndim, np.inf, dtype=dtype)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             roi_min[axis] = idx - before
             roi_max[axis] = idx + after
@@ -797,7 +916,7 @@ class GraphMemoryStore(BaseDataStore):
     ) -> np.ndarray:
         """Slab test for a set of node rows -- the ROI refinement, O(k)."""
         keep = np.ones(rows.shape[0], dtype=bool)
-        for axis, idx in request.slice_indices.items():
+        for axis, idx in request.slice_positions.items():
             before, after = request.extents.get(axis, _DEFAULT_EXTENT)
             coord = self.positions[rows, axis]
             keep &= (coord >= idx - before) & (coord <= idx + after)
@@ -827,7 +946,7 @@ class GraphMemoryStore(BaseDataStore):
         min_alpha = 0.0
         for axis, (fade_before, fade_after, axis_min_alpha) in request.fades.items():
             min_alpha = max(min_alpha, axis_min_alpha)
-            d = self.positions[rows, axis] - request.slice_indices[axis]
+            d = self.positions[rows, axis] - request.slice_positions[axis]
             falloff = np.where(d < 0.0, fade_before, fade_after)
             a = 1.0 - np.abs(d) / np.maximum(falloff, _FALLOFF_EPS)
             alpha *= np.clip(a, 0.0, 1.0).astype(np.float32)
@@ -841,7 +960,13 @@ class GraphMemoryStore(BaseDataStore):
         edge_rows: np.ndarray | None,
     ) -> GraphData:
         """Build the GPU-ready buffers from the selected rows."""
-        displayed = list(request.displayed_axes)
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform.  ``displayed_axes`` indexes the **world**, so using it
+        # here would raise on a store of lower rank than the world and
+        # silently upload the wrong columns on a transform that permutes its
+        # axes; it was the fallback for a headlessly constructed visual until
+        # v1 was retired (R8.3).
+        displayed = list(request.retained_axes)
         fading = bool(request.fades)
 
         nodes_empty = node_rows.shape[0] == 0

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from cellier.data.graph import GraphMemoryStore
+from tests._v2 import data_system
 
 try:  # pragma: no cover - import probe
     import geff as _geff
@@ -30,6 +31,7 @@ def _write_lineage(
     scales=None,
     offsets=None,
     directed=True,
+    axis_types=("time", "space", "space", "space"),
 ):
     """Write a small 4-D tzyx lineage and return ``(path, positions, edges)``.
 
@@ -58,7 +60,7 @@ def _write_lineage(
         graph,
         path,
         axis_names=["t", "z", "y", "x"],
-        axis_types=["time", "space", "space", "space"],
+        axis_types=None if axis_types is None else list(axis_types),
         **kwargs,
     )
     return (
@@ -106,6 +108,59 @@ def test_from_geff_axis_names_override(tmp_path):
 
 
 @requires_geff
+def test_from_geff_builds_a_system_from_the_file_axes(tmp_path):
+    """Names and types come from the file, and the store owns the system."""
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    store = GraphMemoryStore.from_geff(path)
+
+    system = store.data_coordinate_system
+    assert system.axis_names() == ("t", "z", "y", "x")
+    assert [axis.axis_type for axis in system.axes] == [
+        "time",
+        "space",
+        "space",
+        "space",
+    ]
+    assert [axis.sampling for axis in system.axes] == ["continuous"] * 4
+    assert system.datastore_id == store.id
+    assert len(store.level_transforms) == 1
+
+
+@requires_geff
+def test_from_geff_system_follows_the_selected_axes(tmp_path):
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    store = GraphMemoryStore.from_geff(path, axis_names=["z", "y", "x"])
+    assert store.data_coordinate_system.axis_names() == ("z", "y", "x")
+
+
+@requires_geff
+def test_from_geff_untyped_axes_take_the_name_rule(tmp_path):
+    """geff makes ``type`` optional; an unset one is typed from its name."""
+    path, _, _ = _write_lineage(tmp_path / "untyped.geff", axis_types=None)
+    store = GraphMemoryStore.from_geff(path)
+    assert [axis.axis_type for axis in store.data_coordinate_system.axes] == [
+        "time",
+        "space",
+        "space",
+        "space",
+    ]
+
+
+@requires_geff
+def test_from_geff_uses_a_passed_system(tmp_path):
+    """A caller-built system replaces the metadata-derived one outright."""
+    path, _, _ = _write_lineage(tmp_path / "lineage.geff")
+    system = data_system(("t", "z", "y", "x"), sampling="discrete", name="tracks")
+    store = GraphMemoryStore.from_geff(path, data_coordinate_system=system)
+
+    assert store.data_coordinate_system.id == system.id
+    assert store.id == system.datastore_id
+    assert [axis.sampling for axis in store.data_coordinate_system.axes] == [
+        "discrete"
+    ] * 4
+
+
+@requires_geff
 def test_from_geff_unknown_axis_name_raises(tmp_path):
     path, _, _ = _write_lineage(tmp_path / "lineage.geff")
     with pytest.raises(KeyError, match="channel"):
@@ -139,10 +194,10 @@ def test_from_geff_builds_transform(tmp_path):
     )
     store = GraphMemoryStore.from_geff(path)
 
-    assert store.transform is not None
-    assert store.transform.ndim == 4
-    assert np.allclose(np.diag(store.transform.matrix)[:4], [1.0, 4.0, 0.26, 0.26])
-    assert np.allclose(store.transform.matrix[:4, 4], [0.0, 10.0, 0.0, 0.0])
+    # Phase 8: the store keeps the file's raw numbers.  It cannot name the
+    # scene's world, so the transform is built by the controller.
+    assert store.axis_scales == (1.0, 4.0, 0.26, 0.26)
+    assert store.axis_offsets == (0.0, 10.0, 0.0, 0.0)
 
 
 @requires_geff
@@ -151,18 +206,16 @@ def test_from_geff_identity_when_axes_unscaled(tmp_path):
     path, _, _ = _write_lineage(tmp_path / "plain.geff")
     store = GraphMemoryStore.from_geff(path)
 
-    assert store.transform is not None
-    assert np.allclose(store.transform.matrix, np.eye(5))
+    assert store.axis_scales == (1.0, 1.0, 1.0, 1.0)
+    assert store.axis_offsets == (0.0, 0.0, 0.0, 0.0)
 
 
 @requires_geff
 def test_from_geff_has_no_transform_param(tmp_path):
     """D23 is enforced, not merely documented."""
-    from cellier.transform import AffineTransform
-
     path, _, _ = _write_lineage(tmp_path / "lineage.geff")
     with pytest.raises(TypeError, match="transform"):
-        GraphMemoryStore.from_geff(path, transform=AffineTransform.identity(ndim=4))
+        GraphMemoryStore.from_geff(path, transform=object())
 
 
 @requires_geff

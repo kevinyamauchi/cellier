@@ -28,7 +28,6 @@ def _make_dims_state() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
 
@@ -48,6 +47,7 @@ def _make_reslicing_request(
         screen_size_px=screen_size_px,
         world_extent=(0.0, 0.0),
         dims_state=_make_dims_state(),
+        selection=None,
         request_id=uuid4(),
         scene_id=scene_id or uuid4(),
         canvas_id=canvas_id or uuid4(),
@@ -106,21 +106,21 @@ class _StubSlicer:
 def test_dims_state_construction() -> None:
     ds = DimsState(
         axis_labels=("z", "y", "x"),
-        selection=AxisAlignedSelectionState(displayed_axes=(0, 1, 2), slice_indices={}),
+        selection=AxisAlignedSelectionState(
+            displayed_axes=(0, 1, 2),
+        ),
     )
     assert ds.selection.displayed_axes == (0, 1, 2)
-    assert ds.selection.slice_indices == {}
 
 
 def test_dims_state_2d() -> None:
     ds = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
-            displayed_axes=(1, 2), slice_indices={0: 5}
+            displayed_axes=(1, 2),
         ),
     )
     assert ds.selection.displayed_axes == (1, 2)
-    assert ds.selection.slice_indices == {0: 5}
 
 
 def test_reslicing_request_construction() -> None:
@@ -397,7 +397,9 @@ def test_reslice_visual_uses_reverse_map() -> None:
     rm.reslice_visual(visual.visual_model_id, dims_state)
 
     canvas_mock.capture_reslicing_request.assert_called_once_with(
-        dims_state, target_visual_ids=frozenset({visual.visual_model_id})
+        dims_state,
+        selection=None,
+        target_visual_ids=frozenset({visual.visual_model_id}),
     )
 
 
@@ -428,7 +430,7 @@ def test_reslice_visual_only_targets_one_visual() -> None:
     canvas_mock = MagicMock()
     canvas_mock.scene_id = scene_id
 
-    def _capture_request(dims_state, target_visual_ids=None):
+    def _capture_request(dims_state, selection=None, target_visual_ids=None):
         return _make_reslicing_request(
             scene_id=scene_id,
             canvas_id=canvas_id,
@@ -544,3 +546,61 @@ def test_frustum_cull_true_passes_corners() -> None:
     np.testing.assert_array_equal(
         kwargs.get("frustum_corners_world"), req.frustum_corners
     )
+
+
+# ---------------------------------------------------------------------------
+# SceneManager — slicing_enabled gate
+# ---------------------------------------------------------------------------
+
+
+def test_visual_render_config_slicing_enabled_by_default() -> None:
+    assert VisualRenderConfig().slicing_enabled is True
+
+
+def test_slicing_disabled_visual_is_not_planned_3d() -> None:
+    """A visual whose config disables slicing gets no build_slice_request call."""
+    scene_id = uuid4()
+    sm = SceneManager(scene_id=scene_id)
+    visual = _make_mock_visual()
+    sm.add_visual(visual, (0, 1, 2))
+
+    result = sm.build_slice_requests(
+        _make_reslicing_request(scene_id=scene_id),
+        {visual.visual_model_id: VisualRenderConfig(slicing_enabled=False)},
+    )
+
+    visual.build_slice_request.assert_not_called()
+    assert result == {}
+
+
+def test_slicing_disabled_visual_is_not_planned_2d() -> None:
+    """The 2D planning path honours slicing_enabled too."""
+    scene_id = uuid4()
+    sm = SceneManager(scene_id=scene_id)
+    visual = _make_mock_visual()
+    visual.render_modes = {"2d"}
+    sm.add_visual(visual, (1, 2))
+
+    request = ReslicingRequest(
+        camera_type="orthographic",
+        camera_pos=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        frustum_corners=np.zeros((2, 4, 3), dtype=np.float64),
+        fov_y_rad=0.0,
+        screen_size_px=(800.0, 600.0),
+        world_extent=(10.0, 10.0),
+        dims_state=DimsState(
+            axis_labels=("z", "y", "x"),
+            selection=AxisAlignedSelectionState(displayed_axes=(1, 2)),
+        ),
+        selection=None,
+        request_id=uuid4(),
+        scene_id=scene_id,
+        canvas_id=uuid4(),
+        target_visual_ids=None,
+    )
+    result = sm.build_slice_requests(
+        request, {visual.visual_model_id: VisualRenderConfig(slicing_enabled=False)}
+    )
+
+    visual.build_slice_request_2d.assert_not_called()
+    assert result == {}

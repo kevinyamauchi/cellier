@@ -319,7 +319,34 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // Local convention: voxel i centred at i, so shift by +0.5 then divide
     // by texture dimensions to get [0, 1].
     let vol_dimsf_pick = vec3<f32>(textureDimensions(t_img));
-    let pick_coord = (surface_pos + vec3<f32>(0.5)) / vol_dimsf_pick;
+
+    // Step a little way along the ray before encoding, so the reported point
+    // is inside the voxel this fragment drew rather than on its face.
+    //
+    // ``surface_pos`` is the *exact* crossing of the face between the
+    // background cell and the foreground one.  Once the decode shifts it to
+    // the ``[i, i + 1)`` convention that ``ImagePickInfo`` documents, a low
+    // face lands on an exact integer -- and ``floor`` of an exact integer is
+    // decided by the sign of whatever error precedes it.  The encode below
+    // *truncates*, so that error is reliably negative: a surface at voxel 6's
+    // low face reports 5.9996 and floors to 5, the background cell in front of
+    // the surface.  The consumer then reads the wrong label, silently, and
+    // only on the axis whose face the ray entered through.
+    //
+    // The step has to clear one quantisation step -- ``dim / 16383`` voxels --
+    // and stay well short of half a voxel, which is the nearest face on the
+    // other side.  Rounding instead of truncating is not enough on its own:
+    // it centres the error on zero rather than removing it, and the value is
+    // still sitting exactly on the boundary.
+    //
+    // Only the pick coordinate moves.  Colour, depth and the normal above all
+    // use the exact surface, because those want the geometry and this wants
+    // the cell.
+    let pick_quantum = max(
+        max(vol_dimsf_pick.x, vol_dimsf_pick.y), vol_dimsf_pick.z
+    ) / 16383.0;
+    let pick_pos = surface_pos + ray_dir * min(4.0 * pick_quantum, 0.25);
+    let pick_coord = (pick_pos + vec3<f32>(0.5)) / vol_dimsf_pick;
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
         pick_pack(u32(clamp(pick_coord.x, 0.0, 1.0) * 16383.0), 14) +

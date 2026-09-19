@@ -4,108 +4,10 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 from uuid import UUID
 
-from cellier.convenience.gui._controls_config import ChannelControlsConfig
 from cellier.gui._render_controls import VISUAL_RENDER_TITLES
-
-if TYPE_CHECKING:
-    from cellier.visuals._channel_appearance import ChannelAppearance
-
-
-class ResolvedChannelControls(NamedTuple):
-    """The data needed to build a channel-controls widget for one viewer."""
-
-    config: ChannelControlsConfig
-    visual_ids: list[UUID]
-    channels: dict[int, ChannelAppearance]
-
-
-def _resolve_channel_visual_ids(viewer: object) -> ResolvedChannelControls | None:
-    """Resolve the configured channel visual(s) for *viewer*.
-
-    Finds the first ``ChannelControlsConfig`` recorded on
-    ``viewer._controls_configs`` and returns its config, the visual ids the
-    channel widget should drive, and the channel appearances to seed it.
-
-    For a single-panel ``Viewer`` the entry maps directly to one visual id.
-    For an ``OrthoViewer`` the entry's key is a representative (first-panel)
-    visual id and ``viewer._visual_groups`` maps it to the sibling
-    visual ids across the four panels (design section 7.3).
-
-    Returns ``None`` when no channel controls are configured.
-
-    Raises
-    ------
-    ValueError
-        When ``len(channels) > min(max_channels_2d, max_channels_3d)`` on the
-        resolved visual -- over-cap channels would become silent render no-ops,
-        so this fails loudly at widget-build time (design section 7.3 / 11.4).
-    """
-    controller = getattr(viewer, "controller", None)
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    if controller is None or not controls_configs:
-        return None
-
-    rep_id = None
-    config = None
-    for visual_id, cfg in controls_configs.items():
-        if isinstance(cfg, ChannelControlsConfig):
-            rep_id = visual_id
-            config = cfg
-            break
-    if config is None:
-        return None
-
-    groups: dict | None = getattr(viewer, "_visual_groups", None)
-    if groups is not None and rep_id in groups:
-        visual_ids = list(groups[rep_id])
-    else:
-        visual_ids = [rep_id]
-
-    visual = controller.get_visual_model(rep_id)
-    channels = visual.channels
-
-    cap = min(int(visual.max_channels_2d), int(visual.max_channels_3d))
-    if len(channels) > cap:
-        raise ValueError(
-            f"Channel controls require len(channels) <= min(max_channels_2d, "
-            f"max_channels_3d) = {cap}; got {len(channels)}. Raise the caps on "
-            f"add_multichannel_image* if you need more simultaneous channels."
-        )
-
-    return ResolvedChannelControls(config, visual_ids, channels)
-
-
-def channel_widget_kwargs(
-    config: ChannelControlsConfig,
-    channels: dict[int, ChannelAppearance],
-) -> dict:
-    """Build the toolkit-neutral kwargs shared by both channel widgets.
-
-    ``QtChannelList`` and ``AnywidgetChannelList`` accept the same construction
-    keywords (``clim_range``, ``colormap_names``, ``fields``,
-    ``channel_labels``); this derives them from *config*, inferring
-    ``clim_range`` from the channels' current clim when it is not configured.
-    """
-    kwargs: dict = {}
-    if config.fields is not None:
-        kwargs["fields"] = config.fields
-    if config.colormap_names is not None:
-        kwargs["colormap_names"] = config.colormap_names
-    if config.channel_labels is not None:
-        kwargs["channel_labels"] = config.channel_labels
-
-    if config.clim_range is not None:
-        kwargs["clim_range"] = config.clim_range
-    elif channels:
-        los = [float(ch.clim[0]) for ch in channels.values()]
-        his = [float(ch.clim[1]) for ch in channels.values()]
-        kwargs["clim_range"] = (min([*los, 0.0]), max([*his, 1.0]))
-
-    return kwargs
-
 
 # ── Appearance controls: the toolkit-neutral decision layer ──────────────────
 #
@@ -166,11 +68,10 @@ class AppearanceSpecs(NamedTuple):
 
 
 _CONTROL_TITLES = {
-    "color_map": "Colormap",
-    "clim": "Contrast limits",
-    "render": "Render mode",
+    "image": "Image",
     "lod_bias": "LOD bias",
     "aabb": "Bounding box",
+    "trail": "Trail",
     # Read rather than restated: the per-visual groups name themselves in
     # the shared control spec, beside the controls they hold.
     **VISUAL_RENDER_TITLES,
@@ -288,12 +189,10 @@ def appearance_specs(
     -------
     AppearanceSpecs
     """
-    from cellier.convenience.gui._controls_config import InMemoryImageControlsConfig
     from cellier.gui._appearance_fields import (
         APPEARANCE_FIELD_WIDGETS,
         literal_choices,
     )
-    from cellier.gui._colormap_util import colormap_to_str
 
     appearance = getattr(config, "appearance", False)
     if appearance is True:
@@ -316,8 +215,14 @@ def appearance_specs(
     # visual's model actually carries it.  Both halves matter: a config can be
     # paired with a visual whose model is narrower (a multiscale config on an
     # in-memory image has no ``lod_bias`` to drive).
+    # An image's mode-dependent fields live on ``single`` (unified image
+    # design 3.1), not on the shared appearance.
+    single = getattr(visual, "single", None)
     honoured = {
-        field for field in requested if field in controls_map and hasattr(app, field)
+        field
+        for field in requested
+        if field in controls_map
+        and (hasattr(app, field) or (single is not None and hasattr(single, field)))
     }
     # A default list is "everything this config *can* drive", and the visual's
     # model is often narrower on purpose -- a flat mesh has no ``shininess``.
@@ -325,32 +230,25 @@ def appearance_specs(
     # fields the caller named are reported as dropped.
     skipped = sorted(requested - honoured) if explicit else []
 
-    raw_clim = tuple(getattr(app, "clim", (0.0, 1.0)))
-    if (
-        isinstance(config, InMemoryImageControlsConfig)
-        and config.clim_range is not None
-    ):
-        clim_range: tuple[float, float] = config.clim_range
-    else:
-        clim_range = (min(0.0, float(raw_clim[0])), max(1.0, float(raw_clim[1])))
+    image_fields = [
+        field
+        for field in controls_map
+        if field in honoured and controls_map[field] == "image"
+    ]
+
+    def _image_values():
+        from cellier.gui._image_controls import image_control_values
+
+        return image_control_values(
+            visual,
+            fields=image_fields,
+            colormap_names=getattr(config, "colormap_names", None),
+            clim_range=getattr(config, "clim_range", None),
+            channel_labels=getattr(config, "channel_labels", None),
+        )
 
     values_for = {
-        "color_map": lambda: {
-            "initial_colormap": colormap_to_str(getattr(app, "color_map", "grays")),
-            "colormap_names": config.colormap_names
-            if isinstance(config, InMemoryImageControlsConfig)
-            else None,
-        },
-        "clim": lambda: {
-            "clim_range": clim_range,
-            "initial_clim": raw_clim,
-        },
-        "render": lambda: {
-            "clim_range": clim_range,
-            "initial_render_mode": getattr(app, "render_mode", "mip"),
-            "initial_threshold": getattr(app, "iso_threshold", 0.2),
-            "initial_attenuation": getattr(app, "attenuation", 1.0),
-        },
+        "image": _image_values,
         "lod_bias": lambda: {"initial_lod_bias": float(getattr(app, "lod_bias", 1.0))},
     }
 
@@ -380,6 +278,10 @@ def appearance_specs(
             title = stem_title[1] if stem_title else _default_title(field)
         specs.append(ControlSpec(kind, title, values))
 
+    trail_spec = _trail_spec(visual, config, store)
+    if trail_spec is not None:
+        specs.append(trail_spec)
+
     # The bounding box is not a field of the appearance model and is not
     # requested by name: ``aabb`` is on ``BaseVisual`` with a default factory,
     # so every visual has one and every configured panel gets the control.
@@ -408,6 +310,75 @@ def appearance_specs(
         specs.append(dataset_info_spec)
 
     return AppearanceSpecs(specs, skipped)
+
+
+def _trail_spec(visual: object, config: object, store: object) -> ControlSpec | None:
+    """The trail-window control *config* asks for, or ``None``.
+
+    Only a graph visual has a trail, and only ``GraphControlsConfig`` can ask
+    for its control.  The axes are resolved here, against the store's own
+    data axes, because the config is built before it is paired with a store.
+    """
+    requested = getattr(config, "trail_controls", False)
+    trail = getattr(visual, "trail", None)
+    if not requested or trail is None:
+        return None
+
+    systems = getattr(store, "data_coordinate_systems", None) or []
+    system = systems[0] if systems else None
+    names = system.axis_names() if system is not None else ()
+
+    if requested is True:
+        axes = sorted(trail)
+        if not axes and system is not None:
+            axes = [
+                index
+                for index, axis in enumerate(system.axes)
+                if axis.axis_type == "time"
+            ]
+    else:
+        axes = [_resolve_trail_axis(ref, names) for ref in requested]
+    if not axes:
+        warnings.warn(
+            f"trail_controls=True on {getattr(visual, 'name', 'a graph')!r} found "
+            "no axis to offer: the graph has no trail window and no time axis. "
+            "Name the axes instead, e.g. trail_controls=[0].",
+            UserWarning,
+            stacklevel=3,
+        )
+        return None
+
+    return ControlSpec(
+        "trail",
+        _CONTROL_TITLES["trail"],
+        {
+            "axes": [
+                (axis, names[axis] if axis < len(names) else f"axis {axis}")
+                for axis in dict.fromkeys(axes)
+            ],
+            # Copies: the widget keeps what it was seeded with, and must never
+            # hold the objects the controller is wired to.
+            "trail": {axis: window.model_copy() for axis, window in trail.items()},
+        },
+    )
+
+
+def _resolve_trail_axis(ref: int | str, names: tuple[str, ...]) -> int:
+    """Resolve one ``trail_controls`` entry to a data-axis index."""
+    if isinstance(ref, str):
+        matches = [index for index, name in enumerate(names) if name == ref]
+        if len(matches) != 1:
+            problem = "is not one of" if not matches else "is ambiguous among"
+            raise ValueError(
+                f"trail_controls axis {ref!r} {problem} the graph's data axes "
+                f"{list(names)}."
+            )
+        return matches[0]
+    if not 0 <= ref < len(names):
+        raise ValueError(
+            f"trail_controls axis {ref} is out of range for a {len(names)}-axis graph."
+        )
+    return int(ref)
 
 
 def _visual_render_specs(
@@ -454,6 +425,11 @@ def _visual_render_specs(
         }
         if is_labels:
             values["outline_selected_labels"] = dict(visual.outline_selected_labels)
+            # The mode decides which controls the panel draws (slot swatches
+            # or the per-label rows), and both front ends fall back to
+            # ``per_label`` without it -- which misdrew every visual in
+            # another mode.
+            values["outline_mode"] = visual.outline_mode
         specs.append(ControlSpec(kind, _CONTROL_TITLES[kind], values))
 
     if wants_occlusion:
@@ -541,11 +517,18 @@ def warn_skipped_appearance_fields(
     )
 
 
-class AppearanceTarget(NamedTuple):
-    """What an appearance dock drives.
+class ControlTarget(NamedTuple):
+    """One configured visual a controls dock can drive.
 
     Parameters
     ----------
+    key : UUID
+        The representative visual id the config is recorded under.  Stable
+        for as long as the visual exists, so it is what a dock's selection
+        is kept by.
+    label : str
+        What the dock's visual selector calls this target.  Unique among the
+        targets of one dock.
     visual : BaseVisual
         The representative visual.  Its appearance model is what the controls
         are seeded from; on an ``OrthoViewer`` it is the first panel's visual
@@ -559,50 +542,192 @@ class AppearanceTarget(NamedTuple):
         the spec walk is identical either way and only the id list differs.
     """
 
+    key: UUID
+    label: str
     visual: object
     config: object
     visual_ids: list
 
 
-def select_appearance_target(viewer: object) -> AppearanceTarget | None:
-    """Find the visual(s) whose appearance controls a dock should render.
+def appearance_targets(viewer: object) -> list[ControlTarget]:
+    """Every visual an ``AppearanceControls()`` dock can drive, in add order.
 
-    First-match-wins in visual order, matching the pre-stage-1 behaviour
-    exactly -- supporting two independently configured visuals is design
-    section 4.4 and is deferred.  Channel configs are skipped: they are
-    resolved by :func:`_resolve_channel_visual_ids` instead.
-
-    **Multi-scene aware.**  A ``Viewer`` exposes ``scene``; an ``OrthoViewer``
-    exposes ``scenes`` and nothing else, which is why ``AppearanceControls()``
-    used to be a silent no-op on it -- both renderers read ``viewer.scene``,
-    got ``None``, and produced no dock and no error (section 4.1).  Walking
-    ``scenes`` and expanding the group through ``_visual_groups`` is the whole
-    fix; the renderers are unchanged.
-
-    Returns ``None`` when the viewer has no scenes or nothing is configured.
+    A config whose ``appearance`` is falsy (``False``, ``None``, ``[]``) is skipped: it
+    asks for no panel, and :func:`appearance_specs` would build none, so offering it in
+    the selector would only lead to an empty dock.  Multi-scene aware: an
+    ``OrthoViewer`` records one config per fanned-out add, keyed by the first panel's
+    visual, and ``_visual_groups`` expands it to all four.
     """
-    controls_configs: dict = getattr(viewer, "_controls_configs", {})
-    if not controls_configs:
-        return None
+    return _control_targets(viewer)
 
-    scene = getattr(viewer, "scene", None)
-    if scene is not None:
-        scenes = [scene]
-    else:
-        scenes_map = getattr(viewer, "scenes", None)
-        if not scenes_map:
-            return None
-        scenes = list(scenes_map.values())
 
+def _control_targets(viewer: object) -> list[ControlTarget]:
+    """Resolve the recorded configs of one kind into labelled targets.
+
+    Registration order, not scene order: it is the order the user added
+    things in, and it is the same on a ``Viewer`` and an ``OrthoViewer``.  An
+    id the controller no longer knows is skipped rather than raised on; the
+    viewer prunes removed visuals, so reaching one means a stale read, and a
+    dock should show what exists.
+    """
+    controller = getattr(viewer, "controller", None)
+    controls_configs: dict = getattr(viewer, "_controls_configs", {}) or {}
+    if controller is None or not controls_configs:
+        return []
     groups: dict = getattr(viewer, "_visual_groups", {}) or {}
-    for candidate_scene in scenes:
-        for visual in candidate_scene.visuals:
-            config = controls_configs.get(visual.id)
-            if config is None or isinstance(config, ChannelControlsConfig):
-                continue
-            visual_ids = list(groups.get(visual.id, [visual.id]))
-            return AppearanceTarget(visual, config, visual_ids)
-    return None
+
+    resolved = []
+    for rep_id, config in controls_configs.items():
+        if not getattr(config, "appearance", False):
+            continue
+        try:
+            visual = controller.get_visual_model(rep_id)
+        except KeyError:
+            continue
+        visual_ids = list(groups.get(rep_id, [rep_id]))
+        resolved.append(
+            (
+                rep_id,
+                _group_name(controller, visual, visual_ids),
+                visual,
+                config,
+                visual_ids,
+            )
+        )
+
+    labels = unique_labels([name for _, name, _, _, _ in resolved])
+    return [
+        ControlTarget(rep_id, label, visual, config, visual_ids)
+        for (rep_id, _, visual, config, visual_ids), label in zip(resolved, labels)
+    ]
+
+
+OVERLAY_PLACEHOLDER = "No overlays"
+"""What an overlay dock says while the viewer has no overlays."""
+
+
+def overlay_targets(viewer: object) -> list[ControlTarget]:
+    """Every overlay an ``OverlayControls()`` dock can drive.
+
+    In :attr:`Viewer.overlays` order.  Overlays of a type with no controls
+    table entry are skipped rather than offered with an empty panel.  The
+    target's ``visual`` slot holds the overlay model and ``config`` is
+    ``None``: an overlay has no ``controls=`` config, and its controls are
+    fixed by its type.
+    """
+    from cellier.gui._overlay_fields import OVERLAY_CONTROLS
+
+    overlays = [
+        overlay
+        for overlay in getattr(viewer, "overlays", ()) or ()
+        if getattr(overlay, "overlay_type", None) in OVERLAY_CONTROLS
+    ]
+    labels = unique_labels([str(overlay.name) for overlay in overlays])
+    return [
+        ControlTarget(overlay.id, label, overlay, None, [overlay.id])
+        for overlay, label in zip(overlays, labels)
+    ]
+
+
+def overlay_control_specs(overlay: object) -> list[ControlSpec]:
+    """The controls for one overlay, in display order.
+
+    Each spec's ``kind`` is the dotted field path the control writes, which
+    is also the key of ``OVERLAY_FIELD_WIDGETS``.  ``values`` carries the
+    initial value read off the model and, for a ``Literal`` field, the
+    choices it admits.
+    """
+    from cellier.gui._appearance_fields import literal_choices
+    from cellier.gui._overlay_fields import (
+        OVERLAY_CONTROLS,
+        OVERLAY_FIELD_WIDGETS,
+        overlay_field_value,
+    )
+
+    specs = []
+    for field in OVERLAY_CONTROLS.get(getattr(overlay, "overlay_type", ""), ()):
+        values: dict[str, object] = {
+            "initial_value": overlay_field_value(overlay, field)
+        }
+        parent_path, _, attribute = field.rpartition(".")
+        if parent_path:
+            choices = literal_choices(
+                overlay_field_value(overlay, parent_path), attribute
+            )
+            if choices:
+                values["choices"] = choices
+        specs.append(ControlSpec(field, OVERLAY_FIELD_WIDGETS[field][1], values))
+    return specs
+
+
+def _group_name(controller: object, visual: object, visual_ids: list) -> str:
+    """The name a visual group goes by.
+
+    An ``OrthoViewer`` names each panel's visual ``f"{name}_{panel}"``, so a
+    group whose members all share the part before the last underscore is
+    called by that part.  Anything else is called by its representative.
+    """
+    name = str(getattr(visual, "name", "") or "")
+    if len(visual_ids) < 2:
+        return name
+    names = []
+    for visual_id in visual_ids:
+        try:
+            names.append(str(controller.get_visual_model(visual_id).name))
+        except KeyError:
+            continue
+    bases = {sibling.rsplit("_", 1)[0] for sibling in names if "_" in sibling}
+    if len(bases) == 1 and len(names) == sum("_" in n for n in names):
+        return bases.pop()
+    return name
+
+
+def unique_labels(names: list[str]) -> list[str]:
+    """Make *names* unique, keeping the first of each as it is.
+
+    ``["image", "image", "mesh"]`` becomes ``["image", "image (2)", "mesh"]``.
+    Visual names are not unique -- every ``add_image`` defaults to
+    ``"image"`` -- and a selector offering two identical entries cannot be
+    used.  An empty name is called ``"visual"``.
+    """
+    taken: set[str] = set()
+    seen: dict[str, int] = {}
+    labels = []
+    for raw in names:
+        base = raw or "visual"
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        label = base if count == 1 else f"{base} ({count})"
+        while label in taken:
+            count += 1
+            seen[base] = count
+            label = f"{base} ({count})"
+        taken.add(label)
+        labels.append(label)
+    return labels
+
+
+def next_selection(
+    previous: ControlTarget | None, targets: list[ControlTarget]
+) -> ControlTarget | None:
+    """Which target a dock shows after its targets change.
+
+    The previous selection is kept while it exists -- matched by key, or by
+    config when an ``OrthoViewer`` re-keyed its group after the
+    representative panel's visual was removed.  A newly added visual does not
+    take the selection.  When the selection is gone, or there was none, the
+    first target is shown; with no targets, nothing is.
+    """
+    if not targets:
+        return None
+    if previous is not None:
+        for target in targets:
+            if target.key == previous.key:
+                return target
+        for target in targets:
+            if target.config is previous.config:
+                return target
+    return targets[0]
 
 
 def render_panel_kwargs(section: str, controller: object) -> dict:
@@ -662,7 +787,7 @@ def unsupported_dock_node(spec: object) -> TypeError:
     """
     return TypeError(
         f"Cannot render {type(spec).__name__!r} in a dock. Docks accept "
-        "AppearanceControls, ChannelControls, RenderControls, or an HStack / "
+        "AppearanceControls, OverlayControls, RenderControls, or an HStack / "
         "VStack of those. Grid is a center-only node."
     )
 

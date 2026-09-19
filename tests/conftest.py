@@ -1,5 +1,6 @@
 """Test fixtures for Cellier."""
 
+import sys
 import weakref
 
 import numpy as np
@@ -81,6 +82,20 @@ def _close_cellier_objects(monkeypatch):
                 # Teardown must not turn a passing test into an error, and a
                 # test that deliberately half-builds a controller is allowed.
                 pass
+
+    # Qt deletes a closed widget only when the event loop next runs, so drain
+    # it now rather than leave every earlier test's widgets pending.
+    _drain_qt_events()
+
+
+def _drain_qt_events() -> None:
+    """Process pending Qt events, if a Qt application exists."""
+    widgets_module = sys.modules.get("PySide6.QtWidgets")
+    if widgets_module is None:
+        return
+    app = widgets_module.QApplication.instance()
+    if app is not None:
+        app.processEvents()
 
 
 @pytest.fixture(scope="session")

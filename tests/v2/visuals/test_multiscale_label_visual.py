@@ -6,12 +6,12 @@ from uuid import uuid4
 
 import pytest
 
-from cellier.transform import AffineTransform
 from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )
+from tests._v2 import level_transforms
 
 # ── MultiscaleLabelsAppearance ────────────────────────────────────────────────
 
@@ -107,8 +107,8 @@ def test_render_config_json_roundtrip():
 # ── MultiscaleLabelVisual ────────────────────────────────────────────────────
 
 
-def _identity_transform(ndim: int = 3) -> AffineTransform:
-    return AffineTransform.identity(ndim=ndim)
+def _identity_transform(ndim: int = 3):
+    return level_transforms([(1.0,) * ndim])[0]
 
 
 def test_visual_json_roundtrip():

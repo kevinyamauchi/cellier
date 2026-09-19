@@ -46,17 +46,18 @@ class BlockKey2D:
         order as the visual's ``displayed_axes`` -- i.e. ``g0`` is the
         brick coordinate along ``displayed_axes[0]``, ``g1`` along
         ``displayed_axes[1]``.
-    slice_coord : tuple of (axis_index, world_value) pairs
-        Sorted tuple encoding the sliced-axis positions at the time this
-        tile was requested.  Tiles from different slice positions will have
-        distinct keys, allowing the cache to hold tiles from multiple slices
-        simultaneously during a transition.
+    slice_coord : tuple of (data axis, selection) pairs
+        Sorted tuple encoding the level-0 selection fetched on each sliced
+        axis when this tile was requested: an integer plane, or a
+        ``(start, stop)`` window for a slab.  Tiles from different slice
+        positions will have distinct keys, allowing the cache to hold tiles
+        from multiple slices simultaneously during a transition.
     """
 
     level: int
     g0: int
     g1: int
-    slice_coord: tuple[tuple[int, int], ...] = ()
+    slice_coord: tuple[tuple[int, int | tuple[int, int]], ...] = ()
 
 
 @dataclass
@@ -95,9 +96,9 @@ class TileManager2D:
         # tile -> slot  (committed, renderable tiles only)
         self.tilemap: dict[BlockKey2D, TileSlot] = {}
         # slot index -> tile  (committed tiles only; None = free or in-flight)
-        self.slot_index: dict[int, BlockKey2D | None] = {
-            i: None for i in range(cache_parameters.n_slots)
-        }
+        self.slot_index: dict[int, BlockKey2D | None] = dict.fromkeys(
+            range(cache_parameters.n_slots)
+        )
         # Slot 0 is reserved (empty/black).
         self.slot_index[0] = BlockKey2D(level=0, g0=0, g1=0)
         # Free slots (everything except slot 0).

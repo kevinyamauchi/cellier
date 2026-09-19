@@ -35,6 +35,8 @@ fn get_lod_scale(lut_w: u32) -> vec3<f32> {
     }
 }
 
+{$ include 'cellier.brick_rule.wgsl' $}
+
 
 // ── LOD debug colour ──────────────────────────────────────────────────────
 fn get_lod_color(lut_w: u32) -> vec3<f32> {
@@ -136,6 +138,11 @@ fn ray_to_seed(ray_dir: vec3<f32>) -> u32 {
 //                level-k voxels (LOD=1, default params); fits within BORDER=3
 //   gradient   — ±1.5 level-k voxels (grad_eps = lod_scale * 1.5); fits
 //                within BORDER=3 at all LOD levels
+//   cell rule  — on a pyramid whose level ratio is not an integer, the brick
+//                that owns a cell (brick_corner_from_cell) and the brick the
+//                position falls in can differ by about one level-k voxel,
+//                which adds to the budgets above.  Anything past BORDER is
+//                clamped to the padded tile below.
 fn sample_atlas(
     voxel_pos:      vec3<f32>,   // finest-level voxel coordinates
     lut_entry:      vec4<u32>,   // RGB = slot indices, W = lut_w (level, 1-based)
@@ -154,9 +161,13 @@ fn sample_atlas(
     let tile_origin = vec3<f32>(lut_entry.xyz) * padded_size;
 
     // Offset from anchor brick corner — allows negative values (ghost below)
-    // and values > block_size (ghost above).
+    // and values > block_size (ghost above), clamped to the padded tile so a
+    // probe past the ghost border repeats the edge texel instead of reading
+    // (or linearly blending into) the neighbouring atlas slot.
     let voxel_k      = voxel_pos / lod_scale;
-    let pos_in_brick = voxel_k - brick_corner_k;
+    let pos_in_brick = clamp(voxel_k - brick_corner_k,
+                             vec3<f32>(-BORDER),
+                             block_size - vec3<f32>(1.0) + vec3<f32>(BORDER));
 
     // + BORDER: skip ghost border.  + 0.5: sample voxel centre.
     let cache_pos   = tile_origin + pos_in_brick + vec3<f32>(BORDER + 0.5);
@@ -228,8 +239,9 @@ fn setup_brick(
     // 5. If valid, compute step budget.
     if (info.valid) {
         info.lod_scale      = get_lod_scale(lut_entry.w);
-        let voxel_k_bc      = voxel_pos / info.lod_scale;
-        info.brick_corner_k = floor(voxel_k_bc / block_size) * block_size;
+        // The corner of the brick the LUT says owns this cell -- not the one
+        // the position falls in, which differs on non-integer pyramids.
+        info.brick_corner_k = brick_corner_from_cell(safe_idx, lut_entry.w);
         let brick_len       = max(info.t_end - t, 1e-6);
         let brick_world_len = length(brick_max_n - brick_min_n);
         let max_scale  = max(info.lod_scale.x, max(info.lod_scale.y, info.lod_scale.z));
@@ -277,7 +289,10 @@ fn lookup_brick_mip(
     // 4. Step budget (identical to setup_brick, using DDA-derived brick length).
     if (info.valid) {
         info.lod_scale      = get_lod_scale(lut_entry.w);
-        info.brick_corner_k = floor(vec3<f32>(entry_idx) / info.lod_scale) * block_size;
+        // Integer cell -> brick rule, matching the LUT writer.  Dividing the
+        // cell by the float scale instead names the previous brick for whole
+        // cells on a pyramid whose level ratio is not an integer.
+        info.brick_corner_k = brick_corner_from_cell(safe_idx, lut_entry.w);
         let brick_len       = max(info.t_end - t_entry, 1e-6);
         // brick_world_len: diagonal of one brick in normalized space.
         // Since voxel→norm is a uniform linear scale, this is constant for
@@ -356,9 +371,8 @@ fn soft_density_img(
 // All 26 neighbours share the same brick context: ±1 level-k voxel is within
 // BORDER=3, so the clamped textureSample reads correct border data for all
 // samples without any per-sample LUT re-fetch.  The brick_corner_k passed in
-// should be derived from the refined surface position (same as the existing
-// gradient does), not from surface_brick_corner_k, to avoid FP precision
-// issues at brick boundaries.
+// must be the corner of the brick lut_entry names (brick_corner_from_cell),
+// so the offset and the atlas slot refer to the same brick.
 //
 // The returned gradient is divided by lod_scale to give a direction-correct
 // vector in world space for anisotropic datasets.
@@ -829,14 +843,13 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // BORDER ghost-margin (the centred convention would cost half a voxel of it).
     let refined_v    = norm_to_voxel_index(refined_pos, norm_size, dataset_size);
 
-    // Fix 3: compute brick corner once from the refined position so gradient
-    // probes that cross a brick boundary use a direct offset rather than fmod,
-    // which would remap them into the wrong atlas tile.
-    let block_size_v   = vec3<f32>(u_vol_params.block_size_x,
-                                   u_vol_params.block_size_y,
-                                   u_vol_params.block_size_z);
-    let voxel_k_ref    = refined_v / grad_lod;
-    let brick_corner_k = floor(voxel_k_ref / block_size_v) * block_size_v;
+    // Fix 3: one brick corner for every gradient probe, so probes that cross a
+    // brick boundary use a direct offset rather than fmod, which would remap
+    // them into the wrong atlas tile.  It is the corner of the brick grad_lut
+    // came from (set by brick_corner_from_cell from that brick's LUT cell):
+    // recomputing it from refined_v can name a different brick than grad_lut
+    // on a pyramid whose level ratio is not an integer.
+    let brick_corner_k = select(surface_brick_corner_k, prev_brick_corner_k, grad_in_prev);
 
     $$ if render_mode == "smooth_iso"
     // 3×3×3 Sobel on the nearest-neighbour density field.  All 26 samples

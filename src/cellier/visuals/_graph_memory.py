@@ -20,22 +20,45 @@ class TrailConfig(EventedModel):
     The axis is the **dict key** on the visual, not a field here, so a
     config can never disagree with where it is filed.
 
+    **Every extent here is in world units.**  The docstring said "data
+    units" until the render layer was read carefully: it has always divided
+    these by the axis scale before putting them in a request, which is to
+    say it has always treated them as world units and converted.  The code
+    was right and the description was wrong.
+
+    World units are also the only choice that stays meaningful on an
+    irregularly sampled axis: a two-second trail is two seconds wherever the
+    slider sits, spanning three densely sampled frames in one place and two
+    sparse ones in another.  Stated in data units it would be "two frames",
+    which is a different physical length at every position.
+
     Parameters
     ----------
     before : float
-        Extent of the window below the current slice index, in data units.
-        Default 0.5, which is the symmetric slab points and lines use.
+        Extent of the window below the current slice position, in **world**
+        units.  Default 0.5, which is the symmetric slab points and lines
+        use.
     after : float
-        Extent above the current slice index.  Default 0.5.
+        Extent above the current slice position, in **world** units.
+        Default 0.5.
     fade : bool
         If True, elements fade with distance from the current index.  The
         fade rides its own per-element alpha buffer, so it composes with
         either ``color_mode`` and never overwrites it (D19/D20).
     fade_before : float | None
-        Falloff distance below the index.  ``None`` uses ``before`` -- the
-        window width is the only sensible falloff when none is given.
+        Falloff distance below the position, in **world** units.  ``None``
+        uses ``before`` -- the window width is the only sensible falloff
+        when none is given.
     fade_after : float | None
-        Falloff distance above the index.  ``None`` uses ``after``.
+        Falloff distance above the position, in **world** units.  ``None``
+        uses ``after``.
+
+        **Accepted wart:** the store applies the fade linearly in *data*
+        units, so on an irregularly sampled axis the alpha ramps unevenly
+        per world unit -- faster per second through a densely sampled window
+        than through a sparse one.  Computing it in world units would
+        require the store to know the transform, which it deliberately does
+        not.
     min_alpha : float
         Floor applied to in-window elements, so a trail need not vanish
         before the window ends.  Out-of-window elements are forced to

@@ -16,7 +16,7 @@ import weakref
 import pytest
 
 from cellier.controller import CellierController
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 
 def _controller_with_canvas(qtbot) -> CellierController:
@@ -24,7 +24,7 @@ def _controller_with_canvas(qtbot) -> CellierController:
     controller = CellierController()
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )
@@ -104,7 +104,7 @@ def test_controller_close_closes_every_canvas(qtbot):
     controller = CellierController()
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )
@@ -154,7 +154,7 @@ def test_close_releases_canvas_for_both_guis(qtbot, gui):
     controller = CellierController(gui=gui)
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("y", "x")),
+        coordinate_system=world_coordinate_system(spatial_axes("y", "x"), name="world"),
         name="main",
         render_modes={"2d"},
     )
@@ -166,3 +166,37 @@ def test_close_releases_canvas_for_both_guis(qtbot, gui):
     gc.collect()
 
     assert view_ref() is None
+
+
+def test_close_releases_the_renderer_when_qt_destroyed_the_window_first(qtbot):
+    """Closing a Qt canvas must free its ``WgpuRenderer``, and with it the GPU.
+
+    The order that leaked: the window hosting the canvas is destroyed by Qt (the
+    user closes it), and the controller is closed afterwards.  The canvas's
+    event emitter still held ``renderer.convert_event`` and the canvas its draw
+    callback; the cycle runs through the dead widget's Python wrapper, which the
+    garbage collector cannot break.  The renderer -- with every render target
+    and pipeline it owns -- then stayed alive, cumulatively enough to exhaust a
+    software Vulkan device.  ``WgpuRenderer.disable_events`` does not help
+    (rendercanvas removes handlers by identity, and each ``convert_event``
+    access is a new object), so ``CanvasView.close`` removes them itself.
+    """
+    from qtpy.QtWidgets import QVBoxLayout, QWidget
+
+    controller = _controller_with_canvas(qtbot)
+    view = _only_canvas_view(controller)
+    renderer_ref = weakref.ref(view._renderer)
+
+    host = QWidget()
+    QVBoxLayout(host).addWidget(view.widget)
+    qtbot.addWidget(host)
+    host.show()
+    host.close()
+    host.deleteLater()
+    qtbot.wait(50)  # let Qt delete the host, and the canvas with it
+
+    controller.close()
+    del controller, view
+    gc.collect()
+
+    assert renderer_ref() is None

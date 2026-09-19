@@ -415,6 +415,7 @@ async def async_main(zarr_uri: str):
 
     from cellier.controller import CellierController
     from cellier.data import OMEZarrImageDataStore
+    from cellier.data._axes import scale_and_translation_transform
     from cellier.gui.qt import QtCanvasWidget
     from cellier.render._config import (
         CameraConfig,
@@ -422,7 +423,6 @@ async def async_main(zarr_uri: str):
         SlicingConfig,
     )
     from cellier.scene.dims import CoordinateSystem
-    from cellier.transform import AffineTransform
 
     # ── Open the OME-Zarr store ───────────────────────────────────────
     print(f"Opening OME-Zarr store: {zarr_uri}")
@@ -458,8 +458,8 @@ async def async_main(zarr_uri: str):
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
 
     # ── Voxel-to-world transform ──────────────────────────────────────
-    voxel_to_world = AffineTransform.from_scale_and_translation(
-        scale=tuple(level_0_scale_zyx)
+    voxel_to_world = scale_and_translation_transform(
+        data_store.data_coordinate_system, cs, tuple(level_0_scale_zyx)
     )
 
     # ── Initial appearance ────────────────────────────────────────────
@@ -503,10 +503,15 @@ async def async_main(zarr_uri: str):
     # These use voxel indices (not world coords) because slice_indices in this
     # script are in voxel space.
     level0_shape = data_store.level_shapes[0]
-    axis_ranges = {i: (0, level0_shape[i] - 1) for i in range(len(level0_shape))}
+    from cellier.gui._axis_values import ContinuousAxisValues
+
+    axis_values = {
+        i: ContinuousAxisValues(min=0, max=level0_shape[i] - 1)
+        for i in range(len(level0_shape))
+    }
 
     canvas_widget = QtCanvasWidget.from_scene_and_canvas(
-        scene, canvas_view, axis_ranges=axis_ranges
+        scene, canvas_view, axis_values=axis_values
     )
     controller.connect_widget(
         canvas_widget.dims_control,

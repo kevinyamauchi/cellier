@@ -1,4 +1,4 @@
-"""Paint controller for multiscale (zarr-backed) image data stores.
+"""Paint controller for multiscale (zarr-backed) label data stores.
 
 Architecture (Phase 3 — pyramid rebuild + autosave loop)
 ---------------------------------------------------------
@@ -69,12 +69,13 @@ class MultiscalePaintController(AbstractPaintController):
     scene_id :
     canvas_id :
     data_store :
-        Either ``OMEZarrImageDataStore`` or ``MultiscaleZarrDataStore``.
+        The store behind a ``MultiscaleLabelVisual``: an
+        ``OMEZarrLabelDataStore`` or a ``MultiscaleZarrDataStore``.
         Must expose ``_ts_stores: list[ts.TensorStore]`` and
-        ``level_shapes`` / ``level_transforms``.
+        ``level_shapes`` / ``level_scales``.
     visual_block_size :
         Tile / brick side length used by the visual's render config.
-        Must match the ``MultiscaleImageRenderConfig.block_size`` of the
+        Must match the ``MultiscaleLabelRenderConfig.block_size`` of the
         rendered visual.
     displayed_axes :
         The two data-array axes currently displayed in 2D for the bound
@@ -129,6 +130,10 @@ class MultiscalePaintController(AbstractPaintController):
         self._write_buffer: TensorStoreWriteBuffer = TensorStoreWriteBuffer(
             data_store._ts_stores[0]
         )
+        # Let the store refuse a cache-pool change while this buffer holds a
+        # handle: reopening would bind the store's levels to a new pool while
+        # the buffer kept writing through the discarded one.
+        data_store.register_paint_writer(self._write_buffer)
         self._write_layer = WriteLayer(
             data_store_id=data_store.id, block_size=int(visual_block_size)
         )
@@ -159,7 +164,7 @@ class MultiscalePaintController(AbstractPaintController):
     def _apply_brush(self, world_coord: np.ndarray) -> None:
         """Re-order world_coord from pygfx (x, y) to data (row, col) order.
 
-        Both image visuals render ``data[r, c]`` at pygfx world ``(x=c, y=r)``.
+        The labels visuals render ``data[r, c]`` at pygfx world ``(x=c, y=r)``.
         ``CellierController._on_raw_pointer_event`` embeds the mouse position
         verbatim: ``world_coord[ax_row] = pygfx_x`` (column index),
         ``world_coord[ax_col] = pygfx_y`` (row index).  Swapping them here
@@ -248,6 +253,8 @@ class MultiscalePaintController(AbstractPaintController):
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
             self._autosave_timer = None
+        # Release the store's cache-pool interlock (see __init__).
+        self._data_store.unregister_paint_writer()
         super()._teardown()
 
     # ------------------------------------------------------------------
@@ -273,6 +280,7 @@ class MultiscalePaintController(AbstractPaintController):
 
         # 3. Create a fresh transaction for continued staging.
         self._write_buffer = TensorStoreWriteBuffer(self._data_store._ts_stores[0])
+        self._data_store.register_paint_writer(self._write_buffer)
 
         # 4. Drop GPU paint textures — frees the entire slot pool.
         self._controller._clear_painted_tiles_2d(self._visual_id)
@@ -330,7 +338,7 @@ class MultiscalePaintController(AbstractPaintController):
             return {}
 
         level_shapes = self._data_store.level_shapes
-        level_transforms = self._data_store.level_transforms
+        level_scales = self._data_store.level_scales
         stores = self._data_store._ts_stores
         ax_y, ax_x = self._displayed_axes
 
@@ -343,17 +351,11 @@ class MultiscalePaintController(AbstractPaintController):
         for k in range(1, n_levels):
             stride_y = max(
                 1,
-                round(
-                    level_transforms[k].matrix[ax_y, ax_y]
-                    / level_transforms[k - 1].matrix[ax_y, ax_y]
-                ),
+                round(level_scales[k][ax_y] / level_scales[k - 1][ax_y]),
             )
             stride_x = max(
                 1,
-                round(
-                    level_transforms[k].matrix[ax_x, ax_x]
-                    / level_transforms[k - 1].matrix[ax_x, ax_x]
-                ),
+                round(level_scales[k][ax_x] / level_scales[k - 1][ax_x]),
             )
 
             parent_dirty = dirty_by_level.get(k - 1, set())

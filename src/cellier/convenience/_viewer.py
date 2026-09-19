@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 from uuid import UUID
 
 from cellier.controller import CellierController
+from cellier.convenience._controls_registry import ControlsRegistryMixin
 from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
+from cellier.events import CanvasAddedEvent
 from cellier.render._capture import write_png
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import WorldAxesLike, world_coordinate_system
+from cellier.visuals._canvas_overlay import CanvasOverlay
+from cellier.visuals._scene_overlay import SceneOverlay
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,8 +22,6 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget
 
     from cellier.convenience.gui._controls_config import (
-        BaseControlsConfig,
-        ChannelControlsConfig,
         GraphControlsConfig,
         InMemoryImageControlsConfig,
         LabelsControlsConfig,
@@ -39,23 +41,31 @@ if TYPE_CHECKING:
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.scene.scene import Scene
-    from cellier.transform import AffineTransform
+    from cellier.transform import BaseTransform
     from cellier.visuals._base_visual import VisualOutline
-    from cellier.visuals._channel_appearance import ChannelAppearance
     from cellier.visuals._graph_memory import (
         GraphAppearance,
         GraphVisual,
         TrailConfig,
     )
     from cellier.visuals._image import (
-        MultichannelMultiscaleImageVisual,
         MultiscaleImageAppearance,
+        MultiscaleImageChannelAppearance,
         MultiscaleImageRenderConfig,
+        MultiscaleImageSingleAppearance,
         MultiscaleImageVisual,
     )
-    from cellier.visuals._image_memory import BaseImageAppearance, ImageVisual
-    from cellier.visuals._image_memory_multichannel import MultichannelImageVisual
-    from cellier.visuals._label_memory import BaseLabelsAppearance, LabelMemoryVisual
+    from cellier.visuals._image_memory import (
+        ImageVisual,
+        InMemoryImageAppearance,
+        InMemoryImageChannelAppearance,
+        InMemoryImageSingleAppearance,
+    )
+    from cellier.visuals._label_memory import (
+        BaseLabelsAppearance,
+        LabelMemoryVisual,
+        OutlineMode,
+    )
     from cellier.visuals._labels import (
         MultiscaleLabelRenderConfig,
         MultiscaleLabelsAppearance,
@@ -68,7 +78,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T", bound="BaseDataStore")
 
 
-class Viewer(RenderSettingsMixin):
+class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
     """Single-scene viewer wrapping a CellierController.
 
     Creates a controller and a single scene pre-wired and ready to receive
@@ -77,9 +87,15 @@ class Viewer(RenderSettingsMixin):
 
     Parameters
     ----------
-    axis_labels : tuple[str, ...]
-        World-axis names in order, e.g. ``("z", "y", "x")``.
-        The number of labels determines the dimensionality of the scene.
+    axes : WorldAxesLike
+        The world axes in order: a ``WorldCoordinateSystem``, or a sequence of
+        ``Axis`` objects and/or ``(name, axis_type)`` pairs.  Their number
+        determines the dimensionality of the scene.  Axis types are stated,
+        never inferred from the name -- ``spatial_axes("z", "y", "x")`` is the
+        shorthand for an all-spatial world, and a mixed one spells the rest
+        out::
+
+            Viewer([("t", "time"), *spatial_axes("z", "y", "x")])
     dim : "2d" or "3d"
         Initial display dimensionality. Default ``"2d"``.
     render_modes : set[str] or None
@@ -100,7 +116,7 @@ class Viewer(RenderSettingsMixin):
 
     def __init__(
         self,
-        axis_labels: tuple[str, ...],
+        axes: WorldAxesLike,
         *,
         dim: Literal["2d", "3d"] = "2d",
         render_modes: set[str] | None = None,
@@ -114,18 +130,16 @@ class Viewer(RenderSettingsMixin):
         self._scene = self._controller.add_scene(
             name="main",
             dim=dim,
-            coordinate_system=CoordinateSystem(name="world", axis_labels=axis_labels),
+            coordinate_system=world_coordinate_system(axes),
             render_modes=resolved_render_modes,
         )
-        # Saved world-space slice positions, keyed by axis index. Populated
-        # by set_displayed_dimensions so axes restore their last position when
-        # they cycle back from displayed to sliced.
-        self._saved_slice_positions: dict[int, float] = {}
         # Callbacks fired once the scene's startup data is on the GPU; consumed
         # by the launcher (see convenience._launch._init_view).
         self._ready_callbacks: list[Callable[[], None]] = []
-        # Controls configs keyed by visual id; set by add_image / add_image_multiscale.
-        self._controls_configs: dict[UUID, BaseControlsConfig] = {}
+        # Controls configs recorded by the add_* methods, read by the layout
+        # docks; kept current as visuals are removed.
+        self._init_controls_registry()
+        self._init_overlays()
 
     # ------------------------------------------------------------------
     # Public properties
@@ -162,6 +176,155 @@ class Viewer(RenderSettingsMixin):
     @background.setter
     def background(self, value: BackgroundAppearance) -> None:
         self._scene.background = value
+
+    # ------------------------------------------------------------------
+    # Overlays
+    # ------------------------------------------------------------------
+
+    def _init_overlays(self) -> None:
+        """Start holding canvas overlays requested before a canvas exists.
+
+        A convenience viewer builds its canvas late -- in ``add_canvas`` or
+        the layout builders -- so a canvas overlay added first is kept here
+        and attached to the first canvas when ``CanvasAddedEvent`` announces
+        it.  The subscription is weak so a dropped viewer is not kept alive
+        by a controller that outlives it.
+        """
+        self._pending_canvas_overlays: list[CanvasOverlay] = []
+        self._controller._outgoing_events.subscribe(
+            CanvasAddedEvent,
+            self._attach_pending_canvas_overlays,
+            entity_id=self._scene.id,
+            weak=True,
+        )
+
+    @property
+    def overlays(self) -> tuple[CanvasOverlay | SceneOverlay, ...]:
+        """Every overlay on this viewer, scene overlays first.
+
+        Scene overlays in add order, then the canvas overlays of each canvas
+        in creation order, then any canvas overlay still waiting for a canvas.
+        """
+        canvas_overlays = [
+            overlay
+            for canvas_id in self.canvases
+            for overlay in self._scene.canvases[canvas_id].overlays
+        ]
+        return (
+            *self._scene.overlays,
+            *canvas_overlays,
+            *self._pending_canvas_overlays,
+        )
+
+    def add_scene_overlay(self, overlay: SceneOverlay) -> SceneOverlay:
+        """Add a world-space overlay to this viewer's scene.
+
+        A scene overlay is drawn in the scene's world by the scene camera and
+        follows the scene's contents -- see
+        :meth:`~cellier.controller.CellierController.add_scene_overlay`.
+        Its fields are live afterwards::
+
+            box = viewer.add_scene_overlay(SceneBoundingBox(name="box"))
+            box.appearance.color = (1.0, 0.0, 0.0, 1.0)
+            box.visible = False
+
+        Parameters
+        ----------
+        overlay : SceneOverlay
+            The overlay model, e.g. a :class:`~cellier.visuals.SceneBoundingBox`.
+
+        Returns
+        -------
+        SceneOverlay
+            The same model.
+
+        Raises
+        ------
+        TypeError
+            If *overlay* is not a scene overlay.
+        """
+        if not isinstance(overlay, SceneOverlay):
+            raise TypeError(
+                f"add_scene_overlay takes a SceneOverlay, got "
+                f"{type(overlay).__name__}.  Canvas overlays go through "
+                "add_canvas_overlay."
+            )
+        self._controller.add_scene_overlay(self._scene.id, overlay)
+        self._controls_changed.emit()
+        return overlay
+
+    def add_canvas_overlay(self, overlay: CanvasOverlay) -> CanvasOverlay:
+        """Add a screen-space overlay to this viewer's canvas.
+
+        Attached to the viewer's first canvas.  Before any canvas exists --
+        the usual case, since ``launch`` / ``show`` / ``display`` build it --
+        the overlay is held and attached as soon as the canvas is created.
+        Its fields are live once attached.
+
+        Parameters
+        ----------
+        overlay : CanvasOverlay
+            The overlay model, e.g. a :class:`~cellier.visuals.CenteredAxes2D`.
+
+        Returns
+        -------
+        CanvasOverlay
+            The same model.
+
+        Raises
+        ------
+        TypeError
+            If *overlay* is not a canvas overlay.
+        """
+        if not isinstance(overlay, CanvasOverlay):
+            raise TypeError(
+                f"add_canvas_overlay takes a CanvasOverlay, got "
+                f"{type(overlay).__name__}.  Scene overlays go through "
+                "add_scene_overlay."
+            )
+        canvases = self.canvases
+        if canvases:
+            self._controller.add_canvas_overlay(canvases[0], overlay)
+        else:
+            self._pending_canvas_overlays.append(overlay)
+        self._controls_changed.emit()
+        return overlay
+
+    def remove_overlay(self, overlay: CanvasOverlay | SceneOverlay | UUID) -> None:
+        """Remove an overlay of either category.
+
+        Parameters
+        ----------
+        overlay : CanvasOverlay, SceneOverlay or UUID
+            The overlay model, or its id.
+
+        Raises
+        ------
+        KeyError
+            If the overlay is not on this viewer.
+        """
+        overlay_id = overlay if isinstance(overlay, UUID) else overlay.id
+        pending = [o for o in self._pending_canvas_overlays if o.id == overlay_id]
+        if pending:
+            self._pending_canvas_overlays = [
+                o for o in self._pending_canvas_overlays if o.id != overlay_id
+            ]
+        else:
+            if not any(o.id == overlay_id for o in self.overlays):
+                raise KeyError(f"No overlay with id={overlay_id!r} on this viewer.")
+            self._controller.remove_overlay(overlay_id)
+        self._controls_changed.emit()
+
+    def _attach_pending_canvas_overlays(self, event: CanvasAddedEvent) -> None:
+        """Attach the held canvas overlays to the viewer's first canvas."""
+        if not self._pending_canvas_overlays:
+            return
+        pending, self._pending_canvas_overlays = self._pending_canvas_overlays, []
+        for overlay in pending:
+            self._controller.add_canvas_overlay(event.canvas_id, overlay)
+        # The overlays were already listed while pending, but a dock built
+        # against them before the canvas existed may want to rebuild.
+        self._controls_changed.emit()
 
     # ------------------------------------------------------------------
     # Readiness
@@ -278,6 +441,55 @@ class Viewer(RenderSettingsMixin):
         tracker.on_stalled(callback)
 
     # ------------------------------------------------------------------
+    # Picking
+    # ------------------------------------------------------------------
+
+    def on_pick(
+        self,
+        canvas_id: UUID,
+        event_type: type,
+        callback: Callable[[Any], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> Any:
+        """Register a callback fired when a visual of one kind is picked.
+
+        Mirrors :meth:`CellierController.on_pick`; see it for the events,
+        their timing and gating.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to watch, e.g. one of ``viewer.canvases``.
+        event_type : type
+            One of :data:`cellier.events.PICK_EVENT_TYPES`.
+        callback : Callable
+            Called with each pick event.
+        owner_id : UUID or None
+            Owner for bulk removal.  Defaults to *canvas_id*, so removing the
+            canvas removes the subscription.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Pass it to :meth:`unsubscribe_pick`.
+        """
+        return self._controller.on_pick(
+            canvas_id,
+            event_type,
+            callback,
+            owner_id=canvas_id if owner_id is None else owner_id,
+            weak=weak,
+        )
+
+    def unsubscribe_pick(self, handle: Any) -> None:
+        """Remove a subscription created by :meth:`on_pick`."""
+        self._controller.unsubscribe_pick(handle)
+
+    # ------------------------------------------------------------------
     # Capture
     # ------------------------------------------------------------------
 
@@ -315,7 +527,7 @@ class Viewer(RenderSettingsMixin):
         scene, but it will have no data to show: slice requests are planned
         per canvas, so a viewer that never called :meth:`add_canvas` has never
         loaded anything.  Add a canvas and let the reslice finish first --
-        ``scripts/capture.py`` does this for you.
+        ``cellier.convenience.capture`` does this for you.
 
         Parameters
         ----------
@@ -459,9 +671,9 @@ class Viewer(RenderSettingsMixin):
         obj = object.__new__(cls)
         obj._controller = controller
         obj._scene = scene
-        obj._saved_slice_positions: dict[int, float] = {}
         obj._ready_callbacks: list[Callable[[], None]] = []
-        obj._controls_configs: dict[UUID, BaseControlsConfig] = {}
+        obj._init_controls_registry()
+        obj._init_overlays()
         return obj
 
     # ------------------------------------------------------------------
@@ -534,8 +746,9 @@ class Viewer(RenderSettingsMixin):
 
         Switches the scene between 2D and 3D rendering by resolving
         *axis_names* to axis indices and calling the controller's dims API.
-        Slice positions for axes that transition from displayed to sliced are
-        restored from the last known position (or default to 0 on first call).
+        Every axis keeps its slice position whether or not it is displayed,
+        so an axis that goes from displayed back to sliced slices where it
+        last was.
 
         Parameters
         ----------
@@ -556,7 +769,7 @@ class Viewer(RenderSettingsMixin):
                 f"{axis_names!r}"
             )
 
-        coord_labels = self._scene.dims.coordinate_system.axis_labels
+        coord_labels = self._scene.dims.axis_labels
         label_to_index = {label: i for i, label in enumerate(coord_labels)}
 
         invalid = [n for n in axis_names if n not in label_to_index]
@@ -566,37 +779,8 @@ class Viewer(RenderSettingsMixin):
             )
 
         new_displayed = tuple(label_to_index[n] for n in axis_names)
-        new_displayed_set = set(new_displayed)
-
-        selection = self._scene.dims.selection
-        current_slices = dict(selection.slice_indices)
-        stacked = set(selection.stacked_axes)
-        ndim = len(coord_labels)
-
-        # Save current slice positions before they potentially become displayed.
-        for axis, value in current_slices.items():
-            self._saved_slice_positions[axis] = float(value)
-
-        # Build the new slice_indices: every axis that is neither displayed
-        # nor stacked must appear in slice_indices.
-        new_slices: dict[int, float] = {}
-        for i in range(ndim):
-            if i not in new_displayed_set and i not in stacked:
-                new_slices[i] = self._saved_slice_positions.get(i, 0.0)
-
         self._controller.cancel_pending_slices(self._scene.id)
-        current_displayed = set(selection.displayed_axes)
-        adding_axes = new_displayed_set - current_displayed
-        if adding_axes:
-            # Expanding displayed axes: extend displayed first so the axis is
-            # covered before it disappears from slice_indices.
-            self._controller.set_displayed_axes(self._scene.id, new_displayed)
-            self._controller.update_slice_indices(self._scene.id, new_slices)
-        else:
-            # Contracting displayed axes: add the new slice_indices entries
-            # first so coverage is maintained before displayed shrinks.
-            self._controller.update_slice_indices(self._scene.id, new_slices)
-            self._controller.set_displayed_axes(self._scene.id, new_displayed)
+        self._controller.set_displayed_axes(self._scene.id, new_displayed)
         self._controller.fit_camera(self._scene.id)
 
     # ------------------------------------------------------------------
@@ -606,34 +790,55 @@ class Viewer(RenderSettingsMixin):
     def add_image(
         self,
         data: ImageMemoryStore | UUID,
-        appearance: BaseImageAppearance,
+        appearance: InMemoryImageAppearance | None = None,
         name: str = "image",
         controls: InMemoryImageControlsConfig | None = None,
+        *,
+        single: InMemoryImageSingleAppearance | None = None,
+        channel_axis: int | None = None,
+        composite: bool = False,
+        channels: dict[int, InMemoryImageChannelAppearance] | None = None,
+        max_channels: int = 4,
+        transform: BaseTransform | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> ImageVisual:
         """Add an in-memory image visual.
+
+        One visual draws the image single-channel or composited; see
+        :meth:`cellier.controller.CellierController.add_image`.
 
         Parameters
         ----------
         data : ImageMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : BaseImageAppearance
-            Appearance parameters.
+        appearance : InMemoryImageAppearance or None
+            Shared by both modes.  ``None`` uses the defaults.
         name : str
             Human-readable label. Default ``"image"``.
         controls : InMemoryImageControlsConfig or None
-            Appearance panel configuration. When ``None``
-            (default), no appearance panel is created for this visual.
-
+            Appearance panel configuration.  When ``None`` (default), no
+            appearance panel is created for this visual.
+        single : single appearance or None
+            Single mode's appearance.  ``None`` uses the defaults.
+        channel_axis : int or None
+            The data axis a composite draws channels along; it must map to a
+            world axis.  ``None`` (default) gives an image with no channels.
+        composite : bool
+            Start in composite mode.  Requires *channel_axis*.
+        channels : dict[int, channel appearance] or None
+            Composite mode's per-channel appearances.
+        max_channels : int
+            The most channels the visual may hold.  Default 4.
+        transform : BaseTransform or None
+            Data-to-world transform.  Identity when ``None``.
         outline : VisualOutline or None
-            Screen-space outline assignment.  ``None`` (default) leaves the
-            visual unoutlined.  Requires the outline pass to be enabled; see
-            ``outline_enabled``.
+            Screen-space outline assignment.
         ambient_occlusion : bool or None
-            Whether this visual receives ambient occlusion.  ``None``
-            (default) is automatic: excluded while it renders in a
-            MIP-family mode, included otherwise.
+            Whether this visual receives ambient occlusion.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  Default ``True``.
 
         Returns
         -------
@@ -644,11 +849,17 @@ class Viewer(RenderSettingsMixin):
             self._scene.id,
             appearance,
             name,
+            single=single,
+            channel_axis=channel_axis,
+            composite=composite,
+            channels=channels,
+            max_channels=max_channels,
+            transform=transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_labels(
@@ -656,11 +867,13 @@ class Viewer(RenderSettingsMixin):
         data: LabelMemoryStore | UUID,
         appearance: BaseLabelsAppearance | None = None,
         name: str = "labels",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
         outline_selected_labels: dict[int, int] | None = None,
+        outline_mode: OutlineMode = "per_label",
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual.
 
@@ -673,7 +886,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"labels"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : LabelsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -687,10 +900,24 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
         outline_selected_labels : dict[int, int] or None
             Maps a label value to the palette slot the selection layer draws
             it in.  ``None`` (default) selects no label, so an outlined
             labels visual shows boundaries only.
+        outline_mode : {"per_label", "whole_object", "all_boundaries"}
+            How the labels are outlined.  ``"per_label"`` (default) outlines
+            the label values in ``outline_selected_labels``, each in its own
+            slot's colour.  ``"whole_object"`` outlines the volume as one
+            silhouette and ``"all_boundaries"`` every label's boundary, both
+            in the colour of the ``outline`` slot.
 
         Returns
         -------
@@ -704,10 +931,11 @@ class Viewer(RenderSettingsMixin):
             transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
             outline_selected_labels=outline_selected_labels,
+            outline_mode=outline_mode,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_mesh(
@@ -715,10 +943,11 @@ class Viewer(RenderSettingsMixin):
         data: MeshMemoryStore | UUID,
         appearance: MeshAppearance,
         name: str = "mesh",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MeshControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> MeshVisual:
         """Add a mesh visual.
 
@@ -730,7 +959,7 @@ class Viewer(RenderSettingsMixin):
             Appearance parameters.
         name : str
             Human-readable label. Default ``"mesh"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MeshControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -744,6 +973,14 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
 
         Returns
         -------
@@ -757,9 +994,9 @@ class Viewer(RenderSettingsMixin):
             transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_points(
@@ -767,10 +1004,11 @@ class Viewer(RenderSettingsMixin):
         data: PointsMemoryStore | UUID,
         appearance: PointsMarkerAppearance | None = None,
         name: str = "points",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: PointsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> PointsVisual:
         """Add a points visual.
 
@@ -783,7 +1021,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"points"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : PointsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -797,6 +1035,14 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
 
         Returns
         -------
@@ -810,9 +1056,9 @@ class Viewer(RenderSettingsMixin):
             transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_graph(
@@ -820,11 +1066,12 @@ class Viewer(RenderSettingsMixin):
         data: GraphMemoryStore | UUID,
         appearance: GraphAppearance | None = None,
         name: str = "graph",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         trail: dict[int, TrailConfig] | None = None,
         controls: GraphControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> GraphVisual:
         """Add a spatial-graph visual.
 
@@ -841,7 +1088,7 @@ class Viewer(RenderSettingsMixin):
             Axis index -> window configuration. Extends the slab on that
             axis and optionally fades elements by distance from the current
             slice index. An out-of-range axis raises ``ValueError``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. When ``None`` the store's own transform
             is used if it has one (a geff file's per-axis scale and offset),
             and identity otherwise.
@@ -857,6 +1104,14 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
 
         Returns
         -------
@@ -871,9 +1126,9 @@ class Viewer(RenderSettingsMixin):
             trail,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_lines(
@@ -881,10 +1136,11 @@ class Viewer(RenderSettingsMixin):
         data: LinesMemoryStore | UUID,
         appearance: LinesMemoryAppearance | None = None,
         name: str = "lines",
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: LinesControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> LinesVisual:
         """Add a lines visual.
 
@@ -897,7 +1153,7 @@ class Viewer(RenderSettingsMixin):
             when ``None``.
         name : str
             Human-readable label. Default ``"lines"``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : LinesControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -911,6 +1167,14 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
 
         Returns
         -------
@@ -924,21 +1188,28 @@ class Viewer(RenderSettingsMixin):
             transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_image_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleImageAppearance,
+        appearance: MultiscaleImageAppearance | None = None,
         name: str = "image",
         render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleImageControlsConfig | None = None,
+        *,
+        single: MultiscaleImageSingleAppearance | None = None,
+        channel_axis: int | None = None,
+        composite: bool = False,
+        channels: dict[int, MultiscaleImageChannelAppearance] | None = None,
+        max_channels: int = 4,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual.
 
@@ -946,27 +1217,33 @@ class Viewer(RenderSettingsMixin):
         ----------
         data : BaseDataStore or UUID
             Backing multiscale data store or UUID of an already-registered store.
-        appearance : MultiscaleImageAppearance
-            Visual appearance parameters.
+        appearance : MultiscaleImageAppearance or None
+            Shared by both modes, including the LOD settings.
         name : str
             Human-readable label. Default ``"image"``.
         render_config : MultiscaleImageRenderConfig or None
-            LOD and rendering configuration. Uses
-            defaults when ``None``.
-        transform : AffineTransform or None
+            GPU cache configuration.  Uses defaults when ``None``.
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MultiscaleImageControlsConfig or None
-            Appearance panel configuration. When ``None`` (default), no
-            appearance panel is created for this visual.
-
+            Appearance panel configuration.
+        single : single appearance or None
+            Single mode's appearance.  ``None`` uses the defaults.
+        channel_axis : int or None
+            The data axis a composite draws channels along; it must map to a
+            world axis.  ``None`` (default) gives an image with no channels.
+        composite : bool
+            Start in composite mode.  Requires *channel_axis*.
+        channels : dict[int, channel appearance] or None
+            Composite mode's per-channel appearances.
+        max_channels : int
+            The most channels the visual may hold.  Default 4.
         outline : VisualOutline or None
-            Screen-space outline assignment.  ``None`` (default) leaves the
-            visual unoutlined.  Requires the outline pass to be enabled; see
-            ``outline_enabled``.
+            Screen-space outline assignment.
         ambient_occlusion : bool or None
-            Whether this visual receives ambient occlusion.  ``None``
-            (default) is automatic: excluded while it renders in a
-            MIP-family mode, included otherwise.
+            Whether this visual receives ambient occlusion.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  Default ``True``.
 
         Returns
         -------
@@ -979,11 +1256,16 @@ class Viewer(RenderSettingsMixin):
             name,
             render_config,
             transform,
+            single=single,
+            channel_axis=channel_axis,
+            composite=composite,
+            channels=channels,
+            max_channels=max_channels,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual
 
     def add_labels_multiscale(
@@ -992,11 +1274,13 @@ class Viewer(RenderSettingsMixin):
         appearance: MultiscaleLabelsAppearance,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
-        transform: AffineTransform | None = None,
+        transform: BaseTransform | None = None,
         controls: MultiscaleLabelsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
         outline_selected_labels: dict[int, int] | None = None,
+        outline_mode: OutlineMode = "per_label",
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual.
 
@@ -1011,7 +1295,7 @@ class Viewer(RenderSettingsMixin):
         render_config : MultiscaleLabelRenderConfig or None
             LOD and rendering configuration. Uses
             defaults when ``None``.
-        transform : AffineTransform or None
+        transform : BaseTransform or None
             Data-to-world transform. Defaults to identity when ``None``.
         controls : MultiscaleLabelsControlsConfig or None
             Appearance controls configuration.  When ``None`` (default), no
@@ -1025,10 +1309,24 @@ class Viewer(RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        pick_write : bool
+            Whether the visual writes to the pick buffer.  ``True`` (default)
+            makes it pickable.  ``False`` keeps it out -- say, a volume drawn
+            over outlined visuals, whose pick ids would otherwise erase their
+            outlines.  Outlines and ambient-occlusion exclusions are both
+            derived from the pick buffer, so turning it off stops them on
+            this visual; asking for an outline as well turns it back on,
+            with a warning.
         outline_selected_labels : dict[int, int] or None
             Maps a label value to the palette slot the selection layer draws
             it in.  ``None`` (default) selects no label, so an outlined
             labels visual shows boundaries only.
+        outline_mode : {"per_label", "whole_object", "all_boundaries"}
+            How the labels are outlined.  ``"per_label"`` (default) outlines
+            the label values in ``outline_selected_labels``, each in its own
+            slot's colour.  ``"whole_object"`` outlines the volume as one
+            silhouette and ``"all_boundaries"`` every label's boundary, both
+            in the colour of the ``outline`` slot.
 
         Returns
         -------
@@ -1043,137 +1341,9 @@ class Viewer(RenderSettingsMixin):
             transform,
             outline=outline,
             ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
             outline_selected_labels=outline_selected_labels,
+            outline_mode=outline_mode,
         )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
-        return visual
-
-    def add_multichannel_image(
-        self,
-        data: ImageMemoryStore | UUID,
-        channel_axis: int,
-        channels: dict[int, ChannelAppearance],
-        name: str = "multichannel_image",
-        max_channels_2d: int = 8,
-        max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | None = None,
-        outline: VisualOutline | None = None,
-        ambient_occlusion: bool | None = None,
-    ) -> MultichannelImageVisual:
-        """Add an in-memory multichannel image visual.
-
-        Parameters
-        ----------
-        data : ImageMemoryStore or UUID
-            Backing data store or UUID of an already-registered store.
-        channel_axis : int
-            Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance]
-            Per-channel appearance keyed by channel index.
-        name : str
-            Display name. Default ``"multichannel_image"``.
-        max_channels_2d : int
-            Maximum simultaneous 2D channel nodes.
-        max_channels_3d : int
-            Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig or None
-            Per-channel controls configuration. When ``None`` (default), no
-            channel controls are created for this visual.
-
-        outline : VisualOutline or None
-            Screen-space outline assignment.  ``None`` (default) leaves the
-            visual unoutlined.  Requires the outline pass to be enabled; see
-            ``outline_enabled``.
-        ambient_occlusion : bool or None
-            Whether this visual receives ambient occlusion.  ``None``
-            (default) is automatic: excluded while it renders in a
-            MIP-family mode, included otherwise.
-
-        Returns
-        -------
-        MultichannelImageVisual
-        """
-        visual = self._controller.add_multichannel_image(
-            self._resolve_data_store(data),
-            self._scene.id,
-            channel_axis,
-            channels,
-            name,
-            max_channels_2d,
-            max_channels_3d,
-            outline=outline,
-            ambient_occlusion=ambient_occlusion,
-        )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
-        return visual
-
-    def add_multichannel_image_multiscale(
-        self,
-        data: BaseDataStore | UUID,
-        channel_axis: int,
-        channels: dict[int, ChannelAppearance],
-        name: str = "multichannel_image",
-        render_config: MultiscaleImageRenderConfig | None = None,
-        transform: AffineTransform | None = None,
-        max_channels_2d: int = 8,
-        max_channels_3d: int = 4,
-        controls: ChannelControlsConfig | None = None,
-        outline: VisualOutline | None = None,
-        ambient_occlusion: bool | None = None,
-    ) -> MultichannelMultiscaleImageVisual:
-        """Add a multiscale multichannel image visual.
-
-        Parameters
-        ----------
-        data : BaseDataStore or UUID
-            Backing multiscale store or UUID of an already-registered store.
-        channel_axis : int
-            Data axis index for the channel dimension.
-        channels : dict[int, ChannelAppearance]
-            Per-channel appearance keyed by channel index.
-        name : str
-            Display name. Default ``"multichannel_image"``.
-        render_config : MultiscaleImageRenderConfig or None
-            LOD and rendering configuration. Uses
-            defaults when ``None``.
-        transform : AffineTransform or None
-            Data-to-world transform. Defaults to identity when ``None``.
-        max_channels_2d : int
-            Maximum simultaneous 2D channel nodes.
-        max_channels_3d : int
-            Maximum simultaneous 3D channel nodes.
-        controls : ChannelControlsConfig or None
-            Per-channel controls configuration. When ``None`` (default), no
-            channel controls are created for this visual.
-
-        outline : VisualOutline or None
-            Screen-space outline assignment.  ``None`` (default) leaves the
-            visual unoutlined.  Requires the outline pass to be enabled; see
-            ``outline_enabled``.
-        ambient_occlusion : bool or None
-            Whether this visual receives ambient occlusion.  ``None``
-            (default) is automatic: excluded while it renders in a
-            MIP-family mode, included otherwise.
-
-        Returns
-        -------
-        MultichannelMultiscaleImageVisual
-        """
-        visual = self._controller.add_multichannel_image_multiscale(
-            self._resolve_data_store(data),
-            self._scene.id,
-            channel_axis,
-            channels,
-            name,
-            render_config,
-            transform,
-            max_channels_2d,
-            max_channels_3d,
-            outline=outline,
-            ambient_occlusion=ambient_occlusion,
-        )
-        if controls is not None:
-            self._controls_configs[visual.id] = controls
+        self._store_controls([visual.id], controls)
         return visual

@@ -16,9 +16,9 @@ import pytest
 from cellier.controller import CellierController
 from cellier.data.graph import GraphMemoryStore
 from cellier.events import TrailChangedEvent
-from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
+from cellier.scene.dims import world_coordinate_system
 from cellier.visuals import GraphVisual, TrailConfig
+from tests._v2 import bound
 
 
 def _store(**kwargs) -> GraphMemoryStore:
@@ -44,8 +44,9 @@ def graph_setup(qtbot):
     controller.camera_reslice_enabled = False
     scene = controller.add_scene(
         dim="2d",
-        coordinate_system=CoordinateSystem(
-            name="world", axis_labels=("t", "z", "y", "x")
+        coordinate_system=world_coordinate_system(
+            [("t", "time"), ("z", "space"), ("y", "space"), ("x", "space")],
+            name="world",
         ),
         name="main",
         render_modes={"2d", "3d"},
@@ -77,14 +78,13 @@ def test_add_graph_uses_store_transform(graph_setup):
     """A geff-derived transform becomes the default; explicit still wins (D23)."""
     controller, scene, _ = graph_setup
     scaled = _store(
-        transform=AffineTransform.from_scale_and_translation(
-            (1.0, 4.0, 0.26, 0.26), (0.0, 10.0, 0.0, 0.0)
-        )
+        axis_scales=(1.0, 4.0, 0.26, 0.26),
+        axis_offsets=(0.0, 10.0, 0.0, 0.0),
     )
     visual = controller.add_graph(scaled, scene.id, name="from_file")
     assert np.allclose(np.diag(visual.transform.matrix)[:4], [1.0, 4.0, 0.26, 0.26])
 
-    explicit = AffineTransform.identity(ndim=4)
+    explicit = bound(controller, scene.id, scaled, (1.0, 1.0, 1.0, 1.0))
     override = controller.add_graph(
         scaled, scene.id, name="override", transform=explicit
     )

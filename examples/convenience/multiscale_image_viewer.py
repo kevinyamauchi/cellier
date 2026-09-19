@@ -38,13 +38,13 @@ from cellier.convenience import (
     AppearanceControls,
     Layout,
     Viewer,
-    axis_ranges_from_viewer,
+    axis_values_from_viewer,
     run,
 )
 from cellier.convenience.gui import MultiscaleImageControlsConfig, build_canvas_widget
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-from cellier.transform import AffineTransform
-from cellier.visuals import MultiscaleImageAppearance
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageSingleAppearance
 
 # ---------------------------------------------------------------------------
 # Data helpers
@@ -115,24 +115,23 @@ _write_zarr3(tmpdir, "s2", s2)
 store = MultiscaleZarrDataStore(
     zarr_path=str(tmpdir),
     scale_names=["s0", "s1", "s2"],
-    level_transforms=[
-        AffineTransform.identity(ndim=3),
-        AffineTransform.from_scale_and_translation((2.0, 2.0, 2.0), (0.5, 0.5, 0.5)),
-        AffineTransform.from_scale_and_translation((4.0, 4.0, 4.0), (1.5, 1.5, 1.5)),
-    ],
+    level_scales=[(1.0, 1.0, 1.0), (2.0, 2.0, 2.0), (4.0, 4.0, 4.0)],
+    level_translations=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (1.5, 1.5, 1.5)],
 )
 
-viewer = Viewer(axis_labels=("z", "y", "x"), dim="3d")
+viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
 
 viewer.add_image_multiscale(
     store,
     appearance=MultiscaleImageAppearance(
+        lod_bias=1.0,
+        attenuation=1.0,
+    ),
+    single=MultiscaleImageSingleAppearance(
         color_map="viridis",
         clim=(0.0, 1.0),
         render_mode="iso",
         iso_threshold=0.45,
-        lod_bias=1.0,
-        attenuation=1.0,
     ),
     controls=MultiscaleImageControlsConfig(
         appearance=[
@@ -169,8 +168,8 @@ viewer.add_image_multiscale(
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_viewer(viewer)
-canvas_view = build_canvas_widget(viewer, axis_ranges)
+axis_values = axis_values_from_viewer(viewer)
+canvas_view = build_canvas_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Run

@@ -5,6 +5,7 @@ import pytest
 
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.render.visuals import GFXImageMemoryVisual
+from cellier.visuals import InMemoryImageSingleAppearance
 from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -20,7 +21,8 @@ def visual_model_3d(store_3d):
     return ImageVisual(
         name="test",
         data_store_id=str(store_3d.id),
-        appearance=InMemoryImageAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map="viridis"),
     )
 
 
@@ -100,10 +102,10 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     SceneManager.
     """
     from cellier.controller import CellierController
-    from cellier.scene.dims import CoordinateSystem
+    from cellier.scene.dims import spatial_axes, world_coordinate_system
 
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(
         dim="3d",
         coordinate_system=cs,
@@ -115,7 +117,8 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     controller.add_image(
         data=store_3d,
         scene_id=scene.id,
-        appearance=InMemoryImageAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map="viridis"),
     )
 
     scene_manager = controller._render_manager._scenes[scene.id]
@@ -125,7 +128,7 @@ def test_rebuild_visuals_geometry_delegates_to_get_node_for_dims(
     # Spy on get_node_for_dims.
     calls = []
     original = gfx_visual.get_node_for_dims
-    gfx_visual.get_node_for_dims = lambda axes: (calls.append(axes) or original(axes))
+    gfx_visual.get_node_for_dims = lambda axes: calls.append(axes) or original(axes)
 
     # Trigger a dim toggle.
     scene.dims.selection.displayed_axes = (1, 2)

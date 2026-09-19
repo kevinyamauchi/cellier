@@ -21,8 +21,10 @@ define what is rendered and how it is viewed.
 
 ## Dims
 
-::: cellier.scene.CoordinateSystem
 ::: cellier.scene.DimsManager
+::: cellier.scene.AxisAlignedSelection
+::: cellier.scene.spatial_axes
+::: cellier.scene.world_coordinate_system
 
 ## Scene
 

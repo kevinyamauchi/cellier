@@ -1,10 +1,10 @@
 """Components for data handling."""
 
 from cellier.data._base_data_store import BaseDataStore
+from cellier.data._dataset_info import DatasetInfo
 from cellier.data._types import DataStoreType
 from cellier.data.graph._graph_memory_store import GraphMemoryStore
 from cellier.data.graph._graph_requests import GraphData, GraphSliceRequest
-from cellier.data.image._axis_info import AxisInfo
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.image._image_requests import ChunkRequest
 from cellier.data.image._ome_zarr_image_store import OMEZarrImageDataStore
@@ -19,10 +19,10 @@ from cellier.data.points._points_memory_store import PointsMemoryStore
 from cellier.data.points._points_requests import PointsData, PointsSliceRequest
 
 __all__ = [
-    "AxisInfo",
     "BaseDataStore",
     "ChunkRequest",
     "DataStoreType",
+    "DatasetInfo",
     "GraphData",
     "GraphMemoryStore",
     "GraphSliceRequest",

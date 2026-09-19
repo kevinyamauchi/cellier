@@ -18,28 +18,26 @@ import pytest
 
 from cellier.render.visuals import GFXMultiscaleLabelVisual
 from cellier.render.visuals._image import GFXMultiscaleImageVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import (
     MultiscaleImageAppearance,
+    MultiscaleImageSingleAppearance,
     MultiscaleImageVisual,
     MultiscaleLabelsAppearance,
     MultiscaleLabelVisual,
 )
+from tests._v2 import level_transforms
 
 
 def _make_multiscale_image_node_2d(level_shapes):
     model = MultiscaleImageVisual(
         name="img",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
-        appearance=MultiscaleImageAppearance(
-            color_map="grays", clim=(0.0, 255.0), visible=True
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
         ),
+        appearance=MultiscaleImageAppearance(visible=True),
+        single=MultiscaleImageSingleAppearance(color_map="grays", clim=(0.0, 255.0)),
     )
     gfx_visual = GFXMultiscaleImageVisual.from_cellier_model(
         model=model,
@@ -54,12 +52,10 @@ def _make_multiscale_label_node_2d(level_shapes):
     model = MultiscaleLabelVisual(
         name="lbl",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleLabelsAppearance(visible=True),
     )
     gfx_visual = GFXMultiscaleLabelVisual.from_cellier_model(
@@ -97,3 +93,53 @@ def test_multiscale_2d_node_matches_memory_image_world_extent(make_node_2d) -> N
     # And it is the explicit center-at-integer extent [-0.5, N-0.5].
     np.testing.assert_allclose(ms_bbox[0, :2], [-0.5, -0.5], atol=1e-5)
     np.testing.assert_allclose(ms_bbox[1, :2], [w - 0.5, h - 0.5], atol=1e-5)
+
+
+@pytest.mark.parametrize("kind", ["image", "labels"])
+def test_multiscale_3d_volume_bounds_are_the_voxel_extent(
+    kind, request, controller
+) -> None:
+    """The 3D proxy volume reports the data's world extent, not the proxy's.
+
+    The volume node draws through a 2x2x2 dummy texture, whose default pygfx
+    bounding box is an offset box sized by the longest axis.  The camera fit
+    and the ambient occlusion radius both read the scene bounding box, so a
+    volume reporting that box moves the orbit centre off the data.  Labels
+    used to omit ``dataset_size`` and fall back to it.
+
+    Built through the controller: the node's world placement is only set
+    once the controller supplies the render spaces.
+    """
+    # One store per case: both fixtures write their zarr into ``tmp_path``.
+    store = request.getfixturevalue(f"multiscale_{kind}_store")
+    scene = controller.add_scene(dim="3d", name="scene")
+    # Non-uniform (z, y, x) scale on a 16^3 store, so a cube-shaped or
+    # axis-swapped box cannot pass.
+    scale_zyx = (1.0, 2.0, 4.0)
+    transform = controller.data_to_world(scene.id, store, scale=scale_zyx)
+    if kind == "image":
+        visual = controller.add_image_multiscale(
+            data=store,
+            scene_id=scene.id,
+            appearance=MultiscaleImageAppearance(),
+            transform=transform,
+            single=MultiscaleImageSingleAppearance(color_map="grays", clim=(0.0, 1.0)),
+        )
+    else:
+        visual = controller.add_labels_multiscale(
+            data=store,
+            scene_id=scene.id,
+            appearance=MultiscaleLabelsAppearance(),
+            transform=transform,
+        )
+    controller.add_canvas(scene_id=scene.id)
+
+    gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
+    assert gfx_visual._inner_node_3d is not None
+    bbox = gfx_visual._inner_node_3d.get_world_bounding_box()
+
+    # Voxel i is centred on data i, so 16 voxels span [-0.5, 15.5] before
+    # scaling.  pygfx world is (x, y, z), the reverse of cellier's (z, y, x).
+    scale_xyz = np.array(scale_zyx[::-1])
+    np.testing.assert_allclose(bbox[0], -0.5 * scale_xyz, atol=1e-4)
+    np.testing.assert_allclose(bbox[1], 15.5 * scale_xyz, atol=1e-4)

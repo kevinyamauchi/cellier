@@ -8,9 +8,15 @@ import numpy as np
 import pygfx as gfx
 
 from cellier.render._scene_config import VisualRenderConfig
+from cellier.render._spaces import data_slice_positions, visual_covers_position
 from cellier.scene._background import BackgroundAppearance
+from cellier.transform import (
+    NonAffineTransformError,
+    NonInvertibleTransformError,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from cellier.data.image import ChunkRequest
@@ -18,21 +24,14 @@ if TYPE_CHECKING:
     from cellier.render.visuals._graph_memory import GFXGraphMemoryVisual
     from cellier.render.visuals._image import GFXMultiscaleImageVisual
     from cellier.render.visuals._image_memory import GFXImageMemoryVisual
-    from cellier.render.visuals._image_memory_multichannel import (
-        GFXMultichannelImageMemoryVisual,
-    )
-    from cellier.render.visuals._image_multiscale_multichannel import (
-        GFXMultichannelMultiscaleImageVisual,
-    )
     from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
     from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+    from cellier.render.visuals._scene_overlay import GFXSceneOverlay
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
         | GFXImageMemoryVisual
-        | GFXMultichannelImageMemoryVisual
-        | GFXMultichannelMultiscaleImageVisual
         | GFXPointsMemoryVisual
         | GFXLinesMemoryVisual
         | GFXMeshMemoryVisual
@@ -77,6 +76,13 @@ class SceneManager:
         )
         self._visuals: dict[UUID, _GFXVisual] = {}
         self._active_nodes: dict[UUID, gfx.WorldObject | None] = {}
+        # Scene overlays, keyed by overlay model id.  Their nodes live in the
+        # same gfx.Scene as the visuals but are not visuals: they are never
+        # sliced and never picked.
+        self._overlays: dict[UUID, GFXSceneOverlay] = {}
+        # Per-visual store extents, for the out-of-domain check in
+        # build_slice_requests.  Absent means "not known", which never skips.
+        self._axis_extents: dict[UUID, Sequence[tuple[float, float]] | None] = {}
 
         self._has_lighting = lighting == "default"
         if self._has_lighting:
@@ -126,7 +132,12 @@ class SceneManager:
         """IDs of all registered visuals."""
         return list(self._visuals.keys())
 
-    def add_visual(self, visual: _GFXVisual, displayed_axes: tuple[int, ...]) -> None:
+    def add_visual(
+        self,
+        visual: _GFXVisual,
+        displayed_axes: tuple[int, ...],
+        axis_extents: Sequence[tuple[float, float]] | None = None,
+    ) -> None:
         """Register a visual and add its initial node to the scene graph.
 
         Calls ``visual.get_node_for_dims(displayed_axes)`` to select the
@@ -139,6 +150,11 @@ class SceneManager:
             The GFX visual to register.
         displayed_axes : tuple[int, ...]
             Current displayed axes from the scene's dims selection.
+        axis_extents : Sequence[tuple[float, float]] or None
+            The backing store's per-axis extents in level-0 data
+            coordinates, used to decide whether this visual has any data at
+            a given slice position.  ``None`` means "not known", and such a
+            visual is never skipped.
 
         Raises
         ------
@@ -152,9 +168,27 @@ class SceneManager:
                 f"get_node_for_dims({displayed_axes!r}). "
                 "Ensure render_modes includes the required dimensionality."
             )
+        self._axis_extents[visual.visual_model_id] = axis_extents
         self._scene.add(node)
         self._visuals[visual.visual_model_id] = visual
         self._active_nodes[visual.visual_model_id] = node
+
+    def set_axis_extents(
+        self,
+        visual_id: UUID,
+        axis_extents: Sequence[tuple[float, float]] | None,
+    ) -> None:
+        """Replace a visual's store extents after its store's extent changed.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of a registered visual.  An unknown id is ignored.
+        axis_extents : Sequence[tuple[float, float]] or None
+            The store's new level-0 extents, or ``None`` for "not known".
+        """
+        if visual_id in self._visuals:
+            self._axis_extents[visual_id] = axis_extents
 
     def get_active_node(self, visual_id: UUID) -> gfx.WorldObject | None:
         """Return the node currently active in the scene for *visual_id*.
@@ -198,6 +232,35 @@ class SceneManager:
 
         self._active_nodes[visual_id] = new_node
 
+    def add_overlay(self, overlay_id: UUID, overlay: GFXSceneOverlay) -> None:
+        """Register a scene overlay and add its node to the scene graph.
+
+        Parameters
+        ----------
+        overlay_id : UUID
+            ID of the overlay's model.
+        overlay : GFXSceneOverlay
+            The render-layer overlay.
+        """
+        self._overlays[overlay_id] = overlay
+        self._scene.add(overlay.node)
+
+    def remove_overlay(self, overlay_id: UUID) -> None:
+        """Unregister a scene overlay and remove its node from the scene graph.
+
+        Parameters
+        ----------
+        overlay_id : UUID
+            ID of the overlay's model.  An unknown id is ignored.
+        """
+        overlay = self._overlays.pop(overlay_id, None)
+        if overlay is not None:
+            self._scene.remove(overlay.node)
+
+    def get_overlay(self, overlay_id: UUID) -> GFXSceneOverlay | None:
+        """Return the render-layer scene overlay for *overlay_id*, if any."""
+        return self._overlays.get(overlay_id)
+
     def remove_visual(self, visual_id: UUID) -> None:
         """Unregister a visual and remove its node from the scene graph.
 
@@ -212,10 +275,29 @@ class SceneManager:
         visual_id : UUID
             ID of the visual to remove.
         """
+        self._axis_extents.pop(visual_id, None)
         active_node = self._active_nodes.pop(visual_id, None)
         if active_node is not None:
             self._scene.remove(active_node)
-        self._visuals.pop(visual_id)
+        visual = self._visuals.pop(visual_id)
+        # Explicit release for visuals that hold slots, caches or model
+        # connections (unified image design 3.8), rather than trusting GC.
+        close = getattr(visual, "close", None)
+        if close is not None:
+            close()
+
+    def close(self) -> None:
+        """Remove every visual and overlay, releasing their GPU resources.
+
+        Something may still reference this scene manager after its scene is
+        gone -- a closed controller kept alive, a pending slice task -- so the
+        visuals are released here rather than left for when the manager dies.
+        Safe to call more than once.
+        """
+        for visual_id in list(self._visuals):
+            self.remove_visual(visual_id)
+        for overlay_id in list(self._overlays):
+            self.remove_overlay(overlay_id)
 
     def get_visual_id_for_node(self, node: gfx.WorldObject) -> UUID | None:
         """Return the visual_id whose active scene-graph node is *node*.
@@ -284,6 +366,42 @@ class SceneManager:
             return self._build_slice_requests_2d(request, visual_configs)
         return self._build_slice_requests_3d(request, visual_configs)
 
+    def _has_data_here(self, visual_id: UUID, request: ReslicingRequest) -> bool:
+        """Whether a visual has any data at this request's slice positions.
+
+        Compared entirely in the visual's own **data** coordinates: the
+        selection is pulled back through its transform by
+        ``data_slice_positions`` and checked against its store's extents.
+
+        Only reachable in a **mixed-extent scene** -- a scene's slider range
+        is the union of its visuals' extents, so a single-visual scene never
+        leaves its own.  A visual whose extents or spaces are unknown is
+        never skipped.
+
+        A visual that sets ``decides_empty_slices`` is never skipped either.
+        The image visuals apply their own slicing rule (design 3.2) and must
+        see the request to hide their data node when the slice misses the
+        data; skipped, they would keep drawing the last plane they loaded.
+        """
+        visual = self._visuals[visual_id]
+        if getattr(visual, "decides_empty_slices", False):
+            return True
+        extents = self._axis_extents.get(visual_id)
+        if extents is None:
+            return True
+        transform = getattr(visual, "_transform", None)
+        spaces = getattr(visual, "_spaces", None)
+        selection = getattr(request, "selection", None)
+        if transform is None or spaces is None or selection is None:
+            return True
+        try:
+            positions = data_slice_positions(selection.region, transform, spaces.world)
+        except (ValueError, NonAffineTransformError, NonInvertibleTransformError):
+            # The region cannot be pulled back here; leave the decision to
+            # the visual's own planner rather than blanking it.
+            return True
+        return visual_covers_position(extents, positions)
+
     def _build_slice_requests_3d(
         self,
         request: ReslicingRequest,
@@ -298,8 +416,12 @@ class SceneManager:
                 and visual_id not in request.target_visual_ids
             ):
                 continue
+            if not self._has_data_here(visual_id, request):
+                continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
+            if not cfg.slicing_enabled:
+                continue
 
             frustum_corners_world = (
                 request.frustum_corners if cfg.frustum_cull else None
@@ -313,6 +435,7 @@ class SceneManager:
                 lod_bias=cfg.lod_bias,
                 dims_state=request.dims_state,
                 force_level=cfg.force_level,
+                selection=request.selection,
             )
             if chunk_requests:
                 result[visual_id] = chunk_requests
@@ -344,8 +467,12 @@ class SceneManager:
                 and visual_id not in request.target_visual_ids
             ):
                 continue
+            if not self._has_data_here(visual_id, request):
+                continue
 
             cfg = visual_configs.get(visual_id, VisualRenderConfig())
+            if not cfg.slicing_enabled:
+                continue
 
             chunk_requests = visual.build_slice_request_2d(
                 camera_pos_world=request.camera_pos,
@@ -357,6 +484,7 @@ class SceneManager:
                 lod_bias=cfg.lod_bias,
                 force_level=cfg.force_level,
                 use_culling=cfg.frustum_cull,
+                selection=request.selection,
             )
             if chunk_requests:
                 result[visual_id] = chunk_requests

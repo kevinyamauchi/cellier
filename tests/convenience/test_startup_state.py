@@ -14,6 +14,8 @@ import asyncio
 import pytest
 
 from cellier.convenience._startup import StartupState, StartupTracker
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import InMemoryImageSingleAppearance
 
 
 def _tracker(*keys: str) -> StartupTracker:
@@ -189,10 +191,11 @@ def test_an_unstarted_viewer_reports_idle_rather_than_raising():
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(4, 4, 4).astype(np.float32)),
-        appearance=InMemoryImageAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map="viridis"),
     )
 
     assert viewer.startup_state is StartupState.IDLE
@@ -205,7 +208,7 @@ def test_the_startup_hooks_refuse_before_the_viewer_has_started():
     pytest.importorskip("qtpy")
     from cellier.convenience import Viewer
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
 
     for register in (
         lambda: viewer.on_scene_ready("scene", lambda: None),
@@ -226,18 +229,19 @@ async def test_a_viewer_that_never_connects_reports_stalled(qtbot):
     pytest.importorskip("qtpy")
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.convenience._launch import _init_view
     from cellier.convenience.gui import build_canvas_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.visuals import InMemoryImageAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="anywidget")
     viewer.add_image(
         ImageMemoryStore(data=np.random.rand(4, 4, 4).astype(np.float32)),
-        appearance=InMemoryImageAppearance(color_map="viridis"),
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(color_map="viridis"),
     )
-    build_canvas_widget(viewer, axis_ranges_from_viewer(viewer))
+    build_canvas_widget(viewer, axis_values_from_viewer(viewer))
 
     stalled: list[dict] = []
     _init_view(viewer, fit="none", stall_timeout=0.2)

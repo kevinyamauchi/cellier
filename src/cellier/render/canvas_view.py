@@ -37,6 +37,31 @@ if TYPE_CHECKING:
     from cellier.events._bus import EventBus
     from cellier.render._config import AmbientOcclusionConfig
     from cellier.render.visuals._canvas_overlay import GFXCanvasOverlay
+    from cellier.transform import RegionSelection
+
+
+def _no_draw() -> None:
+    """Draw callback installed on a closed canvas; holds no reference to a view."""
+
+
+def _detach_renderer_events(canvas: object, renderer: gfx.WgpuRenderer) -> None:
+    """Remove the renderer's ``convert_event`` handlers from *canvas*.
+
+    ``WgpuRenderer.disable_events`` cannot do this: rendercanvas removes a
+    handler by identity (``cb is not callback``), and ``self.convert_event``
+    builds a fresh bound-method object on every access, so it never matches
+    the one ``enable_events`` registered.  Instead find the registered objects
+    and hand *those* back to ``remove_event_handler``.
+    """
+    # A QRenderWidget forwards its events to an inner widget.
+    emitter = getattr(getattr(canvas, "_subwidget", canvas), "_events", None)
+    handlers = getattr(emitter, "_event_handlers", None)
+    if handlers is None:
+        return
+    for event_type, entries in list(handlers.items()):
+        for _order, callback in list(entries):
+            if getattr(callback, "__self__", None) is renderer:
+                canvas.remove_event_handler(callback, event_type)
 
 
 class CanvasView:
@@ -465,6 +490,15 @@ class CanvasView:
         self._closed = True
         self._overlays.clear()
 
+        # Break the canvas -> view/renderer references before closing it.  The
+        # canvas holds this view's draw callback and, through its event
+        # emitter, the renderer's ``convert_event`` handler.  Closing a Qt
+        # canvas leaves its Python wrapper behind, and cycles through a shiboken
+        # wrapper are invisible to the garbage collector, so without this the
+        # whole renderer (and its GPU resources) is never freed.
+        _detach_renderer_events(self._canvas, self._renderer)
+        self._canvas.request_draw(_no_draw)
+
         try:
             if self._resize_filter is not None:
                 self._canvas.removeEventFilter(self._resize_filter)
@@ -478,6 +512,7 @@ class CanvasView:
     def capture_reslicing_request(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None = None,
         target_visual_ids: frozenset[UUID] | None = None,
     ) -> ReslicingRequest:
         """Snapshot the current camera state into a ReslicingRequest.
@@ -489,6 +524,9 @@ class CanvasView:
         ----------
         dims_state : DimsState
             Current dimension display state.
+        selection : RegionSelection or None
+            The region this canvas is showing, built by the controller from
+            the scene's dims and this canvas's rendered system.
         target_visual_ids : frozenset[UUID] or None
             ``None`` reslices all visuals in the scene.
 
@@ -501,15 +539,16 @@ class CanvasView:
 
         if self._dim == "2d":
             return self._capture_orthographic(
-                dims_state, target_visual_ids, screen_w, screen_h
+                dims_state, selection, target_visual_ids, screen_w, screen_h
             )
         return self._capture_perspective(
-            dims_state, target_visual_ids, screen_w, screen_h
+            dims_state, selection, target_visual_ids, screen_w, screen_h
         )
 
     def _capture_perspective(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None,
         target_visual_ids: frozenset[UUID] | None,
         screen_w: float,
         screen_h: float,
@@ -524,6 +563,7 @@ class CanvasView:
             screen_size_px=(float(screen_w), float(screen_h)),
             world_extent=(0.0, 0.0),
             dims_state=dims_state,
+            selection=selection,
             request_id=uuid4(),
             scene_id=self._scene_id,
             canvas_id=self._canvas_id,
@@ -533,6 +573,7 @@ class CanvasView:
     def _capture_orthographic(
         self,
         dims_state: DimsState,
+        selection: RegionSelection | None,
         target_visual_ids: frozenset[UUID] | None,
         screen_w: float,
         screen_h: float,
@@ -570,6 +611,7 @@ class CanvasView:
             screen_size_px=(float(vw), float(vh)),
             world_extent=(float(world_width), float(world_height)),
             dims_state=dims_state,
+            selection=selection,
             request_id=uuid4(),
             scene_id=self._scene_id,
             canvas_id=self._canvas_id,
@@ -657,6 +699,18 @@ class CanvasView:
             The render-layer overlay to attach.
         """
         self._overlays.append(overlay)
+
+    def remove_overlay(self, overlay: GFXCanvasOverlay) -> None:
+        """Detach a screen-space overlay from this canvas.
+
+        Parameters
+        ----------
+        overlay : GFXCanvasOverlay
+            The render-layer overlay to detach.  An overlay that is not
+            attached is ignored.
+        """
+        if overlay in self._overlays:
+            self._overlays.remove(overlay)
 
     def invalidate_accumulation(self) -> None:
         """Discard the temporal accumulation history before the next frame.

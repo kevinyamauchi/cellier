@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 
@@ -861,7 +861,6 @@ def _make_axis_meshes(
         mesh visuals, one per 2D view.
     """
     from cellier.data import MeshMemoryStore
-    from cellier.transform import AffineTransform
     from cellier.visuals import MeshFlatAppearance
 
     # Axis RGB colors match the plane-mesh and slider color convention.
@@ -884,7 +883,6 @@ def _make_axis_meshes(
     prism_cross_section = _AXIS_3D_PRISM_CROSS_SECTION_FRACTION * world_min_extent
 
     initial_translation = tuple(float(v) for v in initial_centre_zyx)
-    initial_transform = AffineTransform.from_translation(initial_translation)
 
     axis_visuals = []
     for view_name, axis_a, axis_b, color_a, color_b in view_specifications:
@@ -913,7 +911,11 @@ def _make_axis_meshes(
             scene_id=vol_scene.id,
             appearance=appearance,
             name=view_name,
-            transform=initial_transform,
+            # A transform names the system it maps from, so each mesh gets
+            # its own between its own store and the volume scene's world.
+            transform=controller.data_to_world(
+                vol_scene.id, store, translation=initial_translation
+            ),
         )
         axis_visuals.append(visual)
 
@@ -1199,9 +1201,13 @@ class _OrientationUpdater:
         xz_axis_visual,
         yz_axis_visual,
         world_max_zyx: np.ndarray,
+        vol_scene_id,
     ):
         self._id = uuid4()
         self._controller = controller
+        # A transform names the world it maps into, so the scene is needed to
+        # rebuild one whenever the overlay moves.
+        self._vol_scene_id = vol_scene_id
         self._xy_axis_visual_id = xy_axis_visual.id
         self._xz_axis_visual_id = xz_axis_visual.id
         self._yz_axis_visual_id = yz_axis_visual.id
@@ -1218,8 +1224,6 @@ class _OrientationUpdater:
         self._x_world = float(mid[2])
 
     def _update_3d(self) -> None:
-        from cellier.transform import AffineTransform
-
         labels = ("xy", "xz", "yz")
         for label, visual_id, centre_zyx in zip(
             labels,
@@ -1235,9 +1239,13 @@ class _OrientationUpdater:
             ),
         ):
             translation = tuple(float(v) for v in centre_zyx)
+            visual = self._controller.get_visual(visual_id)
+            store = self._controller.get_data_store(UUID(visual.data_store_id))
             self._controller.set_visual_transform(
                 visual_id,
-                AffineTransform.from_translation(translation),
+                self._controller.data_to_world(
+                    self._vol_scene_id, store, translation=translation
+                ),
                 reslice=False,
             )
 
@@ -1543,6 +1551,7 @@ async def async_main(zarr_uri: str) -> None:
 
     from cellier.controller import CellierController
     from cellier.data import OMEZarrImageDataStore
+    from cellier.data._axes import scale_and_translation_transform
     from cellier.gui.qt import QtCanvasWidget, QtDimsControl
     from cellier.render._config import (
         RenderManagerConfig,
@@ -1550,7 +1559,6 @@ async def async_main(zarr_uri: str) -> None:
         TemporalAccumulationConfig,
     )
     from cellier.scene.dims import CoordinateSystem
-    from cellier.transform import AffineTransform
     from cellier.visuals import (
         CenteredAxes2D,
         CenteredAxes2DAppearance,
@@ -1584,8 +1592,8 @@ async def async_main(zarr_uri: str) -> None:
     print(f"  Depth range: near={depth_range[0]:.2f}  far={depth_range[1]:.0f}\n")
 
     cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
-    voxel_to_world = AffineTransform.from_scale_and_translation(
-        scale=tuple(level_0_scale_zyx)
+    voxel_to_world = scale_and_translation_transform(
+        data_store.data_coordinate_system, cs, tuple(level_0_scale_zyx)
     )
 
     initial_clim_max = _dtype_clim_max(data_store.dtype)
@@ -1593,15 +1601,18 @@ async def async_main(zarr_uri: str) -> None:
     clim_range = (0.0, initial_clim_max)
 
     level0_shape = data_store.level_shapes[0]
-    # axis_ranges must be in world coordinates because slice_indices are
+    # axis_values must be in world coordinates because slice_indices are
     # world coordinates (the rendering pipeline maps them through the
     # voxel-to-world inverse transform to get voxel indices).
     # World extent for axis i = (N_i - 1) * physical_scale_i.
     # QLabeledSlider is integer-only, so we round to the nearest integer.
     # Slider steps of 1 world unit → 1/scale_i voxels per step.
     world_max_zyx = (np.array(level0_shape, dtype=np.float64) - 1) * level_0_scale_zyx
-    axis_ranges = {
-        i: (0, round(float(world_max_zyx[i]))) for i in range(len(level0_shape))
+    from cellier.gui._axis_values import ContinuousAxisValues
+
+    axis_values = {
+        i: ContinuousAxisValues(min=0, max=round(float(world_max_zyx[i])))
+        for i in range(len(level0_shape))
     }
 
     # Initial slice positions at mid-volume, in world coordinates (rounded to int).
@@ -1692,7 +1703,7 @@ async def async_main(zarr_uri: str) -> None:
         selection = scene.dims.selection
         dims_control = QtDimsControl(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
             initial_slice_indices=dict(getattr(selection, "slice_indices", {})),
             initial_displayed_axes=getattr(selection, "displayed_axes", ()),
@@ -1704,7 +1715,7 @@ async def async_main(zarr_uri: str) -> None:
         return QtCanvasWidget(canvas_view=canvas_view, dims_control=dims_control)
 
     _vol_cw = QtCanvasWidget.from_scene_and_canvas(
-        vol_scene, _canvas_view(vol_scene.id), axis_ranges=axis_ranges
+        vol_scene, _canvas_view(vol_scene.id), axis_values=axis_values
     )
     controller.connect_widget(
         _vol_cw.dims_control,
@@ -1724,7 +1735,7 @@ async def async_main(zarr_uri: str) -> None:
     # Labels differ per panel because different data axes are displayed.
 
     # XY panel: screen-up = data Y, screen-right = data X
-    xy_axes_overlay = controller.add_canvas_overlay_model(
+    xy_axes_overlay = controller.add_canvas_overlay(
         controller.get_canvas_ids(xy_scene.id)[0],
         CenteredAxes2D(
             name="xy_axes",
@@ -1741,7 +1752,7 @@ async def async_main(zarr_uri: str) -> None:
     )
 
     # XZ panel: screen-up = data Z, screen-right = data X
-    xz_axes_overlay = controller.add_canvas_overlay_model(
+    xz_axes_overlay = controller.add_canvas_overlay(
         controller.get_canvas_ids(xz_scene.id)[0],
         CenteredAxes2D(
             name="xz_axes",
@@ -1758,7 +1769,7 @@ async def async_main(zarr_uri: str) -> None:
     )
 
     # YZ panel: screen-up = data Z, screen-right = data Y
-    yz_axes_overlay = controller.add_canvas_overlay_model(
+    yz_axes_overlay = controller.add_canvas_overlay(
         controller.get_canvas_ids(yz_scene.id)[0],
         CenteredAxes2D(
             name="yz_axes",
@@ -1806,6 +1817,7 @@ async def async_main(zarr_uri: str) -> None:
         xz_axis_visual=xz_axis_visual,
         yz_axis_visual=yz_axis_visual,
         world_max_zyx=world_max_zyx,
+        vol_scene_id=vol_scene.id,
     )
 
     controller.on_camera_changed(

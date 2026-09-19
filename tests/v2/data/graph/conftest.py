@@ -31,7 +31,10 @@ def make_request():
             chunk_request_id=shared,
             scale_index=0,
             displayed_axes=displayed,
-            slice_indices=dict(sliced),
+            retained_axes=tuple(sorted(displayed)),
+            # Named ``slice_indices`` until Phase 8; the graph keeps its own
+            # slab (D6.2) and the positions are in **data** coordinates.
+            slice_positions={a: float(v) for a, v in dict(sliced).items()},
             extents=dict(extents or {}),
             fades=dict(fades or {}),
         )

@@ -43,19 +43,19 @@ def _():
     from cellier.convenience import (
         Layout,
         OrthoViewer,
-        axis_ranges_from_ortho,
+        axis_values_from_ortho,
         display,
     )
     from cellier.convenience.gui import build_ortho_grid_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
-    from cellier.visuals import InMemoryImageAppearance
+    from cellier.visuals import InMemoryImageSingleAppearance
 
     return (
         ImageMemoryStore,
-        InMemoryImageAppearance,
+        InMemoryImageSingleAppearance,
         Layout,
         OrthoViewer,
-        axis_ranges_from_ortho,
+        axis_values_from_ortho,
         binary_blobs,
         build_ortho_grid_widget,
         display,
@@ -70,15 +70,17 @@ def _(binary_blobs, np):
 
 
 @app.cell
-def _(ImageMemoryStore, InMemoryImageAppearance, OrthoViewer, blobs_3d):
-    viewer = OrthoViewer(axis_labels=("z", "y", "x"), gui="anywidget")
+def _(ImageMemoryStore, InMemoryImageSingleAppearance, OrthoViewer, blobs_3d):
+    from cellier.scene.dims import spatial_axes
+
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
 
     store = ImageMemoryStore(data=blobs_3d, name="blobs")
     viewer.controller.add_data_store(store)
 
     viewer.add_image(
         store,
-        appearance=InMemoryImageAppearance(
+        single=InMemoryImageSingleAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             render_mode="iso",
@@ -93,10 +95,10 @@ def _(ImageMemoryStore, InMemoryImageAppearance, OrthoViewer, blobs_3d):
 
 
 @app.cell
-def _(axis_ranges_from_ortho, build_ortho_grid_widget, viewer):
-    axis_ranges = axis_ranges_from_ortho(viewer)
+def _(axis_values_from_ortho, build_ortho_grid_widget, viewer):
+    axis_values = axis_values_from_ortho(viewer)
     canvas_widgets = build_ortho_grid_widget(
-        viewer, axis_ranges, canvas_size=(200, 200)
+        viewer, axis_values, canvas_size=(200, 200)
     )
     return (canvas_widgets,)
 

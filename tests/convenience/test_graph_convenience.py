@@ -7,8 +7,9 @@ import pytest
 
 from cellier.convenience import Viewer
 from cellier.convenience._ortho_viewer import OrthoViewer
-from cellier.transform import AffineTransform
+from cellier.scene.dims import spatial_axes
 from cellier.visuals import GraphAppearance, GraphVisual, TrailConfig
+from tests._v2 import bound
 
 _PANELS = {"xy", "xz", "yz", "vol"}
 
@@ -18,7 +19,7 @@ def _visual_ids(viewer: Viewer) -> set:
 
 
 def test_add_graph_from_store(graph_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_graph(graph_store, appearance=GraphAppearance(), name="g")
 
     assert isinstance(visual, GraphVisual)
@@ -27,7 +28,7 @@ def test_add_graph_from_store(graph_store):
 
 
 def test_add_graph_defaults_appearance_when_none(graph_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_graph(graph_store)
 
     assert visual.id in _visual_ids(viewer)
@@ -37,7 +38,7 @@ def test_add_graph_defaults_appearance_when_none(graph_store):
 
 def test_add_graph_with_trail(graph_store):
     """The trail reaches the visual."""
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     visual = viewer.add_graph(
         graph_store, trail={0: TrailConfig(before=3.0, after=1.0, fade=True)}
     )
@@ -48,14 +49,14 @@ def test_add_graph_with_trail(graph_store):
 
 
 def test_add_graph_rejects_out_of_range_trail_axis(graph_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     with pytest.raises(ValueError, match="out of range"):
         viewer.add_graph(graph_store, trail={5: TrailConfig()})
 
 
 def test_add_graph_by_store_uuid(graph_store):
     """The already-registered-store branch."""
-    viewer = Viewer(("z", "y", "x"), dim="3d")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
     first = viewer.add_graph(graph_store, name="a")
     second = viewer.add_graph(graph_store.id, name="b")
 
@@ -64,15 +65,15 @@ def test_add_graph_by_store_uuid(graph_store):
 
 
 def test_add_graph_explicit_transform_wins(graph_store):
-    viewer = Viewer(("z", "y", "x"), dim="3d")
-    transform = AffineTransform.from_scale((2.0, 2.0, 2.0))
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d")
+    transform = bound(viewer.controller, viewer.scene.id, graph_store, (2.0, 2.0, 2.0))
     visual = viewer.add_graph(graph_store, transform=transform)
 
     assert np.allclose(np.diag(visual.transform.matrix)[:3], [2.0, 2.0, 2.0])
 
 
 def test_ortho_add_graph_fans_out(graph_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_graph(graph_store, appearance=GraphAppearance(), name="g")
 
     assert set(visuals) == _PANELS
@@ -83,7 +84,7 @@ def test_ortho_add_graph_fans_out(graph_store):
 
 
 def test_ortho_add_graph_appearance_and_trail(graph_store):
-    ortho = OrthoViewer(("z", "y", "x"))
+    ortho = OrthoViewer(spatial_axes("z", "y", "x"))
     visuals = ortho.add_graph(
         graph_store,
         appearance=GraphAppearance(node_size=7.0),

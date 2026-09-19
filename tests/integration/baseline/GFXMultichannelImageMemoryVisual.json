@@ -1,0 +1,748 @@
+{
+  "cases": {
+    "rank=3|t=aniso|dims=2d_lead_sliced_nonzero": {
+      "dims": "2d_lead_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "aniso"
+    },
+    "rank=3|t=aniso|dims=2d_lead_sliced_zero": {
+      "dims": "2d_lead_sliced_zero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "aniso"
+    },
+    "rank=3|t=aniso|dims=3d_all": {
+      "dims": "3d_all",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "aniso"
+    },
+    "rank=3|t=identity|dims=2d_lead_sliced_nonzero": {
+      "dims": "2d_lead_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity"
+    },
+    "rank=3|t=identity|dims=2d_lead_sliced_zero": {
+      "dims": "2d_lead_sliced_zero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity"
+    },
+    "rank=3|t=identity|dims=3d_all": {
+      "dims": "3d_all",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity"
+    },
+    "rank=3|t=scale_trans|dims=2d_lead_sliced_nonzero": {
+      "dims": "2d_lead_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          -3.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "scale_trans"
+    },
+    "rank=3|t=scale_trans|dims=2d_lead_sliced_zero": {
+      "dims": "2d_lead_sliced_zero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          -3.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "scale_trans"
+    },
+    "rank=3|t=scale_trans|dims=3d_all": {
+      "dims": "3d_all",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          -3.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          2.0,
+          10.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "scale_trans"
+    },
+    "rank=4|t=identity4|dims=2d_two_sliced": {
+      "dims": "2d_two_sliced",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          0,
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "rank=4|t=identity4|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            5
+          ],
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "rank=4|t=identity4|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            5
+          ],
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "rank=4|t=tzyx|dims=2d_two_sliced": {
+      "dims": "2d_two_sliced",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [],
+      "selections": [],
+      "status": "ok",
+      "transform": "tzyx"
+    },
+    "rank=4|t=tzyx|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          2.0,
+          10.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            5
+          ],
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    },
+    "rank=4|t=tzyx|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.5,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          2.0,
+          10.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [],
+      "scale_indices": [
+        0
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            5
+          ],
+          [
+            0,
+            6
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    }
+  },
+  "drivable": {
+    "node_matrix": true,
+    "slice_request": true
+  },
+  "family": "GFXMultichannelImageMemoryVisual",
+  "kind": "image"
+}

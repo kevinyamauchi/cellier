@@ -33,12 +33,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from tests._v2 import level_transforms as _levels
+from tests._v2 import scale_and_translation
 
 from cellier.render.visuals._image import (
     ImageGeometry3D,
     MultiscaleBrickLayout3D,
+    _displayed_submatrix,
 )
-from cellier.transform import AffineTransform
 
 SNAPSHOT_DIR = Path(__file__).parent
 UPDATE = os.environ.get("CELLIER_UPDATE_SNAPSHOTS", "") not in ("", "0", "false")
@@ -99,23 +101,23 @@ def _replicate_from_cellier_model(
     volume_geometry = None
     if "3d" in render_modes and axes_3d is not None:
         shapes_3d = [tuple(s[ax] for ax in axes_3d) for s in level_shapes]
-        transforms_3d = [t.select_axes(axes_3d) for t in level_transforms]
         volume_geometry = MultiscaleBrickLayout3D(
             level_shapes=shapes_3d,
-            level_transforms=transforms_3d,
+            level_transforms=level_transforms,
             block_size=block_size,
+            fetch_axes=axes_3d,
         )
 
     image_geometry_2d = None
     if "2d" in render_modes:
         shapes_2d_full = [tuple(s[ax] for ax in axes_2d) for s in level_shapes]
-        transforms_2d = [t.select_axes(axes_2d) for t in level_transforms]
         level_shapes_2d = [(s[0], s[1]) for s in shapes_2d_full]
         image_geometry_2d = ImageGeometry3D(
             level_shapes=level_shapes_2d,
             block_size=block_size,
             n_levels=len(level_shapes),
-            level_transforms=transforms_2d,
+            level_transforms=level_transforms,
+            fetch_axes=axes_2d,
         )
 
     return axes_3d, axes_2d, volume_geometry, image_geometry_2d
@@ -160,11 +162,10 @@ def test_snapshot_orthoviewer_3d():
     # translations so that data-order and shader-order vectors differ
     # (i.e. the [2,1,0] reversal is observable in the snapshot).
     level_shapes = [(64, 256, 256), (32, 128, 128), (16, 64, 64)]
-    level_transforms = [
-        AffineTransform.identity(ndim=3),
-        AffineTransform.from_scale_and_translation((2.0, 4.0, 8.0), (0.5, 1.5, 2.5)),
-        AffineTransform.from_scale_and_translation((4.0, 16.0, 64.0), (1.0, 3.0, 5.0)),
-    ]
+    level_transforms = _levels(
+        [(1.0, 1.0, 1.0), (2.0, 4.0, 8.0), (4.0, 16.0, 64.0)],
+        [(0.0, 0.0, 0.0), (0.5, 1.5, 2.5), (1.0, 3.0, 5.0)],
+    )
     displayed_axes = (0, 1, 2)
     block_size = 32
 
@@ -176,11 +177,11 @@ def test_snapshot_orthoviewer_3d():
         render_modes={"2d", "3d"},
     )
 
-    # Slice-request 3D sub-transform: same call as build_slice_request line ~1062.
-    full_transform = AffineTransform.from_scale_and_translation(
-        (4.0, 1.0, 1.0), (10.0, 20.0, 30.0)
-    )
-    sub_3d = full_transform.select_axes(displayed_axes[-3:])
+    # Slice-request 3D sub-transform.  ``select_axes`` went with v1 in
+    # Phase 8; ``_displayed_submatrix`` reads the same entries off the v2
+    # transform and returns the same square block.
+    full_transform = scale_and_translation((4.0, 1.0, 1.0), (10.0, 20.0, 30.0))
+    sub_3d = _displayed_submatrix(full_transform, displayed_axes[-3:])
 
     snapshot = {
         "scenario": "orthoviewer_3d",
@@ -189,7 +190,7 @@ def test_snapshot_orthoviewer_3d():
         "axes_2d": list(axes_2d),
         "volume_geometry": _capture_volume_geometry(vol),
         "image_geometry_2d": _capture_image_geometry_2d(img2d),
-        "slice_request_sub_3d_matrix": _round(sub_3d.matrix),
+        "slice_request_sub_3d_matrix": _round(sub_3d),
     }
     _assert_or_write("orthoviewer_3d", snapshot)
 
@@ -204,11 +205,10 @@ def test_snapshot_multiscale_paint_2d():
     # Anisotropic per-axis scale + translation so the [1, 0] reversal in
     # ImageGeometry2D is observable in the snapshot.
     level_shapes = [(256, 256), (128, 128), (64, 64)]
-    level_transforms = [
-        AffineTransform.identity(ndim=2),
-        AffineTransform.from_scale_and_translation((2.0, 4.0), (0.5, 1.5)),
-        AffineTransform.from_scale_and_translation((4.0, 16.0), (1.0, 3.0)),
-    ]
+    level_transforms = _levels(
+        [(1.0, 1.0), (2.0, 4.0), (4.0, 16.0)],
+        [(0.0, 0.0), (0.5, 1.5), (1.0, 3.0)],
+    )
     displayed_axes = (0, 1)
     block_size = 64
 
@@ -222,16 +222,16 @@ def test_snapshot_multiscale_paint_2d():
     assert axes_3d is None
     assert vol is None
 
-    # Slice-request 2D sub-transform: same as line ~1403 (sub_2d).
-    full_transform = AffineTransform.from_scale_and_translation((1.0, 1.0), (5.0, 7.0))
-    sub_2d = full_transform.select_axes(displayed_axes)
+    # Slice-request 2D sub-transform; see the 3D note above.
+    full_transform = scale_and_translation((1.0, 1.0), (5.0, 7.0))
+    sub_2d = _displayed_submatrix(full_transform, displayed_axes)
 
     snapshot = {
         "scenario": "multiscale_paint_2d",
         "displayed_axes": list(displayed_axes),
         "axes_2d": list(axes_2d),
         "image_geometry_2d": _capture_image_geometry_2d(img2d),
-        "slice_request_sub_2d_matrix": _round(sub_2d.matrix),
+        "slice_request_sub_2d_matrix": _round(sub_2d),
     }
     _assert_or_write("multiscale_paint_2d", snapshot)
 
@@ -246,11 +246,10 @@ def test_snapshot_orthoviewer_2d_in_3d():
     # Anisotropic transforms so the [1, 0] reversal applied to the
     # selected (y, x) sub-transform is observable in the snapshot.
     level_shapes = [(64, 256, 256), (32, 128, 128), (16, 64, 64)]
-    level_transforms = [
-        AffineTransform.identity(ndim=3),
-        AffineTransform.from_scale_and_translation((2.0, 4.0, 8.0), (0.5, 1.5, 2.5)),
-        AffineTransform.from_scale_and_translation((4.0, 16.0, 64.0), (1.0, 3.0, 5.0)),
-    ]
+    level_transforms = _levels(
+        [(1.0, 1.0, 1.0), (2.0, 4.0, 8.0), (4.0, 16.0, 64.0)],
+        [(0.0, 0.0, 0.0), (0.5, 1.5, 2.5), (1.0, 3.0, 5.0)],
+    )
     displayed_axes = (1, 2)
     block_size = 32
 

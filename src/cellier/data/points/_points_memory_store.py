@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, geometry_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -16,10 +16,16 @@ from cellier.data._dataset_info import (
 )
 from cellier.data.points._points_requests import PointsData, PointsSliceRequest
 
-# Placeholder returned when the proximity filter produces zero points.
-# A single invisible point avoids the "empty geometry is illegal" restriction
-# in pygfx.
-_PLACEHOLDER_POSITIONS = np.zeros((1, 3), dtype=np.float32)
+
+def _placeholder_positions(n_display: int) -> np.ndarray:
+    """One invisible point, returned when the filter produces none.
+
+    pygfx will not accept empty geometry, so the store returns a single
+    zeroed vertex instead.  It is sized to the retained axes rather than
+    fixed at three: a rank-4 store displaying data axes ``(2, 3)`` would
+    otherwise index a ``(1, 3)`` constant with axis 3 and raise (F8.4).
+    """
+    return np.zeros((1, n_display), dtype=np.float32)
 
 
 class PointsMemoryStore(BaseDataStore):
@@ -45,9 +51,29 @@ class PointsMemoryStore(BaseDataStore):
         Pass None for uniform-size rendering.
     name : str
         Human-readable label.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per ``positions`` column.  Mark an axis
+        ``sampling="discrete"`` when its column holds sample indices, such
+        as frame numbers.  Empty by default, in which case the store takes
+        the scene's world axes when it is added to a scene.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["points_memory"] = "points_memory"
+    # Reassigning these announces a change on ``data_changed``
+    # (plans/store_change_events.md): positions move the extent.
+    _EXTENT_FIELDS: ClassVar[frozenset[str]] = frozenset({"positions"})
+    _CONTENTS_FIELDS: ClassVar[frozenset[str]] = frozenset({"colors", "sizes"})
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory points"
     name: str = "points_memory_store"
     positions: np.ndarray
@@ -106,6 +132,17 @@ class PointsMemoryStore(BaseDataStore):
     def ndim(self) -> int:
         """Number of spatial dimensions per point."""
         return self.positions.shape[1]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...] | None:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The bounding box of the points, with no padding -- a vertex is a point,
+        not a cell, so there is no half-voxel to add.  ``None`` when the
+        store is empty.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return self._cached_axis_extents(lambda: geometry_axis_extents(self.positions))
 
     @property
     def n_points(self) -> int:
@@ -179,17 +216,26 @@ class PointsMemoryStore(BaseDataStore):
         positions = self.positions  # (n_points, ndim)
         colors = self.colors
         sizes = self.sizes
-        displayed = list(request.displayed_axes)
+        # Ascending: the uploaded vertex buffer's axis order is the data's,
+        # and a display permutation lives in the node matrix (design 3.14).
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform.  ``displayed_axes`` indexes the **world**, so using it
+        # here would raise on a store of lower rank than the world and
+        # silently upload the wrong columns on a transform that permutes its
+        # axes; it was the fallback for a headlessly constructed visual until
+        # v1 was retired (R8.3).
+        displayed = list(request.retained_axes)
 
         # ── Phase 1: build proximity mask ────────────────────────────
         # A point survives if it passes the proximity test on EVERY
         # non-displayed (sliced) axis.
-        point_mask = np.ones(self.n_points, dtype=bool)
-
-        for axis, idx in request.slice_indices.items():
-            lo = float(idx) - request.thickness
-            hi = float(idx) + request.thickness
-            point_mask &= (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
+        # The region *is* the filter (design 3.12).  For images it is reduced
+        # to a bounding box and rounded; for points there is nothing to round
+        # -- the constraints apply to the points themselves.  A 3-D view has
+        # no slabs, so the region is unbounded, ``contains`` is all-True, and
+        # the "no sliced axes so the loop does not run" special case
+        # disappears.
+        point_mask = request.region.contains(positions)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)
@@ -201,7 +247,7 @@ class PointsMemoryStore(BaseDataStore):
             # Empty slab — return placeholder so the node stays valid.
             return PointsData(
                 request_id=request.slice_request_id,
-                positions=_PLACEHOLDER_POSITIONS[:, displayed],
+                positions=_placeholder_positions(len(displayed)),
                 colors=None,
                 sizes=None,
                 color_mode="uniform",

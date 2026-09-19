@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
 
 from cellier.controller import CellierController
 from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
 from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
@@ -221,7 +220,9 @@ def main(label_uri: str):
 
     # ── Transform ─────────────────────────────────────────────────────────
     level0_scale = _extract_level0_scale_from_label_group(label_uri)
-    transform = AffineTransform.from_scale_and_translation(scale=level0_scale)
+    # A transform names the two systems it maps between, so it is built here,
+    # where both the store and the scene's world exist.
+    transform = controller.data_to_world(scene.id, data_store, scale=level0_scale)
 
     # ── Appearance + visual ───────────────────────────────────────────────
     appearance = MultiscaleLabelsAppearance(

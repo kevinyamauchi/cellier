@@ -16,7 +16,7 @@ Z slice : dims slider (2D mode only)
 
 Note on render modes
 --------------------
-The in-memory ``add_image`` path uses ``InMemoryImageAppearance``, which
+The in-memory ``add_image`` path uses ``InMemoryImageSingleAppearance``, which
 exposes ``render_mode`` (``"mip"``, ``"iso"``, or ``"minip"``) and
 ``iso_threshold``.  This example renders the 3D view as an isosurface
 (``render_mode="iso"``).
@@ -30,12 +30,13 @@ from skimage.data import binary_blobs
 from cellier.convenience import (
     Layout,
     Viewer,
-    axis_ranges_from_viewer,
+    axis_values_from_viewer,
     run,
 )
 from cellier.convenience.gui import build_canvas_widget
 from cellier.data.image._image_memory_store import ImageMemoryStore
-from cellier.visuals import InMemoryImageAppearance
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import InMemoryImageSingleAppearance
 
 # ---------------------------------------------------------------------------
 # Data
@@ -47,14 +48,14 @@ blobs_3d = binary_blobs(length=200, n_dim=3, rng=0).astype(np.float32)
 # Viewer model
 # ---------------------------------------------------------------------------
 
-viewer = Viewer(axis_labels=("z", "y", "x"), dim="2d")
+viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d")
 
 store = ImageMemoryStore(data=blobs_3d, name="blobs")
 viewer.controller.add_data_store(store)
 
 viewer.add_image(
     store,
-    appearance=InMemoryImageAppearance(
+    single=InMemoryImageSingleAppearance(
         color_map="viridis",
         clim=(0.0, 1.0),
         render_mode="iso",
@@ -67,8 +68,8 @@ viewer.add_image(
 # Canvas + layout
 # ---------------------------------------------------------------------------
 
-axis_ranges = axis_ranges_from_viewer(viewer)
-canvas_widget = build_canvas_widget(viewer, axis_ranges)
+axis_values = axis_values_from_viewer(viewer)
+canvas_widget = build_canvas_widget(viewer, axis_values)
 
 # ---------------------------------------------------------------------------
 # Launch

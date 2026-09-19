@@ -8,6 +8,7 @@ import pytest
 from cellier.data.graph import GraphMemoryStore
 from cellier.data.points import PointsMemoryStore
 from cellier.data.points._points_requests import PointsSliceRequest
+from tests._v2 import data_region
 
 
 async def test_slab_equivalence_with_points_store(make_request):
@@ -32,8 +33,8 @@ async def test_slab_equivalence_with_points_store(make_request):
         chunk_request_id=request.chunk_request_id,
         scale_index=0,
         displayed_axes=(1, 2),
-        slice_indices={0: 5},
-        thickness=0.5,
+        retained_axes=(1, 2),
+        region=data_region(3, {0: (5, 0.5)}),
     )
     points_data = await points.get_data(points_request)
 

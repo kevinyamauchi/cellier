@@ -47,7 +47,7 @@ from typing import Any
 
 import pygfx as gfx
 from pygfx.renderers.wgpu import Binding, register_wgpu_render_function
-from pygfx.renderers.wgpu.shaders.lineshader import LineShader
+from pygfx.renderers.wgpu.shaders.lineshader import LineSegmentShader
 from pygfx.renderers.wgpu.shaders.pointsshader import PointsShader
 
 __all__ = [
@@ -180,8 +180,13 @@ class AlphaLineSegmentMaterial(gfx.LineSegmentMaterial):
 
 
 @register_wgpu_render_function(gfx.Line, AlphaLineSegmentMaterial)
-class AlphaLineSegmentShader(LineShader):
+class AlphaLineSegmentShader(LineSegmentShader):
     """Line shader carrying an alpha that ramps *along* each segment.
+
+    Derives from ``LineSegmentShader``, not the base ``LineShader``: this
+    registration replaces pygfx's own shader for the material, and only the
+    segment shader sets ``line_type = "segment"``.  The base class draws the
+    vertices as one connected polyline, joining every segment to the next.
 
     Five substitutions rather than the points shader's two, because all six
     of the quad's vertices share one ``node_index``: relying on rasterizer

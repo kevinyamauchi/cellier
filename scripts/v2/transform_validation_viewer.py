@@ -28,13 +28,14 @@ from PySide6 import QtCore, QtWidgets
 
 from cellier.controller import CellierController
 from cellier.data import LinesMemoryStore, MeshMemoryStore, OMEZarrImageDataStore
+from cellier.data._axes import scale_and_translation_transform
 from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.gui.qt import QtCanvasWidget, QtDimsControl
-from cellier.scene import Canvas
+from cellier.scene import Canvas, spatial_axes, world_coordinate_system
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import AxisAlignedSelection, DimsManager
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals import (
     LinesMemoryAppearance,
@@ -467,8 +468,10 @@ def _build_viewer_model(
     y_slice_index = int(initial_slice_position * WORLD_SHAPE[1])
     x_slice_index = int(initial_slice_position * WORLD_SHAPE[2])
 
-    coordinate_system = CoordinateSystem(name="world", axis_labels=["z", "y", "x"])
-    voxel_to_world_transform = AffineTransform.from_scale((3.0, 2.0, 2.0))
+    world = world_coordinate_system(spatial_axes("z", "y", "x"))
+    voxel_to_world_transform = scale_and_translation_transform(
+        image_store.data_coordinate_system, world, (3.0, 2.0, 2.0)
+    )
     depth_range = (1.0, 5000.0)
     clim = (0, 8)
 
@@ -576,7 +579,7 @@ def _build_viewer_model(
     xy_scene = Scene(
         name="xy",
         dims=DimsManager(
-            coordinate_system=coordinate_system,
+            world_coordinate_system=world,
             selection=AxisAlignedSelection(
                 displayed_axes=(1, 2),
                 slice_indices={0: z_slice_index},
@@ -602,7 +605,7 @@ def _build_viewer_model(
     xz_scene = Scene(
         name="xz",
         dims=DimsManager(
-            coordinate_system=coordinate_system,
+            world_coordinate_system=world,
             selection=AxisAlignedSelection(
                 displayed_axes=(0, 2),
                 slice_indices={1: y_slice_index},
@@ -628,7 +631,7 @@ def _build_viewer_model(
     yz_scene = Scene(
         name="yz",
         dims=DimsManager(
-            coordinate_system=coordinate_system,
+            world_coordinate_system=world,
             selection=AxisAlignedSelection(
                 displayed_axes=(0, 1),
                 slice_indices={2: x_slice_index},
@@ -654,7 +657,7 @@ def _build_viewer_model(
     vol_scene = Scene(
         name="vol",
         dims=DimsManager(
-            coordinate_system=coordinate_system,
+            world_coordinate_system=world,
             selection=AxisAlignedSelection(
                 displayed_axes=(0, 1, 2),
                 slice_indices={},
@@ -717,17 +720,21 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
         positions=points_positions,
         colors=points_colors,
         name="points",
+        axis_names=("z", "y", "x"),
     )
     lines_store = LinesMemoryStore(
         positions=lines_positions,
         colors=lines_colors,
         name="lines",
+        axis_names=("z", "y", "x"),
     )
     mesh_store = MeshMemoryStore(
         positions=mesh_vertices,
         indices=mesh_faces,
         colors=mesh_colors,
+        colors_layout="vertex",
         name="mesh",
+        axis_names=("z", "y", "x"),
     )
 
     # ── Build ViewerModel (no render layer) ───────────────────────────────────
@@ -756,17 +763,17 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     )
 
     # ── Build canvas widgets ──────────────────────────────────────────────────
-    axis_ranges = {0: (0, 300), 1: (0, 300), 2: (0, 300)}
+    axis_values = dict.fromkeys(range(3), ContinuousAxisValues(min=0, max=300))
 
     def _get_canvas_view(scene_id):
         return controller.get_canvas_view(controller.get_canvas_ids(scene_id)[0])
 
     def _make_2d_canvas_widget(scene, slider_style):
         canvas_view = _get_canvas_view(scene.id)
-        axis_labels = dict(enumerate(scene.dims.coordinate_system.axis_labels))
+        axis_labels = dict(enumerate(scene.dims.axis_labels))
         dims_control = QtDimsControl(
             scene_id=scene.id,
-            axis_ranges=axis_ranges,
+            axis_values=axis_values,
             axis_labels=axis_labels,
             initial_slice_indices=dict(scene.dims.selection.slice_indices),
             initial_displayed_axes=scene.dims.selection.displayed_axes,
@@ -789,7 +796,7 @@ async def async_main(dataset_dir: Path, image_store: OMEZarrImageDataStore) -> N
     _vol_cw = QtCanvasWidget.from_scene_and_canvas(
         vol_scene,
         _get_canvas_view(vol_scene.id),
-        axis_ranges=axis_ranges,
+        axis_values=axis_values,
     )
     controller.connect_widget(
         _vol_cw.dims_control,

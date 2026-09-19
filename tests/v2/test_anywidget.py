@@ -24,8 +24,9 @@ from cellier.convenience.gui import InMemoryImageControlsConfig  # noqa: E402
 from cellier.render.canvas_view import CanvasView  # noqa: E402
 from cellier.scene.dims import (  # noqa: E402
     AxisAlignedSelection,
-    CoordinateSystem,
     DimsManager,
+    spatial_axes,
+    world_coordinate_system,
 )
 from cellier.scene.scene import Scene  # noqa: E402
 
@@ -37,10 +38,10 @@ def _make_scene(
     """Return a minimal Scene with the given displayed_axes and render_modes."""
     n_axes = max(displayed_axes) + 1
     axis_labels = tuple(f"axis_{i}" for i in range(n_axes))
-    cs = CoordinateSystem(name="world", axis_labels=axis_labels)
-    slice_indices = {i: 0 for i in range(n_axes) if i not in displayed_axes}
+    cs = world_coordinate_system(spatial_axes(*axis_labels), name="world")
+    slice_indices = dict.fromkeys(range(n_axes), 0)
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=displayed_axes,
             slice_indices=slice_indices,
@@ -105,7 +106,7 @@ def test_viewer_gui_property():
     """Viewer exposes the chosen gui and threads it to the controller."""
     from cellier.convenience import Viewer
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     assert viewer.gui == "anywidget"
     assert viewer.controller._gui == "anywidget"
 
@@ -114,7 +115,7 @@ def test_ortho_viewer_gui_property():
     """OrthoViewer exposes the chosen gui and threads it to the controller."""
     from cellier.convenience import OrthoViewer
 
-    viewer = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     assert viewer.gui == "anywidget"
     assert viewer.controller._gui == "anywidget"
 
@@ -123,7 +124,7 @@ def test_viewer_default_gui_is_qt():
     """Viewer defaults to the Qt gui."""
     from cellier.convenience import Viewer
 
-    assert Viewer(("z", "y", "x")).gui == "qt"
+    assert Viewer(spatial_axes("z", "y", "x")).gui == "qt"
 
 
 # ---------------------------------------------------------------------------
@@ -131,19 +132,18 @@ def test_viewer_default_gui_is_qt():
 # ---------------------------------------------------------------------------
 
 
-def _dims_changed_event(source_id, scene_id, *, displayed, slices, stacked=()):
+def _dims_changed_event(source_id, scene_id, *, displayed, slices):
     from cellier._state import AxisAlignedSelectionState, DimsState
     from cellier.events import DimsChangedEvent
 
-    selection = AxisAlignedSelectionState(
-        displayed_axes=displayed, slice_indices=slices, stacked_axes=stacked
-    )
+    selection = AxisAlignedSelectionState(displayed_axes=displayed)
     state = DimsState(axis_labels=("z", "y", "x"), selection=selection)
     return DimsChangedEvent(
         source_id=source_id,
         scene_id=scene_id,
         dims_state=state,
         displayed_axes_changed=False,
+        slice_indices=dict(slices),
     )
 
 
@@ -155,15 +155,19 @@ def _make_dummy_anywidget():
 
 
 def _make_dims_panel(*, with_toggle=False):
+    from cellier.gui._axis_values import ContinuousAxisValues
     from cellier.gui.anywidget import AnywidgetDimsPanel
 
     return AnywidgetDimsPanel(
         scene_id=uuid4(),
-        axis_ranges={0: (0.0, 99.0), 1: (0.0, 511.0), 2: (0.0, 511.0)},
+        axis_values={
+            0: ContinuousAxisValues(min=0.0, max=99.0),
+            1: ContinuousAxisValues(min=0.0, max=511.0),
+            2: ContinuousAxisValues(min=0.0, max=511.0),
+        },
         axis_labels={0: "z", 1: "y", 2: "x"},
-        slice_indices={0: 0},
+        slice_indices={0: 0, 1: 0, 2: 0},
         displayed_axes=(1, 2),
-        stacked_axes=(),
         axes_2d=(1, 2) if with_toggle else None,
         axes_3d=(0, 1, 2) if with_toggle else None,
     )
@@ -243,6 +247,7 @@ def test_dims_panel_toggle_emits_dims_update_event():
     assert isinstance(event, DimsUpdateEvent)
     assert event.source_id == panel._id
     assert event.displayed_axes == (0, 1, 2)
+    assert event.slice_indices is None
     # The controller stamps its echoed DimsChangedEvent with our own
     # source_id, so it would be swallowed by the echo filter -- the panel
     # must relabel itself directly from the click, not by waiting for it.
@@ -250,34 +255,32 @@ def test_dims_panel_toggle_emits_dims_update_event():
     assert list(panel.displayed_axes) == [0, 1, 2]
 
 
-def test_dims_panel_toggle_uses_live_slider_value():
-    """The emitted slice_indices reflect the panel's current slider value.
-
-    Regression test: previously the toggle had no access to slider state and
-    could only reset a newly-hidden axis to a hardcoded default.
-    """
+def test_dims_panel_toggle_sends_only_displayed_axes():
+    """The toggle never carries positions: the model keeps every one (D36)."""
     panel = _make_dims_panel(with_toggle=True)
     emitted = []
     panel.changed.connect(emitted.append)
 
-    # Move axis 0's slider to a non-default value before toggling to 3D.
     panel.slice_indices = {"0": 42, "1": 0, "2": 0}
+    assert emitted[-1].slice_indices == {0: 42.0}
     emitted.clear()
 
-    panel._clicks += 1  # 2D -> 3D: axis 0 becomes displayed, nothing sliced.
+    panel._clicks += 1  # 2D -> 3D
     assert emitted[-1].displayed_axes == (0, 1, 2)
-    assert emitted[-1].slice_indices == {}
+    assert emitted[-1].slice_indices is None
 
-    # Toggle back to 2D: axis 0 becomes hidden again and should carry
-    # forward the last value the sliders held for it. (displayed_axes was
-    # already updated in-place by the previous click, not by a bus echo.)
-    panel._clicks += 1
+    panel._clicks += 1  # 3D -> 2D
     assert emitted[-1].displayed_axes == (1, 2)
-    assert emitted[-1].slice_indices == {0: 42}
+    assert emitted[-1].slice_indices is None
+    assert panel.slice_indices["0"] == 42
 
 
-def test_dims_panel_toggle_relabels_from_external_event():
-    """An external DimsChangedEvent relabels the toggle, echoed events do not."""
+def test_dims_panel_toggle_relabels_from_every_dims_event():
+    """The toggle label follows the model, including our own echo.
+
+    An echo carries the model's displayed axes, which is exactly what the
+    label should describe; only slider values are skipped on an echo.
+    """
     panel = _make_dims_panel(with_toggle=True)
     assert panel.label == "Switch to 3D"
 
@@ -290,17 +293,15 @@ def test_dims_panel_toggle_relabels_from_external_event():
     panel._on_dims_changed(event)
     assert panel.label == "Switch to 2D"
 
-    # An echoed event (our own source_id) must not re-fire relabeling logic
-    # incorrectly -- it's a no-op entirely.
-    panel.label = "unchanged"
     echo_event = _dims_changed_event(
         source_id=panel._id,
         scene_id=panel._scene_id,
         displayed=(1, 2),
-        slices={0: 0},
+        slices={0: 99},
     )
     panel._on_dims_changed(echo_event)
-    assert panel.label == "unchanged"
+    assert panel.label == "Switch to 3D"
+    assert panel.slice_indices["0"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -370,26 +371,26 @@ def _image_viewer():
     """A small anywidget Viewer with one in-memory image and a data store."""
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
-    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
     store = ImageMemoryStore(data=blobs, name="blobs")
     viewer.controller.add_data_store(store)
-    viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
-    return viewer, axis_ranges_from_viewer(viewer)
+    viewer.add_image(store, single={"color_map": "viridis", "clim": (0.0, 1.0)})
+    return viewer, axis_values_from_viewer(viewer)
 
 
 def _image_viewer_with_controls():
     """A small anywidget Viewer with one in-memory image and an appearance panel."""
     import numpy as np
 
-    from cellier.convenience import Viewer, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, axis_values_from_viewer
     from cellier.data.image._image_memory_store import ImageMemoryStore
 
     blobs = np.zeros((8, 8, 8), dtype=np.float32)
-    viewer = Viewer(("z", "y", "x"), dim="2d", gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
     store = ImageMemoryStore(data=blobs, name="blobs")
     viewer.controller.add_data_store(store)
     viewer.add_image(
@@ -397,7 +398,7 @@ def _image_viewer_with_controls():
         appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
         controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
-    return viewer, axis_ranges_from_viewer(viewer)
+    return viewer, axis_values_from_viewer(viewer)
 
 
 def test_build_canvas_widget_anywidget_returns_view():
@@ -467,17 +468,17 @@ def test_build_ortho_grid_anywidget_returns_canvases():
     """build_ortho_grid_widget(gui='anywidget') returns a composable grid."""
     import numpy as np
 
-    from cellier.convenience import OrthoViewer, axis_ranges_from_ortho
+    from cellier.convenience import OrthoViewer, axis_values_from_ortho
     from cellier.convenience._hosts import JupyterHost
     from cellier.convenience.gui import OrthoAnywidgetCanvases, build_ortho_grid_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.gui.anywidget import AnywidgetBox
 
-    viewer = OrthoViewer(("z", "y", "x"), gui="anywidget")
+    viewer = OrthoViewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((8, 8, 8), dtype=np.float32), name="blobs")
     viewer.controller.add_data_store(store)
-    viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
-    ranges = axis_ranges_from_ortho(viewer)
+    viewer.add_image(store, single={"color_map": "viridis", "clim": (0.0, 1.0)})
+    ranges = axis_values_from_ortho(viewer)
 
     grid = build_ortho_grid_widget(viewer, ranges, gui="anywidget")
     assert isinstance(grid, OrthoAnywidgetCanvases)
@@ -611,25 +612,20 @@ def test_display_left_dock_stacks_controls_beside_center(monkeypatch):
     assert direction == "h"
     assert len(leaves) == 2
     panel_node, center_node = leaves
-    # Two appearance fields (color_map, clim) plus the always-on AABB widget
-    # -> three sub-widgets composed into a v-stack, mirroring how the Qt
-    # renderer groups multiple per-field widgets in one QVBoxLayout.
-    assert panel_node.kind == "stack"
-    (
-        panel_direction,
-        panel_leaves,
-        _panel_align,
-        _panel_min_width,
-        panel_gap,
-    ) = panel_node.payload
-    assert panel_direction == "v"
-    assert len(panel_leaves) == 3
-    assert all(leaf.kind == "leaf" for leaf in panel_leaves)
+    # The dock is a live slot, leafed once, so it can follow the viewer; the
+    # controls are the slot's children rather than a host stack.  Two
+    # appearance fields (color_map, clim) plus the always-on AABB widget.
+    from cellier.gui.anywidget import AnywidgetSlot
+
+    assert panel_node.kind == "leaf"
+    slot = panel_node.payload
+    assert isinstance(slot, AnywidgetSlot)
+    assert len(slot.children) == 2
     # An explicit gap groups the split sub-widgets, distinct from the host's
-    # default macro-layout spacing (see compose_appearance_leaf).  Read from
-    # the shared constant rather than restated: it is the same number the Qt
-    # dock column spaces by, which is the point of it living there.
-    assert panel_gap == APPEARANCE_DOCK_GAP_PX
+    # default macro-layout spacing.  Read from the shared constant rather than
+    # restated: it is the same number the Qt dock column spaces by, which is
+    # the point of it living there.
+    assert slot.gap == APPEARANCE_DOCK_GAP_PX
     assert center_node.kind == "stack"  # canvas+dims v-stack
 
 
@@ -718,34 +714,6 @@ def test_layout_single_preset_with_docks():
 # ---------------------------------------------------------------------------
 
 
-def _make_colormap_control(**kwargs):
-    from cellier.gui.anywidget.visuals import AnywidgetColormapCombo
-
-    defaults = {"initial_colormap": "grays"}
-    defaults.update(kwargs)
-    return AnywidgetColormapCombo(uuid4(), **defaults)
-
-
-def _make_clim_slider(**kwargs):
-    from cellier.gui.anywidget.visuals import AnywidgetClimRangeSlider
-
-    defaults = {"clim_range": (0.0, 1.0), "initial_clim": (0.0, 1.0)}
-    defaults.update(kwargs)
-    return AnywidgetClimRangeSlider(uuid4(), **defaults)
-
-
-def _make_volume_render_controls(**kwargs):
-    from cellier.gui.anywidget.visuals import AnywidgetVolumeRenderControls
-
-    defaults = {
-        "initial_render_mode": "mip",
-        "initial_threshold": 0.2,
-        "initial_attenuation": 1.0,
-    }
-    defaults.update(kwargs)
-    return AnywidgetVolumeRenderControls(uuid4(), **defaults)
-
-
 def _make_lod_bias_slider(**kwargs):
     from cellier.gui.anywidget.visuals import AnywidgetLodBiasSlider
 
@@ -776,123 +744,6 @@ def _appearance_changed_event(source_id, visual_id, field, value):
         new_value=value,
         requires_reslice=False,
     )
-
-
-def test_colormap_control_on_appearance_changed_updates_trait_without_emitting():
-    """A model-driven AppearanceChangedEvent updates color_map but does not echo."""
-    control = _make_colormap_control()
-    emitted = []
-    control.changed.connect(emitted.append)
-
-    event = _appearance_changed_event(
-        source_id=uuid4(),
-        visual_id=control._visual_id,
-        field="color_map",
-        value="viridis",
-    )
-    control._on_appearance_changed(event)
-
-    assert control.color_map == "viridis"
-    assert emitted == []
-
-
-def test_colormap_control_echo_filtered_by_source_id():
-    """An AppearanceChangedEvent from the control itself is ignored."""
-    control = _make_colormap_control()
-    original = control.color_map
-
-    event = _appearance_changed_event(
-        source_id=control._id,  # echo: same source
-        visual_id=control._visual_id,
-        field="color_map",
-        value="viridis",
-    )
-    control._on_appearance_changed(event)
-    assert control.color_map == original
-
-
-def test_colormap_control_changed_colormap_converts_to_str():
-    """A cmap.Colormap in AppearanceChangedEvent is converted to its string name."""
-    from cmap import Colormap
-
-    control = _make_colormap_control()
-    event = _appearance_changed_event(
-        source_id=uuid4(),
-        visual_id=control._visual_id,
-        field="color_map",
-        value=Colormap("viridis"),
-    )
-    control._on_appearance_changed(event)
-    assert isinstance(control.color_map, str)
-    assert "viridis" in control.color_map
-
-
-def test_colormap_control_user_change_emits_appearance_update():
-    """A user-driven color_map change emits AppearanceUpdateEvent."""
-    from cellier.events import AppearanceUpdateEvent
-
-    control = _make_colormap_control()
-    emitted = []
-    control.changed.connect(emitted.append)
-
-    control.color_map = "magma"
-
-    assert len(emitted) == 1
-    event = emitted[0]
-    assert isinstance(event, AppearanceUpdateEvent)
-    assert event.source_id == control._id
-    assert event.visual_id == control._visual_id
-    assert event.field == "color_map"
-    assert event.value == "magma"
-
-
-def test_clim_slider_user_change_emits_appearance_update_as_tuple():
-    """A user-driven clim change emits AppearanceUpdateEvent with a tuple value."""
-    from cellier.events import AppearanceUpdateEvent
-
-    slider = _make_clim_slider()
-    emitted = []
-    slider.changed.connect(emitted.append)
-
-    slider.clim = [0.1, 0.9]
-
-    assert len(emitted) == 1
-    event = emitted[0]
-    assert isinstance(event, AppearanceUpdateEvent)
-    assert event.field == "clim"
-    assert event.value == (0.1, 0.9)  # converted list -> tuple
-
-
-def test_volume_render_controls_render_mode_change_emits_appearance_update():
-    """A user-driven render_mode change emits AppearanceUpdateEvent."""
-    from cellier.events import AppearanceUpdateEvent
-
-    controls = _make_volume_render_controls()
-    emitted = []
-    controls.changed.connect(emitted.append)
-
-    controls.render_mode = "iso"
-
-    assert len(emitted) == 1
-    event = emitted[0]
-    assert isinstance(event, AppearanceUpdateEvent)
-    assert event.source_id == controls._id
-    assert event.visual_id == controls._visual_id
-    assert event.field == "render_mode"
-    assert event.value == "iso"
-
-
-def test_volume_render_controls_ignores_unrelated_appearance_field():
-    """An AppearanceChangedEvent for a field this widget doesn't own is ignored."""
-    controls = _make_volume_render_controls()
-    event = _appearance_changed_event(
-        source_id=uuid4(),
-        visual_id=controls._visual_id,
-        field="color_map",
-        value="viridis",
-    )
-    controls._on_appearance_changed(event)
-    assert controls.render_mode == "mip"
 
 
 def test_lod_bias_slider_user_change_emits_appearance_update():
@@ -992,14 +843,13 @@ def test_build_appearance_widgets_anywidget_from_visual():
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
-        AnywidgetClimRangeSlider,
-        AnywidgetColormapCombo,
+        AnywidgetImageControls,
     )
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
     viewer.controller.add_data_store(store)
-    viewer.add_image(store, appearance={"color_map": "viridis", "clim": (0.0, 1.0)})
+    viewer.add_image(store, single={"color_map": "viridis", "clim": (0.0, 1.0)})
 
     visual = viewer.scene.visuals[0]
     controls_config = InMemoryImageControlsConfig(appearance=["color_map", "clim"])
@@ -1008,49 +858,43 @@ def test_build_appearance_widgets_anywidget_from_visual():
         visual, controls_config, viewer.controller, None, backend=ANYWIDGET_BACKEND
     )
 
-    assert [w.title for w in widgets] == [
-        "Colormap",
-        "Contrast limits",
-        "Bounding box",
-    ]
+    assert [w.title for w in widgets] == ["Image", "Bounding box"]
 
     built = widgets
-    # anywidget dynamically subclasses each widget at construction time (the
-    # same mechanism AnywidgetChannelList's add_traits relies on), so compare
-    # via isinstance rather than exact type equality.
-    assert isinstance(built[0], AnywidgetColormapCombo)
-    assert isinstance(built[1], AnywidgetClimRangeSlider)
+    # anywidget dynamically subclasses each widget at construction time, so
+    # compare via isinstance rather than exact type equality.
+    assert isinstance(built[0], AnywidgetImageControls)
+    assert built[0].single["clim"] == [0.0, 1.0]
     # AABB is always wired alongside whenever the visual has one, regardless
     # of whether "aabb" was requested in the appearance field list -- this
     # mirrors ControlPanel's previous (pre-split) behaviour.
-    assert isinstance(built[2], AnywidgetAABBWidget)
+    assert isinstance(built[1], AnywidgetAABBWidget)
 
 
 def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
     """The anywidget renderer creates the split appearance widgets in the left dock."""
     import numpy as np
 
-    from cellier.convenience import Viewer, _hosts, _launch, axis_ranges_from_viewer
+    from cellier.convenience import Viewer, _hosts, _launch, axis_values_from_viewer
     from cellier.convenience.gui import build_canvas_widget
     from cellier.convenience.layout import AppearanceControls, Layout
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.events import AABBChangedEvent, AppearanceChangedEvent
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
-        AnywidgetClimRangeSlider,
-        AnywidgetColormapCombo,
+        AnywidgetImageControls,
     )
 
-    viewer = Viewer(("z", "y", "x"), gui="anywidget")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="anywidget")
     store = ImageMemoryStore(data=np.zeros((4, 4, 4), dtype=np.float32), name="t")
     viewer.controller.add_data_store(store)
     viewer.add_image(
         store,
-        appearance={"color_map": "viridis", "clim": (0.0, 1.0)},
+        single={"color_map": "viridis", "clim": (0.0, 1.0)},
         controls=InMemoryImageControlsConfig(appearance=["color_map", "clim"]),
     )
 
-    ranges = axis_ranges_from_viewer(viewer)
+    ranges = axis_values_from_viewer(viewer)
     view = build_canvas_widget(viewer, ranges, gui="anywidget")
     # The canvas view is canvas + dims only: the in-canvas controls column was
     # unreachable through the public API and is gone (section 7.2).
@@ -1063,23 +907,16 @@ def test_renderer_builds_appearance_widgets_for_configured_visual(monkeypatch):
         viewer, Layout(center=view, left_dock=AppearanceControls()), fit="none"
     )
 
-    # The renderer placed a v-stack of sub-widgets as the left leaf: colormap,
-    # clim, and AABB (always wired alongside when the visual has one).
+    # The renderer placed a v-stack of sub-widgets as the left leaf: the image
+    # control and the AABB (always wired alongside when the visual has one).
     presented = fake.presented
     _direction, leaves, _align, _min_width, _gap = presented.payload
     panel_node = leaves[0]
-    assert panel_node.kind == "stack"
-    (
-        _panel_direction,
-        panel_leaves,
-        _panel_align,
-        _panel_min_width,
-        panel_gap,
-    ) = panel_node.payload
-    assert panel_gap == APPEARANCE_DOCK_GAP_PX  # shared with the Qt dock column
-    widgets = [leaf.payload for leaf in panel_leaves]
-    assert any(isinstance(w, AnywidgetColormapCombo) for w in widgets)
-    assert any(isinstance(w, AnywidgetClimRangeSlider) for w in widgets)
+    assert panel_node.kind == "leaf"
+    slot = panel_node.payload
+    assert slot.gap == APPEARANCE_DOCK_GAP_PX  # shared with the Qt dock column
+    widgets = list(slot.children)
+    assert any(isinstance(w, AnywidgetImageControls) for w in widgets)
     assert any(isinstance(w, AnywidgetAABBWidget) for w in widgets)
 
     event_types = set()

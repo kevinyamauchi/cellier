@@ -41,19 +41,19 @@ def _():
     from cellier.convenience import (
         Layout,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         display,
     )
     from cellier.convenience.gui import build_canvas_widget
     from cellier.data.image._image_memory_store import ImageMemoryStore
-    from cellier.visuals import InMemoryImageAppearance
+    from cellier.visuals import InMemoryImageSingleAppearance
 
     return (
         ImageMemoryStore,
-        InMemoryImageAppearance,
+        InMemoryImageSingleAppearance,
         Layout,
         Viewer,
-        axis_ranges_from_viewer,
+        axis_values_from_viewer,
         binary_blobs,
         build_canvas_widget,
         display,
@@ -68,15 +68,17 @@ def _(binary_blobs, np):
 
 
 @app.cell
-def _(ImageMemoryStore, InMemoryImageAppearance, Viewer, blobs_3d):
-    viewer = Viewer(axis_labels=("z", "y", "x"), dim="2d", gui="anywidget")
+def _(ImageMemoryStore, InMemoryImageSingleAppearance, Viewer, blobs_3d):
+    from cellier.scene.dims import spatial_axes
+
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="2d", gui="anywidget")
 
     store = ImageMemoryStore(data=blobs_3d, name="blobs")
     viewer.controller.add_data_store(store)
 
     viewer.add_image(
         store,
-        appearance=InMemoryImageAppearance(
+        single=InMemoryImageSingleAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             render_mode="iso",
@@ -88,11 +90,11 @@ def _(ImageMemoryStore, InMemoryImageAppearance, Viewer, blobs_3d):
 
 
 @app.cell
-def _(axis_ranges_from_viewer, build_canvas_widget, viewer):
-    axis_ranges = axis_ranges_from_viewer(viewer)
+def _(axis_values_from_viewer, build_canvas_widget, viewer):
+    axis_values = axis_values_from_viewer(viewer)
     canvas_widget = build_canvas_widget(
         viewer,
-        axis_ranges,
+        axis_values,
         canvas_size=(520, 420),
     )
     return (canvas_widget,)

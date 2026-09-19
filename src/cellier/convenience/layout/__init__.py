@@ -19,20 +19,20 @@ Quick start::
 
 from cellier.convenience.layout._spec import (
     AppearanceControls,
-    ChannelControls,
     Grid,
     HStack,
     Layout,
+    OverlayControls,
     RenderControls,
     VStack,
 )
 
 __all__ = [
     "AppearanceControls",
-    "ChannelControls",
     "Grid",
     "HStack",
     "Layout",
+    "OverlayControls",
     "RenderControls",
     "VStack",
 ]

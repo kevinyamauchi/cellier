@@ -4,30 +4,40 @@ import uuid
 
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
-from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from cellier.visuals import (
+    MultiscaleImageAppearance,
+    MultiscaleImageSingleAppearance,
+    MultiscaleImageVisual,
+)
+from tests._v2 import level_transforms
 
 
 def test_scene_roundtrip(tmp_path):
     dims = DimsManager(
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        world_coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         selection=AxisAlignedSelection(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
+            slice_indices={0: 0, 1: 0, 2: 0},
         ),
     )
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
-        appearance=MultiscaleImageAppearance(color_map="viridis"),
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
+        appearance=MultiscaleImageAppearance(),
+        single=MultiscaleImageSingleAppearance(color_map="viridis"),
     )
     camera = PerspectiveCamera(controller=OrbitCameraController())
     canvas = Canvas(cameras={"3d": camera})

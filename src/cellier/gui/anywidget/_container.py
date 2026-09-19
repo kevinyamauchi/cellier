@@ -88,3 +88,54 @@ class AnywidgetBox(anywidget.AnyWidget):
         self.children = []
         close_aux_widgets(self)
         super().close()
+
+
+def _refs_to_json(value: list, _obj: object) -> list[str]:
+    """Serialize children as anywidget composition references."""
+    return [f"anywidget:{child.model_id}" for child in value]
+
+
+def _refs_from_json(value: object, _obj: object) -> object:
+    """Incoming state is never written by ``slot.js``; pass it through."""
+    return value
+
+
+class AnywidgetSlot(anywidget.AnyWidget):
+    """A column whose children can be replaced after it is displayed.
+
+    ``AnywidgetBox`` mounts children through the Jupyter widget manager's
+    ``create_view``, renders once, and does not exist on marimo.  This mounts
+    them through anywidget's composition API (``host.getWidget``), which both
+    Jupyter and marimo implement, and remounts whenever ``children`` changes.
+    That is what lets a dock follow the viewer on either host.
+
+    Children must be anywidgets, and must not be ``AnywidgetBox`` instances:
+    a box nested in a slot on marimo would fall back to ``create_view``.
+
+    Parameters
+    ----------
+    children : list of anywidget.AnyWidget
+        The widgets to show, top to bottom.  Assign a new list to replace them;
+        the slot does not close the widgets it stops showing.
+    gap : int
+        Spacing between children in pixels.
+    title : str
+        A heading drawn above the children.  Empty draws nothing.
+    """
+
+    _esm = _STATIC / "slot.js"
+    _css = _STATIC / "container.css"
+
+    children = traitlets.List(traitlets.Instance(anywidget.AnyWidget)).tag(
+        sync=True, to_json=_refs_to_json, from_json=_refs_from_json
+    )
+    gap = traitlets.Int(4).tag(sync=True)
+    title = traitlets.Unicode("").tag(sync=True)
+
+    def close(self) -> None:
+        """Close this slot and the widgets it currently shows."""
+        for child in list(self.children):
+            child.close()
+        self.children = []
+        close_aux_widgets(self)
+        super().close()

@@ -10,7 +10,9 @@ import numpy as np
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.visuals import InMemoryImageSingleAppearance
 from cellier.visuals._image_memory import ImageVisual, InMemoryImageAppearance
+from tests._v2 import Context
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -22,7 +24,7 @@ def _make_store(shape=(10, 20, 30)) -> ImageMemoryStore:
 
 
 def _make_appearance() -> InMemoryImageAppearance:
-    return InMemoryImageAppearance(color_map="viridis", clim=(0.0, 1.0))
+    return InMemoryImageAppearance()
 
 
 def _make_visual_model(store: ImageMemoryStore) -> ImageVisual:
@@ -39,7 +41,6 @@ def _make_dims_state_2d() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},
         ),
     )
 
@@ -50,7 +51,6 @@ def _make_dims_state_3d() -> DimsState:
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
 
@@ -66,7 +66,11 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_2d()
     requests = visual.build_slice_request_2d(
@@ -76,6 +80,7 @@ def test_build_slice_request_2d_returns_one_request(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
     assert len(requests) == 1
@@ -98,7 +103,11 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+    ctx = Context(3, displayed_axes=(0, 1, 2))
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
@@ -107,6 +116,7 @@ def test_build_slice_request_3d_returns_one_request(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
     assert len(requests) == 1
@@ -140,13 +150,16 @@ def test_5d_dims_state_2d_scene(mock_gfx):
 
     store = _make_store(shape=(2, 3, 10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(5, displayed_axes=(3, 4), slice_indices={0: 0.0, 1: 1.0, 2: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("t", "c", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(3, 4),
-            slice_indices={0: 0, 1: 1, 2: 5},
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -156,6 +169,7 @@ def test_5d_dims_state_2d_scene(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     assert req.axis_selections == (0, 1, 5, (0, 20), (0, 30))
@@ -165,18 +179,20 @@ def test_5d_dims_state_2d_scene(mock_gfx):
 def test_scaled_transform_halves_slice_index_2d(mock_gfx):
     """With scale=(2,2,2), world z=10 should map to data z=5."""
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
+    ctx = Context(3, (2.0, 2.0, 2.0), displayed_axes=(1, 2), slice_indices={0: 10.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 10},  # world z=10
+            # world z=10
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -186,6 +202,7 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # world z=10, scale=2 → data z=5
@@ -198,18 +215,29 @@ def test_scaled_transform_halves_slice_index_2d(mock_gfx):
 def test_non_spatial_axis_not_transformed_3d(mock_gfx):
     """4D store, 3D scene: non-spatial axis (t) is NOT transformed."""
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
-    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"}, transform=t)
+    # The transform is full rank now: ``t`` is scale 1, which is what
+    # "outside the 3D transform" used to mean when a 3-D transform was
+    # expanded to 4 by prepending identity axes.
+    ctx = Context(
+        4,
+        (1.0, 2.0, 2.0, 2.0),
+        displayed_axes=(1, 2, 3),
+        slice_indices={0: 6.0},
+        labels=("t", "z", "y", "x"),
+    )
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("t", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2, 3),
-            slice_indices={0: 6},  # t=6, non-spatial
+            # t=6, non-spatial
         ),
     )
     requests = visual.build_slice_request(
@@ -218,6 +246,7 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # t is non-spatial (outside 3D transform) → stays at 6
@@ -231,18 +260,26 @@ def test_non_spatial_axis_not_transformed_3d(mock_gfx):
 def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
     """4D store, 2D scene: spatial z-axis IS transformed by scale."""
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(8, 10, 20, 30))
     model = _make_visual_model(store)
-    t = AffineTransform.from_scale((2.0, 2.0, 2.0))
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
+    ctx = Context(
+        4,
+        (1.0, 2.0, 2.0, 2.0),
+        displayed_axes=(2, 3),
+        slice_indices={0: 3.0, 1: 8.0},
+        labels=("t", "z", "y", "x"),
+    )
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("t", "z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(2, 3),
-            slice_indices={0: 3, 1: 8},  # t=3 (non-spatial), z=8 (spatial)
+            # t=3 (non-spatial), z=8 (spatial)
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -252,6 +289,7 @@ def test_scaled_transform_on_spatial_slice_in_4d(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     req = requests[0]
     # t=3 non-spatial → stays at 3
@@ -269,13 +307,16 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 7.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 7},
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -285,27 +326,30 @@ def test_identity_transform_preserves_slice_index(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert requests[0].axis_selections[0] == 7
 
 
 @patch("cellier.render.visuals._image_memory.gfx")
-def test_slice_index_clamped_to_store_bounds(mock_gfx):
-    """Transformed slice index should be clamped to valid range."""
+def test_slice_index_outside_store_bounds_draws_nothing(mock_gfx):
+    """A transformed slice index outside the data plans nothing (design 3.2)."""
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    # scale=0.5 means world z=5 → data z=10, which is out of bounds (max 9)
-    t = AffineTransform.from_scale((0.5, 0.5, 0.5))
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"}, transform=t)
+    # scale=0.5 means world z=5 -> data z=10, which is out of bounds (max 9)
+    ctx = Context(3, (0.5, 0.5, 0.5), displayed_axes=(1, 2), slice_indices={0: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},  # world z=5, data z=10 → clamped to 9
+            # world z=5, data z=10 -> past the last plane
         ),
     )
     requests = visual.build_slice_request_2d(
@@ -315,8 +359,10 @@ def test_slice_index_clamped_to_store_bounds(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
-    assert requests[0].axis_selections[0] == 9  # clamped
+    assert requests == []
+    assert visual._slice_empty is True
 
 
 # ---------------------------------------------------------------------------
@@ -409,12 +455,14 @@ def test_on_data_ready_noop_on_empty_batch(mock_gfx):
 def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
     """Node matrix is set on first build_slice_request, not construction."""
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store()
     model = _make_visual_model(store)
-    t = AffineTransform.from_scale((4.0, 2.0, 3.0))
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"}, transform=t)
+    ctx = Context(3, (4.0, 2.0, 3.0), displayed_axes=(0, 1, 2))
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     # Before any slice request, _last_displayed_axes is None.
     assert visual._last_displayed_axes is None
@@ -424,7 +472,6 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
         ),
     )
     visual.build_slice_request(
@@ -433,11 +480,12 @@ def test_node_matrix_set_lazily_on_slice_request(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert visual._last_displayed_axes == (0, 1, 2)
-    # select_axes((0,1,2)) from a 3D transform; _pygfx_matrix reverses
-    # data order (z, y, x) to pygfx order (x, y, z).
-    # scale (4, 2, 3) in data order → (3, 2, 4) in pygfx order.
+    # visual -> data -> world -> rendered composes to the same diagonal;
+    # _pygfx_matrix reverses cellier order (z, y, x) to pygfx (x, y, z),
+    # so scale (4, 2, 3) in data order becomes (3, 2, 4).
     expected = np.diag([3.0, 2.0, 4.0, 1.0]).astype(np.float32)
     np.testing.assert_array_equal(visual.node_3d.local.matrix, expected)
 
@@ -447,18 +495,20 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     """Transform change updates node matrix if displayed axes are known."""
     from cellier.events._events import TransformChangedEvent
     from cellier.render.visuals import GFXImageMemoryVisual
-    from cellier.transform import AffineTransform
 
     store = _make_store()
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"2d"})
+    ctx = Context(3, displayed_axes=(1, 2), slice_indices={0: 5.0})
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"2d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     # First, trigger a slice to establish displayed axes.
     dims = DimsState(
         axis_labels=("z", "y", "x"),
         selection=AxisAlignedSelectionState(
             displayed_axes=(1, 2),
-            slice_indices={0: 5},
         ),
     )
     visual.build_slice_request_2d(
@@ -468,10 +518,20 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
         view_min_world=None,
         view_max_world=None,
         dims_state=dims,
+        selection=ctx.selection,
     )
 
-    # Now change the transform.
-    new_t = AffineTransform.from_scale((3.0, 5.0, 7.0))
+    # Now change the transform, against the same coordinate systems: a v2
+    # transform names its endpoints, so a replacement has to keep them.
+    new_ctx = Context(
+        3,
+        (3.0, 5.0, 7.0),
+        displayed_axes=(1, 2),
+        slice_indices={0: 5.0},
+        data=ctx.data,
+        world=ctx.world,
+    )
+    new_t = new_ctx.transform
     event = TransformChangedEvent(
         source_id=uuid4(),
         scene_id=uuid4(),
@@ -481,8 +541,8 @@ def test_on_transform_changed_updates_node_after_initial_slice(mock_gfx):
     visual.on_transform_changed(event)
 
     assert visual._transform is new_t
-    # 2D node receives select_axes((1, 2)) -> diag(5, 7) in data order (y, x)
-    # -> _pygfx_matrix reverses to pygfx order (x, y) -> diag(7, 5).
+    # The 2D node retains data axes (1, 2) -> diag(5, 7) in cellier order
+    # (y, x), which _pygfx_matrix reverses to pygfx (x, y) -> diag(7, 5).
     expected_2d = np.diag([7.0, 5.0, 1.0, 1.0]).astype(np.float32)
     np.testing.assert_array_equal(visual.node_2d.local.matrix, expected_2d)
 
@@ -496,7 +556,8 @@ def _make_iso_model(store, render_mode="iso", iso_threshold=0.5):
     return ImageVisual(
         name="test",
         data_store_id=str(store.id),
-        appearance=InMemoryImageAppearance(
+        appearance=InMemoryImageAppearance(),
+        single=InMemoryImageSingleAppearance(
             color_map="viridis",
             clim=(0.0, 1.0),
             render_mode=render_mode,
@@ -507,7 +568,9 @@ def _make_iso_model(store, render_mode="iso", iso_threshold=0.5):
 
 def test_appearance_render_mode_defaults():
     """Default render_mode is mip; iso_threshold defaults to 0.5."""
-    appearance = InMemoryImageAppearance(color_map="viridis")
+    from cellier.visuals import InMemoryImageSingleAppearance
+
+    appearance = InMemoryImageSingleAppearance(color_map="viridis")
     assert appearance.render_mode == "mip"
     assert appearance.iso_threshold == 0.5
 
@@ -550,27 +613,27 @@ def test_3d_material_minip():
     assert isinstance(visual._inner_node_3d.material, gfx.VolumeMinipMaterial)
 
 
-def test_on_appearance_changed_render_mode_swaps_material():
+def test_single_render_mode_change_swaps_material():
     """Changing render_mode swaps the 3D material and preserves settings."""
     import pygfx as gfx
 
-    from cellier.events._events import AppearanceChangedEvent
+    from cellier.events._events import SingleAppearanceChangedEvent
     from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(4, 5, 6))
     model = _make_visual_model(store)  # defaults to mip
+    model.single.opacity = 0.5
     visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
-    visual._inner_node_3d.material.opacity = 0.5
 
     assert isinstance(visual._inner_node_3d.material, gfx.VolumeMipMaterial)
 
-    visual.on_appearance_changed(
-        AppearanceChangedEvent(
+    model.single.render_mode = "iso"
+    visual.on_single_appearance_changed(
+        SingleAppearanceChangedEvent(
             source_id=uuid4(),
             visual_id=model.id,
             field_name="render_mode",
             new_value="iso",
-            requires_reslice=False,
         )
     )
 
@@ -581,21 +644,21 @@ def test_on_appearance_changed_render_mode_swaps_material():
     assert tuple(new_material.clim) == (0.0, 1.0)
 
 
-def test_on_appearance_changed_iso_threshold_updates_material():
-    from cellier.events._events import AppearanceChangedEvent
+def test_single_iso_threshold_change_updates_material():
+    from cellier.events._events import SingleAppearanceChangedEvent
     from cellier.render.visuals import GFXImageMemoryVisual
 
     store = _make_store(shape=(4, 5, 6))
     model = _make_iso_model(store, render_mode="iso", iso_threshold=0.5)
     visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
 
-    visual.on_appearance_changed(
-        AppearanceChangedEvent(
+    model.single.iso_threshold = 0.8
+    visual.on_single_appearance_changed(
+        SingleAppearanceChangedEvent(
             source_id=uuid4(),
             visual_id=model.id,
             field_name="iso_threshold",
             new_value=0.8,
-            requires_reslice=False,
         )
     )
 
@@ -609,7 +672,11 @@ def test_identity_transform_is_noop_3d(mock_gfx):
 
     store = _make_store(shape=(10, 20, 30))
     model = _make_visual_model(store)
-    visual = GFXImageMemoryVisual(model, store, render_modes={"3d"})
+    ctx = Context(3, displayed_axes=(0, 1, 2))
+    visual = GFXImageMemoryVisual(
+        model, store, render_modes={"3d"}, transform=ctx.transform
+    )
+    ctx.place(visual)
 
     dims = _make_dims_state_3d()
     requests = visual.build_slice_request(
@@ -618,6 +685,7 @@ def test_identity_transform_is_noop_3d(mock_gfx):
         fov_y_rad=1.0,
         screen_height_px=600.0,
         dims_state=dims,
+        selection=ctx.selection,
     )
     assert len(requests) == 1
     assert requests[0].axis_selections == ((0, 10), (0, 20), (0, 30))

@@ -10,13 +10,14 @@ pytest.importorskip("superqt")
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.controller import CellierController
 from cellier.events import DimsChangedEvent
+from cellier.gui._axis_values import ContinuousAxisValues
 from cellier.gui.qt._scene import QtDimsControl
-from cellier.scene.dims import CoordinateSystem
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 
 
 def _make_controller_with_scene(*, dim="2d"):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim=dim, coordinate_system=cs, name="main")
     return controller, scene
 
@@ -25,7 +26,11 @@ def _make_control(scene, qtbot, *, with_toggle=True) -> QtDimsControl:
     selection = scene.dims.selection
     control = QtDimsControl(
         scene_id=scene.id,
-        axis_ranges={0: (0, 9), 1: (0, 99), 2: (0, 99)},
+        axis_values={
+            0: ContinuousAxisValues(min=0, max=9),
+            1: ContinuousAxisValues(min=0, max=99),
+            2: ContinuousAxisValues(min=0, max=99),
+        },
         axis_labels={0: "z", 1: "y", 2: "x"},
         initial_slice_indices=dict(selection.slice_indices),
         initial_displayed_axes=selection.displayed_axes,
@@ -36,16 +41,15 @@ def _make_control(scene, qtbot, *, with_toggle=True) -> QtDimsControl:
     return control
 
 
-def _dims_changed_event(source_id, scene_id, *, displayed, slices, stacked=()):
-    selection = AxisAlignedSelectionState(
-        displayed_axes=displayed, slice_indices=slices, stacked_axes=stacked
-    )
+def _dims_changed_event(source_id, scene_id, *, displayed, slices):
+    selection = AxisAlignedSelectionState(displayed_axes=displayed)
     state = DimsState(axis_labels=("z", "y", "x"), selection=selection)
     return DimsChangedEvent(
         source_id=source_id,
         scene_id=scene_id,
         dims_state=state,
         displayed_axes_changed=False,
+        slice_indices=dict(slices),
     )
 
 

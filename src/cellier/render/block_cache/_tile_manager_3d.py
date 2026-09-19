@@ -75,11 +75,13 @@ class BlockKey3D:
         brick coordinate along ``displayed_axes[0]``, etc.  For the
         current 3D case with ``displayed_axes=(0, 1, 2)`` these are
         the grid positions along data axes z, y, x respectively.
-    slice_coord : tuple of (axis_index, world_value) pairs
-        Sorted tuple encoding the non-displayed axis positions at the
-        time this brick was requested.  Bricks from different slice
+    slice_coord : tuple of (data axis, selection) pairs
+        Sorted tuple encoding the level-0 selection fetched on each
+        collapsed axis when this brick was requested: an integer plane, or
+        a ``(start, stop)`` window for a slab.  Bricks from different slice
         positions will have distinct keys, allowing the cache to hold
-        bricks from multiple slices simultaneously during a transition.
+        bricks from multiple slices simultaneously during a transition,
+        while slider positions that fetch the same plane share one.
         Empty for purely 3-D data where all axes are displayed.
     """
 
@@ -87,7 +89,7 @@ class BlockKey3D:
     g0: int
     g1: int
     g2: int
-    slice_coord: tuple[tuple[int, int], ...] = ()
+    slice_coord: tuple[tuple[int, int | tuple[int, int]], ...] = ()
 
 
 @dataclass
@@ -153,9 +155,9 @@ class TileManager3D:
         self._reserve: dict[BlockKey3D, TileSlot] = {}
 
         # slot index -> brick  (hot or reserve; None = free or in-flight)
-        self.slot_index: dict[int, BlockKey3D | None] = {
-            i: None for i in range(cache_parameters.n_slots)
-        }
+        self.slot_index: dict[int, BlockKey3D | None] = dict.fromkeys(
+            range(cache_parameters.n_slots)
+        )
         # Slot 0 is reserved (samples as black / out-of-bounds).
         self.slot_index[0] = BlockKey3D(level=0, g0=0, g1=0, g2=0)
 

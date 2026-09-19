@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import ConfigDict, field_serializer, field_validator, model_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._base_data_store import BaseDataStore, geometry_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -82,9 +82,31 @@ class MeshMemoryStore(BaseDataStore):
         about the array that only the caller knows.
     name : str
         Human-readable label.
+    id : UUID4
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems : list[DataCoordinateSystem]
+        The store's coordinate system, as a one-entry list built by the
+        caller, with one axis per ``positions`` column.  Mark an axis
+        ``sampling="discrete"`` when its column holds sample indices, such
+        as frame numbers.  Empty by default, in which case the store takes
+        the scene's world axes when it is added to a scene.
+    level_scales : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_translations : list[tuple[float, ...]]
+        Unused by this single-resolution store; left empty.
+    level_transforms : list[AffineTransform]
+        The level-0 identity, installed from ``data_coordinate_systems``.
+        Not normally passed.
     """
 
     store_type: Literal["mesh_memory"] = "mesh_memory"
+    # Reassigning these announces a change on ``data_changed``
+    # (plans/store_change_events.md): positions move the extent.
+    _EXTENT_FIELDS: ClassVar[frozenset[str]] = frozenset({"positions"})
+    _CONTENTS_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"indices", "colors", "colors_layout"}
+    )
     DATASET_INFO_LABEL: ClassVar[str] = "in-memory mesh"
     name: str = "mesh_memory_store"
     positions: np.ndarray
@@ -190,6 +212,17 @@ class MeshMemoryStore(BaseDataStore):
         return self.positions.shape[0]
 
     @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...] | None:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The bounding box of the vertices, with no padding -- a vertex is a point,
+        not a cell, so there is no half-voxel to add.  ``None`` when the
+        store is empty.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return self._cached_axis_extents(lambda: geometry_axis_extents(self.positions))
+
+    @property
     def n_faces(self) -> int:
         return self.indices.shape[0]
 
@@ -266,18 +299,23 @@ class MeshMemoryStore(BaseDataStore):
         indices = self.indices  # (n_faces, 3)
         colors = self.colors
         n_vertices = positions.shape[0]
-        displayed = list(request.displayed_axes)
+        # Ascending: the uploaded vertex buffer's axis order is the data's,
+        # and a display permutation lives in the node matrix (design 3.14).
+        # ``retained_axes`` is read off the visual's ``data -> world``
+        # transform and is the right answer whenever the controller has placed
+        # the visual.  ``displayed_axes`` indexes the **world**, so using it
+        # here raises on a store of lower rank than the world and silently
+        # uploads the wrong columns on a transform that permutes its axes; it
+        # remains the fallback for a headlessly constructed visual, which has
+        # no transform to read.
+        displayed = list(request.retained_axes)
         n_display = len(displayed)
 
         # ── Phase 1: build slab mask ─────────────────────────────────
-        face_mask = np.ones(self.n_faces, dtype=bool)
-
-        for axis, idx in request.slice_indices.items():
-            lo = float(idx) - request.thickness
-            hi = float(idx) + request.thickness
-            # Include face only if ALL vertices are in the slab on this axis.
-            vertex_in = (positions[:, axis] >= lo) & (positions[:, axis] <= hi)
-            face_mask &= vertex_in[indices].all(axis=1)
+        # The region is the filter (design 3.12).  A face survives when all
+        # three of its vertices do, which is the rule the per-axis loop
+        # applied one axis at a time.
+        face_mask = request.region.contains(positions)[indices].all(axis=1)
 
         # ── Checkpoint A ─────────────────────────────────────────────
         await asyncio.sleep(0)

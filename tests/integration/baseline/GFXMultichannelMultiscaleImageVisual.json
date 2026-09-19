@@ -1,0 +1,634 @@
+{
+  "cases": {
+    "pyr=uniform_2k|t=identity4|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "uniform_2k",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "pyr=uniform_2k|t=identity4|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "uniform_2k",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "pyr=uniform_2k|t=tzyx|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "uniform_2k",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    },
+    "pyr=uniform_2k|t=tzyx|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "uniform_2k",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    },
+    "pyr=z_not_ds|t=identity4|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "z_not_ds",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "pyr=z_not_ds|t=identity4|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "z_not_ds",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "identity4"
+    },
+    "pyr=z_not_ds|t=tzyx|dims=3d_all_but_time": {
+      "dims": "3d_all_but_time",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "z_not_ds",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    },
+    "pyr=z_not_ds|t=tzyx|dims=3d_time_sliced_nonzero": {
+      "dims": "3d_time_sliced_nonzero",
+      "geometry_indices": null,
+      "node_local_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "notes": [
+        "LOD pinned via force_level swept over every pyramid level"
+      ],
+      "pyramid": "z_not_ds",
+      "scale_indices": [
+        0,
+        1
+      ],
+      "selections": [
+        [
+          0,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ],
+            [
+              -3,
+              35
+            ]
+          ]
+        ]
+      ],
+      "status": "ok",
+      "transform": "tzyx"
+    }
+  },
+  "drivable": {
+    "node_matrix": true,
+    "slice_request": true
+  },
+  "family": "GFXMultichannelMultiscaleImageVisual",
+  "kind": "multiscale"
+}

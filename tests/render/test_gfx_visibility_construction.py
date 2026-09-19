@@ -12,7 +12,8 @@ import uuid
 import numpy as np
 import pytest
 
-from cellier.transform import AffineTransform
+from cellier.visuals import InMemoryImageSingleAppearance
+from tests._v2 import level_transforms
 
 # ── GFXImageMemoryVisual ──────────────────────────────────────────────────────
 
@@ -30,7 +31,8 @@ def _image_model(store, visible: bool):
     return ImageVisual(
         name="img",
         data_store_id=str(store.id),
-        appearance=InMemoryImageAppearance(color_map="grays", visible=visible),
+        appearance=InMemoryImageAppearance(visible=visible),
+        single=InMemoryImageSingleAppearance(color_map="grays"),
     )
 
 
@@ -149,12 +151,10 @@ def _multiscale_label_model(visible: bool):
     return MultiscaleLabelVisual(
         name="ms_lbl",
         data_store_id=str(uuid.uuid4()),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=MultiscaleLabelsAppearance(visible=visible),
     )
 

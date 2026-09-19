@@ -13,11 +13,6 @@ $$ endif
 // t_lut             -- texture_2d<f32>, float32 LUT
 // u_lut_params      -- LutParams uniform (auto-generated struct)
 // u_block_scales    -- BlockScales uniform (auto-generated struct)
-// t_paint_cache     -- texture_2d<f32> stripes-of-tiles paint cache
-//                      rows [s*bs, (s+1)*bs) belong to slot s; channels
-//                      are .r=value, .g=alpha (0 = voxel unpainted).
-// t_paint_lut       -- texture_2d<f32>, .r=slot_index, .g=alpha
-//                      (g=0 = no slot allocated for this tile).
 
 // NOTE: Do NOT define struct LutParams or struct BlockScales here.
 // pygfx auto-generates them from the numpy dtype via structname=.
@@ -40,6 +35,8 @@ fn get_tile_scale(level: i32) -> vec2<f32> {
         default: { return vec2<f32>(0.0, 0.0); }
     }
 }
+
+{$ include 'cellier.tile_rule.wgsl' $}
 
 fn sample_im_lut(texcoord: vec2<f32>) -> vec4<f32> {
     let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
@@ -70,46 +67,22 @@ fn sample_im_lut(texcoord: vec2<f32>) -> vec4<f32> {
     let tile_origin = vec2<f32>(lutv.x, lutv.y) * padded_size;
 
     // LOD scale correction: remap within-tile position for coarser levels.
+    // The tile corner comes from the LUT cell (tile_corner_from_cell), the same
+    // rule that wrote the LUT; only the offset inside the tile uses the float
+    // scale.  Clamp to the padded tile, less half a texel for linear filtering,
+    // so a sample just outside its tile repeats the edge texel rather than
+    // blending into the neighbouring atlas slot.
     let sj = get_tile_scale(level);
-    let scaled_pos = pos * sj;
-    let within_tile = scaled_pos - floor(scaled_pos / block_size) * block_size;
+    let corner_k = tile_corner_from_cell(tile_idx, level);
+    let within_tile = clamp(pos * sj - corner_k,
+                            vec2<f32>(0.5 - overlap),
+                            block_size - vec2<f32>(0.5) + vec2<f32>(overlap));
 
     // Final cache sample coordinate (normalised).
     let cache_pos   = tile_origin + within_tile + vec2<f32>(overlap);
     let cache_coord = cache_pos / cache_size;
 
     return textureSample(t_cache, s_cache, cache_coord);
-}
-
-
-fn sample_paint_lut(texcoord: vec2<f32>) -> vec4<f32> {
-    let block_size = vec2<f32>(u_lut_params.block_size_x, u_lut_params.block_size_y);
-    let vol_size   = vec2<f32>(u_lut_params.vol_size_x, u_lut_params.vol_size_y);
-    let lut_size   = vec2<i32>(i32(u_lut_params.lut_size_x), i32(u_lut_params.lut_size_y));
-
-    // Position in level-0 voxel coordinates (matches sample_im_lut).
-    let pos = clamp(texcoord * vol_size, vec2<f32>(0.0), vol_size - vec2<f32>(0.5));
-
-    // Tile grid index at the finest level — paint is always level 0.
-    let tile_f = floor(pos / block_size);
-    let tile_idx = clamp(vec2<i32>(tile_f), vec2<i32>(0), lut_size - vec2<i32>(1));
-
-    // Per-tile fast path: skip the cache lookup entirely if no slot.
-    let lutv = textureLoad(t_paint_lut, tile_idx, 0);
-    if (lutv.y < 0.5) {
-        return vec4<f32>(0.0);
-    }
-
-    let slot = i32(lutv.x);
-    let bs = i32(u_lut_params.block_size_x);
-    let within = vec2<i32>(pos - tile_f * block_size);
-
-    // Stripes layout: row index = slot * bs + within.y.
-    let coord = vec2<i32>(within.x, slot * bs + within.y);
-    let v = textureLoad(t_paint_cache, coord, 0);
-
-    // Per-voxel alpha lives in the cache itself: v.r = value, v.g = alpha.
-    return vec4<f32>(v.r, 0.0, 0.0, v.g);
 }
 
 
@@ -145,13 +118,8 @@ fn vs_main(in: VertexInput) -> Varyings {
 @fragment
 fn fs_main(varyings: Varyings) -> FragmentOutput {
     // Sample through the LUT indirection.
-    let base  = sample_im_lut(varyings.texcoord);
-    let paint = sample_paint_lut(varyings.texcoord);
-
-    // Per-voxel paint alpha overrides base.  alpha == 1 ⇒ paint wins;
-    // alpha == 0 ⇒ base wins; intermediate alphas blend (linearly).
-    let raw_value = mix(base.r, paint.r, paint.a);
-    let raw = vec4<f32>(raw_value, 0.0, 0.0, 1.0);
+    let base = sample_im_lut(varyings.texcoord);
+    let raw = vec4<f32>(base.r, 0.0, 0.0, 1.0);
 
     // Apply clim + colormap (standard pygfx machinery).
     let color = sampled_value_to_color(raw);

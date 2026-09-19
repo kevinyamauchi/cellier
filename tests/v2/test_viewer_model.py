@@ -3,23 +3,26 @@
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
 from cellier.scene import Canvas
 from cellier.scene.cameras import OrbitCameraController, PerspectiveCamera
-from cellier.scene.dims import AxisAlignedSelection, CoordinateSystem, DimsManager
+from cellier.scene.dims import (
+    AxisAlignedSelection,
+    DimsManager,
+    spatial_axes,
+    world_coordinate_system,
+)
 from cellier.scene.scene import Scene
-from cellier.transform import AffineTransform
 from cellier.viewer_model import DataManager, ViewerModel
 from cellier.visuals import MultiscaleImageAppearance, MultiscaleImageVisual
+from tests._v2 import level_transforms, pyramid_levels
 
 
 def _build_viewer(small_zarr_store):
     store = MultiscaleZarrDataStore(
         zarr_path=str(small_zarr_store),
         scale_names=["s0", "s1"],
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         name="test_volume",
     )
     data = DataManager(stores={store.id: store})
@@ -34,21 +37,19 @@ def _build_viewer(small_zarr_store):
     visual = MultiscaleImageVisual(
         name="volume",
         data_store_id=str(store.id),
-        level_transforms=[
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        level_transforms=level_transforms(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
         appearance=appearance,
     )
 
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     dims = DimsManager(
-        coordinate_system=cs,
+        world_coordinate_system=cs,
         selection=AxisAlignedSelection(
             displayed_axes=(0, 1, 2),
-            slice_indices={},
+            slice_indices={0: 0, 1: 0, 2: 0},
         ),
     )
     camera = PerspectiveCamera(
@@ -78,7 +79,7 @@ def test_viewer_model_roundtrip(tmp_path, small_zarr_store):
 
 
 def test_viewer_model_worked_example(tmp_path, small_zarr_store):
-    viewer, store, scene, canvas = _build_viewer(small_zarr_store)
+    viewer, _store, _scene, _canvas = _build_viewer(small_zarr_store)
 
     viewer.to_file(tmp_path / "session.json")
     deserialized = ViewerModel.from_file(tmp_path / "session.json")

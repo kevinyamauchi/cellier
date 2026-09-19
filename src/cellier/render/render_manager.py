@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 from uuid import uuid4
 
 import numpy as np
@@ -29,6 +29,7 @@ from cellier.render.slice_coordinator import SliceCoordinator
 from cellier.slicer import AsyncSlicer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     import pygfx as gfx
@@ -43,7 +44,9 @@ if TYPE_CHECKING:
     from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
     from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
     from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
+    from cellier.render.visuals._scene_overlay import GFXSceneOverlay
     from cellier.scene._background import BackgroundAppearance
+    from cellier.transform import RegionSelection
 
     _GFXVisual = (
         GFXMultiscaleImageVisual
@@ -62,18 +65,38 @@ if TYPE_CHECKING:
 class _ImageDisplayedDataCoord(NamedTuple):
     """Render-layer intermediate for image/volume pick — displayed axes only.
 
-    ``_extract_pick_details`` can only decode the rendered axes; the
-    controller promotes this to a full-N-dim ``ImagePickInfo`` in
-    ``_on_raw_pointer_event`` by filling non-displayed axes from dims state.
+    ``_extract_pick_details`` can only decode the rendered axes from the pick
+    payload; the visual supplies the rest from what it last drew, and the
+    controller joins the two into a full-rank ``ImagePickInfo`` in
+    ``_on_raw_pointer_event``.
 
     Parameters
     ----------
     displayed_data_coord : tuple[float, ...]
         Level-0 data-array position on the displayed axes only (``floor`` gives
         the index).  Length 2 for a 2-D canvas, 3 for a 3-D canvas.
+    collapsed_data_indices : tuple[tuple[int, int], ...] or None
+        ``(data axis, level-0 voxel index)`` for every axis the visual
+        collapsed, taken from the plan it last drew.  ``None`` when the visual
+        cannot say -- it has never been resliced, or it is a headlessly
+        constructed one with no region.
+
+        Pairs rather than a mapping so the tuple stays comparable and
+        hashable like every other pick payload.  These are the planes actually
+        on screen, which is not the same as the planes the current dims state
+        implies: a slider moved since the last reslice changes the second and
+        not the first, and a pick is a question about the first.
+    channel_index : int or None
+        The channel of the slot whose node was hit, or ``None`` when the
+        visual has no channel slots or the node is not one of them.
+    drawn_channels : tuple[int, ...]
+        The channel indices the visual's last plan draws, ascending.
     """
 
     displayed_data_coord: tuple[float, ...]
+    collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
+    channel_index: int | None = None
+    drawn_channels: tuple[int, ...] = ()
 
 
 class _LabelsDisplayedDataCoord(NamedTuple):
@@ -84,6 +107,7 @@ class _LabelsDisplayedDataCoord(NamedTuple):
     """
 
     displayed_data_coord: tuple[float, ...]
+    collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
 
 
 #: Render modes that project along the ray instead of finding a surface.
@@ -120,6 +144,15 @@ class VisualFlags(NamedTuple):
 _RawPickDetails = (
     "_ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None"
 )
+
+
+def _slice_check_extents(data_store: Any) -> Any:
+    """The extents the out-of-domain slice check uses for *data_store*.
+
+    Gridded stores only: a geometry store's vertices are filtered by the
+    slab itself, so it reports ``None`` ("not known") and is never skipped.
+    """
+    return data_store.axis_extents if hasattr(data_store, "level_shapes") else None
 
 
 class RenderManager:
@@ -928,9 +961,37 @@ class RenderManager:
             Current displayed axes from the scene's dims selection.  Passed to
             ``SceneManager.add_visual`` to select the initial node.
         """
-        self._scenes[scene_id].add_visual(visual, displayed_axes)
+        # Extents are passed only for **gridded** stores, and that scoping is
+        # deliberate.  The out-of-domain check exists to replace *clamping*,
+        # and clamping only happens where a world position becomes a scalar
+        # index into a grid (``round_world_to_voxel``).  A geometry store
+        # selects by proximity and already reports ``is_empty`` when nothing
+        # is near, so it never pins a stale plane and needs no short-circuit;
+        # skipping it early would only suppress the per-visual bookkeeping its
+        # planner does on the way.
+        self._scenes[scene_id].add_visual(
+            visual,
+            displayed_axes,
+            axis_extents=_slice_check_extents(data_store),
+        )
         self._visual_to_scene[visual.visual_model_id] = scene_id
         self._data_stores[visual.visual_model_id] = data_store
+
+    def refresh_visual_axis_extents(self, visual_id: UUID) -> None:
+        """Re-read a visual's store extent after the store's extent changed.
+
+        The scene manager keeps each visual's extent for the out-of-domain
+        check in slice planning, copied when the visual was added; an
+        ``"extent"`` store change makes that copy stale.  An unknown visual
+        is ignored.
+        """
+        scene_id = self._visual_to_scene.get(visual_id)
+        data_store = self._data_stores.get(visual_id)
+        if scene_id is None or data_store is None:
+            return
+        self._scenes[scene_id].set_axis_extents(
+            visual_id, _slice_check_extents(data_store)
+        )
 
     def add_canvas_overlay(
         self,
@@ -952,6 +1013,64 @@ class RenderManager:
             If *canvas_id* is not registered.
         """
         self._canvases[canvas_id].add_overlay(gfx_overlay)
+
+    def remove_canvas_overlay(
+        self,
+        canvas_id: UUID,
+        gfx_overlay: GFXCanvasOverlay,
+    ) -> None:
+        """Detach a GFX overlay from *canvas_id*.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of the canvas the overlay is attached to.  An unknown canvas is
+            ignored -- it has already been torn down.
+        gfx_overlay : GFXCanvasOverlay
+            The render-layer overlay to detach.
+        """
+        canvas = self._canvases.get(canvas_id)
+        if canvas is not None:
+            canvas.remove_overlay(gfx_overlay)
+
+    def add_scene_overlay(
+        self,
+        scene_id: UUID,
+        overlay_id: UUID,
+        gfx_overlay: GFXSceneOverlay,
+    ) -> None:
+        """Attach a pre-built GFX scene overlay to *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene that should receive the overlay.
+        overlay_id : UUID
+            ID of the overlay's model.
+        gfx_overlay : GFXSceneOverlay
+            The fully-constructed render-layer overlay.
+
+        Raises
+        ------
+        KeyError
+            If *scene_id* is not registered.
+        """
+        self._scenes[scene_id].add_overlay(overlay_id, gfx_overlay)
+
+    def remove_scene_overlay(self, scene_id: UUID, overlay_id: UUID) -> None:
+        """Detach a scene overlay from *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            ID of the scene.  An unknown scene is ignored -- it has already
+            been torn down.
+        overlay_id : UUID
+            ID of the overlay's model.
+        """
+        scene_manager = self._scenes.get(scene_id)
+        if scene_manager is not None:
+            scene_manager.remove_overlay(overlay_id)
 
     def _on_canvas_pointer_event(
         self, event: gfx.PointerEvent, canvas_id: UUID
@@ -1082,6 +1201,42 @@ class RenderManager:
                 )
             )
 
+    def submit_pick_read(
+        self,
+        requests: list,
+        fetch_fn: Callable,
+        callback: Callable[[list], None],
+        on_complete: Callable[[], None],
+    ) -> UUID | None:
+        """Read pick values through the slicer, cancellable by the returned id.
+
+        Multiscale pick values are read at level 0 through the same cancellable
+        async service as slicing (unified image design 3.7).
+
+        Parameters
+        ----------
+        requests : list[ChunkRequest]
+            One point request per value, all sharing one ``slice_request_id``.
+        fetch_fn : Callable
+            The store's ``get_data`` coroutine.
+        callback : Callable[[list], None]
+            Receives each batch of ``(request, data)`` pairs.
+        on_complete : Callable[[], None]
+            Called once every batch has arrived; never after a cancel.
+
+        Returns
+        -------
+        UUID or None
+            The read's id, for :meth:`cancel_pick_read`.
+        """
+        return self._slicer.submit(
+            requests, fetch_fn, callback, consumer_id="pick", on_complete=on_complete
+        )
+
+    def cancel_pick_read(self, read_id: UUID) -> None:
+        """Cancel an in-flight pick read.  A finished or unknown id is a no-op."""
+        self._slicer.cancel(read_id)
+
     def set_pick_details_enabled(self, canvas_id: UUID, enabled: bool) -> None:
         """Enable or disable element-level pick extraction for one canvas.
 
@@ -1142,12 +1297,6 @@ class RenderManager:
         from cellier.render.visuals._graph_memory import GFXGraphMemoryVisual
         from cellier.render.visuals._image import GFXMultiscaleImageVisual
         from cellier.render.visuals._image_memory import GFXImageMemoryVisual
-        from cellier.render.visuals._image_memory_multichannel import (
-            GFXMultichannelImageMemoryVisual,
-        )
-        from cellier.render.visuals._image_multiscale_multichannel import (
-            GFXMultichannelMultiscaleImageVisual,
-        )
         from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
         from cellier.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
         from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
@@ -1193,8 +1342,6 @@ class RenderManager:
         _IMAGE_TYPES = (
             GFXImageMemoryVisual,
             GFXMultiscaleImageVisual,
-            GFXMultichannelImageMemoryVisual,
-            GFXMultichannelMultiscaleImageVisual,
         )
         _LABELS_TYPES = (
             GFXLabelMemoryVisual,
@@ -1206,9 +1353,24 @@ class RenderManager:
         coord = gfx_visual.pick_data_coordinate(hit_object, pick_info)
         if coord is None:
             return None
+        # The visual knows which planes it drew; asking it is the only way to
+        # get an answer that cannot disagree with what is on screen.
+        collapsed = gfx_visual.pick_collapsed_indices()
+        collapsed_pairs = (
+            tuple(sorted(collapsed.items())) if collapsed is not None else None
+        )
         if isinstance(gfx_visual, _LABELS_TYPES):
-            return _LabelsDisplayedDataCoord(displayed_data_coord=coord)
-        return _ImageDisplayedDataCoord(displayed_data_coord=coord)
+            return _LabelsDisplayedDataCoord(
+                displayed_data_coord=coord, collapsed_data_indices=collapsed_pairs
+            )
+        return _ImageDisplayedDataCoord(
+            displayed_data_coord=coord,
+            collapsed_data_indices=collapsed_pairs,
+            # The pick-buffer winner in composite mode (design 3.7); the
+            # controller reads channel values from these.
+            channel_index=gfx_visual.pick_channel_index(hit_object),
+            drawn_channels=gfx_visual.drawn_channel_indices(),
+        )
 
     def remove_visual(self, visual_id: UUID) -> None:
         """Remove a visual from its scene and deregister it.
@@ -1219,6 +1381,11 @@ class RenderManager:
             ID of the visual to remove.
         """
         scene_id = self._visual_to_scene.pop(visual_id)
+        # Cancel this visual's in-flight slices on every canvas before its
+        # slots are released, so no batch lands on a closed visual.
+        for canvas_id, canvas_scene_id in list(self._canvas_to_scene.items()):
+            if canvas_scene_id == scene_id:
+                self._slice_coordinator.cancel_visual(scene_id, canvas_id, visual_id)
         self._data_stores.pop(visual_id)
         # Drop the per-visual render flags too.  Leaving them behind leaks,
         # and -- because the map is keyed by cellier visual id rather than by
@@ -1230,9 +1397,9 @@ class RenderManager:
     def remove_scene(self, scene_id: UUID) -> None:
         """Remove a scene and all its visuals and canvases.
 
-        Visuals are released by dropping references (pygfx has no explicit
-        destroy API), but each canvas is closed explicitly -- see
-        :meth:`CanvasView.close`, which GC alone cannot substitute for.
+        Each visual and each canvas is closed explicitly: see
+        :meth:`SceneManager.close` and :meth:`CanvasView.close`, which dropping
+        references cannot substitute for.
 
         Parameters
         ----------
@@ -1244,7 +1411,7 @@ class RenderManager:
             self._visual_to_scene.pop(vid, None)
             self._data_stores.pop(vid, None)
             self._visual_flags.pop(vid, None)
-        # scene_manager goes out of scope here; GC drops gfx.Scene + all nodes.
+        scene_manager.close()
 
         canvas_ids = [
             cid for cid, sid in self._canvas_to_scene.items() if sid == scene_id
@@ -1274,7 +1441,13 @@ class RenderManager:
         self._pick_details_enabled.pop(canvas_id, None)
 
     def close(self) -> None:
-        """Close every registered canvas and drop the render references.
+        """Close every canvas and scene, and drop the render references.
+
+        The scenes are closed rather than merely forgotten: a closed controller
+        can stay referenced (a reference cycle, a pending task, a traceback),
+        and a multiscale visual's brick cache alone can be a gigabyte.  Closing
+        each visual releases its textures now, by refcount, instead of whenever
+        the cyclic garbage collector next gets to the controller.
 
         Safe to call more than once.
         """
@@ -1284,6 +1457,14 @@ class RenderManager:
         self._canvas_to_scene.clear()
         self._active_gestures.clear()
         self._pick_details_enabled.clear()
+
+        # Cleared in place: the slice coordinator holds these same dicts.
+        for scene_manager in list(self._scenes.values()):
+            scene_manager.close()
+        self._scenes.clear()
+        self._visual_to_scene.clear()
+        self._data_stores.clear()
+        self._visual_flags.clear()
 
     def reset_frame_counters(self, scene_id: UUID) -> None:
         """Rewind every per-frame counter that feeds *scene_id*'s pixels.
@@ -1347,6 +1528,7 @@ class RenderManager:
         dims_state: DimsState,
         visual_configs: dict[UUID, VisualRenderConfig] | None = None,
         target_visual_ids: frozenset[UUID] | None = None,
+        selections: Mapping[UUID, RegionSelection] | None = None,
     ) -> None:
         """Reslice all visuals in one scene.
 
@@ -1361,6 +1543,10 @@ class RenderManager:
             Current dimension display state.
         visual_configs : dict[UUID, VisualRenderConfig] or None
             Per-visual render configuration.  ``None`` falls back to defaults.
+        selections : Mapping[UUID, RegionSelection] or None
+            The region each canvas is showing, keyed by canvas id.  Built by
+            the controller, which owns the rendered coordinate systems; the
+            render manager only routes them.
         target_visual_ids : frozenset[UUID] or None
             ``None`` reslices all visuals in the scene.
         """
@@ -1369,7 +1555,9 @@ class RenderManager:
         canvases = self._find_canvases_for_scene(scene_id)
         for canvas in canvases:
             request = canvas.capture_reslicing_request(
-                dims_state, target_visual_ids=target_visual_ids
+                dims_state,
+                selection=(selections or {}).get(canvas.canvas_id),
+                target_visual_ids=target_visual_ids,
             )
             self._slice_coordinator.submit(request, visual_configs)
 
@@ -1378,6 +1566,7 @@ class RenderManager:
         visual_id: UUID,
         dims_state: DimsState,
         visual_config: VisualRenderConfig | None = None,
+        selections: Mapping[UUID, RegionSelection] | None = None,
     ) -> None:
         """Reslice one visual.
 
@@ -1393,13 +1582,17 @@ class RenderManager:
             Current dimension display state.
         visual_config : VisualRenderConfig or None
             Render configuration for this visual.  ``None`` uses defaults.
+        selections : Mapping[UUID, RegionSelection] or None
+            The region each canvas is showing, keyed by canvas id.
         """
         cfg = visual_config if visual_config is not None else VisualRenderConfig()
         scene_id = self._visual_to_scene[visual_id]
         canvases = self._find_canvases_for_scene(scene_id)
         for canvas in canvases:
             request = canvas.capture_reslicing_request(
-                dims_state, target_visual_ids=frozenset({visual_id})
+                dims_state,
+                selection=(selections or {}).get(canvas.canvas_id),
+                target_visual_ids=frozenset({visual_id}),
             )
             self._slice_coordinator.submit(request, {visual_id: cfg})
 

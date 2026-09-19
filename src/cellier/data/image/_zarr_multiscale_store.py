@@ -24,7 +24,8 @@ import numpy as np
 import tensorstore as ts
 from pydantic import ConfigDict, PrivateAttr, model_validator
 
-from cellier.data._base_data_store import BaseDataStore
+from cellier.data._axes import level_systems
+from cellier.data._base_data_store import BaseDataStore, gridded_axis_extents
 from cellier.data._dataset_info import (
     DatasetInfo,
     RowSection,
@@ -32,10 +33,15 @@ from cellier.data._dataset_info import (
     format_shape,
     source_label,
 )
-from cellier.transform import AffineTransform
+from cellier.data._tensorstore_cache import (
+    DEFAULT_CACHE_POOL_BYTES,
+    TensorStoreCacheMixin,
+    build_context,
+)
 
 if TYPE_CHECKING:
     from cellier.data.image._image_requests import ChunkRequest
+    from cellier.transform import DataCoordinateSystem
 
 # ---------------------------------------------------------------------------
 # Zarr format detection helpers (private)
@@ -67,6 +73,7 @@ def _detect_zarr_driver(level_path: pathlib.Path) -> str:
 def _open_ts_stores(
     zarr_path: pathlib.Path,
     scale_names: list[str],
+    cache_pool_bytes: int = DEFAULT_CACHE_POOL_BYTES,
 ) -> list[ts.TensorStore]:
     """Open one tensorstore per scale level (read-only, synchronous).
 
@@ -80,6 +87,10 @@ def _open_ts_stores(
     scale_names :
         Subdirectory names in order finest → coarsest, e.g.
         ``["s0", "s1", "s2"]``.
+    cache_pool_bytes :
+        Chunk cache cap in bytes, shared by every level opened here --
+        one context serves them all, so a chunk read for one level is not
+        re-decompressed for the next.  ``0`` disables caching.
 
     Returns
     -------
@@ -87,6 +98,7 @@ def _open_ts_stores(
         One open ``ts.TensorStore`` per scale level.  Chunk data is
         not loaded until ``await store[...].read()`` is called.
     """
+    context = build_context(cache_pool_bytes)
     stores: list[ts.TensorStore] = []
     for name in scale_names:
         level_path = pathlib.Path(zarr_path) / name
@@ -98,7 +110,7 @@ def _open_ts_stores(
                 "path": str(level_path),
             },
         }
-        store = ts.open(spec).result()
+        store = ts.open(spec, context=context).result()
         stores.append(store)
     return stores
 
@@ -108,7 +120,7 @@ def _open_ts_stores(
 # ---------------------------------------------------------------------------
 
 
-class MultiscaleZarrDataStore(BaseDataStore):
+class MultiscaleZarrDataStore(TensorStoreCacheMixin, BaseDataStore):
     """Data store for a multiscale zarr volume read via tensorstore.
 
     Public fields are validated and serialisable (pydantic).
@@ -125,10 +137,26 @@ class MultiscaleZarrDataStore(BaseDataStore):
     scale_names :
         Ordered list of subdirectory names, finest → coarsest,
         e.g. ``["s0", "s1", "s2"]``.
+    level_scales :
+        Per-level, per-axis scale of level-k voxels in level-0 voxels.
+        ``level_scales[0]`` must be all ones.  Length must match
+        ``scale_names``.
+    level_translations :
+        The offset half of the same, in level-0 voxels.
+    id :
+        Unique identifier.  Taken from the ``datastore_id`` of
+        ``data_coordinate_systems[0]`` when not given; otherwise generated.
+    data_coordinate_systems :
+        One system per resolution level, finest first.  The store reads no
+        axis metadata, so these come from the caller --
+        :meth:`from_scale_and_translation` builds them from a level-0
+        system -- or, when left empty, from the scene's world axes once the
+        store is added to a scene.  Each system's ``datastore_id`` must equal
+        ``id``.
     level_transforms :
-        Per-level affine transforms mapping level-k voxel coords to
-        level-0 voxel coords. ``level_transforms[0]`` must be the
-        identity. Length must match ``scale_names``.
+        Level ``k`` voxels -> level ``0`` voxels, one per system, built from
+        ``level_scales`` and ``level_translations`` once the systems exist.
+        Not normally passed.
     name :
         Human-readable name for the store (inherited from
         ``BaseDataStore``; defaults to ``"multiscale zarr data store"``).
@@ -146,7 +174,6 @@ class MultiscaleZarrDataStore(BaseDataStore):
     DATASET_INFO_LABEL: ClassVar[str] = "multiscale zarr"
     zarr_path: str
     scale_names: list[str]
-    level_transforms: list[AffineTransform]
     name: str = "multiscale zarr data store"
 
     # ── Private tensorstore handles (not serialised) ────────────────────
@@ -158,13 +185,19 @@ class MultiscaleZarrDataStore(BaseDataStore):
     # ── Validation ─────────────────────────────────────────────────────
 
     @model_validator(mode="after")
-    def _validate_level_transforms(self) -> MultiscaleZarrDataStore:
-        """Check that level_transforms length matches scale_names."""
-        if len(self.level_transforms) != len(self.scale_names):
+    def _validate_level_geometry(self) -> MultiscaleZarrDataStore:
+        """Check that the per-level geometry matches ``scale_names``."""
+        if len(self.level_scales) != len(self.scale_names):
             raise ValueError(
-                f"level_transforms has {len(self.level_transforms)} entries "
+                f"level_scales has {len(self.level_scales)} entries "
                 f"but scale_names has {len(self.scale_names)} entries; "
                 f"they must match."
+            )
+        if len(self.level_translations) != len(self.scale_names):
+            raise ValueError(
+                f"level_translations has {len(self.level_translations)} "
+                f"entries but scale_names has {len(self.scale_names)} "
+                f"entries; they must match."
             )
         return self
 
@@ -179,6 +212,18 @@ class MultiscaleZarrDataStore(BaseDataStore):
         self._ts_stores = _open_ts_stores(
             pathlib.Path(self.zarr_path),
             self.scale_names,
+            self.cache_pool_bytes,
+        )
+        # After the handles: the base checks the systems against the level
+        # count and rank, which are read off them.
+        super().model_post_init(__context)
+
+    def _reopen_ts_stores(self) -> None:
+        """Reopen every level against the store's current cache budget."""
+        self._ts_stores = _open_ts_stores(
+            pathlib.Path(self.zarr_path),
+            self.scale_names,
+            self.cache_pool_bytes,
         )
 
     # ── Convenience constructor ─────────────────────────────────────────
@@ -191,6 +236,7 @@ class MultiscaleZarrDataStore(BaseDataStore):
         scale_names: list[str],
         level_scales: list[tuple[float, ...]],
         level_translations: list[tuple[float, ...]],
+        data_coordinate_system: DataCoordinateSystem | None = None,
         name: str = "multiscale zarr data store",
     ) -> MultiscaleZarrDataStore:
         """Construct from per-level scale and translation vectors.
@@ -206,6 +252,12 @@ class MultiscaleZarrDataStore(BaseDataStore):
         level_translations :
             Per-level translation vectors. ``level_translations[0]``
             should be all 0s.
+        data_coordinate_system :
+            The level-0 coordinate system, one axis per data dimension.  The
+            coarser levels copy its axes (names, types, units and sampling)
+            with fresh ids, and the store adopts its ``datastore_id`` as its
+            ``id``.  ``None`` leaves the store without systems until it is
+            added to a scene.
         name :
             Human-readable name for the store.
         """
@@ -215,14 +267,18 @@ class MultiscaleZarrDataStore(BaseDataStore):
                 f"level_translations has {len(level_translations)} entries; "
                 f"they must match."
             )
-        transforms = [
-            AffineTransform.from_scale_and_translation(scale=sc, translation=tr)
-            for sc, tr in zip(level_scales, level_translations)
-        ]
         return cls(
             zarr_path=zarr_path,
             scale_names=scale_names,
-            level_transforms=transforms,
+            level_scales=[tuple(float(v) for v in sc) for sc in level_scales],
+            level_translations=[
+                tuple(float(v) for v in tr) for tr in level_translations
+            ],
+            data_coordinate_systems=(
+                []
+                if data_coordinate_system is None
+                else level_systems(data_coordinate_system, len(scale_names), name)
+            ),
             name=name,
         )
 
@@ -234,9 +290,30 @@ class MultiscaleZarrDataStore(BaseDataStore):
         return len(self._ts_stores)
 
     @property
+    def ndim(self) -> int:
+        """Number of data dimensions, read off the level-0 handle.
+
+        This store reads no axis metadata -- unlike the OME-Zarr readers it
+        is constructed from bare scale and translation vectors.  Its axes
+        come from a caller's ``data_coordinate_system`` or from the scene it
+        is added to, and this rank is what either must match.
+        """
+        return len(self._ts_stores[0].domain.shape)
+
+    @property
     def level_shapes(self) -> list[tuple[int, ...]]:
         """Shape for each scale level, finest first."""
         return [tuple(int(d) for d in store.domain.shape) for store in self._ts_stores]
+
+    @property
+    def axis_extents(self) -> tuple[tuple[float, float], ...]:
+        """Per-axis ``(low, high)`` extents in level-0 data coordinates.
+
+        The edge convention: an axis of ``size`` voxels spans
+        ``[-0.5, size - 0.5]``.  See
+        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        """
+        return gridded_axis_extents(self.level_shapes[0])
 
     @property
     def dtype(self) -> np.dtype:
@@ -256,14 +333,14 @@ class MultiscaleZarrDataStore(BaseDataStore):
         No value range: unlike the in-memory stores, computing one here
         would mean reading every level-0 chunk off disk or over the network.
 
-        The per-level scale rows are derived from ``level_transforms``
+        The per-level scale rows are derived from ``level_scales``
         rather than asserted -- the examples used to hardcode strings like
         ``"2x isotropic"`` that no longer matched an anisotropic pyramid.
         """
         shapes = self.level_shapes
         level_rows: list[tuple[str, str]] = []
         for index, (level_name, shape) in enumerate(zip(self.scale_names, shapes)):
-            scale = np.diag(self.level_transforms[index].matrix)[:-1]
+            scale = np.asarray(self.level_scales[index], dtype=float)
             level_rows.append(
                 (
                     level_name,

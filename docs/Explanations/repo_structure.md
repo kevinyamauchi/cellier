@@ -54,7 +54,8 @@ The Cellier models are in several modules grouped by their functionality.
 
 - `cellier.data` contains the data store models and data IO components.
 - `cellier.scene` contains the scene models such as cameras, canvas, and dims.
-- `cellier.transform` contains the coordinate transform models such as affine transforms.
+- `cellier.transform` contains the coordinate systems and the transforms
+  between them, such as affine transforms.
 - `cellier.viewer_model` contains the top-level viewer model.
 - `cellier.visuals` contains the visual models such as images, meshes, and labels.
 

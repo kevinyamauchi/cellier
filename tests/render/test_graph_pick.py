@@ -18,8 +18,8 @@ import pytest
 from cellier.data.graph import GraphMemoryStore, GraphSliceRequest
 from cellier.events._events import GraphEdgePickInfo, GraphNodePickInfo
 from cellier.render.visuals._graph_memory import GFXGraphMemoryVisual
-from cellier.transform import AffineTransform
 from cellier.visuals import GraphAppearance, GraphVisual
+from tests._v2 import identity
 
 try:  # pragma: no cover - import probe
     import spatial_graph as _spatial_graph
@@ -42,7 +42,7 @@ def _visual(store) -> GFXGraphMemoryVisual:
     return GFXGraphMemoryVisual(
         visual_model=model,
         render_modes={"2d", "3d"},
-        transform=AffineTransform.identity(ndim=store.ndim),
+        transform=identity(store.ndim),
     )
 
 
@@ -53,7 +53,8 @@ def _commit(visual, store, displayed=(0, 1, 2), sliced=None, extents=None):
         chunk_request_id=shared,
         scale_index=0,
         displayed_axes=displayed,
-        slice_indices=dict(sliced or {}),
+        retained_axes=tuple(sorted(displayed)),
+        slice_positions={a: float(v) for a, v in dict(sliced or {}).items()},
         extents=dict(extents or {}),
         fades={},
     )
@@ -204,13 +205,15 @@ def test_pick_falls_back_to_rows_without_a_store():
 def test_render_manager_routes_graph_picks(qtbot):
     """The pick-details branch reaches the visual through the scene manager."""
     from cellier.controller import CellierController
-    from cellier.scene.dims import CoordinateSystem
+    from cellier.scene.dims import spatial_axes, world_coordinate_system
 
     controller = CellierController()
     controller.camera_reslice_enabled = False
     scene = controller.add_scene(
         dim="3d",
-        coordinate_system=CoordinateSystem(name="world", axis_labels=("z", "y", "x")),
+        coordinate_system=world_coordinate_system(
+            spatial_axes("z", "y", "x"), name="world"
+        ),
         name="main",
     )
     controller.add_canvas(scene_id=scene.id)

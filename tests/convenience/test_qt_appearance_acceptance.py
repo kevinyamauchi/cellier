@@ -25,6 +25,11 @@ from cellier.convenience.gui import (
     InMemoryImageControlsConfig,
     MultiscaleImageControlsConfig,
 )
+from cellier.scene.dims import spatial_axes
+from cellier.visuals import (
+    InMemoryImageSingleAppearance,
+    MultiscaleImageSingleAppearance,
+)
 from cellier.visuals._image import MultiscaleImageAppearance
 from cellier.visuals._image_memory import InMemoryImageAppearance
 from tests.convenience._qt_acceptance import (
@@ -52,22 +57,17 @@ def test_multiscale_panel_control_names_in_order(qtbot, multiscale_image_store):
     not requested by name -- ``aabb`` is on ``BaseVisual`` with a default
     factory, so every configured panel gets it, on both toolkits.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image_multiscale(
         multiscale_image_store,
-        appearance=MultiscaleImageAppearance(color_map="viridis", render_mode="mip"),
+        appearance=MultiscaleImageAppearance(),
         controls=MultiscaleImageControlsConfig(appearance=_ALL_MULTISCALE_FIELDS),
+        single=MultiscaleImageSingleAppearance(color_map="viridis", render_mode="mip"),
     )
 
     container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
-    assert control_labels(container) == [
-        "Colormap",
-        "Contrast limits",
-        "Render mode",
-        "LOD bias",
-        "Bounding box",
-    ]
+    assert control_labels(container) == ["Image", "LOD bias", "Bounding box"]
     assert_panel_renders(container)
 
 
@@ -83,22 +83,18 @@ def test_in_memory_panel_control_names_in_order(qtbot, image_store):
     Requesting the same fields on an ``InMemoryImageControlsConfig`` now
     raises at construction -- see ``test_controls_config_validation.py``.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
-        appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
+        appearance=InMemoryImageAppearance(),
         controls=MultiscaleImageControlsConfig(appearance=_ALL_MULTISCALE_FIELDS),
+        single=InMemoryImageSingleAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
 
     with pytest.warns(UserWarning, match="attenuation"):
         container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
-    assert control_labels(container) == [
-        "Colormap",
-        "Contrast limits",
-        "Render mode",
-        "Bounding box",
-    ]
+    assert control_labels(container) == ["Image", "Bounding box"]
     assert_panel_renders(container)
 
 
@@ -108,20 +104,17 @@ def test_panel_order_follows_the_builder_not_the_config(qtbot, image_store):
     The docstring on ``appearance`` says "in display order"; it is not.  Pinned
     so stage 1's shared spec list either preserves this or changes it visibly.
     """
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     viewer.add_image(
         image_store,
-        appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
+        appearance=InMemoryImageAppearance(),
         controls=InMemoryImageControlsConfig(appearance=["clim", "color_map"]),
+        single=InMemoryImageSingleAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
 
     container = render_dock(AppearanceControls(), viewer, QtLayoutHost(), [])
 
-    assert control_labels(container) == [
-        "Colormap",
-        "Contrast limits",
-        "Bounding box",
-    ]
+    assert control_labels(container) == ["Image", "Bounding box"]
 
 
 def test_a_typo_never_reaches_the_dock_at_all(qtbot, image_store):
@@ -145,11 +138,12 @@ def test_bounding_box_group_is_seeded_from_the_visual(qtbot, image_store):
     """
     from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QGroupBox
 
-    viewer = Viewer(("z", "y", "x"), gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     visual = viewer.add_image(
         image_store,
-        appearance=InMemoryImageAppearance(color_map="grays", clim=(0.0, 1.0)),
+        appearance=InMemoryImageAppearance(),
         controls=InMemoryImageControlsConfig(appearance=["color_map"]),
+        single=InMemoryImageSingleAppearance(color_map="grays", clim=(0.0, 1.0)),
     )
     visual.aabb.enabled = True
     visual.aabb.line_width = 7.5

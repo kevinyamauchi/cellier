@@ -12,21 +12,19 @@ from cellier.data.image._zarr_multiscale_store import (
     MultiscaleZarrDataStore,
 )
 from cellier.gui.qt.visuals._lod_bias import QtLodBiasSlider
-from cellier.scene.dims import CoordinateSystem
-from cellier.transform import AffineTransform
+from cellier.scene.dims import spatial_axes, world_coordinate_system
 from cellier.visuals import MultiscaleImageAppearance
+from tests._v2 import pyramid_levels
 
 
 def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
     defaults = {
         "zarr_path": str(small_zarr_store),
         "scale_names": ["s0", "s1"],
-        "level_transforms": [
-            AffineTransform.identity(ndim=3),
-            AffineTransform.from_scale_and_translation(
-                (2.0, 2.0, 2.0), (0.5, 0.5, 0.5)
-            ),
-        ],
+        **pyramid_levels(
+            [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        ),
     }
     defaults.update(kwargs)
     return MultiscaleZarrDataStore(**defaults)
@@ -34,12 +32,10 @@ def _make_store(small_zarr_store, **kwargs) -> MultiscaleZarrDataStore:
 
 def _make_controller_with_visual(small_zarr_store, initial_lod_bias=1.0):
     controller = CellierController()
-    cs = CoordinateSystem(name="world", axis_labels=("z", "y", "x"))
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
     scene = controller.add_scene(dim="3d", coordinate_system=cs, name="main")
     store = _make_store(small_zarr_store)
-    appearance = MultiscaleImageAppearance(
-        color_map="viridis", clim=(0.0, 1.0), lod_bias=initial_lod_bias
-    )
+    appearance = MultiscaleImageAppearance(lod_bias=initial_lod_bias)
     visual = controller.add_image_multiscale(
         data=store, scene_id=scene.id, appearance=appearance, name="vol"
     )
@@ -116,6 +112,6 @@ def test_unrelated_field_change_ignored(qtbot, small_zarr_store):
     qtbot.addWidget(slider.widget)
     controller.connect_widget(slider, subscription_specs=slider.subscription_specs())
 
-    controller.update_appearance_field(visual.id, "clim", (0.0, 500.0))
+    controller.update_appearance_field(visual.id, "interpolation", "linear")
 
     assert slider._slider.value() == pytest.approx(1.0)

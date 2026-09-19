@@ -33,6 +33,7 @@ from cellier.convenience._hosts import QtLayoutHost
 from cellier.convenience.layout._walk import render_dock
 from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
 from cellier.data.points._points_memory_store import PointsMemoryStore
+from cellier.scene.dims import spatial_axes
 from cellier.visuals._mesh_memory import MeshFlatAppearance
 
 _POS = np.array([[1, 1, 1], [5, 1, 1], [1, 5, 1], [1, 1, 5]], dtype=np.float32)
@@ -212,7 +213,7 @@ async def test_the_qt_visible_checkbox_hides_and_restores_the_picture(
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.visuals._mesh_memory import MeshFlatAppearance
 
-    viewer = Viewer(("z", "y", "x"), dim="3d", gui="qt")
+    viewer = Viewer(spatial_axes("z", "y", "x"), dim="3d", gui="qt")
     viewer.controller.camera_reslice_enabled = False
     visual = viewer.add_mesh(
         MeshMemoryStore(
