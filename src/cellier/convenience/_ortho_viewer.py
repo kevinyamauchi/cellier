@@ -49,6 +49,12 @@ if TYPE_CHECKING:
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
+    from cellier.events import (
+        BackstopCompleteEvent,
+        LoadingProgress,
+        ResliceProgressEvent,
+        SubscriptionHandle,
+    )
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.transform import BaseTransform, WorldCoordinateSystem
@@ -78,10 +84,30 @@ if TYPE_CHECKING:
         MultiscaleLabelVisual,
     )
     from cellier.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
+    from cellier.visuals._loading import ProgressiveLoadingConfig
     from cellier.visuals._mesh_memory import MeshAppearance, MeshVisual
     from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 _T = TypeVar("_T", bound="BaseDataStore")
+
+
+def _callback_ref(callback: Callable, weak: bool) -> Callable[[], Callable | None]:
+    """A zero-argument getter for *callback*, weak when asked.
+
+    The group subscriptions wrap the caller's callback in a closure, so the
+    bus's own weak reference would hold the closure (collected at once)
+    rather than the callback; the weak reference is taken here instead.
+    """
+    if not weak:
+        return lambda: callback
+    import weakref
+
+    if getattr(callback, "__name__", None) == "<lambda>":
+        raise ValueError("Cannot create a weak subscription to a lambda.")
+    if hasattr(callback, "__self__"):
+        return weakref.WeakMethod(callback)
+    return weakref.ref(callback)
+
 
 # Panel keys in display order. ``vol`` is the 3D panel; the rest are 2D slices.
 _PANEL_KEYS: tuple[str, ...] = ("xy", "xz", "yz", "vol")
@@ -1326,6 +1352,160 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         if visual_id not in group:
             raise KeyError(f"{visual_id} is not a panel image of this OrthoViewer.")
         return group
+
+    # ------------------------------------------------------------------
+    # Progressive loading (multiscale visuals), over a panel group
+    # ------------------------------------------------------------------
+
+    def loading_progress(self, visual: object) -> LoadingProgress | None:
+        """How far a multiscale visual's four panels have loaded, summed.
+
+        Mirrors :meth:`CellierController.loading_progress` over the panel
+        group: counts are added and the completion flags hold only when they
+        hold for every panel.
+
+        Parameters
+        ----------
+        visual : UUID, visual model, or dict
+            Any panel's multiscale visual; see :meth:`image_group`.
+
+        Returns
+        -------
+        LoadingProgress or None
+            ``None`` while no panel has been planned.
+        """
+        from cellier.gui._loading import sum_progress
+
+        progress = [
+            self._controller.loading_progress(vid) for vid in self.image_group(visual)
+        ]
+        return sum_progress(p for p in progress if p is not None)
+
+    def on_reslice_progress(
+        self,
+        visual: object,
+        callback: Callable[[ResliceProgressEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> list[SubscriptionHandle]:
+        """Register a callback fired as a multiscale visual's panels load.
+
+        Mirrors :meth:`CellierController.on_reslice_progress` over the panel
+        group.  The callback gets each panel's event with ``progress``
+        replaced by the group sum (:meth:`loading_progress`); ``visual_id``
+        and ``scene_id`` name the panel whose change triggered it.
+
+        Parameters
+        ----------
+        visual : UUID, visual model, or dict
+            Any panel's multiscale visual; see :meth:`image_group`.
+        callback : Callable
+            Called with a ``ResliceProgressEvent``.
+        owner_id : UUID or None
+            Owner for ``controller.unsubscribe_owner``.  Defaults to each
+            panel visual's id, so removing a panel's visual removes its
+            subscription.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        list[SubscriptionHandle]
+            One per panel.
+        """
+        group = self.image_group(visual)
+        callback_ref = _callback_ref(callback, weak)
+
+        def _on_progress(event: ResliceProgressEvent) -> None:
+            target = callback_ref()
+            if target is None:
+                return
+            total = self.loading_progress(group[0])
+            target(event._replace(progress=total) if total is not None else event)
+
+        return [
+            self._controller.on_reslice_progress(
+                vid, _on_progress, owner_id=vid if owner_id is None else owner_id
+            )
+            for vid in group
+        ]
+
+    def on_backstop_complete(
+        self,
+        visual: object,
+        callback: Callable[[BackstopCompleteEvent], None],
+        *,
+        owner_id: UUID | None = None,
+        weak: bool = False,
+    ) -> list[SubscriptionHandle]:
+        """Register a callback fired when every panel's backstop is in.
+
+        Mirrors :meth:`CellierController.on_backstop_complete` over the
+        panel group: fires on the panel event that completes the group, with
+        that panel's event.
+
+        Parameters
+        ----------
+        visual : UUID, visual model, or dict
+            Any panel's multiscale visual; see :meth:`image_group`.
+        callback : Callable
+            Called with a ``BackstopCompleteEvent``.
+        owner_id : UUID or None
+            Owner for ``controller.unsubscribe_owner``.  Defaults to each
+            panel visual's id.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        list[SubscriptionHandle]
+            One per panel.
+        """
+        group = self.image_group(visual)
+        callback_ref = _callback_ref(callback, weak)
+
+        def _on_backstop(event: BackstopCompleteEvent) -> None:
+            target = callback_ref()
+            if target is None:
+                return
+            progress = [self._controller.loading_progress(vid) for vid in group]
+            if all(p is not None and p.backstop_complete for p in progress):
+                target(event)
+
+        return [
+            self._controller.on_backstop_complete(
+                vid, _on_backstop, owner_id=vid if owner_id is None else owner_id
+            )
+            for vid in group
+        ]
+
+    def set_loading(self, visual: object, **fields: Any) -> ProgressiveLoadingConfig:
+        """Change how every panel of a multiscale visual loads.
+
+        Mirrors :meth:`CellierController.set_loading_config`, applied to each
+        panel.  The merged config is validated before any panel changes, so
+        an invalid combination raises and changes nothing.
+
+        Parameters
+        ----------
+        visual : UUID, visual model, or dict
+            Any panel's multiscale visual; see :meth:`image_group`.
+        **fields :
+            ``ProgressiveLoadingConfig`` fields, e.g. ``dims_drag="backstop"``.
+
+        Returns
+        -------
+        ProgressiveLoadingConfig
+            The first panel's config after the call.
+        """
+        group = self.image_group(visual)
+        # The first write validates; the rest cannot fail differently, since
+        # the panels are kept equal.
+        result = self._controller.set_loading_config(group[0], **fields)
+        for vid in group[1:]:
+            self._controller.set_loading_config(vid, **fields)
+        return result
 
     def set_image_composite(self, visual: object, composite: bool) -> None:
         """Switch every panel's image between single and composite mode.

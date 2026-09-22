@@ -44,6 +44,7 @@ from cellier.transform import (
     WorldCoordinateSystem,
 )
 from cellier.visuals import InMemoryImageSingleAppearance
+from tests._planning import planned_requests_3d
 from tests._v2 import level_transforms
 
 # ---------------------------------------------------------------------------
@@ -415,7 +416,8 @@ def _drive_slice_requests(
     which is the space the filter runs in.
     """
     if is_3d:
-        reqs = visual.build_slice_request(
+        reqs = planned_requests_3d(
+            visual,
             camera_pos_world=np.array([0.0, 0.0, 0.0]),
             frustum_corners_world=None,
             fov_y_rad=1.0,
@@ -663,7 +665,8 @@ def _geometry_case(
 
     # A real get_data call, to record the surviving element indices.
     if is_3d:
-        reqs = visual.build_slice_request(
+        reqs = planned_requests_3d(
+            visual,
             camera_pos_world=np.zeros(3),
             frustum_corners_world=None,
             fov_y_rad=1.0,
@@ -881,7 +884,8 @@ def _multiscale_case(
     pairs: list[Any] = []
     scale_indices: set = set()
     for level in range(len(pyramid.level_shapes)):
-        reqs = visual.build_slice_request(
+        reqs = planned_requests_3d(
+            visual,
             camera_pos_world=_MULTISCALE_CAMERA,
             frustum_corners_world=None,
             fov_y_rad=1.0,

@@ -279,7 +279,7 @@ def bricks_in_frustum(
         values = brick_keys
     else:
         keys_list = list(brick_keys)
-        values = {k: 0 for k in keys_list}
+        values = dict.fromkeys(keys_list, 0)
 
     n = len(keys_list)
     if n == 0:

@@ -202,11 +202,10 @@ async def test_force_level_reaches_every_drawn_slot(controller, reslice, czyx_st
     await reslice(controller, scene.id)
 
     for index in gfx_visual._drawn.values():
-        levels = {
-            key.level
-            for key in gfx_visual.slots[index]._block_cache_3d.tile_manager.tilemap
-        }
-        assert levels == {1}
+        slot = gfx_visual.slots[index]
+        levels = {key.level for key in slot._block_cache_3d.tile_manager.tilemap}
+        # The target is level 1; the coarsest level is the backstop under it.
+        assert levels - {slot.n_levels} == {1}
 
 
 async def test_a_mode_switch_reuses_the_channel_cache(controller, reslice, czyx_store):
@@ -220,9 +219,13 @@ async def test_a_mode_switch_reuses_the_channel_cache(controller, reslice, czyx_
     await reslice(controller, scene.id)
 
     assert gfx_visual._drawn == {1: slot_for_one}
-    stats = gfx_visual.slots[slot_for_one]._last_plan_stats
-    assert stats["total_required"] > 0
-    assert stats["misses"] == 0
+    slot = gfx_visual.slots[slot_for_one]
+    assert slot._last_plan_stats["total_required"] > 0
+    scheduler = controller._render_manager.scheduler
+    desired, new = scheduler.core.pass_stats(slot.residency_3d().cache_id)
+    stats = slot._last_plan_stats
+    assert desired == stats["n_backstop"] + stats["n_target"]
+    assert new == 0
 
 
 # ---------------------------------------------------------------------------
@@ -230,20 +233,20 @@ async def test_a_mode_switch_reuses_the_channel_cache(controller, reslice, czyx_
 # ---------------------------------------------------------------------------
 
 
-async def test_remove_visual_closes_it_and_cancels_every_slot(
+async def test_remove_visual_closes_it_and_forgets_every_atlas(
     controller, reslice, czyx_store
 ):
     scene, visual, gfx_visual = _add(controller, czyx_store, dim="2d")
     await reslice(controller, scene.id)
-    cancelled: list = []
-    slots = gfx_visual.slots
-    for slot in slots:
-        slot.cancel_pending_2d = lambda s=slot: cancelled.append(s)
+    scheduler = controller._render_manager.scheduler
+    atlases = set(gfx_visual.residencies())
+    assert atlases
+    assert atlases <= set(scheduler.core.cache_ids)
 
     controller.remove_visual(visual.id)
 
-    # Every slot is cancelled (the coordinator and close() may both do it).
-    assert {id(slot) for slot in cancelled} == {id(slot) for slot in slots}
+    # Every slot's atlas is gone from the scheduler, so nothing lands later.
+    assert not atlases & set(scheduler.core.cache_ids)
     assert gfx_visual.slots == ()
     assert gfx_visual.node_2d.children == ()
 

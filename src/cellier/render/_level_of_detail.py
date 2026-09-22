@@ -25,8 +25,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from cellier.render.block_cache import BlockKey3D
-
 if TYPE_CHECKING:
     from cellier.render.lut_indirection import BlockLayout3D
 
@@ -381,36 +379,3 @@ def sort_arr_by_distance(
 # ---------------------------------------------------------------------------
 # Convert to BrickKey dict
 # ---------------------------------------------------------------------------
-
-
-def arr_to_brick_keys(
-    arr: np.ndarray,
-    slice_coord: tuple[tuple[int, int], ...] = (),
-) -> dict[BlockKey3D, int]:
-    """Convert a brick array to ``dict[BlockKey3D, int]``.
-
-    Parameters
-    ----------
-    arr : ndarray, shape (M, 4), dtype int32
-        Columns: ``[level, gz_c, gy_c, gx_c]``.
-    slice_coord : tuple of (axis_index, world_value) pairs
-        Sorted slice-position encoding to embed in every key.  Pass the
-        value of ``_current_slice_coord_3d`` from the visual.
-
-    Returns
-    -------
-    required : dict[BlockKey3D, int]
-        ``{BlockKey3D: level}`` preserving row order.
-    """
-    required: dict[BlockKey3D, int] = {}
-    for row in arr:
-        level = int(row[0])
-        key = BlockKey3D(
-            level=level,
-            g0=int(row[1]),
-            g1=int(row[2]),
-            g2=int(row[3]),
-            slice_coord=slice_coord,
-        )
-        required[key] = level
-    return required

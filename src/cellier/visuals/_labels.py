@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cellier.transform import AffineTransform
 from cellier.visuals._label_memory import BaseLabelsAppearance, BaseLabelsVisual
+from cellier.visuals._loading import ProgressiveLoadingConfig
 
 
 class MultiscaleLabelsAppearance(BaseLabelsAppearance):
@@ -55,12 +56,18 @@ class MultiscaleLabelRenderConfig(BaseModel):
         Maximum GPU memory for the 3-D brick cache. Default 1 GiB.
     gpu_budget_bytes_2d : int
         Maximum GPU memory for the 2-D tile cache. Default 64 MiB.
+    paint_max_tiles : int
+        Tiles the 2-D paint overlay can hold. Default 512.
+    loading : ProgressiveLoadingConfig
+        The coarse backstop loaded ahead of the target level.  Changing
+        only this reslices; the other fields reallocate GPU resources.
     """
 
     block_size: int = 32
     gpu_budget_bytes: int = 1 * 1024**3
     gpu_budget_bytes_2d: int = 64 * 1024**2
     paint_max_tiles: int = 512
+    loading: ProgressiveLoadingConfig = Field(default_factory=ProgressiveLoadingConfig)
 
 
 class MultiscaleLabelVisual(BaseLabelsVisual):

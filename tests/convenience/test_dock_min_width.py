@@ -77,10 +77,17 @@ def _qt_window(qtbot, **layout_kwargs):
     return window, docks
 
 
+def _content(dock):
+    """The floored column inside a side dock's scroll area."""
+    return dock.widget().widget()
+
+
 def test_qt_dock_keeps_the_default_floor(qtbot):
     _window, docks = _qt_window(qtbot, right_dock=_DOCK)
 
-    assert docks["right"].widget().minimumWidth() == QtLayoutHost.DEFAULT_DOCK_MIN_WIDTH
+    assert (
+        _content(docks["right"]).minimumWidth() == QtLayoutHost.DEFAULT_DOCK_MIN_WIDTH
+    )
 
 
 def test_qt_dock_takes_the_layout_width(qtbot):
@@ -88,9 +95,9 @@ def test_qt_dock_takes_the_layout_width(qtbot):
         qtbot, left_dock=_DOCK, right_dock=_DOCK, right_dock_min_width=340
     )
 
-    assert docks["right"].widget().minimumWidth() == 340
+    assert _content(docks["right"]).minimumWidth() == 340
     # The other side keeps the default.
-    assert docks["left"].widget().minimumWidth() == QtLayoutHost.DEFAULT_DOCK_MIN_WIDTH
+    assert _content(docks["left"]).minimumWidth() == QtLayoutHost.DEFAULT_DOCK_MIN_WIDTH
 
 
 def test_qt_width_below_the_default_takes_effect(qtbot):
@@ -112,7 +119,7 @@ def test_qt_dock_drags_wider_but_not_narrower(qtbot):
     window.resize(1200, 800)
     window.show()
     qtbot.waitExposed(window)
-    content = docks["right"].widget()
+    content = _content(docks["right"])
 
     window.resizeDocks([docks["right"]], [100], Qt.Orientation.Horizontal)
     qtbot.wait(10)
@@ -140,8 +147,10 @@ def test_jupyter_floors_a_side_dock_in_a_box():
         dock_min_widths={"left": None, "right": 340},
     )
 
+    # Both side docks sit in their scroll box; the floor rides on it.
     left_item, middle_center, right_item = root.children
-    assert left_item is left  # no width, no wrapper
+    assert left_item.min_width == 0
+    assert list(left_item.children) == [left]
     assert middle_center is center
     assert right_item.min_width == 340
     assert list(right_item.children) == [right]
@@ -159,4 +168,6 @@ def test_marimo_floors_a_side_dock_with_a_style():
         "center", {"right": "dock"}, [], dock_min_widths={"right": 340}
     )
 
-    assert root == ("hstack", ["center", ("style", "dock", {"min-width": "340px"})])
+    _hstack, [center, (_s, (_s2, dock, inner_style), _outer)] = root
+    assert (center, dock) == ("center", "dock")
+    assert inner_style["min-width"] == "340px"

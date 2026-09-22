@@ -234,7 +234,7 @@ def test_dataset_info_reaches_both_docks(qtbot, multiscale_image_store):
     )
 
     rows = [("Scale levels", "2"), ("Data type", "float32")]
-    expected = ["Image", "Bounding box", "Dataset info"]
+    expected = ["Image", "Bounding box", "Loading", "Dataset info"]
 
     qt_viewer = Viewer(spatial_axes("z", "y", "x"), gui="qt")
     qt_viewer.add_image_multiscale(
@@ -503,6 +503,8 @@ def test_composite_default_titles_match_the_shared_vocabulary():
     from cellier.gui.anywidget.visuals import (
         AnywidgetAABBWidget,
         AnywidgetImageControls,
+        AnywidgetLoadingConfigControls,
+        AnywidgetLoadingIndicator,
         AnywidgetLodBiasSlider,
         AnywidgetTrailControls,
     )
@@ -516,6 +518,8 @@ def test_composite_default_titles_match_the_shared_vocabulary():
     from cellier.gui.qt.visuals import (
         QtAABBWidget,
         QtImageControls,
+        QtLoadingConfigControls,
+        QtLoadingIndicator,
         QtLodBiasSlider,
         QtTrailControls,
     )
@@ -525,6 +529,8 @@ def test_composite_default_titles_match_the_shared_vocabulary():
         "lod_bias": (QtLodBiasSlider, AnywidgetLodBiasSlider),
         "aabb": (QtAABBWidget, AnywidgetAABBWidget),
         "trail": (QtTrailControls, AnywidgetTrailControls),
+        "loading": (QtLoadingIndicator, AnywidgetLoadingIndicator),
+        "loading_config": (QtLoadingConfigControls, AnywidgetLoadingConfigControls),
         "visual_outline": (QtVisualOutlineControls, AnywidgetVisualOutlineControls),
         "labels_outline": (QtLabelsOutlineControls, AnywidgetLabelsOutlineControls),
         "visual_occlusion": (

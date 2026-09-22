@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from cellier.render.block_cache._tile_manager_2d import BlockKey2D
-
 if TYPE_CHECKING:
     from cellier.render.lut_indirection._layout_2d import BlockLayout2D
 
@@ -231,25 +229,25 @@ def sort_tiles_by_distance_2d(
 
 
 def viewport_cull_2d(
-    required: dict[BlockKey2D, int],
+    arr: np.ndarray,
     block_size: int,
     view_min: np.ndarray,
     view_max: np.ndarray,
     level_scale_arr_shader: np.ndarray | None = None,
     level_translation_arr_shader: np.ndarray | None = None,
-) -> tuple[dict[BlockKey2D, int], int]:
+) -> tuple[np.ndarray, int]:
     """Remove tiles that lie entirely outside the viewport.
 
     Parameters
     ----------
-    required : dict[BlockKey2D, int]
-        Tile key -> level mapping (order-preserving).
+    arr : ndarray
+        ``(M, 3)`` rows ``(level, gy, gx)``, in load order.
     block_size : int
         Tile side length in data pixels at finest level.
     view_min : ndarray, shape (2,)
-        Viewport AABB minimum ``(x, y)`` in world space.
+        Viewport AABB minimum ``(x, y)`` in level-0 data space.
     view_max : ndarray, shape (2,)
-        Viewport AABB maximum ``(x, y)`` in world space.
+        Viewport AABB maximum ``(x, y)`` in level-0 data space.
     level_scale_arr_shader : ndarray, shape (n_levels, 2) or None
         Per-level scale in shader order ``(x=W, y=H)``.
     level_translation_arr_shader : ndarray, shape (n_levels, 2) or None
@@ -257,21 +255,18 @@ def viewport_cull_2d(
 
     Returns
     -------
-    culled : dict[BlockKey2D, int]
-        Subset of ``required`` that overlaps the viewport.
+    culled : ndarray
+        The rows of ``arr`` that overlap the viewport, order preserved.
     n_culled : int
         Number of tiles removed.
     """
-    if not required:
-        return required, 0
+    if len(arr) == 0:
+        return arr, 0
 
-    keys = list(required.keys())
-    n = len(keys)
     bs = float(block_size)
-
-    levels = np.array([k.level for k in keys], dtype=np.int32)
-    gy = np.array([k.g0 for k in keys], dtype=np.float64)
-    gx = np.array([k.g1 for k in keys], dtype=np.float64)
+    levels = arr[:, 0].astype(np.int64)
+    gy = arr[:, 1].astype(np.float64)
+    gx = arr[:, 2].astype(np.float64)
 
     if level_scale_arr_shader is not None and level_translation_arr_shader is not None:
         bw_x = bs * level_scale_arr_shader[levels - 1, 0]  # (M,)
@@ -296,47 +291,4 @@ def viewport_cull_2d(
         & (tile_max_y > view_min[1])
         & (tile_min_y < view_max[1])
     )
-
-    n_culled = n - int(np.sum(visible))
-    if n_culled == 0:
-        return required, 0
-
-    culled = {}
-    for i, keep in enumerate(visible):
-        if keep:
-            k = keys[i]
-            culled[k] = required[k]
-
-    return culled, n_culled
-
-
-def arr_to_block_keys_2d(
-    arr: np.ndarray,
-    slice_coord: tuple[tuple[int, int], ...] = (),
-) -> dict[BlockKey2D, int]:
-    """Convert array rows to a BlockKey2D dict.
-
-    Parameters
-    ----------
-    arr : ndarray
-        Array of shape ``(M, 3)`` with columns ``(level, gy, gx)``.
-    slice_coord : tuple of (axis_index, world_value) pairs
-        Sorted slice-position encoding to embed in every key.  Pass the
-        value of ``_current_slice_coord`` from the visual.
-
-    Returns
-    -------
-    required : dict[BlockKey2D, int]
-        ``{BlockKey2D: level}`` preserving row order.
-    """
-    required: dict[BlockKey2D, int] = {}
-    for row in arr:
-        level = int(row[0])
-        key = BlockKey2D(
-            level=level,
-            g0=int(row[1]),
-            g1=int(row[2]),
-            slice_coord=slice_coord,
-        )
-        required[key] = level
-    return required
+    return arr[visible], len(arr) - int(np.sum(visible))

@@ -144,6 +144,10 @@ class LayoutHost(Protocol):
         the narrowest that dock may be, in logical pixels; a missing or
         ``None`` entry keeps the host default.  Sizing is placement, so it
         happens here rather than in ``dock_panel``.
+
+        The left and right docks scroll vertically on every host, so a dock
+        is never what sets the layout's height: on Qt the window's height
+        does (the screen's, at most), on anywidget the center column's.
         """
         ...
 
@@ -295,11 +299,16 @@ class QtLayoutHost:
         Each dock's content is floored at its ``dock_min_widths`` entry, or
         :attr:`DEFAULT_DOCK_MIN_WIDTH`.  A minimum rather than a fixed width:
         the dock separator can still drag it wider, never narrower.
+
+        The left and right docks scroll vertically, so a dock is never what
+        sets the window's height: that is the screen's (see
+        ``_scroll_dock_widget``).
         """
         from qtpy.QtCore import Qt
         from qtpy.QtWidgets import QApplication, QDockWidget, QMainWindow
 
         from cellier.convenience.layout._qt_renderer import (
+            _scroll_dock_widget,
             _wrap_dock_widget,
             make_window,
         )
@@ -325,6 +334,8 @@ class QtLayoutHost:
             content.setMinimumWidth(
                 (dock_min_widths or {}).get(name) or self.DEFAULT_DOCK_MIN_WIDTH
             )
+            if name in ("left", "right"):
+                content = _scroll_dock_widget(content)
             dock.setWidget(content)
             dock.setFeatures(
                 QDockWidget.DockWidgetFeature.DockWidgetMovable
@@ -440,18 +451,28 @@ class _AnywidgetDockPanel:
         ``_RenderView`` owns teardown, not the root.  A side dock with a
         ``dock_min_widths`` entry is floored at it; there is no splitter to
         drag it wider, so it is otherwise as wide as its content.
+
+        The left and right docks scroll vertically within the height of the
+        center column (the canvas and its sliders), so a long dock never
+        makes the output taller than the canvas needs.
         """
         docks = dict(docks)
-        for side, width in (dock_min_widths or {}).items():
-            if width and docks.get(side) is not None:
-                docks[side] = self._min_width(docks[side], width)
+        widths = dock_min_widths or {}
+        # Side docks scroll within the center's height rather than setting
+        # it, so a long controls column never pushes the canvas row past
+        # what the canvas needs.  The dock width floor rides on the same
+        # wrapper.
+        for side in ("left", "right"):
+            if docks.get(side) is not None:
+                docks[side] = self._scroll_dock(docks[side], widths.get(side))
         middle_items = [
             item
             for item in (docks.get("left"), center, docks.get("right"))
             if item is not None
         ]
         middle = (
-            self.stack(middle_items, direction="h")
+            # "stretch": a scrolling dock fills the height the center sets.
+            self.stack(middle_items, direction="h", align="stretch")
             if len(middle_items) > 1
             else middle_items[0]
         )
@@ -535,9 +556,31 @@ class MarimoHost(_AnywidgetDockPanel):
         # marimo's own primitives.
         return self._mo.vstack([self._mo.md(f"**{title}**"), stacked])
 
-    def _min_width(self, item: object, width: int) -> object:
-        """Floor *item* at *width* pixels with a styled marimo wrapper."""
-        return self._mo.style(item, {"min-width": f"{width}px"})
+    def _scroll_dock(self, item: object, width: int | None) -> object:
+        """Scroll a side dock within the row's height, floored at *width*.
+
+        Two styled wrappers carrying the rules ``container.css`` gives the
+        Jupyter box: the outer one is stretched to the row's height and never
+        shorter than ``AnywidgetBox.SCROLL_MIN_HEIGHT``; the inner one takes
+        no height of its own (``height: 0``), fills the outer
+        (``min-height: 100%``) and scrolls.
+        """
+        from cellier.gui.anywidget import AnywidgetBox
+
+        inner_style = {
+            "height": "0",
+            "min-height": "100%",
+            "overflow-y": "auto",
+            "overflow-x": "hidden",
+            "overscroll-behavior": "contain",
+        }
+        if width:
+            inner_style["min-width"] = f"{width}px"
+        outer_style = {
+            "align-self": "stretch",
+            "min-height": f"{AnywidgetBox.SCROLL_MIN_HEIGHT}px",
+        }
+        return self._mo.style(self._mo.style(item, inner_style), outer_style)
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Arrange rows with nested ``vstack`` / ``hstack``.
@@ -601,11 +644,11 @@ class JupyterHost(_AnywidgetDockPanel):
             **kwargs,
         )
 
-    def _min_width(self, item: object, width: int) -> object:
-        """Floor *item* at *width* pixels inside an ``AnywidgetBox``."""
+    def _scroll_dock(self, item: object, width: int | None) -> object:
+        """Scroll a side dock within the row's height, floored at *width*."""
         from cellier.gui.anywidget import AnywidgetBox
 
-        return AnywidgetBox(children=[item], min_width=width)
+        return AnywidgetBox(children=[item], min_width=width or 0, scroll=True)
 
     def grid(self, rows: Sequence[Sequence[object]]) -> object:
         """Compose rows of ``AnywidgetBox`` (horizontal) inside an outer one.

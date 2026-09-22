@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
+from cellier.gui._loading import LOADING_CONFIG_TITLE, LOADING_TITLE
 from cellier.gui._render_controls import VISUAL_RENDER_TITLES
 
 # ── Appearance controls: the toolkit-neutral decision layer ──────────────────
@@ -28,7 +29,8 @@ class ControlSpec:
     ----------
     kind : str
         Which control to build: ``color_map``, ``clim``, ``render``,
-        ``lod_bias``, ``aabb`` or ``dataset_info``.  A renderer with no
+        ``lod_bias``, ``aabb``, ``loading``, ``loading_config`` or
+        ``dataset_info``.  A renderer with no
         builder for a kind skips it.
     title : str
         What the control is called, e.g. ``"Contrast limits"``.  Both front
@@ -72,6 +74,8 @@ _CONTROL_TITLES = {
     "lod_bias": "LOD bias",
     "aabb": "Bounding box",
     "trail": "Trail",
+    "loading": LOADING_TITLE,
+    "loading_config": LOADING_CONFIG_TITLE,
     # Read rather than restated: the per-visual groups name themselves in
     # the shared control spec, beside the controls they hold.
     **VISUAL_RENDER_TITLES,
@@ -302,6 +306,25 @@ def appearance_specs(
         )
 
     specs.extend(_visual_render_specs(visual, config, palette))
+
+    # Only a multiscale visual loads progressively; its render config says
+    # so by carrying ``loading``.  The widget reads the current progress off
+    # the controller when it is built, so the spec carries nothing.
+    loading = getattr(getattr(visual, "render_config", None), "loading", None)
+    if loading is not None and getattr(config, "loading_indicator", False):
+        specs.append(ControlSpec("loading", _CONTROL_TITLES["loading"], {}))
+    if loading is not None and getattr(config, "loading_controls", False):
+        level_shapes = getattr(store, "level_shapes", None)
+        specs.append(
+            ControlSpec(
+                "loading_config",
+                _CONTROL_TITLES["loading_config"],
+                {
+                    "loading": loading.model_dump(),
+                    "n_levels": len(level_shapes) if level_shapes else None,
+                },
+            )
+        )
 
     dataset_info_spec = _dataset_info_spec(
         getattr(config, "dataset_info", False), store

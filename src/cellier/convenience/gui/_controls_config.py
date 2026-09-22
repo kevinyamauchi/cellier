@@ -261,6 +261,15 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
     clim_range : tuple[float, float] or None
         ``(min, max)`` bounds for the contrast-limits slider.
 
+    loading_indicator : bool
+        Show how far the visual's data has loaded: a bar and a status line
+        fed by ``ResliceProgressEvent``.  ``True`` (default); it appears
+        whenever the appearance panel does.
+    loading_controls : bool
+        Show a control for every ``ProgressiveLoadingConfig`` field (the
+        backstop and what a dims slider tick loads), applied while the
+        visual is shown.  ``False`` (default): these are advanced settings.
+
     Notes
     -----
     ``dataset_info`` is inherited from ``BaseControlsConfig``: it used to
@@ -273,6 +282,9 @@ class MultiscaleImageControlsConfig(InMemoryImageControlsConfig):
         "attenuation": "image",
         "lod_bias": "lod_bias",
     }
+
+    loading_indicator: bool = True
+    loading_controls: bool = False
 
 
 @dataclass
@@ -317,12 +329,21 @@ class MultiscaleLabelsControlsConfig(LabelsControlsConfig):
     ----------
     appearance : list[AppearanceField] or bool
         Appearance fields.  ``True`` shows every field this class drives.
+    loading_indicator : bool
+        Show how far the visual's data has loaded.  ``True`` (default); it
+        appears whenever the appearance panel does.
+    loading_controls : bool
+        Show a control for every ``ProgressiveLoadingConfig`` field.
+        ``False`` (default).
     """
 
     APPEARANCE_CONTROLS: ClassVar[dict[str, str]] = {
         **LabelsControlsConfig.APPEARANCE_CONTROLS,
         "lod_bias": "lod_bias",
     }
+
+    loading_indicator: bool = True
+    loading_controls: bool = False
 
 
 @dataclass

@@ -10,6 +10,7 @@ from cellier.visuals._image_memory import (
     BaseImageSingleAppearance,
     BaseImageVisual,
 )
+from cellier.visuals._loading import ProgressiveLoadingConfig
 
 
 class MultiscaleImageAppearance(BaseImageAppearance):
@@ -83,6 +84,9 @@ class MultiscaleImageRenderConfig(BaseModel):
     gpu_budget_bytes_2d : int
         Maximum GPU memory for the 2-D tile caches, split likewise.
         Default 64 MiB.
+    loading : ProgressiveLoadingConfig
+        The coarse backstop loaded ahead of the target level.  Changing
+        only this reslices; the other fields reallocate GPU resources.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -90,6 +94,7 @@ class MultiscaleImageRenderConfig(BaseModel):
     block_size: int = 32
     gpu_budget_bytes: int = 1 * 1024**3
     gpu_budget_bytes_2d: int = 64 * 1024**2
+    loading: ProgressiveLoadingConfig = Field(default_factory=ProgressiveLoadingConfig)
 
 
 class MultiscaleImageVisual(BaseImageVisual):

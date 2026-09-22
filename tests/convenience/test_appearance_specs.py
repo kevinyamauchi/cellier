@@ -88,7 +88,7 @@ def test_every_multiscale_field_maps_to_a_control():
             ]
         ),
     )
-    assert kinds(result) == ["image", "lod_bias", "aabb"]
+    assert kinds(result) == ["image", "lod_bias", "aabb", "loading"]
     assert result.specs[0].values["fields"] == [
         "color_map",
         "clim",
@@ -109,7 +109,7 @@ def test_every_image_field_collapses_into_one_control():
         result = appearance_specs(
             _multiscale(), MultiscaleImageControlsConfig(appearance=fields)
         )
-        assert kinds(result) == ["image", "aabb"], fields
+        assert kinds(result) == ["image", "aabb", "loading"], fields
 
 
 def test_order_is_the_config_maps_order_not_the_callers():
@@ -264,11 +264,15 @@ def test_dataset_info_is_appended_last_and_only_when_non_empty():
         appearance=["color_map"], dataset_info=[("Scale levels", "4")]
     )
     result = appearance_specs(_multiscale(), config)
-    assert kinds(result) == ["image", "aabb", "dataset_info"]
+    assert kinds(result) == ["image", "aabb", "loading", "dataset_info"]
     assert result.specs[-1].values == {"rows": [("Scale levels", "4")]}
 
     config.dataset_info = ()
-    assert kinds(appearance_specs(_multiscale(), config)) == ["image", "aabb"]
+    assert kinds(appearance_specs(_multiscale(), config)) == [
+        "image",
+        "aabb",
+        "loading",
+    ]
 
 
 def test_dataset_info_rows_are_coerced_to_strings():
@@ -297,6 +301,7 @@ def test_titles_are_shared_by_both_front_ends():
         "Image",
         "LOD bias",
         "Bounding box",
+        "Loading",
     ]
 
 
@@ -518,14 +523,18 @@ def test_dataset_info_true_asks_the_store_to_describe_itself():
         MultiscaleImageControlsConfig(appearance=["color_map"], dataset_info=True),
         _FakeStore(info),
     )
-    assert kinds(result) == ["image", "aabb", "dataset_info"]
+    assert kinds(result) == ["image", "aabb", "loading", "dataset_info"]
     assert result.specs[-1].values == {"info": info}
 
 
 def test_dataset_info_true_without_a_store_builds_no_block():
     """A block asserting that a store has no metadata is worse than no block."""
     config = MultiscaleImageControlsConfig(appearance=["color_map"], dataset_info=True)
-    assert kinds(appearance_specs(_multiscale(), config)) == ["image", "aabb"]
+    assert kinds(appearance_specs(_multiscale(), config)) == [
+        "image",
+        "aabb",
+        "loading",
+    ]
 
 
 def test_dataset_info_accepts_a_prebuilt_dataset_info():
@@ -564,3 +573,25 @@ def test_dataset_info_is_available_on_every_config_class():
         config = config_class(appearance=["visible"], dataset_info=True)
         result = appearance_specs(_multiscale(), config, _FakeStore(info))
         assert "dataset_info" in kinds(result), config_class.__name__
+
+
+def test_the_loading_indicator_is_multiscale_only_and_can_be_turned_off():
+    """Only a multiscale visual loads progressively (design v3 5.13)."""
+    from cellier.visuals import ImageVisual
+
+    fields = ["color_map"]
+    on = appearance_specs(
+        _multiscale(), MultiscaleImageControlsConfig(appearance=fields)
+    )
+    assert kinds(on)[-1] == "loading"
+    assert on.specs[-1].title == "Loading"
+    off = appearance_specs(
+        _multiscale(),
+        MultiscaleImageControlsConfig(appearance=fields, loading_indicator=False),
+    )
+    assert "loading" not in kinds(off)
+    # An in-memory image under the multiscale config has nothing to load.
+    in_memory = ImageVisual(name="image", data_store_id="store")
+    assert "loading" not in kinds(
+        appearance_specs(in_memory, MultiscaleImageControlsConfig(appearance=fields))
+    )

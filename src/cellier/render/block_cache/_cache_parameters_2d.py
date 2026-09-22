@@ -59,7 +59,7 @@ def compute_block_cache_parameters_2d(
     bytes_per_tile = padded * padded * bytes_per_pixel
     max_slots = gpu_budget_bytes // bytes_per_tile
     # 2D grid: grid_side^2 = n_slots
-    grid_side = int(math.isqrt(max_slots))
+    grid_side = math.isqrt(max_slots)
     # Ensure at least 2 (slot 0 is reserved).
     grid_side = max(grid_side, 2)
     n_slots = grid_side * grid_side

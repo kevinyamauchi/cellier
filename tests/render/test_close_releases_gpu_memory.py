@@ -16,6 +16,7 @@ texture can die is by ``close()`` dropping the references to it.
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import weakref
 from contextlib import contextmanager
@@ -191,7 +192,13 @@ async def test_close_mid_slice_frees_every_texture(kind, request, monkeypatch):
     textures = _track_instances(monkeypatch, gfx.Texture)
     with _collector_off():
         controller, _scene_id = _build(request, kind)
-        in_flight = list(controller._render_manager._slicer._tasks.values())
+        render_manager = controller._render_manager
+        in_flight = list(render_manager._slicer._tasks.values())
+        if not in_flight:
+            # Multiscale 3D loads through the chunk scheduler: its pass runs
+            # on the next loop turn and starts the reads.
+            await asyncio.sleep(0)
+            in_flight = list(render_manager.scheduler._tasks)
         assert in_flight, "no slice was in flight -- the test proves nothing"
 
         controller.close()

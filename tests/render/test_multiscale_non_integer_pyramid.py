@@ -23,7 +23,7 @@ import pytest
 import tensorstore as ts
 
 from cellier.data.image._zarr_multiscale_store import MultiscaleZarrDataStore
-from cellier.visuals import MultiscaleImageSingleAppearance
+from cellier.visuals import MultiscaleImageSingleAppearance, ProgressiveLoadingConfig
 from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
@@ -161,7 +161,10 @@ async def _render_image(controller, render_scene, reslice, root, dim, level):
         data=_store(root, f"ramp-{dim}-{level}"),
         scene_id=scene.id,
         appearance=MultiscaleImageAppearance(force_level=level),
-        render_config=MultiscaleImageRenderConfig(block_size=BLOCK_SIZE),
+        # The level under test only: no backstop drawn beneath it.
+        render_config=MultiscaleImageRenderConfig(
+            block_size=BLOCK_SIZE, loading=ProgressiveLoadingConfig(backstop=False)
+        ),
         single=MultiscaleImageSingleAppearance(
             color_map="gray", clim=(0.0, 1.0), render_mode="mip"
         ),
@@ -180,7 +183,9 @@ async def _render_labels(controller, render_scene, reslice, root, dim, level):
         data=_store(root, f"bands-{dim}-{level}"),
         scene_id=scene.id,
         appearance=MultiscaleLabelsAppearance(force_level=level),
-        render_config=MultiscaleLabelRenderConfig(block_size=BLOCK_SIZE),
+        render_config=MultiscaleLabelRenderConfig(
+            block_size=BLOCK_SIZE, loading=ProgressiveLoadingConfig(backstop=False)
+        ),
     )
     controller.add_canvas(scene_id=scene.id)
     await reslice(controller, scene.id)

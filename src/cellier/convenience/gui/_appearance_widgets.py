@@ -35,6 +35,28 @@ def _any_lod_bias(spec: ControlSpec, visual_ids, controller=None):
     )
 
 
+def _any_loading(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.visuals import AnywidgetLoadingIndicator
+
+    initial = (
+        {vid: controller.loading_progress(vid) for vid in visual_ids}
+        if controller is not None
+        else None
+    )
+    return AnywidgetLoadingIndicator(visual_ids, initial=initial, title=spec.title)
+
+
+def _any_loading_config(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.visuals import AnywidgetLoadingConfigControls
+
+    return AnywidgetLoadingConfigControls(
+        visual_ids,
+        loading=spec.values["loading"],
+        n_levels=spec.values["n_levels"],
+        title=spec.title,
+    )
+
+
 def _any_aabb(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetAABBWidget
 
@@ -117,6 +139,8 @@ ANYWIDGET_BUILDERS = {
     "lod_bias": _any_lod_bias,
     "trail": _any_trail,
     "aabb": _any_aabb,
+    "loading": _any_loading,
+    "loading_config": _any_loading_config,
     "visual_outline": _any_visual_outline,
     "labels_outline": _any_labels_outline,
     "visual_occlusion": _any_visual_occlusion,

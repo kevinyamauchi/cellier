@@ -28,7 +28,7 @@ slot and a level.
 
 Two sides use the LUT:
 
-1. **The writer** (`rebuild_lut` / `rebuild_lut_2d`) writes every resident
+1. **The writer** (`paint_lut`, through each LUT manager's `paint`) writes every resident
    brick into the base cells it covers, coarsest level first, so finer data
    overwrites coarser placeholders. A level-k brick covers several base cells.
 2. **The shader** turns a sample position into a base cell, reads the cell's
