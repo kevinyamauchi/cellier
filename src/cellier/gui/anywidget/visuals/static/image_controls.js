@@ -197,6 +197,11 @@ function render({ model, el }) {
     if (field === "color_map") return makeSelect(model.get("colormap_names"), v, onChange);
     if (field === "clim") return makeClimSlider(model.get("clim_range") || [0, 1], v, onChange);
     if (field === "render_mode") return makeSelect(model.get("render_modes"), v, onChange);
+    if (field === "iso_threshold") {
+      // A threshold is in data units, like the contrast limits.
+      const [lo, hi] = model.get("clim_range") || [0, 1];
+      return makeFloatSlider(lo, hi, v, onChange);
+    }
     return makeFloatSlider(0.0, 1.0, v, onChange);
   }
 

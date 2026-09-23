@@ -239,7 +239,12 @@ class QtImageControls(VisualIdGroup):
                 applier = _combo_applier(control)
             else:  # opacity, iso_threshold
                 control = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
-                control.setRange(0.0, 1.0)
+                # A threshold is in data units, like the contrast limits;
+                # opacity is a fraction.
+                if field == "iso_threshold":
+                    control.setRange(*values["clim_range"])
+                else:
+                    control.setRange(0.0, 1.0)
                 control.setValue(float(mode[field]))
                 control.valueChanged.connect(
                     lambda v, f=field: self._emit(page, f, float(v), channel)

@@ -188,6 +188,30 @@ def test_qt_single_and_channel_edits_reach_the_model_and_back(qt_controls):
     assert value == pytest.approx(0.75)
 
 
+def test_qt_threshold_slider_spans_the_clim_range(qt_controls):
+    """A threshold is in data units, so its slider spans ``clim_range``.
+
+    It used to share opacity's fixed 0-1 range, which clamped the threshold of
+    any non-normalized image (a uint16 volume) to 1.
+    """
+    controller, visual = _image()
+    controller.update_single_appearance_field(visual.id, "iso_threshold", 30000.0)
+    values = image_control_values(visual, fields=_FIELDS, clim_range=(0.0, 65535.0))
+    widget = _connect(controller, qt_controls(visual.id, values))
+
+    threshold = widget._controls[("single", None, "iso_threshold")]
+    assert (threshold.minimum(), threshold.maximum()) == (0.0, 65535.0)
+    assert threshold.value() == pytest.approx(30000.0)
+    channel_threshold = widget._controls[("channel", 1, "iso_threshold")]
+    assert channel_threshold.maximum() == 65535.0
+    # Opacity is a fraction whatever the data range.
+    opacity = widget._controls[("single", None, "opacity")]
+    assert (opacity.minimum(), opacity.maximum()) == (0.0, 1.0)
+
+    threshold.setValue(40000.0)
+    assert visual.single.iso_threshold == pytest.approx(40000.0)
+
+
 def test_qt_shows_a_colormap_that_no_name_can_reconstruct(qt_controls):
     """The lightsheet case: channels built with an inline ``Colormap``.
 
