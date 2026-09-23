@@ -34,6 +34,7 @@ from uuid import uuid4
 import numpy as np
 
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._level_mapping import level_to_data
 from cellier.render.block_cache._tile_manager_2d import BlockKey2D
 from cellier.render.block_cache._tile_manager_2d import TileSlot as TileSlot2D
 from cellier.render.block_cache._tile_manager_3d import BlockKey3D, TileSlot
@@ -352,12 +353,24 @@ class _AtlasResidency:
                         low[:, axis], high[:, axis] = value
                     else:
                         low[:, axis], high[:, axis] = value, value + 1
-            scale = self._level_scales[level - 1]
-            shift = self._level_translations[level - 1]
-            a, b = low * scale + shift, high * scale + shift
+            # Centre convention (plan v2, D1): level voxels [low, high) cover
+            # u in [low - 0.5, high - 0.5], and level-0 voxels [start, stop)
+            # cover data [start - 0.5, stop - 0.5].
+            a, b = (
+                level_to_data(
+                    low - 0.5,
+                    self._level_scales[level - 1],
+                    self._level_translations[level - 1],
+                ),
+                level_to_data(
+                    high - 0.5,
+                    self._level_scales[level - 1],
+                    self._level_translations[level - 1],
+                ),
+            )
             low0, high0 = np.minimum(a, b), np.maximum(a, b)
             for r in regions:
-                inside = (low0 < r[:, 1]) & (high0 > r[:, 0])
+                inside = (low0 < r[:, 1] - 0.5) & (high0 > r[:, 0] - 0.5)
                 hit[rows] |= inside.all(axis=1)
         return hit
 

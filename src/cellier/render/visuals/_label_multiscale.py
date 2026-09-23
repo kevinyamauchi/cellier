@@ -13,6 +13,7 @@ from cellier.render._frustum import (
     bricks_in_frustum_arr,
     frustum_planes_from_corners,
 )
+from cellier.render._level_mapping import base_cell_range
 from cellier.render._level_of_detail import (
     select_levels_arr_forced,
     select_levels_from_cache,
@@ -35,6 +36,7 @@ from cellier.render.block_cache import (
 )
 from cellier.render.block_cache._block_cache_2d import BlockCache2D
 from cellier.render.block_cache._cache_parameters_2d import (
+    TILE_BORDER_2D,
     compute_block_cache_parameters_2d,
 )
 from cellier.render.lut_indirection import LutIndirectionManager3D
@@ -117,6 +119,13 @@ if TYPE_CHECKING:
 # Importing this module registers the shader classes with pygfx.
 import cellier.render.shaders._label_multiscale as _label_reg  # noqa: F401
 
+#: How far past a sample position each labels path reads, in level-k voxels,
+#: at the default ``ray_steps_per_voxel`` (plan v2, "Padding budgets"): the
+#: brick-rule padding warning subtracts it from the ghost border.  3D: one
+#: bisection step (1 at K = 1); 2D: nearest sampling reads nothing extra.
+_LABELS_SAMPLING_MARGIN_3D = 1.0
+_LABELS_SAMPLING_MARGIN_2D = 0.0
+
 
 class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
     """Render-layer wrapper for one logical multiscale label visual.
@@ -166,6 +175,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         salt: int = 0,
         color_dict: dict | None = None,
         render_mode: str = "iso_categorical",
+        ray_steps_per_voxel: float = 1.0,
         gpu_budget_bytes_3d: int = 1 * 1024**3,
         gpu_budget_bytes_2d: int = 64 * 1024**2,
         transform: BaseTransform | None = None,
@@ -243,6 +253,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         self._colormap_mode: str = colormap_mode
         self._salt: int = int(salt)
         self._render_mode: str = render_mode
+        self._ray_steps_per_voxel: float = float(ray_steps_per_voxel)
         self._paint_max_tiles: int = int(paint_max_tiles)
 
         # 2D paint resources (allocated in _allocate_paint_resources_2d)
@@ -281,6 +292,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 base_layout=volume_geometry.base_layout,
                 n_levels=volume_geometry.n_levels,
                 level_scale_vecs_data=volume_geometry._scale_vecs_data,
+                level_translation_vecs_data=volume_geometry._translation_vecs_data,
+                sampling_margin=_LABELS_SAMPLING_MARGIN_3D,
                 level_shapes=volume_geometry.level_shapes,
                 border=cache_parameters_3d.overlap,
             )
@@ -298,6 +311,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
                 block_size=image_geometry_2d.block_size,
+                overlap=TILE_BORDER_2D,
             )
             self._block_cache_2d = BlockCache2D(
                 cache_parameters=cache_parameters_2d, dtype=np.int32
@@ -306,6 +320,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 base_layout=image_geometry_2d.base_layout,
                 n_levels=image_geometry_2d.n_levels,
                 scale_vecs_data=image_geometry_2d._scale_vecs_data,
+                translation_vecs_data=image_geometry_2d._translation_vecs_data,
+                sampling_margin=_LABELS_SAMPLING_MARGIN_2D,
                 level_shapes=image_geometry_2d.level_shapes,
                 border=cache_parameters_2d.overlap,
             )
@@ -316,6 +332,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
                 level_shapes=image_geometry_2d.level_shapes,
                 block_size=image_geometry_2d.block_size,
+                level_translation_vecs_data=image_geometry_2d._translation_vecs_data,
             )
             self._allocate_paint_resources_2d()
 
@@ -351,6 +368,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
                 volume_geometry._scale_vecs_data,
                 level_shapes=volume_geometry.level_shapes,
                 block_size=volume_geometry.block_size,
+                level_translation_vecs_data=volume_geometry._translation_vecs_data,
             )
 
         # Which label values the selection layer outlines.  Held here so a
@@ -455,6 +473,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             salt=app.salt,
             color_dict=dict(app.color_dict),
             render_mode=app.render_mode,
+            ray_steps_per_voxel=app.ray_steps_per_voxel,
             gpu_budget_bytes_3d=gpu_budget_bytes,
             gpu_budget_bytes_2d=gpu_budget_bytes_2d,
             paint_max_tiles=paint_max_tiles,
@@ -583,6 +602,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             base_layout=geo.base_layout,
             n_levels=geo.n_levels,
             level_scale_vecs_data=geo._scale_vecs_data,
+            level_translation_vecs_data=geo._translation_vecs_data,
+            sampling_margin=_LABELS_SAMPLING_MARGIN_3D,
             level_shapes=geo.level_shapes,
             border=self._block_cache_3d.info.overlap,
         )
@@ -591,6 +612,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             geo._scale_vecs_data,
             level_shapes=geo.level_shapes,
             block_size=geo.block_size,
+            level_translation_vecs_data=geo._translation_vecs_data,
         )
         if self.node_3d is not None:
             inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node()
@@ -621,6 +643,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             block_size = visual_model.render_config.block_size
             pick_write = visual_model.pick_write
             self._render_mode = app.render_mode
+            self._ray_steps_per_voxel = float(app.ray_steps_per_voxel)
             material_fields = {
                 "opacity": app.opacity,
                 "depth_test": app.depth_test,
@@ -673,6 +696,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             base_layout=geo.base_layout,
             n_levels=geo.n_levels,
             level_scale_vecs_data=geo._scale_vecs_data,
+            level_translation_vecs_data=geo._translation_vecs_data,
+            sampling_margin=_LABELS_SAMPLING_MARGIN_3D,
             level_shapes=geo.level_shapes,
             border=cache_parameters_3d.overlap,
         )
@@ -696,6 +721,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             geo._scale_vecs_data,
             level_shapes=geo.level_shapes,
             block_size=geo.block_size,
+            level_translation_vecs_data=geo._translation_vecs_data,
         )
 
         inner, self.material_3d, self._proxy_tex_3d = self._build_3d_node(
@@ -723,6 +749,8 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             base_layout=geo2d.base_layout,
             n_levels=geo2d.n_levels,
             scale_vecs_data=geo2d._scale_vecs_data,
+            translation_vecs_data=geo2d._translation_vecs_data,
+            sampling_margin=_LABELS_SAMPLING_MARGIN_2D,
             level_shapes=geo2d.level_shapes,
             border=self._block_cache_2d.info.overlap,
         )
@@ -733,6 +761,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             level_scale_vecs_data=geo2d._scale_vecs_data,
             level_shapes=geo2d.level_shapes,
             block_size=geo2d.block_size,
+            level_translation_vecs_data=geo2d._translation_vecs_data,
         )
         self._allocate_paint_resources_2d()
         if self.node_2d is not None:
@@ -1168,11 +1197,15 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             # background tiles out of the LUT.  view_min/max are level-0 voxels
             # in (gx, gy) order; convert to half-open cell bounds and clamp.
             gh_grid, gw_grid = geo2d.base_layout.grid_dims
-            cx0 = max(0, int(np.floor(view_min[0] / block_size)))
-            cx1 = min(gw_grid, int(np.ceil(view_max[0] / block_size)))
-            cy0 = max(0, int(np.floor(view_min[1] / block_size)))
-            cy1 = min(gh_grid, int(np.ceil(view_max[1] / block_size)))
-            self._current_viewport_cells = (cy0, cx0, cy1, cx1)
+            (cx0, cy0), (cx1, cy1) = base_cell_range(
+                view_min[:2], view_max[:2], block_size
+            )
+            self._current_viewport_cells = (
+                max(0, int(cy0)),
+                max(0, int(cx0)),
+                min(gh_grid, int(cy1)),
+                min(gw_grid, int(cx1)),
+            )
         else:
             self._current_viewport_cells = None
 
@@ -1388,6 +1421,10 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             self._render_mode = val
             if self.material_3d is not None:
                 self.material_3d.render_mode = val
+        elif field == "ray_steps_per_voxel":
+            self._ray_steps_per_voxel = float(val)
+            if self.material_3d is not None:
+                self.material_3d.ray_steps_per_voxel = float(val)
         # LOD fields — these affect planning, not GPU state; nothing to push.
 
     def on_visibility_changed(self, event: VisualVisibilityChangedEvent) -> None:
@@ -1674,6 +1711,7 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
             render_mode=self._render_mode,
             n_entries=self._n_entries,
             pick_write=pick_write,
+            ray_steps_per_voxel=self._ray_steps_per_voxel,
         )
 
         geometry = gfx.Geometry(grid=proxy_tex)

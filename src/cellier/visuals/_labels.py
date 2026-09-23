@@ -34,6 +34,11 @@ class MultiscaleLabelsAppearance(BaseLabelsAppearance):
         Overrides automatic LOD selection when set. Default None.
     frustum_cull : bool
         Skip bricks outside the camera frustum. Default True.
+    ray_steps_per_voxel : float
+        3D ray-march samples per voxel of the drawn level, measured along
+        the ray.  Lower is faster but can skip labels a voxel or two
+        thick.  Must be in [0.5, 8]: below 0.5 a bisection probe can
+        overshoot the brick's ghost border.  Default 1.0.
     """
 
     render_mode: Literal[
@@ -42,6 +47,7 @@ class MultiscaleLabelsAppearance(BaseLabelsAppearance):
     lod_bias: float = 1.0
     force_level: int | None = None
     frustum_cull: bool = True
+    ray_steps_per_voxel: float = Field(default=1.0, ge=0.5, le=8.0)
 
 
 class MultiscaleLabelRenderConfig(BaseModel):

@@ -185,3 +185,30 @@ def test_block_scales_buffer_2d_power_of_two_fallback():
     data = build_block_scales_buffer_2d(n_levels=3).data
     assert tuple(data["span_3"][:2]) == (4.0, 4.0)
     assert tuple(data["bricks_3"][:2]) == (float(UNBOUNDED_BRICK_COUNT),) * 2
+
+
+# -- Level offsets (plan v2, Phase 4) ------------------------------------------
+
+
+def test_brick_scales_buffer_carries_level_offsets_in_shader_order():
+    translations = [np.array([0.0, 0.0, 0.0]), np.array([0.5, 1.0, 1.5])]
+    data = build_brick_scales_buffer(
+        [np.ones(3), np.array([2.0, 3.0, 4.0])],
+        level_translation_vecs_data=translations,
+    ).data
+    # LUT level k (1-based) is data level k - 1; shader order reverses (z, y, x).
+    np.testing.assert_array_equal(data["offset_1"][:3], [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(data["offset_2"][:3], [1.5, 1.0, 0.5])
+    # Without translations every offset is zero.
+    plain = build_brick_scales_buffer([np.ones(3), np.array([2.0, 3.0, 4.0])]).data
+    assert not any(plain[f"offset_{k}"].any() for k in range(10))
+
+
+def test_block_scales_buffer_2d_carries_level_offsets_uninverted():
+    data = build_block_scales_buffer_2d(
+        level_scale_vecs_data=[np.ones(2), np.array([2.0, 4.0])],
+        level_translation_vecs_data=[np.zeros(2), np.array([0.5, 1.5])],
+    ).data
+    # scale_k holds 1 / s; offset_k holds t itself, shader order (x, y).
+    np.testing.assert_allclose(data["scale_2"][:2], [0.25, 0.5])
+    np.testing.assert_array_equal(data["offset_2"][:2], [1.5, 0.5])

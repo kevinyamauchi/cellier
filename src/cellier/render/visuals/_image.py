@@ -16,6 +16,7 @@ from cellier.render._frustum import (
     bricks_in_frustum_arr,
     frustum_planes_from_corners,
 )
+from cellier.render._level_mapping import base_cell_range
 from cellier.render._level_of_detail import (
     build_level_grids,
     select_levels_arr_forced,
@@ -43,6 +44,7 @@ from cellier.render.block_cache import (
 )
 from cellier.render.block_cache._block_cache_2d import BlockCache2D
 from cellier.render.block_cache._cache_parameters_2d import (
+    TILE_BORDER_2D,
     compute_block_cache_parameters_2d,
 )
 from cellier.render.lut_indirection import BlockLayout3D, LutIndirectionManager3D
@@ -118,6 +120,14 @@ if TYPE_CHECKING:
 # Importing this module registers the shader class with pygfx via the
 # @register_wgpu_render_function decorator.
 import cellier.render.shaders._multiscale_volume_brick as _brick_reg  # noqa: F401
+
+#: How far past a sample position each image path reads, in level-k voxels,
+#: at the default ``ray_steps_per_voxel`` (plan v2, "Padding budgets"): the
+#: brick-rule padding warning subtracts it from the ghost border.  3D: the
+#: gradient probe (+-1.5) outreaches one bisection step (1 at K = 1); 2D:
+#: linear filtering.
+_IMAGE_SAMPLING_MARGIN_3D = 1.5
+_IMAGE_SAMPLING_MARGIN_2D = 0.5
 
 
 class NormSizedVolume(gfx.Volume):
@@ -1131,11 +1141,13 @@ class MultiscaleRegionPlanner:
         if view_min is None or view_max is None:
             return None
         gh_grid, gw_grid = self._image_geometry_2d.base_layout.grid_dims
-        cx0 = max(0, int(np.floor(view_min[0] / block_size)))
-        cx1 = min(gw_grid, int(np.ceil(view_max[0] / block_size)))
-        cy0 = max(0, int(np.floor(view_min[1] / block_size)))
-        cy1 = min(gh_grid, int(np.ceil(view_max[1] / block_size)))
-        return (cy0, cx0, cy1, cx1)
+        (cx0, cy0), (cx1, cy1) = base_cell_range(view_min[:2], view_max[:2], block_size)
+        return (
+            max(0, int(cy0)),
+            max(0, int(cx0)),
+            min(gh_grid, int(cy1)),
+            min(gw_grid, int(cx1)),
+        )
 
     def _adopt_viewport_2d(
         self,
@@ -1416,6 +1428,8 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
                 base_layout=volume_geometry.base_layout,
                 n_levels=volume_geometry.n_levels,
                 level_scale_vecs_data=volume_geometry._scale_vecs_data,
+                level_translation_vecs_data=volume_geometry._translation_vecs_data,
+                sampling_margin=_IMAGE_SAMPLING_MARGIN_3D,
                 level_shapes=volume_geometry.level_shapes,
                 border=cache_parameters_3d.overlap,
             )
@@ -1436,12 +1450,15 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             cache_parameters_2d = compute_block_cache_parameters_2d(
                 gpu_budget_bytes=gpu_budget_bytes_2d,
                 block_size=image_geometry_2d.block_size,
+                overlap=TILE_BORDER_2D,
             )
             self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
             self._lut_manager_2d = LutIndirectionManager2D(
                 base_layout=image_geometry_2d.base_layout,
                 n_levels=image_geometry_2d.n_levels,
                 scale_vecs_data=image_geometry_2d._scale_vecs_data,
+                translation_vecs_data=image_geometry_2d._translation_vecs_data,
+                sampling_margin=_IMAGE_SAMPLING_MARGIN_2D,
                 level_shapes=image_geometry_2d.level_shapes,
                 border=cache_parameters_2d.overlap,
             )
@@ -1452,6 +1469,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
                 level_scale_vecs_data=image_geometry_2d._scale_vecs_data,
                 level_shapes=image_geometry_2d.level_shapes,
                 block_size=image_geometry_2d.block_size,
+                level_translation_vecs_data=image_geometry_2d._translation_vecs_data,
             )
 
         # ── Brick-shader-specific buffers (3D only) ──────────────────────
@@ -1493,6 +1511,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
                 volume_geometry._scale_vecs_data,
                 level_shapes=volume_geometry.level_shapes,
                 block_size=volume_geometry.block_size,
+                level_translation_vecs_data=volume_geometry._translation_vecs_data,
             )
 
         if colormap is None:
@@ -1757,6 +1776,8 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             base_layout=self._volume_geometry.base_layout,
             n_levels=self._volume_geometry.n_levels,
             level_scale_vecs_data=self._volume_geometry._scale_vecs_data,
+            level_translation_vecs_data=self._volume_geometry._translation_vecs_data,
+            sampling_margin=_IMAGE_SAMPLING_MARGIN_3D,
             level_shapes=self._volume_geometry.level_shapes,
             border=cache_parameters_3d.overlap,
         )
@@ -1780,6 +1801,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             self._volume_geometry._scale_vecs_data,
             level_shapes=self._volume_geometry.level_shapes,
             block_size=self._volume_geometry.block_size,
+            level_translation_vecs_data=self._volume_geometry._translation_vecs_data,
         )
         if self.material_2d is not None:
             colormap = self.material_2d.map
@@ -1834,12 +1856,15 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         cache_parameters_2d = compute_block_cache_parameters_2d(
             gpu_budget_bytes=self._gpu_budget_bytes_2d,
             block_size=self._image_geometry_2d.block_size,
+            overlap=TILE_BORDER_2D,
         )
         self._block_cache_2d = BlockCache2D(cache_parameters=cache_parameters_2d)
         self._lut_manager_2d = LutIndirectionManager2D(
             base_layout=self._image_geometry_2d.base_layout,
             n_levels=self._image_geometry_2d.n_levels,
             scale_vecs_data=self._image_geometry_2d._scale_vecs_data,
+            translation_vecs_data=self._image_geometry_2d._translation_vecs_data,
+            sampling_margin=_IMAGE_SAMPLING_MARGIN_2D,
             level_shapes=self._image_geometry_2d.level_shapes,
             border=cache_parameters_2d.overlap,
         )
@@ -1850,6 +1875,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             level_scale_vecs_data=self._image_geometry_2d._scale_vecs_data,
             level_shapes=self._image_geometry_2d.level_shapes,
             block_size=self._image_geometry_2d.block_size,
+            level_translation_vecs_data=self._image_geometry_2d._translation_vecs_data,
         )
         if self.material_3d is not None:
             colormap = self.material_3d.map
@@ -1883,6 +1909,8 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             base_layout=geo.base_layout,
             n_levels=geo.n_levels,
             level_scale_vecs_data=geo._scale_vecs_data,
+            level_translation_vecs_data=geo._translation_vecs_data,
+            sampling_margin=_IMAGE_SAMPLING_MARGIN_3D,
             level_shapes=geo.level_shapes,
             border=self._block_cache_3d.info.overlap,
         )
@@ -1891,6 +1919,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             geo._scale_vecs_data,
             level_shapes=geo.level_shapes,
             block_size=geo.block_size,
+            level_translation_vecs_data=geo._translation_vecs_data,
         )
         # Rebuild node preserving current appearance
         if self.node_3d is not None:
@@ -1922,6 +1951,8 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             base_layout=geo2d.base_layout,
             n_levels=geo2d.n_levels,
             scale_vecs_data=geo2d._scale_vecs_data,
+            translation_vecs_data=geo2d._translation_vecs_data,
+            sampling_margin=_IMAGE_SAMPLING_MARGIN_2D,
             level_shapes=geo2d.level_shapes,
             border=self._block_cache_2d.info.overlap,
         )
@@ -1933,6 +1964,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
             level_scale_vecs_data=geo2d._scale_vecs_data,
             level_shapes=geo2d.level_shapes,
             block_size=geo2d.block_size,
+            level_translation_vecs_data=geo2d._translation_vecs_data,
         )
         # Rebuild node preserving current appearance
         if self.node_2d is not None:
@@ -2465,6 +2497,9 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         elif event.field_name == "attenuation":
             if self.material_3d is not None:
                 self.material_3d.attenuation = float(event.new_value)
+        elif event.field_name == "ray_steps_per_voxel":
+            if self.material_3d is not None:
+                self.material_3d.ray_steps_per_voxel = float(event.new_value)
         elif event.field_name == "render_mode":
             if self.material_3d is not None:
                 self.material_3d.render_mode = event.new_value
@@ -3077,6 +3112,7 @@ class GFXMultiscaleImageVisual:
                 material.clim = mode_appearance.clim
                 material.threshold = float(mode_appearance.iso_threshold)
                 material.attenuation = float(shared.attenuation)
+                material.ray_steps_per_voxel = float(shared.ray_steps_per_voxel)
                 material.render_mode = mode_appearance.render_mode
                 material.opacity = mode_appearance.opacity
                 material.interpolation = shared.interpolation

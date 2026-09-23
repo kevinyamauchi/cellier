@@ -297,3 +297,37 @@ def test_2d_keys_in_region() -> None:
     )
     region = ((0.0, 1.0), (14.0, 15.0), (14.0, 15.0))
     assert residency.keys_in_region(keys, [region]).tolist() == [False, True, True]
+
+
+def test_2d_keys_in_region_uses_voxel_centres_on_a_translated_level() -> None:
+    """Level 2 (scale 2) shifted by t = 0.25: centre convention (plan v2, D1).
+
+    Brick 0's padded tile holds level voxels ``-1 .. BLOCK``; voxel ``BLOCK``
+    is centred on ``2 * BLOCK + 0.25`` and covers up to ``2 * BLOCK + 1.25``.
+    Level-0 voxel ``2 * BLOCK + 1`` (from ``2 * BLOCK + 0.5``) overlaps it;
+    ``2 * BLOCK + 2`` (from ``2 * BLOCK + 1.5``) does not.  The edge-convention
+    formula this replaced reached ``2 * BLOCK + 2.25`` and hit both.
+    """
+    translations = np.zeros((3, 3))
+    translations[1] = (0.0, 0.25, 0.25)
+    params = compute_block_cache_parameters_2d(
+        gpu_budget_bytes=16 * (BLOCK + 2) ** 2 * 4, block_size=BLOCK, overlap=1
+    )
+    lut = LutIndirectionManager2D(
+        BlockLayout2D.from_shape(shape=SHAPES_2D[0], block_size=BLOCK, overlap=1),
+        n_levels=3,
+        scale_vecs_data=[s[1:] for s in SCALES_2D],
+        level_shapes=SHAPES_2D,
+    )
+    residency = ImageResidency2D(
+        BlockCache2D(params), lut, BLOCK, SCALES_2D, translations
+    )
+    t0 = residency.intern((0, None, None))
+    keys = pack_keys(np.array([2]), np.array([t0]), np.array([[0, 0]]))
+
+    def hit(voxel: int) -> bool:
+        region = ((0.0, 1.0), (voxel, voxel + 1.0), (voxel, voxel + 1.0))
+        return bool(residency.keys_in_region(keys, [region])[0])
+
+    assert hit(2 * BLOCK + 1)
+    assert not hit(2 * BLOCK + 2)

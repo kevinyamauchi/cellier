@@ -22,6 +22,7 @@ from cellier.data._axes import (
     scale_and_translation_transform,
     store_level_transforms,
 )
+from cellier.data._level_contract import validate_store_levels
 from cellier.events import (
     AABBChangedEvent,
     AABBUpdateEvent,
@@ -3639,6 +3640,9 @@ class CellierController:
         """
         if data_store.data_coordinate_systems:
             install_level_transforms(data_store)
+            # A store restored or built with its transforms already set skips
+            # the install, and with it the check: run it here.
+            validate_store_levels(data_store)
             self._register_coordinate_systems(*data_store.data_coordinate_systems)
             return
         ndim = getattr(data_store, "ndim", None)

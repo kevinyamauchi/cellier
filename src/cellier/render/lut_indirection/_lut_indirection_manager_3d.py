@@ -64,6 +64,14 @@ class LutIndirectionManager3D:
         The brick cache's padding in voxels.  When given together with the
         scales and shapes, levels whose cell -> brick rule needs more padding
         than this are logged as warnings.
+    level_translation_vecs_data : list of ndarray, optional
+        Per-level translations in level-0 voxels, data order; the budget
+        warning then includes the translation term.  ``None`` assumes block
+        averaging.
+    sampling_margin : float
+        How far past a sample position this path's shader reads, in level-k
+        voxels, at the default ray density (plan v2, "Padding budgets"):
+        subtracted from *border* for the warning.  Default 0.5 (linear).
 
     Attributes
     ----------
@@ -87,6 +95,8 @@ class LutIndirectionManager3D:
         level_scale_vecs_data: list | None = None,
         level_shapes: list | None = None,
         border: float | None = None,
+        level_translation_vecs_data: list | None = None,
+        sampling_margin: float = 0.5,
     ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
@@ -94,7 +104,12 @@ class LutIndirectionManager3D:
         self._level_shapes = level_shapes
         if border is not None:
             for issue in brick_rule_issues(
-                level_scale_vecs_data, level_shapes, base_layout.block_size, border
+                level_scale_vecs_data,
+                level_shapes,
+                base_layout.block_size,
+                border,
+                sampling_margin=sampling_margin,
+                translation_vecs_data=level_translation_vecs_data,
             ):
                 _GPU_LOGGER.warning("brick_rule_padding  3d  %s", issue.describe())
         self.lut_data, self.lut_tex = build_lut_texture(base_layout)

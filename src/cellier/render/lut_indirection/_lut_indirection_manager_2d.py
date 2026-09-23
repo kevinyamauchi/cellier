@@ -46,6 +46,14 @@ class LutIndirectionManager2D:
         The tile cache's padding in pixels.  When given together with the
         scales and shapes, levels whose cell -> tile rule needs more padding
         than this are logged as warnings.
+    translation_vecs_data : list[np.ndarray] or None
+        Per-level translations in level-0 voxels, ``(ty, tx)``; the budget
+        warning then includes the translation term.  ``None`` assumes block
+        averaging.
+    sampling_margin : float
+        How far past a sample position this path's shader reads, in level-k
+        voxels, at the default ray density (plan v2, "Padding budgets"):
+        subtracted from *border* for the warning.  Default 0.5 (linear).
     """
 
     def __init__(
@@ -55,6 +63,8 @@ class LutIndirectionManager2D:
         scale_vecs_data: list[np.ndarray] | None = None,
         level_shapes: list | None = None,
         border: float | None = None,
+        translation_vecs_data: list[np.ndarray] | None = None,
+        sampling_margin: float = 0.5,
     ) -> None:
         self._base_layout = base_layout
         self._n_levels = n_levels
@@ -62,7 +72,12 @@ class LutIndirectionManager2D:
         self._level_shapes = level_shapes
         if border is not None:
             for issue in brick_rule_issues(
-                scale_vecs_data, level_shapes, base_layout.block_size, border
+                scale_vecs_data,
+                level_shapes,
+                base_layout.block_size,
+                border,
+                sampling_margin=sampling_margin,
+                translation_vecs_data=translation_vecs_data,
             ):
                 _GPU_LOGGER.warning("brick_rule_padding  2d  %s", issue.describe())
         self.lut_data, self.lut_tex = build_lut_texture_2d(base_layout.grid_dims)
