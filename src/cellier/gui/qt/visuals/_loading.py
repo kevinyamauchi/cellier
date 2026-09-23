@@ -76,6 +76,7 @@ class QtLoadingIndicator(VisualIdGroup):
         self._bar.setTextVisible(False)
         self._bar.setMaximumHeight(8)
         self._text = QLabel(box)
+        self._text.setWordWrap(True)
         layout.addWidget(self._bar)
         layout.addWidget(self._text)
         self._row = labelled_row(

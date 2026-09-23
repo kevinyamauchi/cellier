@@ -41,7 +41,7 @@ class IndicatorState(NamedTuple):
         1: an empty plan is drawn full once complete, and empty before
         anything was planned.
     text : str
-        The status line, e.g. ``"Loading detail: 12 / 40"``.
+        The status line, e.g. ``"Detail: 12 / 40"``.
     busy : bool
         Anything still to load.
     """
@@ -72,12 +72,11 @@ def indicator_state(progress: LoadingProgress | None) -> IndicatorState:
     """The bar and text for *progress*.
 
     - no plan yet: ``"Not loaded"``;
-    - backstop still loading: ``"Loading overview: 3 / 8"``;
-    - then the target: ``"Loading detail: 12 / 40"``;
+    - backstop still loading: ``"Overview: 3 / 8"``;
+    - then the target: ``"Detail: 12 / 40"``;
     - done: ``"Loaded"``, or ``"Loaded, 2 failed"``;
     - done, but the plan was the backstop only (a slider drag with
-      ``dims_drag="backstop"``): ``"Overview loaded; detail when the slider
-      stops"``.
+      ``dims_drag="backstop"``): ``"Overview ready. Detail on stop."``.
 
     Chunks the plan dropped to fit the cache (``truncated_target``) are
     reported after either, since they will never load at this cache size.
@@ -86,17 +85,17 @@ def indicator_state(progress: LoadingProgress | None) -> IndicatorState:
         return IndicatorState(1, 0, "Not loaded", busy=False)
     p = progress
     if not p.backstop_complete:
-        text = f"Loading overview: {p.resident_backstop} / {p.needed_backstop}"
+        text = f"Overview: {p.resident_backstop} / {p.needed_backstop}"
     elif not p.complete:
-        text = f"Loading detail: {p.resident_target} / {p.needed_target}"
+        text = f"Detail: {p.resident_target} / {p.needed_target}"
     elif p.target_deferred:
-        text = "Overview loaded; detail when the slider stops"
+        text = "Overview ready. Detail on stop."
     else:
         text = "Loaded"
     if p.failed:
         text += f", {p.failed} failed"
     if p.truncated_target:
-        text += f", {p.truncated_target} over the cache"
+        text += f", {p.truncated_target} over budget"
     if p.needed_target == 0:
         maximum, value = 1, int(p.complete and not p.target_deferred)
     else:

@@ -29,23 +29,23 @@ def test_the_text_follows_the_phase():
         backstop_complete=False,
         complete=False,
     )
-    assert indicator_state(overview).text == "Loading overview: 3 / 8"
+    assert indicator_state(overview).text == "Overview: 3 / 8"
     detail = overview._replace(resident_backstop=8, backstop_complete=True)
     detail = detail._replace(resident_target=12)
     state = indicator_state(detail)
-    assert state.text == "Loading detail: 12 / 40"
+    assert state.text == "Detail: 12 / 40"
     assert (state.maximum, state.value, state.busy) == (40, 12, True)
     done = detail._replace(resident_target=38, failed=2, complete=True)
     assert indicator_state(done).text == "Loaded, 2 failed"
     assert not indicator_state(done).busy
     over = done._replace(failed=0, truncated_target=5)
-    assert indicator_state(over).text == "Loaded, 5 over the cache"
+    assert indicator_state(over).text == "Loaded, 5 over budget"
 
 
 def test_a_backstop_only_plan_says_the_detail_waits():
     drag = LoadingProgress(needed_backstop=8, resident_backstop=8, target_deferred=True)
     state = indicator_state(drag)
-    assert state.text == "Overview loaded; detail when the slider stops"
+    assert state.text == "Overview ready. Detail on stop."
     assert state.busy
     assert state.value == 0
 
@@ -99,7 +99,7 @@ async def test_the_indicator_follows_a_load(
 
     def detail_loading() -> bool:
         scheduler.commit_round()
-        return _shown(widget).startswith("Loading detail")
+        return _shown(widget).startswith("Detail")
 
     await _until(detail_loading)
     assert widget.state.busy
@@ -155,4 +155,4 @@ def test_a_group_indicator_sums_its_visuals(qtbot):
             LoadingProgress(needed_target=4, resident_target=1, complete=False),
         )
     )
-    assert widget.text == "Loading detail: 5 / 8"
+    assert widget.text == "Detail: 5 / 8"
