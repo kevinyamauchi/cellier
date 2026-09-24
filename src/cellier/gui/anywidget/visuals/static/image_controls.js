@@ -19,6 +19,19 @@ const LABELS = {
 
 const MODE_FIELDS = ["color_map", "clim", "opacity", "render_mode", "iso_threshold"];
 
+// Decimal places for the fraction-like fields (opacity, attenuation); mirrors
+// cellier.gui._image_controls.FRACTION_DECIMALS.  Data-unit fields (contrast
+// limits, threshold) use the model's "decimals" trait instead.
+const FRACTION_DECIMALS = 2;
+
+// The shortest the contrast and threshold tracks may be, in pixels; mirrors
+// cellier.gui._image_controls.MIN_TRACK_WIDTH_PX.  The dock grows to keep it.
+const MIN_TRACK_WIDTH_PX = 120;
+
+function formatNumber(value, decimals) {
+  return Number(value).toFixed(decimals);
+}
+
 function throttled(fn) {
   let timer = null;
   let pending = null;
@@ -77,7 +90,7 @@ function makeSelect(options, initial, onChange) {
   };
 }
 
-function makeFloatSlider(min, max, initial, onChange) {
+function makeFloatSlider(min, max, initial, onChange, decimals = FRACTION_DECIMALS) {
   const el = document.createElement("div");
   el.className = "cellier-app-row-inner";
   const inp = document.createElement("input");
@@ -88,10 +101,10 @@ function makeFloatSlider(min, max, initial, onChange) {
   inp.value = initial;
   const readout = document.createElement("span");
   readout.className = "cellier-app-readout";
-  readout.textContent = Number(initial).toFixed(3);
+  readout.textContent = formatNumber(initial, decimals);
   const send = throttled(onChange);
   inp.addEventListener("input", () => {
-    readout.textContent = Number(inp.value).toFixed(3);
+    readout.textContent = formatNumber(inp.value, decimals);
     send(parseFloat(inp.value));
   });
   inp.addEventListener("change", () => onChange(parseFloat(inp.value)));
@@ -101,14 +114,35 @@ function makeFloatSlider(min, max, initial, onChange) {
     el,
     set(v) {
       inp.value = v;
-      readout.textContent = Number(v).toFixed(3);
+      readout.textContent = formatNumber(v, decimals);
     },
   };
 }
 
-function makeClimSlider(range, initial, onChange) {
+function makeClimSlider(range, initial, onChange, decimals) {
+  // Four numbers, as the Qt control shows: the current low and high on a line
+  // above the track, and the range bounds at its two ends.
   const el = document.createElement("div");
-  el.className = "cellier-clim-track";
+  el.className = "cellier-clim";
+  const values = document.createElement("div");
+  values.className = "cellier-clim-values";
+  const loReadout = document.createElement("span");
+  loReadout.className = "cellier-clim-readout";
+  const hiReadout = document.createElement("span");
+  hiReadout.className = "cellier-clim-readout";
+  values.appendChild(loReadout);
+  values.appendChild(hiReadout);
+  const trackRow = document.createElement("div");
+  trackRow.className = "cellier-clim-row";
+  const minBound = document.createElement("span");
+  minBound.className = "cellier-clim-bound";
+  minBound.textContent = formatNumber(range[0], decimals);
+  const maxBound = document.createElement("span");
+  maxBound.className = "cellier-clim-bound";
+  maxBound.textContent = formatNumber(range[1], decimals);
+  const track = document.createElement("div");
+  track.className = "cellier-clim-track";
+  track.style.minWidth = `${MIN_TRACK_WIDTH_PX}px`;
   const rail = document.createElement("div");
   rail.className = "cellier-clim-rail";
   const fill = document.createElement("div");
@@ -128,6 +162,8 @@ function makeClimSlider(range, initial, onChange) {
     const span = parseFloat(lo.max) - mn || 1;
     fill.style.left = ((parseFloat(lo.value) - mn) / span) * 100 + "%";
     fill.style.right = ((parseFloat(lo.max) - parseFloat(hi.value)) / span) * 100 + "%";
+    loReadout.textContent = formatNumber(lo.value, decimals);
+    hiReadout.textContent = formatNumber(hi.value, decimals);
   }
   const current = () => [parseFloat(lo.value), parseFloat(hi.value)];
   const send = throttled(onChange);
@@ -143,10 +179,15 @@ function makeClimSlider(range, initial, onChange) {
   });
   lo.addEventListener("change", () => onChange(current()));
   hi.addEventListener("change", () => onChange(current()));
-  el.appendChild(rail);
-  el.appendChild(fill);
-  el.appendChild(lo);
-  el.appendChild(hi);
+  track.appendChild(rail);
+  track.appendChild(fill);
+  track.appendChild(lo);
+  track.appendChild(hi);
+  trackRow.appendChild(minBound);
+  trackRow.appendChild(track);
+  trackRow.appendChild(maxBound);
+  el.appendChild(values);
+  el.appendChild(trackRow);
   updateFill();
   return {
     el,
@@ -195,14 +236,19 @@ function render({ model, el }) {
     const v = values[field];
     if (field === "visible") return makeCheckbox(v, onChange);
     if (field === "color_map") return makeSelect(model.get("colormap_names"), v, onChange);
-    if (field === "clim") return makeClimSlider(model.get("clim_range") || [0, 1], v, onChange);
+    const decimals = model.get("decimals");
+    if (field === "clim") {
+      return makeClimSlider(model.get("clim_range") || [0, 1], v, onChange, decimals);
+    }
     if (field === "render_mode") return makeSelect(model.get("render_modes"), v, onChange);
     if (field === "iso_threshold") {
       // A threshold is in data units, like the contrast limits.
       const [lo, hi] = model.get("clim_range") || [0, 1];
-      return makeFloatSlider(lo, hi, v, onChange);
+      const slider = makeFloatSlider(lo, hi, v, onChange, decimals);
+      slider.el.querySelector("input").style.minWidth = `${MIN_TRACK_WIDTH_PX}px`;
+      return slider;
     }
-    return makeFloatSlider(0.0, 1.0, v, onChange);
+    return makeFloatSlider(0.0, 1.0, v, onChange, FRACTION_DECIMALS);
   }
 
   function build() {

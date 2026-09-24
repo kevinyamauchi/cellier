@@ -249,6 +249,7 @@ def appearance_specs(
             colormap_names=getattr(config, "colormap_names", None),
             clim_range=getattr(config, "clim_range", None),
             channel_labels=getattr(config, "channel_labels", None),
+            decimals=getattr(config, "decimals", 2),
         )
 
     values_for = {

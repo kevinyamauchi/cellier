@@ -219,6 +219,18 @@ def test_a_configured_clim_range_wins_over_the_inferred_one():
     assert result.specs[0].values["clim_range"] == [0.0, 4095.0]
 
 
+def test_the_image_spec_carries_the_configured_decimals():
+    default = appearance_specs(
+        _in_memory(clim=(0.0, 1.0)), InMemoryImageControlsConfig(appearance=["clim"])
+    )
+    configured = appearance_specs(
+        _in_memory(clim=(0.0, 1.0)),
+        InMemoryImageControlsConfig(appearance=["clim"], decimals=0),
+    )
+    assert default.specs[0].values["decimals"] == 2
+    assert configured.specs[0].values["decimals"] == 0
+
+
 def test_the_image_spec_widens_clim_range_over_every_channel():
     """Composite channels count too, so every contrast slider fits its limits."""
     from cellier.visuals import InMemoryImageChannelAppearance

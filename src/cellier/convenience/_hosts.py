@@ -15,6 +15,8 @@ from __future__ import annotations
 from contextlib import suppress
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from cellier.convenience.layout._spec import DOCK_MIN_WIDTH
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -142,8 +144,10 @@ class LayoutHost(Protocol):
         over so a host whose root owns teardown -- Qt's window does -- can take
         the list with it.  *dock_min_widths* maps ``"left"`` / ``"right"`` to
         the narrowest that dock may be, in logical pixels; a missing or
-        ``None`` entry keeps the host default.  Sizing is placement, so it
-        happens here rather than in ``dock_panel``.
+        ``None`` entry uses :data:`~cellier.convenience.layout._spec.DOCK_MIN_WIDTH`
+        (260 px) on every host.  It is a floor: a dock whose controls need more
+        is as wide as they need.  Sizing is placement, so it happens here
+        rather than in ``dock_panel``.
 
         The left and right docks scroll vertically on every host, so a dock
         is never what sets the layout's height: on Qt the window's height
@@ -274,17 +278,18 @@ class QtLayoutHost:
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
         # No minimum width here: the floor belongs to the whole dock (see
-        # ``assemble``), where a caller's smaller ``*_dock_min_width`` can
-        # replace it.  A floor on this column would outvote that.
+        # ``assemble``), where a caller's larger ``*_dock_min_width``
+        # replaces the default.
         return container
 
     def live_slot(self) -> _QtLiveSlot:
         """A ``QWidget`` whose content column ``set`` replaces."""
         return _QtLiveSlot(self)
 
-    #: The narrowest a dock may be when the layout does not say.  What every
-    #: dock column was floored at before the width became configurable.
-    DEFAULT_DOCK_MIN_WIDTH = 260
+    #: The narrowest a dock may be when the layout does not say; the shared
+    #: :data:`~cellier.convenience.layout._spec.DOCK_MIN_WIDTH`, kept here
+    #: under its old name.
+    DEFAULT_DOCK_MIN_WIDTH = DOCK_MIN_WIDTH
 
     def assemble(
         self,
@@ -298,7 +303,9 @@ class QtLayoutHost:
 
         Each dock's content is floored at its ``dock_min_widths`` entry, or
         :attr:`DEFAULT_DOCK_MIN_WIDTH`.  A minimum rather than a fixed width:
-        the dock separator can still drag it wider, never narrower.
+        the dock separator can still drag it wider, never narrower, and a
+        left or right dock whose controls need more than the floor starts
+        as wide as they need (see ``_scroll_dock_widget``).
 
         The left and right docks scroll vertically, so a dock is never what
         sets the window's height: that is the screen's (see
@@ -448,9 +455,11 @@ class _AnywidgetDockPanel:
 
         anywidget has no dock concept, so the arrangement is built from
         stacks.  *closeables* is unused here: on this toolkit the caller's
-        ``_RenderView`` owns teardown, not the root.  A side dock with a
-        ``dock_min_widths`` entry is floored at it; there is no splitter to
-        drag it wider, so it is otherwise as wide as its content.
+        ``_RenderView`` owns teardown, not the root.  A side dock is floored
+        at its ``dock_min_widths`` entry, or at
+        :data:`~cellier.convenience.layout._spec.DOCK_MIN_WIDTH` when it has
+        none; there is no splitter to drag it wider, so above the floor it is
+        as wide as its content.
 
         The left and right docks scroll vertically within the height of the
         center column (the canvas and its sliders), so a long dock never
@@ -464,7 +473,9 @@ class _AnywidgetDockPanel:
         # wrapper.
         for side in ("left", "right"):
             if docks.get(side) is not None:
-                docks[side] = self._scroll_dock(docks[side], widths.get(side))
+                docks[side] = self._scroll_dock(
+                    docks[side], widths.get(side) or DOCK_MIN_WIDTH
+                )
         middle_items = [
             item
             for item in (docks.get("left"), center, docks.get("right"))

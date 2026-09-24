@@ -55,6 +55,16 @@ TRANSPARENCY_CHOICES: tuple[str, ...] = (
 
 INTERPOLATION_CHOICES: tuple[str, ...] = ("nearest", "linear")
 
+#: Decimal places for the fraction-like fields (opacity, attenuation), on both
+#: front ends.  Fixed, unlike the data-unit fields, which follow the config's
+#: ``decimals``.
+FRACTION_DECIMALS: int = 2
+
+#: The shortest the contrast-limits and iso-threshold slider tracks may be, in
+#: logical pixels, on both front ends.  Their number labels take most of a
+#: narrow dock's width; the dock grows to keep this much track instead.
+MIN_TRACK_WIDTH_PX: int = 120
+
 #: The inbound events the control listens to, per driven visual.
 INBOUND_EVENT_TYPES: tuple[type, ...] = (
     AppearanceChangedEvent,
@@ -172,6 +182,7 @@ def image_control_values(
     colormap_names: list[str] | None = None,
     clim_range: tuple[float, float] | None = None,
     channel_labels: dict[int, str] | None = None,
+    decimals: int = 2,
 ) -> dict[str, Any]:
     """Everything either front end needs to build the image control.
 
@@ -189,6 +200,9 @@ def image_control_values(
         ``None``.
     channel_labels : dict[int, str] or None
         Per-channel names; ``"Channel {i}"`` when absent.
+    decimals : int
+        Decimal places for values in data units (the contrast limits and the
+        iso threshold).  Fractions such as opacity always show 2.
 
     Returns
     -------
@@ -245,6 +259,7 @@ def image_control_values(
         if colormap_names is not None
         else list(DEFAULT_COLORMAP_NAMES),
         "clim_range": [float(clim_range[0]), float(clim_range[1])],
+        "decimals": int(decimals),
     }
 
 

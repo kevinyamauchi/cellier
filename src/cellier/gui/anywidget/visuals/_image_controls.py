@@ -69,6 +69,8 @@ class AnywidgetImageControls(VisualIdGroup, anywidget.AnyWidget):
     interpolations = traitlets.List([]).tag(sync=True)
     colormap_names = traitlets.List([]).tag(sync=True)
     clim_range = traitlets.List([0.0, 1.0]).tag(sync=True)
+    decimals = traitlets.Int(2).tag(sync=True)
+    """Decimal places for the contrast limits and the iso threshold."""
 
     def __init__(
         self,
@@ -93,6 +95,7 @@ class AnywidgetImageControls(VisualIdGroup, anywidget.AnyWidget):
             interpolations=list(values["interpolations"]),
             colormap_names=list(values["colormap_names"]),
             clim_range=list(values["clim_range"]),
+            decimals=int(values["decimals"]),
             **kwargs,
         )
         self._id = uuid4()

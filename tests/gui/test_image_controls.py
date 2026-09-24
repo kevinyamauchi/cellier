@@ -212,6 +212,41 @@ def test_qt_threshold_slider_spans_the_clim_range(qt_controls):
     assert visual.single.iso_threshold == pytest.approx(40000.0)
 
 
+def test_qt_data_unit_fields_follow_the_configured_decimals(qt_controls):
+    """Contrast and threshold show ``decimals``; fractions always show 2."""
+    controller, visual = _image()
+    values = image_control_values(
+        visual, fields=_FIELDS, clim_range=(0.0, 65535.0), decimals=0
+    )
+    widget = _connect(controller, qt_controls(visual.id, values))
+
+    for page, channel in (("single", None), ("channel", 1)):
+        assert widget._controls[(page, channel, "clim")].decimals() == 0
+        assert widget._controls[(page, channel, "iso_threshold")].decimals() == 0
+        assert widget._controls[(page, channel, "opacity")].decimals() == 2
+
+    # The default is 2.
+    default = qt_controls(visual.id, _values(visual))
+    assert default._controls[("single", None, "clim")].decimals() == 2
+    assert default._controls[("single", None, "iso_threshold")].decimals() == 2
+
+
+def test_qt_contrast_and_threshold_tracks_keep_a_minimum_width(qt_controls):
+    """The track, not the whole control, is floored; opacity is not."""
+    from cellier.gui._image_controls import MIN_TRACK_WIDTH_PX
+
+    _controller, visual = _image()
+    widget = qt_controls(visual.id, _values(visual))
+
+    for page, channel in (("single", None), ("channel", 1)):
+        for field in ("clim", "iso_threshold"):
+            control = widget._controls[(page, channel, field)]
+            assert control._slider.minimumWidth() == MIN_TRACK_WIDTH_PX
+            assert control.minimumSizeHint().width() > MIN_TRACK_WIDTH_PX
+        opacity = widget._controls[(page, channel, "opacity")]
+        assert opacity._slider.minimumWidth() == 0
+
+
 def test_qt_shows_a_colormap_that_no_name_can_reconstruct(qt_controls):
     """The lightsheet case: channels built with an inline ``Colormap``.
 
@@ -321,3 +356,10 @@ def test_anywidget_channel_edits_reach_the_model_and_back(any_controls):
 
     controller.update_channel_appearance_field(visual.id, 0, "opacity", 0.5)
     assert widget.channels["0"]["opacity"] == pytest.approx(0.5)
+
+
+def test_anywidget_decimals_trait_carries_the_configured_value(any_controls):
+    _controller, visual = _image()
+    assert any_controls(visual.id, _values(visual)).decimals == 2
+    values = image_control_values(visual, fields=_FIELDS, decimals=0)
+    assert any_controls(visual.id, values).decimals == 0

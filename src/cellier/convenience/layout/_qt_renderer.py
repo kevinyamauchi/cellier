@@ -123,11 +123,13 @@ def _scroll_dock_widget(content: object) -> object:
     sliders under it) past the bottom edge.  In the scroll area the dock
     asks for :data:`DOCK_SCROLL_MIN_HEIGHT` and scrolls the rest.
 
-    The width does not scroll: the area is as wide as *content*'s minimum
-    width plus the scroll bar, so the bar never covers the controls.  That
-    minimum is Qt's own: an explicit ``minimumWidth`` (the dock floor
-    ``assemble`` sets) wins over the size hint, as it did before the dock
-    scrolled.
+    The width does not scroll: the area is as wide as *content* needs plus
+    the scroll bar, so the bar never covers the controls.  What it needs is
+    the larger of its explicit ``minimumWidth`` (the dock floor ``assemble``
+    sets) and its minimum size hint.  Qt's own rule lets an explicit minimum
+    win over the hint, which kept the dock at the floor while its controls
+    needed more; with no horizontal scroll bar they were then squeezed below
+    their minimum and clipped at the right edge.
 
     A combo box, spin box or slider under the pointer takes wheel events
     only while it has keyboard focus; otherwise the wheel scrolls the dock
@@ -207,7 +209,9 @@ def _scroll_dock_widget(content: object) -> object:
             inner = self.widget()
             width = 0
             if inner is not None:
-                width = inner.minimumWidth() or inner.minimumSizeHint().width()
+                # The larger of the floor and what the controls need: an
+                # explicit minimum alone would outvote the hint (see above).
+                width = max(inner.minimumWidth(), inner.minimumSizeHint().width())
             width += self._bar_width() + 2 * self.frameWidth()
             return QSize(width, DOCK_SCROLL_MIN_HEIGHT)
 

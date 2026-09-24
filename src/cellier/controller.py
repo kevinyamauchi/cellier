@@ -3742,19 +3742,35 @@ class CellierController:
         ``(z, y, x) -> (x, y, z)`` reversal is not carried here; it stays at
         the pygfx boundary.
 
-        The embedding's linear block is a selection matrix, and every world
-        axis the canvas does not display is a ``constant_output_axes`` entry
-        -- never a broadcast one.  A sliced axis sits at its slice position.
+        The embedding is built by :meth:`_build_rendered_embedding`.
         """
         scene = self._model.scenes[scene_id]
         world = scene.dims.world_coordinate_system
-        selection = scene.dims.selection
-        displayed_axes = tuple(selection.displayed_axes)
+        displayed_axes = tuple(scene.dims.selection.displayed_axes)
         rendered = RenderedCoordinateSystem.from_world(
             world,
             [world.axes[axis].id for axis in displayed_axes],
             canvas_id,
         )
+        return rendered, self._build_rendered_embedding(scene_id, rendered)
+
+    def _build_rendered_embedding(
+        self, scene_id: UUID, rendered: RenderedCoordinateSystem
+    ) -> AffineTransform:
+        """Build the ``rendered -> world`` embedding of an existing system.
+
+        The embedding's linear block is a selection matrix, and every world
+        axis the canvas does not display is a ``constant_output_axes`` entry
+        -- never a broadcast one.  A sliced axis sits at its slice position.
+
+        Takes the rendered system rather than building one: its axis ids are
+        fresh on every ``from_world`` call, so an embedding built from a new
+        system would not start at the one the canvas and its visuals hold.
+        """
+        scene = self._model.scenes[scene_id]
+        world = scene.dims.world_coordinate_system
+        selection = scene.dims.selection
+        displayed_axes = tuple(selection.displayed_axes)
         constant: dict[Any, float] = {}
         for axis in range(world.ndim):
             if axis in displayed_axes:
@@ -3772,7 +3788,7 @@ class CellierController:
             constant_output_axes=constant,
             name="rendered_to_world",
         )
-        return rendered, embedding
+        return embedding
 
     def _rebuild_rendered(self, scene_id: UUID) -> None:
         """Rebuild the rendered system and embedding for every canvas on a scene.
@@ -3794,14 +3810,16 @@ class CellierController:
 
         The rendered system itself is unchanged -- same axes, same ids -- so
         it is reused rather than rebuilt, which is what keeps axis ids stable
-        across a slider drag.
+        across a slider drag.  The new embedding is built against that same
+        system, so the pair keeps agreeing on its ids.
         """
         for canvas_id in self._scene_to_canvases.get(scene_id, []):
             entry = self._rendered.get(canvas_id)
             if entry is None:
                 continue
-            _, embedding = self._build_rendered(scene_id, canvas_id)
-            self._rendered[canvas_id] = (entry[0], embedding)
+            rendered = entry[0]
+            embedding = self._build_rendered_embedding(scene_id, rendered)
+            self._rendered[canvas_id] = (rendered, embedding)
 
     def _forget_rendered(self, canvas_id: UUID) -> None:
         """Drop a canvas's rendered system."""

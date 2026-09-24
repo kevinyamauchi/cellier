@@ -211,7 +211,7 @@ def test_jupyter_wraps_each_side_dock_in_a_scroll_box():
     assert top_item is top  # top and bottom do not scroll
     left_item, middle_center, right_item = middle.children
     assert middle_center is center
-    for item, dock, width in ((left_item, left, 0), (right_item, right, 340)):
+    for item, dock, width in ((left_item, left, 260), (right_item, right, 340)):
         assert item.scroll
         assert item.min_width == width
         assert list(item.children) == [dock]

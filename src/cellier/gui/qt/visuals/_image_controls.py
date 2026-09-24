@@ -18,7 +18,9 @@ from cellier.events import ImageCompositeUpdateEvent
 from cellier.gui._appearance_fields import VisualIdGroup
 from cellier.gui._image_controls import (
     FIELD_LABELS,
+    FRACTION_DECIMALS,
     INBOUND_EVENT_TYPES,
+    MIN_TRACK_WIDTH_PX,
     MODE_FIELDS,
     image_update_event,
     inbound_target,
@@ -175,6 +177,7 @@ class QtImageControls(VisualIdGroup):
 
         if "attenuation" in shared and "attenuation" in self._fields:
             slider = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
+            slider.setDecimals(FRACTION_DECIMALS)
             slider.setRange(0.0, 10.0)
             slider.setValue(shared["attenuation"])
             slider.valueChanged.connect(
@@ -224,8 +227,11 @@ class QtImageControls(VisualIdGroup):
                 applier = _colormap_applier(control)
             elif field == "clim":
                 control = QLabeledDoubleRangeSlider(Qt.Orientation.Horizontal)
-                control.setDecimals(2)
+                # Before setValue, so the first value is not rounded to the
+                # previous precision.
+                control.setDecimals(values["decimals"])
                 control.setRange(*values["clim_range"])
+                _set_min_track_width(control)
                 control.setValue(tuple(mode["clim"]))
                 control.valueChanged.connect(
                     lambda v: self._emit(page, "clim", list(v), channel)
@@ -242,8 +248,11 @@ class QtImageControls(VisualIdGroup):
                 # A threshold is in data units, like the contrast limits;
                 # opacity is a fraction.
                 if field == "iso_threshold":
+                    control.setDecimals(values["decimals"])
                     control.setRange(*values["clim_range"])
+                    _set_min_track_width(control)
                 else:
+                    control.setDecimals(FRACTION_DECIMALS)
                     control.setRange(0.0, 1.0)
                 control.setValue(float(mode[field]))
                 control.valueChanged.connect(
@@ -370,3 +379,14 @@ def _colormap_applier(control):
 
 def _value_applier(control, convert=float):
     return lambda value: _blocked(control, lambda: control.setValue(convert(value)))
+
+
+def _set_min_track_width(control) -> None:
+    """Keep a labelled slider's track at least :data:`MIN_TRACK_WIDTH_PX` wide.
+
+    The floor goes on the inner slider, not the whole control: the number
+    labels beside it already take their own width, and a floor on the control
+    would be split between them.  ``_slider`` is superqt's; without it the
+    control is floored as a whole.
+    """
+    getattr(control, "_slider", control).setMinimumWidth(MIN_TRACK_WIDTH_PX)
