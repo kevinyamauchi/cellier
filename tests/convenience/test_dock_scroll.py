@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from cellier.convenience import Viewer
 from cellier.convenience._hosts import JupyterHost, MarimoHost
 from cellier.convenience.layout import Layout, RenderControls
@@ -159,6 +161,15 @@ def test_a_focused_control_takes_the_wheel(qtbot):
     spin = QtWidgets.QSpinBox()
     column.layout().insertRow(0, "spin", spin)
     window.activateWindow()
+    # Only the active window has a focus widget, and activating one takes a
+    # window manager: under a bare Xvfb (Linux CI) the window never becomes
+    # active, so the spin box cannot take focus.
+    try:
+        qtbot.waitUntil(
+            lambda: QtWidgets.QApplication.activeWindow() is window, timeout=2000
+        )
+    except qtbot.TimeoutError:
+        pytest.skip("no window manager to activate the window")
     spin.setFocus()
     qtbot.waitUntil(spin.hasFocus)
 
