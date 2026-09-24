@@ -18,6 +18,7 @@ from cellier.convenience._ortho_dims import OrthoDimsController
 from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
 from cellier.render._capture import write_png
+from cellier.scene._background import viewer_background
 from cellier.scene.dims import (
     AxisAlignedSelection,
     DimsManager,
@@ -112,6 +113,16 @@ def _callback_ref(callback: Callable, weak: bool) -> Callable[[], Callable | Non
 # Panel keys in display order. ``vol`` is the 3D panel; the rest are 2D slices.
 _PANEL_KEYS: tuple[str, ...] = ("xy", "xz", "yz", "vol")
 
+# The appearance-controls groups a fanned-out add records: one control drives
+# the three 2D panels, another the 3D panel.  Key -> (panel keys, dock label
+# format).  A setting such as a render mode or iso threshold only means
+# something in 3D, and the 2D and 3D views often want different contrast, so
+# the two are never linked.
+_CONTROLS_GROUPS: dict[str, tuple[tuple[str, ...], str]] = {
+    "2d": (("xy", "xz", "yz"), "{name} (2D views)"),
+    "3d": (("vol",), "{name} (3D view)"),
+}
+
 
 def _copy(model):
     """A copy of *model*, so each panel's visual owns its appearance.
@@ -201,6 +212,15 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
     :class:`~cellier.convenience._ortho_dims.OrthoDimsController`, so the
     panels share one world point (design 3.6).
 
+    Every panel starts with a uniform black background
+    (:func:`~cellier.scene._background.viewer_background`); see
+    :meth:`set_background`.
+
+    Appearance controls come in two groups per added visual: one drives the
+    three 2D panels together, the other the 3D panel.  An
+    ``AppearanceControls()`` dock offers both, labelled ``"{name} (2D
+    views)"`` and ``"{name} (3D view)"``.
+
     Parameters
     ----------
     axes : WorldAxesLike
@@ -242,10 +262,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         self._extra_axes = {i for i in range(self._ndim) if i not in self._spatial_axes}
         self._scenes = self._build_scenes(world)
         self._dims_controller: OrthoDimsController | None = None
-        # Per-visual controls configs, keyed by a representative (first-panel)
-        # visual id; _visual_groups maps that id to every panel's sibling
-        # visual id so one widget can drive them all.  Not channel-specific:
-        # any fanned-out add_* records its group here (design section 8.3).
+        # Per-visual controls configs, keyed by a representative visual id;
+        # _visual_groups maps that id to the visuals one widget drives: the
+        # three 2D panels, or the 3D panel (_CONTROLS_GROUPS).  Not
+        # channel-specific: any fanned-out add_* records its groups here.
         self._init_controls_registry()
         # Callbacks fired once all panel scenes' startup data is on the GPU;
         # consumed by the launcher (see convenience._launch._init_view).
@@ -283,6 +303,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ),
                 render_modes=render_modes,
                 lighting="none",
+                background=viewer_background(),
             )
             scenes[key] = self._controller.add_scene_model(scene)
         return scenes
@@ -828,11 +849,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         """Add an in-memory image to every panel from a single data store.
 
         Each panel gets its own visual model with its own copy of the
-        appearances.  Keep them equal through :meth:`set_image_composite`,
+        appearances.  :meth:`set_image_composite`,
         :meth:`update_image_single_field` and
-        :meth:`update_image_channel_field` (or the image control, which uses
-        them).  A composited axis cannot be one of the spatial axes, since some
-        panel always displays it (unified image design 3.4).
+        :meth:`update_image_channel_field` set all four panels at once.  The
+        image controls instead drive the 2D panels and the 3D panel
+        separately, so the two can differ.  A composited axis cannot be one
+        of the spatial axes, since some panel always displays it (unified
+        image design 3.4).
 
         Parameters
         ----------
@@ -843,7 +866,8 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         controls : InMemoryImageControlsConfig or None
-            Appearance controls configuration shared across all four panels.
+            Appearance controls configuration, used for two controls: one
+            driving the three 2D panels, one the 3D panel.
         single : single appearance or None
             Single mode's appearance.  ``None`` uses the defaults.
         channel_axis : int or None
@@ -881,7 +905,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_labels(
@@ -909,9 +933,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : LabelsControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -943,7 +968,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 outline_selected_labels=outline_selected_labels,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_mesh(
@@ -970,9 +995,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MeshControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -999,7 +1025,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_points(
@@ -1026,9 +1052,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : PointsControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -1055,7 +1082,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_graph(
@@ -1086,9 +1113,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         trail : dict[int, TrailConfig] or None
             Axis index -> window configuration, applied to every panel.
         controls : GraphControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -1116,7 +1144,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_lines(
@@ -1143,9 +1171,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : LinesControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -1172,7 +1201,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_image_multiscale(
@@ -1209,7 +1238,8 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MultiscaleImageControlsConfig or None
-            Appearance controls configuration shared across all four panels.
+            Appearance controls configuration, used for two controls: one
+            driving the three 2D panels, one the 3D panel.
         single : single appearance or None
             Single mode's appearance.  ``None`` uses the defaults.
         channel_axis : int or None
@@ -1248,7 +1278,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     def add_labels_multiscale(
@@ -1278,9 +1308,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         transform : BaseTransform or None
             Data-to-world transform.  Defaults to identity when ``None``.
         controls : MultiscaleLabelsControlsConfig or None
-            Appearance controls configuration shared across all four panels:
-            one dock widget drives every panel's visual in lock-step.  When
-            ``None`` (default), no appearance controls are created.
+            Appearance controls configuration, used for two controls: one
+            drives the three 2D panels' visuals in lock-step, the other the
+            3D panel's.  When ``None`` (default), no appearance controls are
+            created.
 
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
@@ -1313,11 +1344,15 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 outline_selected_labels=outline_selected_labels,
             )
         )
-        self._record_controls(visuals, controls)
+        self._record_controls(visuals, controls, name)
         return visuals
 
     # ------------------------------------------------------------------
     # Image group methods (mode and settings mirrored across the panels)
+    #
+    # These set all four panels at once and are for scripts.  The image
+    # controls do not use them: each drives its own group (the 2D panels or
+    # the 3D panel) through the bus.
     # ------------------------------------------------------------------
 
     def image_group(self, visual: object) -> list[UUID]:
@@ -1559,15 +1594,22 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         self,
         visuals: dict[str, object],
         controls: BaseControlsConfig | None,
+        name: str,
     ) -> None:
-        """Record a controls config for a fanned-out add.
+        """Record a controls config for a fanned-out add, as two groups.
 
-        Stores the config keyed by a representative (first-panel) visual id,
-        and maps that id to every panel's sibling visual id so one widget can
-        drive all four panels (design section 7.4).
+        One group holds the three 2D panels' visuals and one the 3D panel's
+        (:data:`_CONTROLS_GROUPS`), both with the same config, so one widget
+        drives the 2D views together and another the 3D view.  Each is
+        labelled for the dock's selector, e.g. ``"image (2D views)"``.
 
         The appearance docks resolve this record through
         ``appearance_targets``, which is what makes ``AppearanceControls()``
         work on an ``OrthoViewer`` at all (section 4.1).
         """
-        self._store_controls([v.id for v in visuals.values()], controls)
+        for keys, label in _CONTROLS_GROUPS.values():
+            self._store_controls(
+                [visuals[key].id for key in keys],
+                controls,
+                label=label.format(name=name),
+            )

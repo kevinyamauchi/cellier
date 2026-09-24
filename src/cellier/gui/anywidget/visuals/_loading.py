@@ -27,8 +27,8 @@ class AnywidgetLoadingIndicator(VisualIdGroup, anywidget.AnyWidget):
     """How far a multiscale visual's data has loaded.
 
     Mirrors ``QtLoadingIndicator``: a bar of target chunks resident over
-    needed, and a status line.  Read-only: it listens to
-    ``ResliceProgressEvent`` and emits nothing.
+    needed, and a status line, under a heading titled ``title``.  Read-only:
+    it listens to ``ResliceProgressEvent`` and emits nothing.
 
     Parameters
     ----------

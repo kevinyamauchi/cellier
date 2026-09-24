@@ -22,9 +22,18 @@ from __future__ import annotations
 
 
 def _qt_image(spec, visual_ids, controller):
+    from cellier.gui._image_controls import display_seed
     from cellier.gui.qt.visuals import QtImageControls
 
-    return QtImageControls(visual_ids, spec.values, title=spec.title)
+    # Seeded now and then followed: DimsChangedEvent fires only on a change.
+    scene_ids, n_displayed = display_seed(controller, visual_ids)
+    return QtImageControls(
+        visual_ids,
+        spec.values,
+        title=spec.title,
+        n_displayed_dimensions=n_displayed,
+        scene_ids=scene_ids,
+    )
 
 
 def _qt_lod_bias(spec, visual_ids, controller):

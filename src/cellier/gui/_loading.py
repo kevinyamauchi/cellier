@@ -27,8 +27,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
     from uuid import UUID
 
-LOADING_TITLE = "Loading"
-"""The indicator's name: its ``DEFAULT_TITLE`` on both toolkits."""
+LOADING_TITLE = "Data fetch status"
+"""The indicator's name: its ``DEFAULT_TITLE`` on both toolkits.
+
+Drawn as the heading of a group around the bar and status line, never as a
+label beside the bar.
+"""
 
 
 class IndicatorState(NamedTuple):

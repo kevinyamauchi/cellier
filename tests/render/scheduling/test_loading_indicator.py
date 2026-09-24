@@ -156,3 +156,28 @@ def test_a_group_indicator_sums_its_visuals(qtbot):
         )
     )
     assert widget.text == "Detail: 5 / 8"
+
+
+# -- the group around the bar -------------------------------------------------------
+
+
+def test_the_qt_indicator_is_a_titled_group_without_a_side_label(qtbot):
+    """Framed like the image and bounding-box controls; no label by the bar."""
+    from qtpy.QtWidgets import QGroupBox, QLabel
+
+    from cellier.gui.qt.visuals import QtLoadingIndicator
+
+    widget = QtLoadingIndicator(uuid4())
+
+    assert isinstance(widget.widget, QGroupBox)
+    assert widget.widget.title() == "Data fetch status"
+    texts = [label.text() for label in widget.widget.findChildren(QLabel)]
+    assert "Data fetch status" not in texts
+    assert "Loading" not in texts
+
+
+def test_the_anywidget_indicator_has_the_same_title():
+    pytest.importorskip("anywidget")
+    from cellier.gui.anywidget.visuals import AnywidgetLoadingIndicator
+
+    assert AnywidgetLoadingIndicator(uuid4()).title == "Data fetch status"

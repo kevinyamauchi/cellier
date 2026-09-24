@@ -1,14 +1,12 @@
 // Loading indicator ESM: a bar of target chunks resident over needed, and a
-// status line.  Read-only; the Python side pushes every change.
+// status line, under a group heading (the Qt QGroupBox title).  No label
+// beside the bar.  Read-only; the Python side pushes every change.
 
 function render({ model, el }) {
   el.classList.add("cellier-loading");
 
-  const row = document.createElement("div");
-  row.className = "cellier-app-row";
-
-  const label = document.createElement("label");
-  label.className = "cellier-app-label";
+  const heading = document.createElement("div");
+  heading.className = "cellier-group-title";
 
   const body = document.createElement("div");
   body.className = "cellier-loading-body";
@@ -20,7 +18,7 @@ function render({ model, el }) {
   text.className = "cellier-loading-text";
 
   function update() {
-    label.textContent = model.get("title") || "Loading";
+    heading.textContent = model.get("title") || "Data fetch status";
     bar.max = Math.max(model.get("maximum") ?? 1, 1);
     bar.value = model.get("value") ?? 0;
     text.textContent = model.get("text") ?? "";
@@ -34,9 +32,8 @@ function render({ model, el }) {
 
   body.appendChild(bar);
   body.appendChild(text);
-  row.appendChild(label);
-  row.appendChild(body);
-  el.appendChild(row);
+  el.appendChild(heading);
+  el.appendChild(body);
 }
 
 export default { render };

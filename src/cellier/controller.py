@@ -3276,6 +3276,28 @@ class CellierController:
         """Return the live Scene model for scene_id."""
         return self._model.scenes[scene_id]
 
+    def get_visual_scene_id(self, visual_id: UUID) -> UUID:
+        """Return the id of the scene *visual_id* belongs to.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            ID of a visual added to one of the controller's scenes.
+
+        Returns
+        -------
+        UUID
+
+        Raises
+        ------
+        KeyError
+            If no visual with *visual_id* has been added.
+        """
+        try:
+            return self._visual_to_scene[visual_id]
+        except KeyError:
+            raise KeyError(f"No visual with id {visual_id}") from None
+
     def get_data_store(self, store_id: UUID) -> BaseDataStore:
         """Return the registered data store for store_id.
 

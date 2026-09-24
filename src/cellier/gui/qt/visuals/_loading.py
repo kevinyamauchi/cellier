@@ -22,8 +22,10 @@ class QtLoadingIndicator(VisualIdGroup):
 
     A bar of target chunks resident over needed, and a status line: the
     coarse overview (the backstop) first, then the detail, then
-    ``"Loaded"``.  Read-only: it listens to ``ResliceProgressEvent`` and
-    emits nothing (``plans/progressive_loading_design_v3.md`` 5.13).
+    ``"Loaded"``.  Both sit in a group titled :data:`DEFAULT_TITLE`, like the
+    image and bounding-box controls.  Read-only: it listens to
+    ``ResliceProgressEvent`` and emits nothing
+    (``plans/progressive_loading_design_v3.md`` 5.13).
 
     Wire to the controller after construction::
 
@@ -42,7 +44,7 @@ class QtLoadingIndicator(VisualIdGroup):
     initial :
         Their progress now, so an indicator built mid-load starts right.
     title :
-        The name shown beside the bar.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's title.  Defaults to :data:`DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """
@@ -63,7 +65,7 @@ class QtLoadingIndicator(VisualIdGroup):
     ) -> None:
         from qtpy.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
-        from cellier.gui.qt.visuals._chrome import labelled_row
+        from cellier.gui.qt.visuals._chrome import titled_group
 
         self._id = uuid4()
         self._init_visual_ids(visual_id)
@@ -79,7 +81,7 @@ class QtLoadingIndicator(VisualIdGroup):
         self._text.setWordWrap(True)
         layout.addWidget(self._bar)
         layout.addWidget(self._text)
-        self._row = labelled_row(
+        self._group = titled_group(
             self.DEFAULT_TITLE if title is None else title, box, parent
         )
 
@@ -90,8 +92,8 @@ class QtLoadingIndicator(VisualIdGroup):
 
     @property
     def widget(self):
-        """The labelled row to insert into a layout."""
-        return self._row
+        """The titled group to insert into a layout."""
+        return self._group
 
     @property
     def state(self) -> IndicatorState:

@@ -2,6 +2,10 @@
 // standalone).  Shared rows, a composite switch, and a page per mode.  Every
 // control writes its whole dict trait back ("shared", "single" or
 // "channels"); Python diffs it and emits one bus event per changed field.
+//
+// Rows that only mean something for some render modes, or only in 3D, hide
+// themselves: rowVisible mirrors cellier.gui._image_controls.row_visible,
+// with the mode lists and n_displayed_dimensions read from the model.
 
 const THROTTLE_MS = 50;
 
@@ -27,6 +31,18 @@ const FRACTION_DECIMALS = 2;
 // The shortest the contrast and threshold tracks may be, in pixels; mirrors
 // cellier.gui._image_controls.MIN_TRACK_WIDTH_PX.  The dock grows to keep it.
 const MIN_TRACK_WIDTH_PX = 120;
+
+// Fields whose rows show only in 3D; mirrors
+// cellier.gui._image_controls.THREE_D_FIELDS.
+const THREE_D_FIELDS = ["render_mode", "iso_threshold", "attenuation"];
+
+function rowVisible(field, modes, nDisplayed, thresholdModes, attenuationModes) {
+  if (!THREE_D_FIELDS.includes(field)) return true;
+  if (nDisplayed !== 3) return false;
+  if (field === "iso_threshold") return modes.some((m) => thresholdModes.includes(m));
+  if (field === "attenuation") return modes.some((m) => attenuationModes.includes(m));
+  return true;
+}
 
 function formatNumber(value, decimals) {
   return Number(value).toFixed(decimals);
@@ -204,16 +220,56 @@ function render({ model, el }) {
   let guard = false;
   // "page|channel|field" -> control
   let controls = {};
+  // Every row that can hide: { el, page, channel, field }.
+  let hideable = [];
 
   function row(parent, field, control) {
     const r = document.createElement("div");
     r.className = "cellier-app-row";
+    r.dataset.field = field;
     const label = document.createElement("label");
     label.className = "cellier-app-label";
     label.textContent = LABELS[field] || field;
     r.appendChild(label);
     r.appendChild(control.el);
     parent.appendChild(r);
+    return r;
+  }
+
+  function hideableRow(parent, page, channel, field, control) {
+    const r = row(parent, field, control);
+    if (THREE_D_FIELDS.includes(field)) hideable.push({ el: r, page, channel, field });
+    return r;
+  }
+
+  // The shared attenuation slider, on the single page (under the render
+  // mode) and once on the composite page; both set the one shared field.
+  function attenuationControl() {
+    const shared = model.get("shared") || {};
+    const fieldsOn = model.get("fields") || [];
+    if (!("attenuation" in shared) || !fieldsOn.includes("attenuation")) return null;
+    return makeFloatSlider(0.0, 10.0, shared.attenuation, (v) =>
+      write("shared", null, "attenuation", v),
+    );
+  }
+
+  // Show or hide every row that can hide, from the current state.  Run in
+  // full on every trigger so the rule lives in one place.
+  function applyVisibility() {
+    const n = model.get("n_displayed_dimensions");
+    const thresholdModes = model.get("threshold_modes") || [];
+    const attenuationModes = model.get("attenuation_modes") || [];
+    const single = model.get("single") || {};
+    const channels = model.get("channels") || {};
+    const channelModes = Object.values(channels).map((c) => c.render_mode);
+    for (const { el: r, page, channel, field } of hideable) {
+      let modes;
+      if (page === "composite") modes = channelModes;
+      else if (page === "channel") modes = [(channels[channel] || {}).render_mode];
+      else modes = [single.render_mode];
+      const visible = rowVisible(field, modes, n, thresholdModes, attenuationModes);
+      r.style.display = visible ? "" : "none";
+    }
   }
 
   // Write one field back into its dict trait.
@@ -227,6 +283,7 @@ function render({ model, el }) {
       model.set(page, { ...(model.get(page) || {}), [field]: value });
     }
     model.save_changes();
+    if (field === "render_mode") applyVisibility();
   }
 
   function modeControl(page, channel, field, values) {
@@ -254,6 +311,7 @@ function render({ model, el }) {
   function build() {
     el.innerHTML = "";
     controls = {};
+    hideable = [];
     const fieldsOn = model.get("fields") || [];
 
     const title = document.createElement("div");
@@ -277,13 +335,6 @@ function render({ model, el }) {
       controls["shared||" + field] = c;
       row(sharedBox, field, c);
     }
-    if ("attenuation" in shared && fieldsOn.includes("attenuation")) {
-      const c = makeFloatSlider(0.0, 10.0, shared.attenuation, (v) =>
-        write("shared", null, "attenuation", v),
-      );
-      controls["shared||attenuation"] = c;
-      row(sharedBox, "attenuation", c);
-    }
     el.appendChild(sharedBox);
 
     const switchRow = document.createElement("label");
@@ -305,11 +356,19 @@ function render({ model, el }) {
     const singlePage = document.createElement("div");
     singlePage.className = "cellier-image-page cellier-image-single";
     const single = model.get("single") || {};
+    const attenuation = [];
     for (const field of MODE_FIELDS) {
       const c = modeControl("single", null, field, single);
       if (c === null) continue;
       controls["single||" + field] = c;
-      row(singlePage, field, c);
+      hideableRow(singlePage, "single", null, field, c);
+      if (field === "render_mode") {
+        const a = attenuationControl();
+        if (a !== null) {
+          attenuation.push(a);
+          hideableRow(singlePage, "single", null, "attenuation", a);
+        }
+      }
     }
     el.appendChild(singlePage);
 
@@ -335,12 +394,26 @@ function render({ model, el }) {
         const c = modeControl("channel", key, field, channels[key]);
         if (c === null) continue;
         controls["channel|" + key + "|" + field] = c;
-        row(group, field, c);
+        hideableRow(group, "channel", key, field, c);
       }
       compositePage.appendChild(group);
     }
+    const compositeAttenuation = attenuationControl();
+    if (compositeAttenuation !== null) {
+      // One value for every channel, so one row below them all.
+      attenuation.push(compositeAttenuation);
+      hideableRow(compositePage, "composite", null, "attenuation", compositeAttenuation);
+    }
+    if (attenuation.length > 0) {
+      controls["shared||attenuation"] = {
+        set: (v) => {
+          for (const a of attenuation) a.set(v);
+        },
+      };
+    }
     el.appendChild(compositePage);
     applyPage();
+    applyVisibility();
   }
 
   function applyPage() {
@@ -376,7 +449,10 @@ function render({ model, el }) {
   let channelKeys = Object.keys(model.get("channels") || {}).sort().join(",");
   build();
   model.on("change:shared", () => sync("shared"));
-  model.on("change:single", () => sync("single"));
+  model.on("change:single", () => {
+    sync("single");
+    applyVisibility();
+  });
   model.on("change:channels", () => {
     const keys = Object.keys(model.get("channels") || {}).sort().join(",");
     if (keys !== channelKeys) {
@@ -384,8 +460,12 @@ function render({ model, el }) {
       build();
     } else {
       sync("channels");
+      applyVisibility();
     }
   });
+  for (const name of ["n_displayed_dimensions", "threshold_modes", "attenuation_modes"]) {
+    model.on(`change:${name}`, applyVisibility);
+  }
   model.on("change:composite", () => {
     guard = true;
     try {

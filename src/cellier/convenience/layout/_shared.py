@@ -555,15 +555,16 @@ class ControlTarget(NamedTuple):
         targets of one dock.
     visual : BaseVisual
         The representative visual.  Its appearance model is what the controls
-        are seeded from; on an ``OrthoViewer`` it is the first panel's visual
-        and the other three are guaranteed equal to it.
+        are seeded from; on an ``OrthoViewer`` it is the group's first panel
+        visual.
     config : BaseControlsConfig
         The recorded controls config.
     visual_ids : list[UUID]
-        Every visual the controls write to -- one on a ``Viewer``, the four
-        panel siblings on an ``OrthoViewer``.  The widgets accept this
-        directly (see ``cellier.gui._appearance_fields.VisualIdGroup``), so
-        the spec walk is identical either way and only the id list differs.
+        Every visual the controls write to -- one on a ``Viewer``; on an
+        ``OrthoViewer``, the three 2D panel siblings or the 3D panel's
+        visual.  The widgets accept this directly (see
+        ``cellier.gui._appearance_fields.VisualIdGroup``), so the spec walk is
+        identical either way and only the id list differs.
     """
 
     key: UUID
@@ -579,8 +580,9 @@ def appearance_targets(viewer: object) -> list[ControlTarget]:
     A config whose ``appearance`` is falsy (``False``, ``None``, ``[]``) is skipped: it
     asks for no panel, and :func:`appearance_specs` would build none, so offering it in
     the selector would only lead to an empty dock.  Multi-scene aware: an
-    ``OrthoViewer`` records one config per fanned-out add, keyed by the first panel's
-    visual, and ``_visual_groups`` expands it to all four.
+    ``OrthoViewer`` records two groups per fanned-out add, the 2D panels and the
+    3D panel, each keyed by its first visual and labelled by the viewer; the
+    ``_visual_groups`` record expands each key to its visuals.
     """
     return _control_targets(viewer)
 
@@ -599,6 +601,7 @@ def _control_targets(viewer: object) -> list[ControlTarget]:
     if controller is None or not controls_configs:
         return []
     groups: dict = getattr(viewer, "_visual_groups", {}) or {}
+    given_labels: dict = getattr(viewer, "_controls_labels", {}) or {}
 
     resolved = []
     for rep_id, config in controls_configs.items():
@@ -612,7 +615,7 @@ def _control_targets(viewer: object) -> list[ControlTarget]:
         resolved.append(
             (
                 rep_id,
-                _group_name(controller, visual, visual_ids),
+                given_labels.get(rep_id) or _group_name(controller, visual, visual_ids),
                 visual,
                 config,
                 visual_ids,

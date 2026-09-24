@@ -23,6 +23,7 @@ from cellier.events import (
 from cellier.gui._colormap_util import colormap_to_str
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from uuid import UUID
 
 #: Shared-section fields, in display order.
@@ -65,6 +66,21 @@ FRACTION_DECIMALS: int = 2
 #: narrow dock's width; the dock grows to keep this much track instead.
 MIN_TRACK_WIDTH_PX: int = 120
 
+#: Render modes that use the iso threshold.  The threshold row is shown only
+#: for these, and only in 3D.
+THRESHOLD_MODES: tuple[str, ...] = ("iso", "smooth_iso")
+
+#: Render modes that use the attenuation coefficient.  The attenuation row is
+#: shown only for these, and only in 3D.
+ATTENUATION_MODES: tuple[str, ...] = ("attenuated_mip",)
+
+#: Fields whose rows are shown only when the scene displays three dimensions:
+#: a 2D slice ignores them.
+THREE_D_FIELDS: tuple[str, ...] = ("render_mode", "iso_threshold", "attenuation")
+
+#: The display dimensionalities a scene can have.
+DISPLAY_DIMENSIONS: tuple[int, ...] = (2, 3)
+
 #: The inbound events the control listens to, per driven visual.
 INBOUND_EVENT_TYPES: tuple[type, ...] = (
     AppearanceChangedEvent,
@@ -99,6 +115,111 @@ DEFAULT_COLORMAP_NAMES: list[str] = [
     "magenta",
     "cyan",
 ]
+
+
+def validate_n_displayed_dimensions(value: Any) -> int:
+    """Return *value* if it is a display dimensionality (2 or 3).
+
+    Raises
+    ------
+    TypeError
+        If *value* is not an int (``bool`` included).
+    ValueError
+        If *value* is not 2 or 3.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"n_displayed_dimensions must be an int, got {type(value).__name__}."
+        )
+    if value not in DISPLAY_DIMENSIONS:
+        raise ValueError(f"n_displayed_dimensions must be 2 or 3, got {value}.")
+    return value
+
+
+def row_visible(
+    field: str, render_modes: Iterable[str], n_displayed_dimensions: int
+) -> bool:
+    """Whether a row of the image control is shown.
+
+    Both front ends call this for every row that can hide, each time anything
+    it depends on changes, rather than adjusting rows one trigger at a time.
+
+    Parameters
+    ----------
+    field : str
+        The row's field.
+    render_modes : iterable of str
+        The render modes the row serves: its page's mode, or every channel's
+        for the composite page's shared attenuation row.
+    n_displayed_dimensions : int
+        How many dimensions the scene displays (2 or 3).
+
+    Returns
+    -------
+    bool
+        ``render_mode`` rows are shown in 3D; ``iso_threshold`` rows in 3D for
+        a mode in :data:`THRESHOLD_MODES`; ``attenuation`` rows in 3D for a
+        mode in :data:`ATTENUATION_MODES`.  Every other row is always shown.
+    """
+    if field not in THREE_D_FIELDS:
+        return True
+    if n_displayed_dimensions != 3:
+        return False
+    if field == "iso_threshold":
+        return any(mode in THRESHOLD_MODES for mode in render_modes)
+    if field == "attenuation":
+        return any(mode in ATTENUATION_MODES for mode in render_modes)
+    return True
+
+
+def displayed_dimensions(dims_state: Any) -> int | None:
+    """How many dimensions *dims_state* displays; ``None`` if it does not say.
+
+    A selection with no ``displayed_axes`` (the plane-selection stub) gives
+    ``None``, and the control keeps what it had.
+    """
+    axes = getattr(getattr(dims_state, "selection", None), "displayed_axes", None)
+    return None if axes is None else len(axes)
+
+
+def display_seed(
+    controller: Any, visual_ids: Iterable[UUID]
+) -> tuple[tuple[UUID, ...], int]:
+    """The scenes an image control follows, and what they display now.
+
+    ``DimsChangedEvent`` fires only on a change and ``connect_widget`` does
+    not replay state, so a control is seeded with the current value at
+    construction and then follows the events.
+
+    Parameters
+    ----------
+    controller : CellierController or None
+        The controller the control is wired to.  ``None`` gives no scenes
+        and 3 (every row that can hide is shown).
+    visual_ids : iterable of UUID
+        The visuals the control drives.
+
+    Returns
+    -------
+    tuple
+        ``(scene_ids, n_displayed_dimensions)``: each driven visual's scene,
+        in order and without repeats, and the first scene's display
+        dimensionality.  A control assumes its visuals share one.
+    """
+    if controller is None:
+        return (), 3
+    scene_ids: list[UUID] = []
+    for visual_id in visual_ids:
+        try:
+            scene_id = controller.get_visual_scene_id(visual_id)
+        except KeyError:
+            continue
+        if scene_id not in scene_ids:
+            scene_ids.append(scene_id)
+    n = None
+    if scene_ids:
+        n = displayed_dimensions(controller.get_scene(scene_ids[0]).dims)
+    return tuple(scene_ids), 3 if n is None else n
 
 
 def to_widget_value(field: str, value: Any) -> Any:
@@ -260,6 +381,8 @@ def image_control_values(
         else list(DEFAULT_COLORMAP_NAMES),
         "clim_range": [float(clim_range[0]), float(clim_range[1])],
         "decimals": int(decimals),
+        "threshold_modes": list(THRESHOLD_MODES),
+        "attenuation_modes": list(ATTENUATION_MODES),
     }
 
 

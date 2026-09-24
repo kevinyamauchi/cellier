@@ -162,7 +162,7 @@ def test_qt_pages_hold_the_right_fields(qt_controls):
     channel = {(ch, f) for page, ch, f in widget._controls if page == "channel"}
     assert single == {"clim", "opacity", "render_mode", "iso_threshold"}
     assert {f for ch, f in channel if ch == 1} == single | {"visible"}
-    assert ("shared", None, "attenuation") not in widget._controls
+    assert not any(f == "attenuation" for _p, _c, f in widget._controls)
 
     multiscale = _multiscale_model(
         channel_axis=0, channels={0: MultiscaleImageChannelAppearance()}
@@ -171,7 +171,10 @@ def test_qt_pages_hold_the_right_fields(qt_controls):
         multiscale.id,
         image_control_values(multiscale, fields=[*_FIELDS, "attenuation"]),
     )
-    assert ("shared", None, "attenuation") in ms_widget._controls
+    # One shared value: under the render mode on the single page, and once
+    # below the channels on the composite page.
+    attenuation = {(p, c) for p, c, f in ms_widget._controls if f == "attenuation"}
+    assert attenuation == {("single", None), ("composite", None)}
 
 
 def test_qt_single_and_channel_edits_reach_the_model_and_back(qt_controls):

@@ -71,7 +71,7 @@ def test_multiscale_panel_control_names_in_order(qtbot, multiscale_image_store):
         "Image",
         "LOD bias",
         "Bounding box",
-        "Loading",
+        "Data fetch status",
     ]
     assert_panel_renders(container)
 

@@ -11,6 +11,7 @@ from cellier.convenience._render_settings import RenderSettingsMixin
 from cellier.convenience._startup import StartupState
 from cellier.events import CanvasAddedEvent
 from cellier.render._capture import write_png
+from cellier.scene._background import viewer_background
 from cellier.scene.dims import WorldAxesLike, world_coordinate_system
 from cellier.visuals._canvas_overlay import CanvasOverlay
 from cellier.visuals._scene_overlay import SceneOverlay
@@ -144,6 +145,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
             dim=dim,
             coordinate_system=world_coordinate_system(axes),
             render_modes=resolved_render_modes,
+            background=viewer_background(),
         )
         # Callbacks fired once the scene's startup data is on the GPU; consumed
         # by the launcher (see convenience._launch._init_view).
@@ -176,10 +178,12 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
     def background(self) -> BackgroundAppearance:
         """Appearance of the background drawn behind the scene's visuals.
 
-        Mutate its fields to update the canvas at runtime::
+        Uniform black by default
+        (:func:`~cellier.scene._background.viewer_background`).  Mutate its
+        fields to update the canvas at runtime::
 
-            viewer.background.mode = "uniform"
-            viewer.background.color = (0.0, 0.0, 0.0, 1.0)
+            viewer.background.color = (1.0, 1.0, 1.0, 1.0)
+            viewer.background.mode = "vertical_gradient"
 
         Assigning a whole new ``BackgroundAppearance`` works too.
         """

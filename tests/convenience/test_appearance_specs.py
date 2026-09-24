@@ -313,7 +313,7 @@ def test_titles_are_shared_by_both_front_ends():
         "Image",
         "LOD bias",
         "Bounding box",
-        "Loading",
+        "Data fetch status",
     ]
 
 
@@ -596,7 +596,7 @@ def test_the_loading_indicator_is_multiscale_only_and_can_be_turned_off():
         _multiscale(), MultiscaleImageControlsConfig(appearance=fields)
     )
     assert kinds(on)[-1] == "loading"
-    assert on.specs[-1].title == "Loading"
+    assert on.specs[-1].title == "Data fetch status"
     off = appearance_specs(
         _multiscale(),
         MultiscaleImageControlsConfig(appearance=fields, loading_indicator=False),
