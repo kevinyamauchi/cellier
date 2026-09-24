@@ -13,6 +13,7 @@ from cellier.render._frustum import (
     bricks_in_frustum_arr,
     frustum_planes_from_corners,
 )
+from cellier.render._gpu_lifetime import destroy_textures
 from cellier.render._level_mapping import base_cell_range
 from cellier.render._level_of_detail import (
     select_levels_arr_forced,
@@ -1331,9 +1332,30 @@ class GFXMultiscaleLabelVisual(MultiscaleRegionPlanner):
         A slice task still in flight holds ``on_data_ready`` -- and so this
         visual -- until the event loop runs its cancellation, so the brick
         caches (up to ``gpu_budget_bytes`` each) are dropped here rather than
-        whenever the visual dies.
+        whenever the visual dies.  The textures are destroyed rather than
+        dropped: pygfx's bind-group cache would otherwise keep their GPU memory
+        after the visual is gone.
         """
         self._closed = True
+        textures = [
+            self._proxy_tex_3d,
+            self._proxy_tex_2d,
+            self._label_keys_texture,
+            self._label_colors_texture,
+            self._t_paint_cache,
+            self._t_paint_lut,
+        ]
+        for cache in (self._block_cache_3d, self._block_cache_2d):
+            if cache is not None:
+                textures.append(cache.cache_tex)
+        if self._lut_manager_3d is not None:
+            textures += [
+                self._lut_manager_3d.lut_tex,
+                self._lut_manager_3d.brick_max_tex,
+            ]
+        if self._lut_manager_2d is not None:
+            textures.append(self._lut_manager_2d.lut_tex)
+        destroy_textures(*textures)
         self._residency_3d = self._residency_2d = None
         for group in (self.node_3d, self.node_2d):
             if group is not None:

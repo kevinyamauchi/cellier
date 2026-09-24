@@ -16,6 +16,7 @@ from cellier.render._frustum import (
     bricks_in_frustum_arr,
     frustum_planes_from_corners,
 )
+from cellier.render._gpu_lifetime import destroy_textures, weak_callback
 from cellier.render._level_mapping import base_cell_range
 from cellier.render._level_of_detail import (
     build_level_grids,
@@ -2659,6 +2660,30 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         if self.material_3d is not None:
             self.material_3d.reset_frame_index()
 
+    def close(self) -> None:
+        """Free this slot's GPU textures and drop its caches.  Unusable afterwards.
+
+        The textures are destroyed rather than dropped: pygfx's bind-group
+        cache would otherwise keep their GPU memory after the slot is gone.
+        """
+        textures = [self._proxy_tex_3d, self._proxy_tex_2d]
+        for cache in (self._block_cache_3d, self._block_cache_2d):
+            if cache is not None:
+                textures.append(cache.cache_tex)
+        if self._lut_manager_3d is not None:
+            textures += [
+                self._lut_manager_3d.lut_tex,
+                self._lut_manager_3d.brick_max_tex,
+            ]
+        if self._lut_manager_2d is not None:
+            textures.append(self._lut_manager_2d.lut_tex)
+        destroy_textures(*textures)
+        self._residency_3d = self._residency_2d = None
+        self._data_ready_listener = self._data_ready_listener_2d = None
+        self._block_cache_3d = self._lut_manager_3d = None
+        self._block_cache_2d = self._lut_manager_2d = None
+        self._proxy_tex_3d = self._proxy_tex_2d = None
+
     # ── Private helpers ─────────────────────────────────────────────────
 
     def _build_aabb_line_3d(self) -> gfx.Line:
@@ -2921,8 +2946,10 @@ class GFXMultiscaleImageVisual:
                 pick_write=self._pick_write,
             )
             slot._block_size = config.block_size
-            slot._data_ready_listener = self._reveal_aabb_3d
-            slot._data_ready_listener_2d = self._reveal_aabb_2d
+            # Weakly: the slots are this visual's, so a strong bound method
+            # would be a cycle keeping every slot's caches alive.
+            slot._data_ready_listener = weak_callback(self._reveal_aabb_3d)
+            slot._data_ready_listener_2d = weak_callback(self._reveal_aabb_2d)
             slot.key = None
             slot.last_drawn = 0
             slot.color_map_source = None
@@ -3396,9 +3423,7 @@ class GFXMultiscaleImageVisual:
         removes them), so nothing lands on a closed slot.
         """
         for slot in self._slots:
-            # The residency calls back into the slot: drop the pair's cycle.
-            slot._residency_3d = slot._residency_2d = None
-            slot._data_ready_listener = slot._data_ready_listener_2d = None
+            slot.close()
         for group in (self.node_3d, self.node_2d):
             if group is not None:
                 group.clear()

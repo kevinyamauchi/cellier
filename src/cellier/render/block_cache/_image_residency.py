@@ -34,6 +34,7 @@ from uuid import uuid4
 import numpy as np
 
 from cellier.data.image._image_requests import ChunkRequest
+from cellier.render._gpu_lifetime import weak_callback
 from cellier.render._level_mapping import level_to_data
 from cellier.render.block_cache._tile_manager_2d import BlockKey2D
 from cellier.render.block_cache._tile_manager_2d import TileSlot as TileSlot2D
@@ -220,7 +221,9 @@ class _AtlasResidency:
         self._overlap = int(block_cache.info.overlap)
         self._level_scales = np.asarray(level_scales, dtype=np.float64)
         self._level_translations = np.asarray(level_translations, dtype=np.float64)
-        self._on_write = on_write
+        # The visual owns this residency and passes its own methods: held
+        # weakly, so a visual dropped without close() dies by refcount.
+        self._on_write = weak_callback(on_write)
         self._selections: list[SliceSelection] = []
         self._selection_ids: dict[SliceSelection, int] = {}
         self._request_id = uuid4()
@@ -425,7 +428,7 @@ class ImageResidency3D(_AtlasResidency):
             level_translations,
             on_write=on_write,
         )
-        self._brick_max_fn = brick_max
+        self._brick_max_fn = weak_callback(brick_max, dead_result=0.0)
         side = int(block_cache.info.grid_side)
         flat = np.arange(1, self.n_slots + 1)
         sz, rem = np.divmod(flat, side * side)
