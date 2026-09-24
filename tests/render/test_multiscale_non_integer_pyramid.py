@@ -34,6 +34,7 @@ from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 
 BLOCK_SIZE = 8
 SHAPES = [(16, 98, 16), (8, 49, 8), (4, 24, 4)]
@@ -174,7 +175,9 @@ async def _render_image(controller, render_scene, reslice, root, dim, level):
         appearance=MultiscaleImageAppearance(force_level=level),
         # The level under test only: no backstop drawn beneath it.
         render_config=MultiscaleImageRenderConfig(
-            block_size=BLOCK_SIZE, loading=ProgressiveLoadingConfig(backstop=False)
+            **SMALL_BUDGETS,
+            block_size=BLOCK_SIZE,
+            loading=ProgressiveLoadingConfig(backstop=False),
         ),
         single=MultiscaleImageSingleAppearance(
             color_map="gray", clim=(0.0, 1.0), render_mode="mip"
@@ -195,7 +198,9 @@ async def _render_labels(controller, render_scene, reslice, root, dim, level):
         scene_id=scene.id,
         appearance=MultiscaleLabelsAppearance(force_level=level),
         render_config=MultiscaleLabelRenderConfig(
-            block_size=BLOCK_SIZE, loading=ProgressiveLoadingConfig(backstop=False)
+            **SMALL_BUDGETS,
+            block_size=BLOCK_SIZE,
+            loading=ProgressiveLoadingConfig(backstop=False),
         ),
     )
     controller.add_canvas(scene_id=scene.id)

@@ -31,9 +31,11 @@ from cellier.data.image._image_memory_store import ImageMemoryStore
 from cellier.scene.dims import spatial_axes
 from cellier.visuals import (
     InMemoryImageSingleAppearance,
+    MultiscaleImageRenderConfig,
     MultiscaleImageSingleAppearance,
 )
 from cellier.visuals._image_memory import InMemoryImageAppearance
+from tests._gpu_budget import SMALL_BUDGETS
 
 _PANELS = ("xy", "xz", "yz", "vol")
 _2D = ("xy", "xz", "yz")
@@ -101,6 +103,7 @@ def test_add_image_multiscale_records_the_config_and_the_group(multiscale_image_
         appearance=MultiscaleImageAppearance(),
         controls=MultiscaleImageControlsConfig(appearance=["lod_bias"]),
         single=MultiscaleImageSingleAppearance(color_map="viridis"),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS),
     )
 
     ids_2d = [visuals[key].id for key in _2D]

@@ -18,6 +18,7 @@ from cellier.events import (
     ResliceProgressEvent,
 )
 from cellier.visuals import ProgressiveLoadingConfig
+from tests._gpu_budget import SMALL_BUDGETS
 from tests.render.conftest import drain_loading
 from tests.render.scheduling.test_backstop_integration import _add, _Gate, _until
 
@@ -150,7 +151,7 @@ async def test_one_event_per_loop_iteration_over_every_channel(
         store,
         scene.id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         channel_axis=0,
         composite=True,
         channels={

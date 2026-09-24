@@ -17,6 +17,7 @@ from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 from tests.render.conftest import drain_loading
 
 DRAG = ProgressiveLoadingConfig(dims_drag="backstop")
@@ -55,7 +56,9 @@ def _add(controller, store, dim="2d", loading=DRAG, name="scene"):
         data=store,
         scene_id=scene.id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8, loading=loading),
+        render_config=MultiscaleImageRenderConfig(
+            **SMALL_BUDGETS, block_size=8, loading=loading
+        ),
         single=MultiscaleImageSingleAppearance(
             color_map="viridis", clim=(0.0, 1.0), render_mode="mip"
         ),
@@ -217,7 +220,7 @@ async def test_other_visuals_in_the_scene_still_plan_in_full(
         data=multiscale_image_store,
         scene_id=scene.id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         single=MultiscaleImageSingleAppearance(color_map="viridis"),
     )
     await _loaded(controller, scene)

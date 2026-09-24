@@ -45,6 +45,8 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
+from tests._gpu_budget import SMALL_BUDGETS
+
 #: Level-0 shape and voxel size, (z, y, x).  Every axis differs, so a swapped
 #: or dropped axis shows up.
 SHAPE = (32, 96, 128)
@@ -257,7 +259,9 @@ def _build_viewer(path):
     from cellier.transform import AffineTransform
     from cellier.visuals import (
         MultiscaleImageAppearance,
+        MultiscaleImageRenderConfig,
         MultiscaleImageSingleAppearance,
+        MultiscaleLabelRenderConfig,
         MultiscaleLabelsAppearance,
     )
 
@@ -294,11 +298,13 @@ def _build_viewer(path):
             render_mode="iso",
             iso_threshold=THRESHOLD,
         ),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS),
     )
     labels = viewer.add_labels_multiscale(
         labels_store,
         appearance=MultiscaleLabelsAppearance(force_level=1),
         transform=to_world(labels_store),
+        render_config=MultiscaleLabelRenderConfig(**SMALL_BUDGETS),
     )
     return viewer, image, labels
 

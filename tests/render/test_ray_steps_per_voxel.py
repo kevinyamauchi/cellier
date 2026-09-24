@@ -25,6 +25,7 @@ from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 
 SHAPES = [(32, 32, 32), (16, 16, 16)]
 SCALES = [tuple(s0 / sk for s0, sk in zip(SHAPES[0], shape)) for shape in SHAPES]
@@ -75,13 +76,17 @@ def _add_visual(controller, scene_id, root, kind):
             appearance=MultiscaleLabelsAppearance(
                 force_level=1, render_mode="flat_categorical"
             ),
-            render_config=MultiscaleLabelRenderConfig(block_size=8, loading=loading),
+            render_config=MultiscaleLabelRenderConfig(
+                **SMALL_BUDGETS, block_size=8, loading=loading
+            ),
         )
     return controller.add_image_multiscale(
         data=_write_slab(root, "float32", 1.0),
         scene_id=scene_id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8, loading=loading),
+        render_config=MultiscaleImageRenderConfig(
+            **SMALL_BUDGETS, block_size=8, loading=loading
+        ),
         single=MultiscaleImageSingleAppearance(
             color_map="gray", clim=(0.0, 1.0), render_mode="mip"
         ),

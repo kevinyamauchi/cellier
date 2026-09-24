@@ -19,6 +19,7 @@ from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 from tests.render.conftest import drain_loading
 
 TARGET_SCALE, BACKSTOP_SCALE = 0, 1
@@ -32,7 +33,9 @@ def _add(controller, store, dim="3d", loading=None, **render):
         scene_id=scene.id,
         appearance=MultiscaleImageAppearance(force_level=TARGET_LEVEL),
         render_config=MultiscaleImageRenderConfig(
-            block_size=8, loading=loading or ProgressiveLoadingConfig(), **render
+            block_size=8,
+            loading=loading or ProgressiveLoadingConfig(),
+            **{**SMALL_BUDGETS, **render},
         ),
         single=MultiscaleImageSingleAppearance(
             color_map="viridis", clim=(0.0, 1.0), render_mode="mip"
@@ -295,7 +298,7 @@ async def test_each_composite_channel_gets_its_own_backstop(
         store,
         scene.id,
         appearance=MultiscaleImageAppearance(force_level=TARGET_LEVEL),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         channel_axis=0,
         composite=True,
         channels={

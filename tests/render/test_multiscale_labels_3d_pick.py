@@ -20,6 +20,7 @@ from cellier.visuals._labels import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 
 SHAPES = [(16, 16, 16), (8, 8, 8)]
 CUBE_LO, CUBE_HI = 5, 10  # inclusive, level-0 voxels, every axis
@@ -77,7 +78,9 @@ async def test_a_pick_just_inside_the_silhouette_names_the_label(
         scene_id=scene.id,
         appearance=MultiscaleLabelsAppearance(force_level=1, render_mode=render_mode),
         render_config=MultiscaleLabelRenderConfig(
-            block_size=8, loading=ProgressiveLoadingConfig(backstop=False)
+            **SMALL_BUDGETS,
+            block_size=8,
+            loading=ProgressiveLoadingConfig(backstop=False),
         ),
     )
     controller.add_canvas(scene_id=scene.id)

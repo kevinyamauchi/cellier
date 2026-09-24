@@ -233,15 +233,24 @@ async def test_remove_mid_flight_drops_the_reads() -> None:
 
 
 async def test_retire_stops_new_reads() -> None:
-    store = AsyncStore(latency=0.01)
+    # The reads are held open until the retire has been applied.  A retire
+    # is a pass, applied on the next loop iteration; a read landing before
+    # then refills from the old queue, and a timed sleep could not rule that
+    # out (on Windows a 2 ms sleep can oversleep a 10 ms read).
+    gate = asyncio.Event()
+    store = AsyncStore(gate=gate)
     residency = FakeResidency(64)
     scheduler = ChunkScheduler(
         SchedulerConfig(max_in_flight=2, backstop_reserved=0, commit_fallback_s=0.005)
     )
     scheduler.register(1, residency)
     scheduler.pass_([desired(1, target=fine_keys(1, n=20), store=store)])
-    await asyncio.sleep(0.002)
+    async with asyncio.timeout(5.0):
+        while len(store.calls) < 2:
+            await asyncio.sleep(0)
     scheduler.retire(1)
+    await asyncio.sleep(0)  # the retire's pass runs
+    gate.set()
     await scheduler.drain()
     assert len(store.calls) == 2  # only what was in flight
     assert len(residency.writes) == 2  # kept, as RECENT

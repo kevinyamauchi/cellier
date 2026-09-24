@@ -16,6 +16,7 @@ from cellier.visuals._image import (
     MultiscaleImageAppearance,
     MultiscaleImageRenderConfig,
 )
+from tests._gpu_budget import SMALL_BUDGETS
 from tests.render.conftest import drain_loading
 
 
@@ -25,7 +26,7 @@ def _add(controller, store, dim="3d"):
         data=store,
         scene_id=scene.id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         single=MultiscaleImageSingleAppearance(
             color_map="viridis", clim=(0.0, 1.0), render_mode="mip"
         ),
@@ -254,7 +255,7 @@ async def test_an_undrawn_channel_retires_its_atlas(controller, tmp_path):
         store,
         scene.id,
         appearance=MultiscaleImageAppearance(force_level=1),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         channel_axis=0,
         composite=True,
         channels={

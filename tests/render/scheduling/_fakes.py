@@ -118,14 +118,21 @@ class AsyncStore:
         Seconds per read.
     fail : Callable[[int, int], bool] | None
         ``(key, attempt) -> raise?``; attempts count from 1.
+    gate : asyncio.Event | None
+        When given, every read waits for it to be set before its latency,
+        so a test decides when reads land instead of racing the clock.
     """
 
     def __init__(
-        self, latency: float = 0.002, fail: Callable[[int, int], bool] | None = None
+        self,
+        latency: float = 0.002,
+        fail: Callable[[int, int], bool] | None = None,
+        gate: asyncio.Event | None = None,
     ) -> None:
         self.id = uuid4()
         self.latency = latency
         self.fail = fail
+        self.gate = gate
         self.calls: list[int] = []
         self.concurrent = 0
         self.max_concurrent = 0
@@ -136,6 +143,8 @@ class AsyncStore:
         self.concurrent += 1
         self.max_concurrent = max(self.max_concurrent, self.concurrent)
         try:
+            if self.gate is not None:
+                await self.gate.wait()
             await asyncio.sleep(self.latency)
             if self.fail is not None and self.fail(key, self.calls.count(key)):
                 raise OSError(f"read of {key} failed")

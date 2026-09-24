@@ -11,6 +11,7 @@ it wants.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import numpy as np
 import pytest
@@ -138,6 +139,18 @@ async def test_an_extent_change_replans_a_multiscale_reader(
 # -- the rate cap ---------------------------------------------------------------------
 
 
+def _min_gap(interval: float) -> float:
+    """The shortest spacing the cap can show between two reslices.
+
+    asyncio fires a timer up to one clock tick early (``_run_once`` runs
+    every handle due before ``time() + clock_resolution``), and the loop
+    clock only moves in ticks.  On Windows before Python 3.13 that tick is
+    15.6 ms, so a 33 ms interval can read as 32 ms; elsewhere it is well
+    under a microsecond.  0.99 absorbs float noise.
+    """
+    return 0.99 * interval - time.get_clock_info("monotonic").resolution
+
+
 async def test_a_burst_of_changes_reslices_once_now_and_once_after(
     controller, image_volume, monkeypatch
 ):
@@ -155,7 +168,7 @@ async def test_a_burst_of_changes_reslices_once_now_and_once_after(
     await drain_loading(controller)
     assert len(times) == 2
     interval = 1.0 / controller._render_manager.config.scheduler.store_change_max_hz
-    assert times[1] - times[0] >= interval * 0.99
+    assert times[1] - times[0] >= _min_gap(interval)
 
 
 async def test_a_steady_stream_is_capped_and_the_last_change_is_resliced(
@@ -178,8 +191,9 @@ async def test_a_steady_stream_is_capped_and_the_last_change_is_resliced(
     await drain_loading(controller)
 
     elapsed = times[-1] - times[0]
-    assert len(times) - 1 <= elapsed * max_hz + 1
-    assert all(b - a >= 0.99 / max_hz for a, b in zip(times, times[1:], strict=False))
+    min_gap = _min_gap(1.0 / max_hz)
+    assert len(times) - 1 <= elapsed / min_gap + 1
+    assert all(b - a >= min_gap for a, b in zip(times, times[1:], strict=False))
     # Nothing is dropped: a reslice runs after the final change.
     assert times[-1] >= last_change
 

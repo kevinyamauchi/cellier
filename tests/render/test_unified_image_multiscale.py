@@ -19,6 +19,7 @@ from cellier.visuals import (
     MultiscaleImageSingleAppearance,
 )
 from cellier.visuals._image import MultiscaleImageRenderConfig
+from tests._gpu_budget import SMALL_BUDGETS
 from tests.render.conftest import _write_multiscale_zarr
 
 _CZYX = [("c", "channel"), *spatial_axes("z", "y", "x")]
@@ -59,7 +60,7 @@ def _add(controller, store, *, dim, composite=True, channels=None, **appearance)
         store,
         scene.id,
         appearance=MultiscaleImageAppearance(**appearance),
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         channel_axis=0,
         composite=composite,
         channels=channels,
@@ -102,7 +103,11 @@ def test_a_multiscale_image_without_a_channel_axis_has_one_slot(
     controller, multiscale_image_store
 ):
     scene = controller.add_scene(dim="2d", name="scene")
-    visual = controller.add_image_multiscale(multiscale_image_store, scene.id)
+    visual = controller.add_image_multiscale(
+        multiscale_image_store,
+        scene.id,
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS),
+    )
     gfx_visual = controller._render_manager._scenes[scene.id].get_visual(visual.id)
     assert len(gfx_visual.slots) == 1
 
@@ -281,7 +286,7 @@ def test_the_budget_splits_between_channels_not_pool_slots(
         visual = controller.add_image_multiscale(
             czyx_store,
             scene.id,
-            render_config=MultiscaleImageRenderConfig(block_size=8),
+            render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
             channel_axis=0,
             composite=True,
             channels={
@@ -310,7 +315,7 @@ def test_an_image_without_channels_keeps_the_whole_budget(
     plain = controller.add_image_multiscale(
         multiscale_image_store,
         scene.id,
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
     )
     plain_gfx = controller._render_manager._scenes[scene.id].get_visual(plain.id)
 
@@ -318,7 +323,7 @@ def test_an_image_without_channels_keeps_the_whole_budget(
     channelled = controller.add_image_multiscale(
         czyx_store,
         channel_scene.id,
-        render_config=MultiscaleImageRenderConfig(block_size=8),
+        render_config=MultiscaleImageRenderConfig(**SMALL_BUDGETS, block_size=8),
         channel_axis=0,
         channels={0: MultiscaleImageChannelAppearance()},
     )
