@@ -92,6 +92,12 @@ def _any_mesh_section(spec: ControlSpec, visual_ids, controller=None):
     )
 
 
+def _any_clipping_planes(spec: ControlSpec, visual_ids, controller=None):
+    from cellier.gui.anywidget.visuals import AnywidgetClippingPlanesControls
+
+    return AnywidgetClippingPlanesControls(visual_ids, title=spec.title, **spec.values)
+
+
 def _any_aabb(spec: ControlSpec, visual_ids, controller=None):
     from cellier.gui.anywidget.visuals import AnywidgetAABBWidget
 
@@ -177,6 +183,7 @@ ANYWIDGET_BUILDERS = {
     "loading": _any_loading,
     "loading_config": _any_loading_config,
     "mesh_section": _any_mesh_section,
+    "clipping_planes": _any_clipping_planes,
     "lod_config": _any_lod_config,
     "visual_outline": _any_visual_outline,
     "labels_outline": _any_labels_outline,

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
+from cellier.gui._clipping_planes import CLIPPING_PLANES_TITLE, clipping_planes_seed
 from cellier.gui._loading import LOADING_CONFIG_TITLE, LOADING_TITLE
 from cellier.gui._lod import LOD_CONFIG_TITLE
 from cellier.gui._mesh_section import MESH_SECTION_TITLE
@@ -32,7 +33,8 @@ class ControlSpec:
     kind : str
         Which control to build: ``color_map``, ``clim``, ``render``,
         ``lod_bias``, ``aabb``, ``loading``, ``loading_config``,
-        ``mesh_section``, ``lod_config`` or ``dataset_info``.  A renderer with no
+        ``mesh_section``, ``clipping_planes``, ``lod_config`` or
+        ``dataset_info``.  A renderer with no
         builder for a kind skips it.
     title : str
         What the control is called, e.g. ``"Contrast limits"``.  Both front
@@ -79,6 +81,7 @@ _CONTROL_TITLES = {
     "loading": LOADING_TITLE,
     "loading_config": LOADING_CONFIG_TITLE,
     "mesh_section": MESH_SECTION_TITLE,
+    "clipping_planes": CLIPPING_PLANES_TITLE,
     "lod_config": LOD_CONFIG_TITLE,
     # Read rather than restated: the per-visual groups name themselves in
     # the shared control spec, beside the controls they hold.
@@ -320,6 +323,17 @@ def appearance_specs(
                 "mesh_section",
                 _CONTROL_TITLES["mesh_section"],
                 {"section": section.model_dump()},
+            )
+        )
+
+    # The visual's clipping planes: a row per plane.  Opt-in.  Every visual
+    # type has them; they are edited in the store's data coordinates.
+    if getattr(config, "clipping_controls", False) and store is not None:
+        specs.append(
+            ControlSpec(
+                "clipping_planes",
+                _CONTROL_TITLES["clipping_planes"],
+                clipping_planes_seed(visual, store),
             )
         )
 

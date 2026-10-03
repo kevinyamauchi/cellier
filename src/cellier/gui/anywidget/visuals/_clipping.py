@@ -1,0 +1,191 @@
+"""The anywidget "Clipping planes" control of a visual.
+
+One widget whose synced trait holds the whole list of planes; its front
+end draws a row per entry.  Adding a plane constructs no widget, so
+marimo's rule against building widgets outside a running cell never
+applies.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+import anywidget
+import traitlets
+from psygnal import Signal
+
+from cellier.gui._appearance_fields import VisualIdGroup
+from cellier.gui._clipping_planes import (
+    CLIPPING_PLANES_TITLE,
+    CUSTOM_PRESET,
+    ClippingPlanesEditor,
+)
+from cellier.gui.anywidget._teardown import close_aux_widgets
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from uuid import UUID
+
+    from cellier.events import SubscriptionSpec
+
+_STATIC = Path(__file__).parent / "static"
+
+
+class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
+    """A visual's clipping planes: one row per plane, and an add button.
+
+    Each row has an enabled checkbox, the data axis the normal points along
+    (or ``custom``), the normal itself, a flip button, a position slider
+    along the normal and a remove button.  Values are in the visual's data
+    coordinates.
+
+    The front end reports an action by setting ``edit`` to
+    ``{"action", "index", "value", "serial"}``; the Python side applies it
+    and syncs ``rows`` back.  A refused edit comes back as ``error`` with
+    ``rows`` unchanged.  ``rows`` and ``error`` are written by the Python
+    side only; a value a host writes into them is put back.  An update is sent only when the planes differ from
+    the ones held, so a host that delivers one edit twice sends one.
+
+    Wire to the controller after construction::
+
+        seed = clipping_planes_seed(visual, store)
+        controls = AnywidgetClippingPlanesControls(visual.id, **seed)
+        controller.connect_widget(
+            controls, subscription_specs=controls.subscription_specs()
+        )
+
+    Parameters
+    ----------
+    visual_id :
+        The visual, or a group of them (an ``OrthoViewer``'s panel
+        siblings), edited together.
+    coordinate_system :
+        The level-0 data coordinate system of the store they read (its id).
+    axis_names :
+        The data axis names, in order.
+    bounds :
+        ``(low, high)`` of the data on each axis.
+    planes :
+        The current rows (``rows_from_planes(visual.clipping_planes)``).
+    """
+
+    _esm = _STATIC / "clipping_planes.js"
+    _css = _STATIC / "clipping_planes.css"
+
+    changed: Signal = Signal(object)
+    closed: Signal = Signal()
+
+    DEFAULT_TITLE = CLIPPING_PLANES_TITLE
+    """Name shown when no ``title=`` is given."""
+
+    title = traitlets.Unicode(DEFAULT_TITLE).tag(sync=True)
+    #: The normal presets: the data axis names, then "custom".
+    presets = traitlets.List([]).tag(sync=True)
+    #: One entry per plane: enabled, normal, position, preset, normal_text,
+    #: low, high.
+    rows = traitlets.List([]).tag(sync=True)
+    #: The reason the last edit was refused, or "".
+    error = traitlets.Unicode("").tag(sync=True)
+    #: Set by the front end: ``{"action", "index", "value", "serial"}``.
+    edit = traitlets.Dict({}).tag(sync=True)
+
+    def __init__(
+        self,
+        visual_id: UUID | Sequence[UUID],
+        *,
+        coordinate_system: UUID | str,
+        axis_names: Sequence[str],
+        bounds: Sequence[Sequence[float]],
+        planes: Sequence[Mapping[str, Any]] = (),
+        **kwargs,
+    ) -> None:
+        super().__init__(presets=[*map(str, axis_names), CUSTOM_PRESET], **kwargs)
+        self._id = uuid4()
+        self._init_visual_ids(visual_id)
+        self._editor = ClippingPlanesEditor(
+            self._visual_ids,
+            coordinate_system,
+            axis_names,
+            bounds,
+            planes,
+            self._id,
+            self.changed.emit,
+            self._show,
+        )
+        self._shown_error = ""
+        self._show(self._editor.rows, "")
+        self.observe(self._on_edit, names="edit")
+        self.observe(self._keep_shown, names=["rows", "error"])
+
+    # -- Public interface ------------------------------------------------------
+
+    @property
+    def widget(self) -> AnywidgetClippingPlanesControls:
+        """An ``AnyWidget`` is itself the embeddable element."""
+        return self
+
+    @property
+    def editor(self) -> ClippingPlanesEditor:
+        """The toolkit-neutral half (for tests and scripting)."""
+        return self._editor
+
+    def close(self) -> None:
+        """Unsubscribe from the bus and release the widget."""
+        self.closed.emit()
+        close_aux_widgets(self)
+        super().close()
+
+    def subscription_specs(self) -> list[SubscriptionSpec]:
+        """One ``ClippingPlanesChangedEvent`` per visual."""
+        return self._editor.subscription_specs()
+
+    # -- widget -> model -------------------------------------------------------
+
+    def _on_edit(self, change) -> None:
+        edit = change["new"] or {}
+        action = edit.get("action")
+        editor = self._editor
+        if action == "add":
+            editor.add()
+            return
+        index = edit.get("index")
+        if not isinstance(index, int) or not 0 <= index < len(editor.rows):
+            return
+        value = edit.get("value")
+        if action == "remove":
+            editor.remove(index)
+        elif action == "enabled":
+            editor.set_enabled(index, bool(value))
+        elif action == "position":
+            editor.set_position(index, float(value))
+        elif action == "flip":
+            editor.flip(index)
+        elif action == "preset":
+            editor.set_preset(index, str(value))
+        elif action == "normal":
+            editor.set_normal_text(index, str(value))
+
+    # -- model -> widget -------------------------------------------------------
+
+    def _show(self, rows: list[dict[str, Any]], error: str) -> None:
+        self._shown_error = error
+        with self.hold_sync():
+            self.rows = self._editor.describe()
+            self.error = error
+
+    def _keep_shown(self, change) -> None:
+        """Put back ``rows`` and ``error`` when a host overwrites them.
+
+        They are written by this side only.  marimo sends a widget's whole
+        state with every front-end edit, so the front end's copy of them,
+        which is the one from before the edit, arrives with the edit and
+        would replace what the edit just produced.
+        """
+        if change["name"] == "rows":
+            shown = self._editor.describe()
+            if change["new"] != shown:
+                self.rows = shown
+        elif change["new"] != self._shown_error:
+            self.error = self._shown_error

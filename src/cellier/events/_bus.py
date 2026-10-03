@@ -24,6 +24,7 @@ from cellier.events._events import (
     CanvasMouseRelease2DEvent,
     CanvasMouseRelease3DEvent,
     ChannelAppearanceChangedEvent,
+    ClippingPlanesChangedEvent,
     DataStoreContentsChangedEvent,
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
@@ -81,6 +82,7 @@ _ENTITY_FIELD: dict[type, str] = {
     BackstopCompleteEvent: "visual_id",
     LoadingConfigChangedEvent: "visual_id",
     LodConfigChangedEvent: "visual_id",
+    ClippingPlanesChangedEvent: "visual_id",
     ResliceCancelledEvent: "visual_id",
     FrameRenderedEvent: "canvas_id",
     CanvasConnectedEvent: "canvas_id",
@@ -498,6 +500,7 @@ class EventBus:
               ``ResliceProgressEvent``, ``BackstopCompleteEvent``,
               ``LoadingConfigChangedEvent``,
               ``LodConfigChangedEvent``,
+              ``ClippingPlanesChangedEvent``,
               ``ResliceCancelledEvent``
             - Canvas (keyed by ``canvas_id``) — ``FrameRenderedEvent``,
               ``CanvasConnectedEvent``

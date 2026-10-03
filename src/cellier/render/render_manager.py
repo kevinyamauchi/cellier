@@ -1800,6 +1800,32 @@ class RenderManager:
         if set_lod is not None:
             set_lod(lod)
 
+    def set_visual_clipping_planes(self, visual_id: UUID, planes: Any) -> None:
+        """Hand a visual its clipping planes; ignored if it takes none."""
+        scene_id = self._visual_to_scene.get(visual_id)
+        scene_manager = self._scenes.get(scene_id)
+        if scene_manager is None:
+            return
+        setter = getattr(
+            scene_manager.get_visual(visual_id), "set_clipping_planes", None
+        )
+        if setter is not None:
+            setter(planes)
+
+    def clipping_planes_affect_request(self, visual_id: UUID) -> bool:
+        """Whether a change of planes changes what *visual_id* reads."""
+        scene_id = self._visual_to_scene.get(visual_id)
+        scene_manager = self._scenes.get(scene_id)
+        if scene_manager is None:
+            return False
+        return bool(
+            getattr(
+                scene_manager.get_visual(visual_id),
+                "clipping_planes_affect_request",
+                False,
+            )
+        )
+
     def set_camera_moving(self, canvas_id: UUID, moving: bool) -> None:
         """Record whether a canvas's camera is in motion.
 

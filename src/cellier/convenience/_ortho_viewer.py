@@ -29,7 +29,7 @@ from cellier.scene.dims import (
 from cellier.scene.scene import Scene
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Generator, Mapping, Sequence
     from pathlib import Path
 
     import numpy as np
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from cellier.render._config import RenderManagerConfig
     from cellier.scene._background import BackgroundAppearance
     from cellier.transform import BaseTransform, WorldCoordinateSystem
+    from cellier.visuals import ClippingPlane
     from cellier.visuals._base_visual import VisualOutline
     from cellier.visuals._graph_memory import (
         GraphAppearance,
@@ -972,8 +973,25 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         return data
 
     def _fan_out(self, add_one) -> dict[str, object]:
-        """Call *add_one(key, scene)* for every panel and collect the results."""
-        return {key: add_one(key, scene) for key, scene in self._scenes.items()}
+        """Call *add_one(key, scene)* for every panel and collect the results.
+
+        The panels' visuals read one store and share its data coordinate
+        system, so their clipping planes are linked: assigning
+        ``clipping_planes`` on one panel's visual gives the same tuple to
+        the others.  Each panel then reduces it with its own displayed axes
+        (clipping planes design D20).
+        """
+        visuals = {key: add_one(key, scene) for key, scene in self._scenes.items()}
+        models = list(visuals.values())
+        for source in models:
+
+            def _mirror(planes, source=source) -> None:
+                for other in models:
+                    if other is not source and other.clipping_planes != planes:
+                        other.clipping_planes = planes
+
+            source.events.clipping_planes.connect(_mirror)
+        return visuals
 
     # ------------------------------------------------------------------
     # Visual add methods (one data store, one visual per panel)
@@ -993,6 +1011,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         max_channels: int = 4,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, ImageVisual]:
         """Add an in-memory image to every panel from a single data store.
 
@@ -1032,6 +1051,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, ImageVisual]
@@ -1051,6 +1077,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 max_channels=max_channels,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1066,6 +1093,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         outline_selected_labels: dict[int, int] | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, LabelMemoryVisual]:
         """Add an in-memory label image to every panel from one data store.
 
@@ -1099,6 +1127,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             it in.  ``None`` (default) selects no label, so an outlined
             labels visual shows boundaries only.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, LabelMemoryVisual]
@@ -1114,6 +1149,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
                 outline_selected_labels=outline_selected_labels,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1129,6 +1165,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         section: MeshSectionConfig | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, MeshVisual]:
         """Add a mesh to every panel from a single data store.
 
@@ -1164,6 +1201,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             ``None`` (default) is an outline and a fill of the cut.  Each
             panel's visual gets its own copy.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, MeshVisual]
@@ -1179,6 +1223,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
                 section=None if section is None else section.model_copy(),
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1195,6 +1240,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         ambient_occlusion: bool | None = None,
         section: MeshSectionConfig | None = None,
         lod: GeometryLodConfig | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, MultiscaleMeshVisual]:
         """Add a mesh with levels of detail to every panel, from one store.
 
@@ -1231,6 +1277,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             same for every panel; change it later with
             :meth:`set_lod_config`.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, MultiscaleMeshVisual]
@@ -1247,6 +1300,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 ambient_occlusion=ambient_occlusion,
                 section=None if section is None else section.model_copy(),
                 lod=lod,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1261,6 +1315,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         controls: PointsControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, PointsVisual]:
         """Add a points visual to every panel from a single data store.
 
@@ -1290,6 +1345,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, PointsVisual]
@@ -1304,6 +1366,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 transform,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1319,6 +1382,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         controls: GraphControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, GraphVisual]:
         """Add a spatial-graph visual to every panel from a single data store.
 
@@ -1351,6 +1415,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, GraphVisual]
@@ -1366,6 +1437,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 trail,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1380,6 +1452,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         controls: LinesControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, LinesVisual]:
         """Add a lines visual to every panel from a single data store.
 
@@ -1409,6 +1482,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, LinesVisual]
@@ -1423,6 +1503,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 transform,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1444,6 +1525,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         max_channels: int = 4,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, MultiscaleImageVisual]:
         """Add a multiscale image to every panel from a single data store.
 
@@ -1480,6 +1562,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, MultiscaleImageVisual]
@@ -1500,6 +1589,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 max_channels=max_channels,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1516,6 +1606,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         outline_selected_labels: dict[int, int] | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> dict[str, MultiscaleLabelVisual]:
         """Add a multiscale label image to every panel from one data store.
 
@@ -1550,6 +1641,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             it in.  ``None`` (default) selects no label, so an outlined
             labels visual shows boundaries only.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         dict[str, MultiscaleLabelVisual]
@@ -1566,6 +1664,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
                 outline_selected_labels=outline_selected_labels,
+                clipping_planes=clipping_planes,
             )
         )
         self._record_controls(visuals, controls, name)

@@ -1,0 +1,50 @@
+.cellier-clipping-planes {
+  font-family: var(--jp-ui-font-family, sans-serif);
+  font-size: 12px;
+  min-width: 260px;
+}
+
+.cellier-clipping-planes-title {
+  font-weight: 600;
+  margin: 2px 0 4px;
+}
+
+.cellier-clipping-planes-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cellier-clipping-planes-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.cellier-clipping-planes-normal {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cellier-clipping-planes-position {
+  grid-column: 2 / span 2;
+  min-width: 0;
+  width: 100%;
+}
+
+.cellier-clipping-planes-value {
+  grid-column: 4 / span 2;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cellier-clipping-planes-add {
+  margin-top: 6px;
+}
+
+.cellier-clipping-planes-error {
+  color: #d04040;
+  margin-top: 4px;
+}

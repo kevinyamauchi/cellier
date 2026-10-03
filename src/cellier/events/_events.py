@@ -418,6 +418,30 @@ class LoadingConfigChangedEvent(NamedTuple):
     loading: Any
 
 
+class ClippingPlanesChangedEvent(NamedTuple):
+    """A visual's ``clipping_planes`` changed.
+
+    Emitted for every change, whether it came from
+    ``CellierController.set_clipping_planes`` (or a
+    ``ClippingPlanesUpdateEvent``) or from assigning
+    ``visual.clipping_planes`` directly.
+
+    Parameters
+    ----------
+    source_id : UUID
+        Who asked for the change: the widget's id for a GUI edit, otherwise
+        the controller's.
+    visual_id : UUID
+        The visual.  The routing key.
+    clipping_planes : tuple[ClippingPlane, ...]
+        The complete tuple after the change.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    clipping_planes: Any
+
+
 class LodConfigChangedEvent(NamedTuple):
     """A multiscale mesh's ``lod`` config changed.
 
@@ -1442,6 +1466,7 @@ CellierEventTypes = (
     | BackstopCompleteEvent
     | LoadingConfigChangedEvent
     | LodConfigChangedEvent
+    | ClippingPlanesChangedEvent
     | ResliceCancelledEvent
     | FrameRenderedEvent
     | VisualAddedEvent

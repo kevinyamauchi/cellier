@@ -39,6 +39,8 @@ from cellier.events import (
     CanvasSizeChangedEvent,
     ChannelAppearanceChangedEvent,
     ChannelAppearanceUpdateEvent,
+    ClippingPlanesChangedEvent,
+    ClippingPlanesUpdateEvent,
     DataStoreContentsChangedEvent,
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
@@ -170,6 +172,7 @@ if TYPE_CHECKING:
     from cellier.visuals._base_visual import BaseVisual, VisualOutline
     from cellier.visuals._label_memory import OutlineMode
 from cellier.visuals._canvas_overlay import CanvasOverlay, CenteredAxes2D
+from cellier.visuals._clipping import ClippingPlane, validate_clipping_planes
 from cellier.visuals._graph_memory import (
     GraphAppearance,
     GraphVisual,
@@ -439,6 +442,12 @@ class _OverlayEntry:
 # ``LoadingConfigChangedEvent`` (``set_loading_config``).
 _loading_source_id_override: contextvars.ContextVar[UUID | None] = (
     contextvars.ContextVar("_loading_source_id_override", default=None)
+)
+
+# Parallel context variable for ``visual.clipping_planes`` changes, stamped
+# on ``ClippingPlanesChangedEvent`` (``set_clipping_planes``).
+_clipping_source_id_override: contextvars.ContextVar[UUID | None] = (
+    contextvars.ContextVar("_clipping_source_id_override", default=None)
 )
 
 # Parallel context variable for ``visual.lod`` changes, stamped on
@@ -1007,6 +1016,11 @@ class CellierController:
             self._on_lod_config_update,
             owner_id=self._id,
         )
+        self._incoming_events.subscribe(
+            ClippingPlanesUpdateEvent,
+            self._on_clipping_planes_update,
+            owner_id=self._id,
+        )
 
     @property
     def incoming_events(self) -> EventBus:
@@ -1475,6 +1489,7 @@ class CellierController:
         # transform, the visual space, the region pull-back -- is addressed
         # by axis id.
         self._ensure_data_coordinate_systems(scene_id, data_store, visual_model)
+        self._check_clipping_planes(visual_model, visual_model.clipping_planes)
         world = self._model.scenes[scene_id].dims.world_coordinate_system
         supplied = getattr(visual_model, "transform", None)
         if supplied is None:
@@ -1520,6 +1535,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> ImageVisual:
         """Add an in-memory image visual to a scene.
 
@@ -1561,6 +1577,13 @@ class CellierController:
         pick_write : bool
             Whether the visual writes to the pick buffer.  Default ``True``.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         ImageVisual
@@ -1573,6 +1596,7 @@ class CellierController:
             *channels* has more than *max_channels* entries.
         """
         visual_model = ImageVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance
@@ -1606,6 +1630,7 @@ class CellierController:
         pick_write: bool = True,
         outline_selected_labels: dict[int, int] | None = None,
         outline_mode: OutlineMode = "per_label",
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> LabelMemoryVisual:
         """Add an in-memory label visual to a scene.
 
@@ -1649,6 +1674,13 @@ class CellierController:
             silhouette and ``"all_boundaries"`` every label's boundary, both
             in the colour of the ``outline`` slot.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         LabelMemoryVisual
@@ -1660,6 +1692,7 @@ class CellierController:
 
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = LabelMemoryVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -1686,6 +1719,7 @@ class CellierController:
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
         section: MeshSectionConfig | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> MeshVisual:
         """Add a mesh visual to a scene.
 
@@ -1727,12 +1761,20 @@ class CellierController:
             (``mode="cut"``) or the scene's slab (``mode="slab"``).
             ``None`` (default) is an outline and a fill of the cut.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         MeshVisual
         """
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MeshVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -1759,6 +1801,7 @@ class CellierController:
         pick_write: bool = True,
         section: MeshSectionConfig | None = None,
         lod: GeometryLodConfig | None = None,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> MultiscaleMeshVisual:
         """Add a mesh with levels of detail to a scene.
 
@@ -1798,6 +1841,13 @@ class CellierController:
             Which coarse level is kept (``coarse_level``, 1-based; the
             coarsest by default), and when it is loaded and drawn.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         MultiscaleMeshVisual
@@ -1812,6 +1862,7 @@ class CellierController:
         resolved_lod.coarse_scale_index(data.level_count)
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MultiscaleMeshVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -1837,6 +1888,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> PointsVisual:
         """Add a points visual backed by a PointsMemoryStore.
 
@@ -1871,6 +1923,13 @@ class CellierController:
             this visual; asking for an outline as well turns it back on,
             with a warning.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         PointsVisual
@@ -1880,6 +1939,7 @@ class CellierController:
 
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = PointsVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -1903,6 +1963,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> LinesVisual:
         """Add a lines visual backed by a LinesMemoryStore.
 
@@ -1937,6 +1998,13 @@ class CellierController:
             this visual; asking for an outline as well turns it back on,
             with a warning.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         LinesVisual
@@ -1946,6 +2014,7 @@ class CellierController:
 
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = LinesVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -1970,6 +2039,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> GraphVisual:
         """Add a spatial-graph visual backed by a GraphMemoryStore.
 
@@ -2011,6 +2081,13 @@ class CellierController:
             this visual; asking for an outline as well turns it back on,
             with a warning.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         GraphVisual
@@ -2039,6 +2116,7 @@ class CellierController:
         resolved_transform = self._prepare_transform(scene_id, data, resolved_transform)
 
         visual_model = GraphVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             appearance=appearance,
@@ -2070,6 +2148,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene.
 
@@ -2108,6 +2187,13 @@ class CellierController:
         pick_write : bool
             Whether the visual writes to the pick buffer.  Default ``True``.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         MultiscaleImageVisual
@@ -2122,6 +2208,7 @@ class CellierController:
 
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MultiscaleImageVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             level_transforms=data.level_transforms,
@@ -2158,6 +2245,7 @@ class CellierController:
         pick_write: bool = True,
         outline_selected_labels: dict[int, int] | None = None,
         outline_mode: OutlineMode = "per_label",
+        clipping_planes: Sequence[ClippingPlane] = (),
     ) -> MultiscaleLabelVisual:
         """Add a multiscale label visual to a scene.
 
@@ -2204,6 +2292,13 @@ class CellierController:
             silhouette and ``"all_boundaries"`` every label's boundary, both
             in the colour of the ``outline`` slot.
 
+        clipping_planes : Sequence[ClippingPlane]
+            Clipping planes, in the store's level-0 data coordinates: the
+            visual is drawn only on the kept side of every enabled plane.
+            Build them from ``data.data_coordinate_systems[0]``.  They can
+            be changed later by assigning ``visual.clipping_planes``.
+            Default none.
+
         Returns
         -------
         MultiscaleLabelVisual
@@ -2213,6 +2308,7 @@ class CellierController:
 
         resolved_transform = self._prepare_transform(scene_id, data, transform)
         visual_model = MultiscaleLabelVisual(
+            clipping_planes=clipping_planes,
             name=name,
             data_store_id=str(data.id),
             level_transforms=data.level_transforms,
@@ -2391,6 +2487,11 @@ class CellierController:
         setter = getattr(gfx_visual, "set_render_spaces", None)
         if setter is not None:
             setter(self.render_spaces(visual_model.id))
+        if visual_model.clipping_planes:
+            # A visual constructed with planes is clipped on its first frame.
+            self._render_manager.set_visual_clipping_planes(
+                visual_model.id, visual_model.clipping_planes
+            )
 
         # psygnal bridges
         if hasattr(visual_model, "appearance"):
@@ -2406,6 +2507,7 @@ class CellierController:
         if isinstance(visual_model, MultiscaleMeshVisual):
             self._wire_lod(visual_model)
         self._wire_transform(visual_model, scene_id)
+        self._wire_clipping_planes(visual_model)
         self._wire_render_config(visual_model)
         self._wire_pick_write(visual_model)
         self._wire_visual_render(visual_model)
@@ -2425,6 +2527,7 @@ class CellierController:
             (ImageCompositeChangedEvent, "on_image_composite_changed"),
             (AABBChangedEvent, "on_aabb_changed"),
             (MeshSectionChangedEvent, "on_section_changed"),
+            (ClippingPlanesChangedEvent, "on_clipping_planes_changed"),
             (VisualVisibilityChangedEvent, "on_visibility_changed"),
             (TrailChangedEvent, "on_trail_changed"),
             (TransformChangedEvent, "on_transform_changed"),
@@ -2436,6 +2539,22 @@ class CellierController:
                     event_type,
                     handler,
                     entity_id=visual_model.id,
+                    owner_id=visual_model.id,
+                )
+
+        # Store changes are keyed by the store, not the visual.  The
+        # controller emits them before it reslices the store's readers, so a
+        # visual that remembers what it loaded forgets it in time.
+        for event_type, handler_name in (
+            (DataStoreContentsChangedEvent, "on_data_store_contents_changed"),
+            (DataStoreMetadataChangedEvent, "on_data_store_metadata_changed"),
+        ):
+            handler = getattr(gfx_visual, handler_name, None)
+            if handler is not None:
+                self._outgoing_events.subscribe(
+                    event_type,
+                    handler,
+                    entity_id=UUID(str(visual_model.data_store_id)),
                     owner_id=visual_model.id,
                 )
 
@@ -4573,6 +4692,73 @@ class CellierController:
             (visual.events.transform, handler)
         )
 
+    def _check_clipping_planes(self, visual: BaseVisual, planes: Any) -> None:
+        """Refuse planes that are not in *visual*'s level-0 data system.
+
+        Raises
+        ------
+        ValueError
+            If a plane names another coordinate system, or has another rank.
+        """
+        if not planes:
+            return
+        store = self._model.data.stores[UUID(str(visual.data_store_id))]
+        system = store.data_coordinate_system
+        for index, item in enumerate(planes):
+            if item.plane.coordinate_system != system.id:
+                raise ValueError(
+                    f"Clipping plane {index} of visual {visual.name!r} is not in "
+                    "the visual's data coordinate system.  Build it from "
+                    "store.data_coordinate_systems[0] of the store the visual "
+                    "reads."
+                )
+            if item.plane.ndim != system.ndim:
+                raise ValueError(
+                    f"Clipping plane {index} of visual {visual.name!r} has "
+                    f"{item.plane.ndim} components; its data has {system.ndim} "
+                    f"axes {system.axis_names()}."
+                )
+
+    def _wire_clipping_planes(self, visual: BaseVisual) -> None:
+        """Carry a replaced ``clipping_planes`` tuple to the render layer.
+
+        The render visual reduces the planes for its view and writes them to
+        its materials (a uniform update, or one shader compile when the
+        number of planes changed).  A visual whose reads depend on the
+        planes is resliced.  Emits ``ClippingPlanesChangedEvent``.
+
+        A tuple that fails the check is put back to the last good one and
+        the error raised.
+        """
+        visual_id = visual.id
+        accepted: list[tuple] = [visual.clipping_planes]
+
+        def _on_clipping_planes(planes: tuple) -> None:
+            try:
+                self._check_clipping_planes(visual, planes)
+            except ValueError:
+                with visual.events.clipping_planes.blocked():
+                    visual.clipping_planes = accepted[0]
+                raise
+            accepted[0] = planes
+            self._outgoing_events.emit(
+                ClippingPlanesChangedEvent(
+                    source_id=_clipping_source_id_override.get() or self._id,
+                    visual_id=visual_id,
+                    clipping_planes=planes,
+                )
+            )
+            if visual_id not in self._visual_to_scene:
+                return
+            if self._render_manager.clipping_planes_affect_request(visual_id):
+                self.reslice_visual(visual_id)
+            self._request_draw_for_visual(visual_id)
+
+        visual.events.clipping_planes.connect(_on_clipping_planes)
+        self._visual_psygnal_handlers.setdefault(visual_id, []).append(
+            (visual.events.clipping_planes, _on_clipping_planes)
+        )
+
     def _wire_render_config(self, visual: BaseVisual) -> None:
         """Reslice a multiscale visual whose ``render_config.loading`` changed.
 
@@ -6561,6 +6747,58 @@ class CellierController:
         finally:
             _lod_source_id_override.reset(token)
         return new
+
+    def set_clipping_planes(
+        self,
+        visual_id: UUID,
+        clipping_planes: Sequence[ClippingPlane],
+        *,
+        source_id: UUID | None = None,
+    ) -> tuple[ClippingPlane, ...]:
+        """Replace a visual's clipping planes.
+
+        The same as assigning ``visual.clipping_planes``, with the check
+        made before anything changes and a *source_id* for echo filtering.
+        Emits ``ClippingPlanesChangedEvent``; nothing happens when the tuple
+        equals the current one.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        clipping_planes :
+            The complete new sequence of ``ClippingPlane``, in the visual's
+            level-0 data coordinates.  Empty removes them all.
+        source_id :
+            UUID to stamp on the emitted ``ClippingPlanesChangedEvent``.
+            GUI widgets pass ``source_id=self._id`` so their own
+            subscription can ignore the echo.
+
+        Returns
+        -------
+        tuple[ClippingPlane, ...]
+            The visual's new planes.
+
+        Raises
+        ------
+        ValueError
+            If a plane is not in the visual's data coordinate system or has
+            the wrong number of components.
+        """
+        visual = self.get_visual_model(visual_id)
+        planes = validate_clipping_planes(clipping_planes)
+        self._check_clipping_planes(visual, planes)
+        token = _clipping_source_id_override.set(source_id)
+        try:
+            visual.clipping_planes = planes
+        finally:
+            _clipping_source_id_override.reset(token)
+        return visual.clipping_planes
+
+    def _on_clipping_planes_update(self, event: ClippingPlanesUpdateEvent) -> None:
+        self.set_clipping_planes(
+            event.visual_id, event.clipping_planes, source_id=event.source_id
+        )
 
     def _on_lod_config_update(self, event: LodConfigUpdateEvent) -> None:
         self.set_lod_config(
@@ -9379,6 +9617,41 @@ class CellierController:
         """
         return self._outgoing_events.subscribe(
             MeshSectionChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_clipping_planes_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[ClippingPlanesChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a visual's clipping planes change.
+
+        Parameters
+        ----------
+        visual_id :
+            The visual to watch.
+        callback :
+            Called with the ``ClippingPlanesChangedEvent``: ``source_id``
+            for echo filtering, and ``clipping_planes``, the complete new
+            tuple.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._outgoing_events.subscribe(
+            ClippingPlanesChangedEvent,
             callback,
             entity_id=visual_id,
             owner_id=owner_id,

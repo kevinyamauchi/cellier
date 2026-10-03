@@ -379,6 +379,28 @@ class LodConfigUpdateEvent(NamedTuple):
     value: Any
 
 
+class ClippingPlanesUpdateEvent(NamedTuple):
+    """Request to replace a visual's clipping planes.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing
+        ``ClippingPlanesChangedEvent`` so the caller can echo-filter on its
+        own subscription.
+    visual_id :
+        Target visual.
+    clipping_planes :
+        The complete new tuple of ``ClippingPlane``.  The whole tuple
+        rather than one plane, so adding, removing, moving and toggling are
+        one kind of request.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    clipping_planes: Any
+
+
 class TrailUpdateEvent(NamedTuple):
     """Request to set or clear the trail window on one axis of a graph visual.
 
@@ -419,6 +441,7 @@ CellierUpdateEventTypes = (
     | VisualRenderUpdateEvent
     | LoadingConfigUpdateEvent
     | LodConfigUpdateEvent
+    | ClippingPlanesUpdateEvent
     | TrailUpdateEvent
 )
 
