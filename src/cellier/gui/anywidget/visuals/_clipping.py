@@ -19,7 +19,6 @@ from psygnal import Signal
 from cellier.gui._appearance_fields import VisualIdGroup
 from cellier.gui._clipping_planes import (
     CLIPPING_PLANES_TITLE,
-    CUSTOM_PRESET,
     ClippingPlanesEditor,
 )
 from cellier.gui.anywidget._teardown import close_aux_widgets
@@ -36,10 +35,12 @@ _STATIC = Path(__file__).parent / "static"
 class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
     """A visual's clipping planes: one row per plane, and an add button.
 
-    Each row has an enabled checkbox, the data axis the normal points along
-    (or ``custom``), the normal itself, a flip button, a position slider
-    along the normal and a remove button.  Values are in the visual's data
-    coordinates.
+    Each row has an enabled checkbox, a flip button, a remove button, the
+    normal and a position slider along the normal.  The normal has one
+    column per data axis: two buttons named after the axis as the store's
+    coordinate system gives it (``+z`` and ``-z``) that face the plane
+    along the axis, and under them the normal's entry on it.  Values are in
+    the visual's data coordinates.
 
     The front end reports an action by setting ``edit`` to
     ``{"action", "index", "value", "serial"}``; the Python side applies it
@@ -87,10 +88,9 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
     """Name shown when no ``title=`` is given."""
 
     title = traitlets.Unicode(DEFAULT_TITLE).tag(sync=True)
-    #: The normal presets: the data axis names, then "custom".
-    presets = traitlets.List([]).tag(sync=True)
-    #: One entry per plane: enabled, normal, position, preset, normal_text,
-    #: low, high.
+    #: The data axis names, in the order of a normal's entries.
+    axis_names = traitlets.List([]).tag(sync=True)
+    #: One entry per plane: enabled, normal, position, facing, low, high.
     rows = traitlets.List([]).tag(sync=True)
     #: The reason the last edit was refused, or "".
     error = traitlets.Unicode("").tag(sync=True)
@@ -109,7 +109,7 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
         bounds_source: Callable[[], Sequence[Sequence[float]]] | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(presets=[*map(str, axis_names), CUSTOM_PRESET], **kwargs)
+        super().__init__(axis_names=[*map(str, axis_names)], **kwargs)
         self._id = uuid4()
         self._init_visual_ids(visual_id)
         self._editor = ClippingPlanesEditor(
@@ -172,10 +172,17 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
             editor.set_position(index, float(value))
         elif action == "flip":
             editor.flip(index)
-        elif action == "preset":
-            editor.set_preset(index, str(value))
-        elif action == "normal":
-            editor.set_normal_text(index, str(value))
+        elif action in ("facing", "component"):
+            # ``[axis index, sign]`` or ``[axis index, entry]``.
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
+                return
+            axis, amount = value
+            if not isinstance(axis, int) or not 0 <= axis < len(editor.axis_names):
+                return
+            if action == "facing":
+                editor.set_facing(index, axis, -1 if float(amount) < 0 else 1)
+            else:
+                editor.set_component(index, axis, float(amount))
 
     # -- model -> widget -------------------------------------------------------
 

@@ -1,11 +1,16 @@
 // Clipping planes ESM: one row per entry of `rows`.  The Python side syncs
-// `rows` (what to draw) and `presets` (the normal presets); an action is
-// reported by setting `edit`, and a refused one comes back as `error` with
-// `rows` unchanged.
+// `rows` (what to draw) and `axis_names` (the data axes, in the order of a
+// normal's entries); an action is reported by setting `edit`, and a refused
+// one comes back as `error` with `rows` unchanged.
 //
 // A row is built once and then updated in place, so a slider is not
 // destroyed while it is dragged.  Rows are only added or removed when the
 // number of planes changes.
+
+// A normal's entry as the number input shows it: at most three decimals.
+function shown(value) {
+  return String(Number(Number(value).toFixed(3)));
+}
 
 function render({ model, el }) {
   el.classList.add("cellier-clipping-planes");
@@ -42,34 +47,23 @@ function render({ model, el }) {
   const built = [];
 
   function build(index) {
+    const names = model.get("axis_names");
     const root = document.createElement("div");
     root.className = "cellier-clipping-planes-row";
     root.dataset.role = "row";
     root.dataset.index = String(index);
 
+    // -- header: on or off, flip, remove
+    const header = document.createElement("div");
+    header.className = "cellier-clipping-planes-header";
+
+    const enabledLabel = document.createElement("label");
     const enabled = document.createElement("input");
     enabled.type = "checkbox";
     enabled.title = "Whether this plane clips. It stays in the list.";
     enabled.dataset.role = "enabled";
     enabled.addEventListener("change", () => send("enabled", index, enabled.checked));
-
-    const preset = document.createElement("select");
-    preset.title = "The data axis the plane's normal points along.";
-    preset.dataset.role = "preset";
-    for (const name of model.get("presets")) {
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = name;
-      preset.appendChild(option);
-    }
-    preset.addEventListener("change", () => send("preset", index, preset.value));
-
-    const normal = document.createElement("input");
-    normal.type = "text";
-    normal.className = "cellier-clipping-planes-normal";
-    normal.title = "The normal, one number per data axis. It points to the side that is kept.";
-    normal.dataset.role = "normal";
-    normal.addEventListener("change", () => send("normal", index, normal.value));
+    enabledLabel.append(enabled, ` Plane ${index + 1}`);
 
     const flip = document.createElement("button");
     flip.textContent = "Flip";
@@ -83,6 +77,73 @@ function render({ model, el }) {
     remove.addEventListener("click", () => send("remove", index, null));
 
     const spacer = document.createElement("span");
+    spacer.className = "cellier-clipping-planes-spacer";
+    header.append(enabledLabel, spacer, flip, remove);
+
+    // -- normal: one column per data axis, two buttons over an entry
+    const normal = document.createElement("div");
+    normal.className = "cellier-clipping-planes-normal";
+    normal.style.gridTemplateColumns = `auto repeat(${names.length}, minmax(0, 1fr))`;
+
+    const normalLabel = document.createElement("span");
+    normalLabel.className = "cellier-clipping-planes-label";
+    normalLabel.textContent = "Normal";
+    normalLabel.title =
+      "The normal, one entry per data axis. It points to the side that is kept. " +
+      "Only its direction matters. A button faces the plane along its axis and " +
+      "keeps that side.";
+    normal.appendChild(normalLabel);
+
+    // The normal last drawn, to refuse an all-zero one without a round trip.
+    let current = names.map(() => 0);
+    const facing = [];  // { axis, sign, button }
+    const components = [];
+    names.forEach((name, axis) => {
+      const pair = document.createElement("div");
+      pair.className = "cellier-clipping-planes-facing";
+      pair.style.gridColumn = String(axis + 2);
+      for (const [sign, text, side] of [[1, "+", "higher"], [-1, "-", "lower"]]) {
+        const button = document.createElement("button");
+        button.textContent = `${text}${name}`;
+        button.title = `Cut across ${name} and keep the side toward ${side} ${name}.`;
+        button.dataset.role = "facing";
+        button.dataset.axis = String(axis);
+        button.dataset.sign = String(sign);
+        button.addEventListener("click", () => send("facing", index, [axis, sign]));
+        pair.appendChild(button);
+        facing.push({ axis, sign, button });
+      }
+      normal.appendChild(pair);
+    });
+    names.forEach((name, axis) => {
+      const component = document.createElement("input");
+      component.type = "number";
+      component.step = "0.1";
+      component.title = `The normal's entry on ${name}.`;
+      component.dataset.role = "component";
+      component.dataset.axis = String(axis);
+      component.style.gridColumn = String(axis + 2);
+      component.addEventListener("change", () => {
+        const entry = Number(component.value);
+        const next = current.map((v, i) => (i === axis ? entry : v));
+        send("component", index, [axis, entry]);
+        // An all-zero or unreadable normal is refused and `rows` does not
+        // change, so nothing would draw the entry again: put it back here.
+        if (!Number.isFinite(entry) || next.every((v) => v === 0)) {
+          component.value = shown(current[axis]);
+        }
+      });
+      normal.appendChild(component);
+      components.push(component);
+    });
+
+    // -- position along the normal
+    const along = document.createElement("div");
+    along.className = "cellier-clipping-planes-along";
+
+    const positionLabel = document.createElement("span");
+    positionLabel.className = "cellier-clipping-planes-label";
+    positionLabel.textContent = "Position";
 
     const position = document.createElement("input");
     position.type = "range";
@@ -101,13 +162,25 @@ function render({ model, el }) {
     const value = document.createElement("span");
     value.className = "cellier-clipping-planes-value";
     value.dataset.role = "value";
+    along.append(positionLabel, position, value);
 
-    root.append(enabled, preset, normal, flip, remove, spacer, position, value);
+    root.append(header, normal, along);
 
     function apply(row) {
       enabled.checked = Boolean(row.enabled);
-      preset.value = row.preset;
-      if (document.activeElement !== normal) normal.value = row.normal_text;
+      current = row.normal.map(Number);
+      for (const { axis, sign, button } of facing) {
+        const on = Boolean(row.facing) && row.facing[0] === axis && row.facing[1] === sign;
+        button.classList.toggle("cellier-clipping-planes-on", on);
+        button.setAttribute("aria-pressed", String(on));
+      }
+      components.forEach((component, axis) => {
+        // An entry being typed already reads as the value it will send;
+        // only a different number is written over it.
+        if (component.value === "" || shown(component.value) !== shown(current[axis])) {
+          component.value = shown(current[axis]);
+        }
+      });
       position.min = String(row.low);
       position.max = String(row.high);
       // While the thumb is held the element already shows the newest value;
@@ -142,7 +215,8 @@ function render({ model, el }) {
 
   model.on("change:rows", draw);
   model.on("change:title", drawTitle);
-  model.on("change:error", drawError);
+  // A refused edit leaves `rows` as they were: draw them over what was typed.
+  model.on("change:error", () => { drawError(); draw(); });
   drawTitle();
   draw();
   drawError();

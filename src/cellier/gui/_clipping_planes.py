@@ -42,9 +42,6 @@ if TYPE_CHECKING:
 CLIPPING_PLANES_TITLE = "Clipping planes"
 """The control's name: its ``DEFAULT_TITLE`` on both toolkits."""
 
-CUSTOM_PRESET = "custom"
-"""The normal preset shown when the normal is not along one data axis."""
-
 Row = dict[str, Any]
 
 
@@ -141,14 +138,6 @@ def position_range(
     return low, high
 
 
-def preset_of(normal: Sequence[float], axis_names: Sequence[str]) -> str:
-    """The axis name a normal lies along, or :data:`CUSTOM_PRESET`."""
-    along = [index for index, value in enumerate(normal) if float(value) != 0.0]
-    if len(along) == 1:
-        return axis_names[along[0]]
-    return CUSTOM_PRESET
-
-
 def facing_of(normal: Sequence[float]) -> list[int] | None:
     """The signed data axis a normal lies along.
 
@@ -162,34 +151,6 @@ def facing_of(normal: Sequence[float]) -> list[int] | None:
     if len(along) != 1:
         return None
     return [along[0], -1 if float(normal[along[0]]) < 0 else 1]
-
-
-def preset_normal(
-    preset: str, axis_names: Sequence[str], current: Sequence[float]
-) -> list[float]:
-    """The unit normal along axis *preset*, keeping *current*'s direction."""
-    index = list(axis_names).index(preset)
-    sign = -1.0 if float(current[index]) < 0 else 1.0
-    return [sign if i == index else 0.0 for i in range(len(axis_names))]
-
-
-def parse_normal(text: str, ndim: int) -> list[float]:
-    """Read a typed normal: *ndim* numbers separated by commas or spaces.
-
-    Raises
-    ------
-    ValueError
-        If the count is wrong, an entry is not a number, or all are zero.
-    """
-    parts = [part for part in text.replace(",", " ").split() if part]
-    if len(parts) != ndim:
-        raise ValueError(f"A normal here has {ndim} entries; got {len(parts)}.")
-    normal = [float(part) for part in parts]
-    if not any(value != 0.0 for value in normal) or not all(
-        math.isfinite(value) for value in normal
-    ):
-        raise ValueError("A normal must be finite and not all zero.")
-    return normal
 
 
 def new_row(axis_names: Sequence[str], bounds: Sequence[Sequence[float]]) -> Row:
@@ -449,22 +410,6 @@ class ClippingPlanesEditor:
         normal[axis] = float(value)
         self.set_normal(index, normal)
 
-    def set_preset(self, index: int, preset: str) -> None:
-        """Point plane *index* along data axis *preset*."""
-        if preset == CUSTOM_PRESET:
-            return
-        normal = preset_normal(preset, self.axis_names, self.rows[index]["normal"])
-        self.set_normal(index, normal)
-
-    def set_normal_text(self, index: int, text: str) -> None:
-        """Give plane *index* a typed normal; a bad entry shows an error."""
-        try:
-            normal = parse_normal(text, len(self.axis_names))
-        except ValueError as error:
-            self._show(list(self.rows), str(error))
-            return
-        self.set_normal(index, normal)
-
     # -- model -> widget -----------------------------------------------------
 
     def on_changed(self, event: ClippingPlanesChangedEvent) -> None:
@@ -488,8 +433,8 @@ class ClippingPlanesEditor:
     def describe(self) -> list[Row]:
         """The rows with what a front end needs to draw each one.
 
-        Adds ``facing`` (:func:`facing_of`), ``preset``, ``normal_text`` and
-        the slider's ``low`` / ``high``.
+        Adds ``facing`` (:func:`facing_of`) and the slider's ``low`` /
+        ``high``.
         """
         described = []
         for row in self.rows:
@@ -498,8 +443,6 @@ class ClippingPlanesEditor:
                 {
                     **row,
                     "facing": facing_of(row["normal"]),
-                    "preset": preset_of(row["normal"], self.axis_names),
-                    "normal_text": ", ".join(f"{v:g}" for v in row["normal"]),
                     "low": min(low, row["position"]),
                     "high": max(high, row["position"]),
                 }

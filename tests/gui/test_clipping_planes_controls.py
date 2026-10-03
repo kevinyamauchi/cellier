@@ -16,13 +16,10 @@ from cellier.controller import CellierController
 from cellier.data import PointsMemoryStore
 from cellier.gui._clipping_planes import (
     CLIPPING_PLANES_TITLE,
-    CUSTOM_PRESET,
     clipping_planes_seed,
     facing_of,
-    parse_normal,
     planes_from_rows,
     position_range,
-    preset_of,
     rows_from_planes,
 )
 from cellier.transform import Axis, DataCoordinateSystem
@@ -96,16 +93,18 @@ def _act(widget, action, index=None, value=None) -> None:
         row.flip.click()
     elif action == "enabled":
         row.enabled.setChecked(value)
-    elif action == "preset":
-        # Qt has a "+" and a "-" button per data axis, not a preset list.
-        row.facing[(widget.editor.axis_names.index(value), 1)].click()
+    elif action == "facing":
+        row.facing[tuple(value)].click()
     elif action == "position":
         row.position.setValue(value)
-    elif action == "normal":
-        # Qt has one entry per data axis, not a typed normal.
-        entries = [float(part) for part in value.replace(",", " ").split()]
-        for component, entry in zip(row.components, entries):
-            component.setValue(entry)
+    elif action == "component":
+        row.components[value[0]].setValue(value[1])
+
+
+def _set_normal(widget, index, normal) -> None:
+    """Enter *normal* one entry at a time, as a user would."""
+    for axis, entry in enumerate(normal):
+        _act(widget, "component", index, [axis, entry])
 
 
 def _n_rows(widget) -> int:
@@ -135,14 +134,11 @@ def test_the_position_range_is_the_box_projected_on_the_normal():
     assert (low, high) == pytest.approx((0.0, 60 / np.sqrt(2)))
 
 
-def test_presets_and_typed_normals():
-    names = ["z", "y", "x"]
-    assert preset_of([0, -3, 0], names) == "y"
-    assert preset_of([1, 1, 0], names) == CUSTOM_PRESET
-    assert parse_normal("1, 0  -2", 3) == [1.0, 0.0, -2.0]
-    for bad in ("1 2", "0 0 0", "a b c"):
-        with pytest.raises(ValueError, match=r"entries|zero|float"):
-            parse_normal(bad, 3)
+def test_the_facing_of_a_normal():
+    assert facing_of([0, -3, 0]) == [1, -1]
+    assert facing_of([0, 0, 2]) == [2, 1]
+    assert facing_of([1, 1, 0]) is None
+    assert facing_of([0, 0, 0]) is None
 
 
 def test_the_seed_is_read_off_the_store(controller):
@@ -181,9 +177,13 @@ def test_it_adds_moves_toggles_and_removes_planes(controller, toolkit):
 
     _act(widget, "add")
     assert len(visual.clipping_planes) == 2
-    _act(widget, "preset", 1, "y")
+    _act(widget, "facing", 1, [1, 1])
     np.testing.assert_array_equal(visual.clipping_planes[1].plane.normal, [0, 1, 0])
-    _act(widget, "normal", 1, "0, 1, 1")
+    _act(widget, "facing", 1, [0, -1])
+    np.testing.assert_array_equal(visual.clipping_planes[1].plane.normal, [-1, 0, 0])
+    # An oblique normal, an entry at a time; z last, so it is never all zero.
+    for axis, entry in ((1, 1.0), (2, 1.0), (0, 0.0)):
+        _act(widget, "component", 1, [axis, entry])
     np.testing.assert_array_equal(visual.clipping_planes[1].plane.normal, [0, 1, 1])
 
     _act(widget, "remove", 0)
@@ -199,7 +199,7 @@ def test_turning_the_normal_keeps_the_plane_through_the_middle(controller, toolk
     widget = _make(toolkit, [visual.id], visual, store)
     controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
     _act(widget, "add")
-    _act(widget, "preset", 0, "z")
+    _act(widget, "facing", 0, [0, 1])
     plane = visual.clipping_planes[0].plane
     # The data's centre is (5, 10, 20); the plane still passes through it.
     assert plane.signed_distance([5.0, 10.0, 20.0]) == pytest.approx(0.0)
@@ -222,20 +222,6 @@ def test_a_change_from_elsewhere_is_shown_and_sends_nothing(controller, toolkit)
     assert widget.editor.rows[0]["position"] == 7.0
     assert widget.editor.rows[1]["enabled"] is False
     assert sent == []
-    widget.close()
-
-
-def test_a_bad_typed_normal_is_refused_with_a_reason(controller):
-    visual, store = _add_points(controller)
-    widget = _make("anywidget", [visual.id], visual, store)
-    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
-    _act(widget, "add")
-    before = visual.clipping_planes
-    _act(widget, "normal", 0, "1, 2")
-    assert visual.clipping_planes == before
-    assert "3 entries" in widget.error
-    _act(widget, "normal", 0, "1, 2, 0")
-    assert widget.error == ""
     widget.close()
 
 
@@ -286,16 +272,36 @@ def test_the_qt_facing_buttons_set_the_axis_and_the_kept_side(controller):
     assert facing_of([0, -1, 0.5]) is None
 
 
-def test_a_zeroed_normal_is_refused_and_the_entry_put_back(controller):
+@pytest.mark.parametrize("toolkit", ["qt", "anywidget"])
+def test_a_zeroed_normal_is_refused_with_a_reason(controller, toolkit):
     visual, store = _add_points(controller)
-    widget = _make("qt", [visual.id], visual, store)
+    widget = _make(toolkit, [visual.id], visual, store)
     controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
     _act(widget, "add")
     before = visual.clipping_planes
-    widget.row(0).components[2].setValue(0.0)
+    _act(widget, "component", 0, [2, 0.0])
     assert visual.clipping_planes == before
     assert "zero" in widget.error
-    assert widget.row(0).components[2].value() == 1.0
+    if toolkit == "qt":  # the entry is put back
+        assert widget.row(0).components[2].value() == 1.0
+    else:
+        assert widget.rows[0]["normal"] == [0.0, 0.0, 1.0]
+    _act(widget, "component", 0, [1, 2.0])
+    assert widget.error == ""
+    widget.close()
+
+
+def test_the_anywidget_ignores_a_malformed_edit(controller):
+    visual, store = _add_points(controller)
+    widget = _make("anywidget", [visual.id], visual, store)
+    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
+    _act(widget, "add")
+    before = visual.clipping_planes
+    for value in (None, [7, 1], ["x", 1], [1]):
+        _act(widget, "facing", 0, value)
+        _act(widget, "component", 0, value)
+    assert visual.clipping_planes == before
+    widget.close()
 
 
 @pytest.mark.parametrize("toolkit", ["qt", "anywidget"])
@@ -358,9 +364,9 @@ def test_the_anywidget_sends_one_update_for_an_edit_delivered_twice(controller):
     _act(widget, "position", 0, 5.0)
     assert len(sent) == 1
     # What the front end draws a row from.
-    assert widget.rows[0]["preset"] == "x"
+    assert widget.rows[0]["facing"] == [2, 1]
     assert (widget.rows[0]["low"], widget.rows[0]["high"]) == (0.0, 40.0)
-    assert widget.presets == ["z", "y", "x", CUSTOM_PRESET]
+    assert widget.axis_names == ["z", "y", "x"]
     widget.close()
 
 
@@ -408,11 +414,11 @@ def test_a_control_for_five_axes(controller, toolkit):
         visual.clipping_planes[0].plane.normal, [0, 0, 0, 0, 1]
     )
     # An oblique normal over z, y and x: t and c are not constrained.
-    _act(widget, "normal", 0, "0 0 1 1 1")
+    _set_normal(widget, 0, [0, 0, 1, 1, 1])
     assert widget.error == ""
     described = widget.editor.describe()[0]
-    assert described["preset"] == CUSTOM_PRESET
-    assert described["normal_text"] == "0, 0, 1, 1, 1"
+    assert described["normal"] == [0.0, 0.0, 1.0, 1.0, 1.0]
+    assert described["facing"] is None
     assert (described["low"], described["high"]) == pytest.approx(
         (0.0, (10 + 20 + 40) / np.sqrt(3))
     )

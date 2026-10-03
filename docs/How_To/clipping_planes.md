@@ -163,8 +163,5 @@ of `normal`. The axis names come from the store's data coordinate system
 The position slider's range is the data's bounding box along the normal, and
 follows the store when its extent changes.
 
-The anywidget control still has the earlier layout: a list of axes (or
-`custom`) and a typed normal.
-
 See `examples/clipping_planes/clipping_planes_viewer.py` and, for multiscale
 visuals, `examples/clipping_planes/multiscale_clipping_planes_viewer.py`.

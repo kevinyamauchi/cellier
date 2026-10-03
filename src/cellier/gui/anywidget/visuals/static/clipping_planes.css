@@ -4,6 +4,26 @@
   min-width: 260px;
 }
 
+/* A host may reset the browser's own button and input borders (marimo
+   does), which leaves them looking like plain text: draw them here. */
+.cellier-clipping-planes button,
+.cellier-clipping-planes input[type="number"] {
+  border: 1px solid rgba(128, 128, 128, 0.6);
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.cellier-clipping-planes button {
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.cellier-clipping-planes input[type="number"] {
+  padding: 1px 4px;
+}
+
 .cellier-clipping-planes-title {
   font-weight: 600;
   margin: 2px 0 4px;
@@ -12,36 +32,81 @@
 .cellier-clipping-planes-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
 }
 
 .cellier-clipping-planes-row {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto auto;
-  align-items: center;
-  gap: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
+.cellier-clipping-planes-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cellier-clipping-planes-spacer {
+  flex: 1;
+}
+
+/* Column 1 is the label, beside both rows; then one column per data axis. */
 .cellier-clipping-planes-normal {
+  display: grid;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cellier-clipping-planes-normal > .cellier-clipping-planes-label {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.cellier-clipping-planes-facing {
+  grid-row: 1;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+
+.cellier-clipping-planes-facing > button {
+  padding: 1px 5px;
+}
+
+.cellier-clipping-planes-facing > button.cellier-clipping-planes-on {
+  background: var(--jp-brand-color1, #3b82f6);
+  border-color: var(--jp-brand-color1, #3b82f6);
+  color: #fff;
+}
+
+.cellier-clipping-planes-normal > input {
+  grid-row: 2;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
 }
 
+.cellier-clipping-planes-along {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .cellier-clipping-planes-position {
-  grid-column: 2 / span 2;
+  flex: 1;
   min-width: 0;
-  width: 100%;
 }
 
 .cellier-clipping-planes-value {
-  grid-column: 4 / span 2;
+  min-width: 4em;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .cellier-clipping-planes-add {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .cellier-clipping-planes-error {
