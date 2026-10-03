@@ -147,9 +147,24 @@ viewer.add_image(
 )
 ```
 
-The "Clipping planes" group has a row per plane: on or off, the data axis
-the normal points along (or `custom`, with the normal typed in), a flip
-button, a position slider along the normal, and a remove button. In an
+The "Clipping planes" group has a row per plane: on or off, a flip button,
+a remove button, the normal, and a position slider along the normal. In an
 `OrthoViewer` a visual's planes are shared by its four panels.
 
-See `examples/convenience/clipping_planes_viewer.py`.
+The normal has one column per data axis, in the same order as the entries
+of `normal`. The axis names come from the store's data coordinate system
+(`store.data_coordinate_systems[0]`). For an axis named `z`, the column has:
+
+- a `+z` and a `-z` button. They face the plane along that axis and keep the
+  side toward higher (`+z`) or lower (`-z`) values. The plane turns in place.
+- under them, the normal's entry on that axis, for an oblique plane. Only the direction
+  of the normal matters; the entries are not rescaled as you type.
+
+The position slider's range is the data's bounding box along the normal, and
+follows the store when its extent changes.
+
+The anywidget control still has the earlier layout: a list of axes (or
+`custom`) and a typed normal.
+
+See `examples/clipping_planes/clipping_planes_viewer.py` and, for multiscale
+visuals, `examples/clipping_planes/multiscale_clipping_planes_viewer.py`.

@@ -25,7 +25,7 @@ from cellier.gui._clipping_planes import (
 from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from uuid import UUID
 
     from cellier.events import SubscriptionSpec
@@ -69,6 +69,12 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
         ``(low, high)`` of the data on each axis.
     planes :
         The current rows (``rows_from_planes(visual.clipping_planes)``).
+    data_store_id :
+        The store the visuals read.
+    bounds_source :
+        Reads the store's current ``(low, high)`` per axis.  Given with
+        *data_store_id*, the position ranges follow the store's extent;
+        without it they stay at *bounds*.
     """
 
     _esm = _STATIC / "clipping_planes.js"
@@ -99,6 +105,8 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
         axis_names: Sequence[str],
         bounds: Sequence[Sequence[float]],
         planes: Sequence[Mapping[str, Any]] = (),
+        data_store_id: UUID | str | None = None,
+        bounds_source: Callable[[], Sequence[Sequence[float]]] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(presets=[*map(str, axis_names), CUSTOM_PRESET], **kwargs)
@@ -113,6 +121,8 @@ class AnywidgetClippingPlanesControls(VisualIdGroup, anywidget.AnyWidget):
             self._id,
             self.changed.emit,
             self._show,
+            data_store_id=data_store_id,
+            bounds_source=bounds_source,
         )
         self._shown_error = ""
         self._show(self._editor.rows, "")

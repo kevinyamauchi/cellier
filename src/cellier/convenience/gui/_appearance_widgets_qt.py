@@ -88,9 +88,15 @@ def _qt_mesh_section(spec, visual_ids, controller):
 
 
 def _qt_clipping_planes(spec, visual_ids, controller):
+    from cellier.gui._clipping_planes import seed_bounds_source
     from cellier.gui.qt.visuals import QtClippingPlanesControls
 
-    return QtClippingPlanesControls(visual_ids, title=spec.title, **spec.values)
+    return QtClippingPlanesControls(
+        visual_ids,
+        title=spec.title,
+        bounds_source=seed_bounds_source(controller, spec.values),
+        **spec.values,
+    )
 
 
 def _qt_aabb(spec, visual_ids, controller):

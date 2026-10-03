@@ -3,8 +3,9 @@
 A visual carries a tuple of :class:`~cellier.visuals.ClippingPlane` in its
 level-0 data coordinates.  The Qt and anywidget controls
 (``QtClippingPlanesControls``, ``AnywidgetClippingPlanesControls``) draw one
-row per plane: an enabled checkbox, a normal (a preset per data axis, or
-typed), a flip button, a position slider along the normal and a remove
+row per plane: an enabled checkbox, a normal (one entry per data axis, under
+that axis's name, with a button to face the plane along either direction of
+an axis), a flip button, a position slider along the normal and a remove
 button; an add button appends a plane.  This module holds the rows, turns
 them into planes and back, and carries edits to the bus and model changes
 back.
@@ -30,6 +31,7 @@ from uuid import UUID
 from cellier.events import (
     ClippingPlanesChangedEvent,
     ClippingPlanesUpdateEvent,
+    DataStoreMetadataChangedEvent,
     SubscriptionSpec,
 )
 from cellier.gui._loading import error_message
@@ -147,6 +149,21 @@ def preset_of(normal: Sequence[float], axis_names: Sequence[str]) -> str:
     return CUSTOM_PRESET
 
 
+def facing_of(normal: Sequence[float]) -> list[int] | None:
+    """The signed data axis a normal lies along.
+
+    Returns
+    -------
+    list[int] or None
+        ``[axis index, sign]`` with sign ``1`` or ``-1``; ``None`` when the
+        normal has a component on more than one axis.
+    """
+    along = [index for index, value in enumerate(normal) if float(value) != 0.0]
+    if len(along) != 1:
+        return None
+    return [along[0], -1 if float(normal[along[0]]) < 0 else 1]
+
+
 def preset_normal(
     preset: str, axis_names: Sequence[str], current: Sequence[float]
 ) -> list[float]:
@@ -183,6 +200,17 @@ def new_row(axis_names: Sequence[str], bounds: Sequence[Sequence[float]]) -> Row
     return {"enabled": True, "normal": normal, "position": 0.5 * (low + high)}
 
 
+def store_bounds(store: Any, ndim: int) -> list[list[float]]:
+    """``[low, high]`` of *store*'s data on each of its *ndim* axes.
+
+    ``[0, 1]`` per axis for a store that cannot say (an empty one).
+    """
+    extents = store.axis_extents
+    if extents is None:
+        return [[0.0, 1.0] for _ in range(ndim)]
+    return [[float(low), float(high)] for low, high in extents]
+
+
 def clipping_planes_seed(visual: Any, store: Any) -> dict[str, Any]:
     """What a clipping planes control is built with, read off the models.
 
@@ -198,22 +226,43 @@ def clipping_planes_seed(visual: Any, store: Any) -> dict[str, Any]:
     -------
     dict[str, Any]
         ``coordinate_system`` (the store's level-0 system id, as a string),
-        ``axis_names``, ``bounds`` (``[low, high]`` per data axis) and
-        ``planes`` (the rows).
+        ``data_store_id`` (as a string), ``axis_names``, ``bounds``
+        (``[low, high]`` per data axis) and ``planes`` (the rows).
     """
     system = store.data_coordinate_system
-    extents = store.axis_extents
     names = [str(name) for name in system.axis_names()]
-    if extents is None:
-        bounds = [[0.0, 1.0] for _ in names]
-    else:
-        bounds = [[float(low), float(high)] for low, high in extents]
     return {
         "coordinate_system": str(system.id),
+        "data_store_id": str(store.id),
         "axis_names": names,
-        "bounds": bounds,
+        "bounds": store_bounds(store, len(names)),
         "planes": rows_from_planes(visual.clipping_planes),
     }
+
+
+def seed_bounds_source(
+    controller: Any, seed: Mapping[str, Any]
+) -> Callable[[], list[list[float]]] | None:
+    """A reader of the current bounds of the store a seed was read off.
+
+    Parameters
+    ----------
+    controller : CellierController or None
+        Looks the store up by id each time, so the reader holds no store.
+    seed : Mapping[str, Any]
+        From :func:`clipping_planes_seed`.
+
+    Returns
+    -------
+    Callable or None
+        The ``bounds_source`` of a clipping planes control; ``None``
+        without a controller.
+    """
+    if controller is None:
+        return None
+    store_id = UUID(str(seed["data_store_id"]))
+    ndim = len(seed["axis_names"])
+    return lambda: store_bounds(controller.get_data_store(store_id), ndim)
 
 
 class ClippingPlanesEditor:
@@ -242,6 +291,12 @@ class ClippingPlanesEditor:
         Sends an edit (the widget's ``changed.emit``).
     show : Callable[[list[Row], str], None]
         Draws the rows and an error message ("" for none).
+    data_store_id : UUID, str or None
+        The store the visuals read.  With *bounds_source*, the position
+        range follows the store's extent.
+    bounds_source : Callable[[], Sequence[Sequence[float]]] or None
+        Reads the store's current ``(low, high)`` per axis.  ``None`` keeps
+        *bounds* for the life of the control.
     """
 
     def __init__(
@@ -254,6 +309,8 @@ class ClippingPlanesEditor:
         source_id: UUID,
         emit: Callable[[ClippingPlanesUpdateEvent], None],
         show: Callable[[list[Row], str], None],
+        data_store_id: UUID | str | None = None,
+        bounds_source: Callable[[], Sequence[Sequence[float]]] | None = None,
     ) -> None:
         self._visual_ids = tuple(visual_ids)
         self._coordinate_system = UUID(str(coordinate_system))
@@ -263,15 +320,32 @@ class ClippingPlanesEditor:
         self._source_id = source_id
         self._emit = emit
         self._show = show
+        self._data_store_id = (
+            None if data_store_id is None else UUID(str(data_store_id))
+        )
+        self._bounds_source = bounds_source
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
-        """One ``ClippingPlanesChangedEvent`` subscription per visual."""
-        return [
+        """One ``ClippingPlanesChangedEvent`` subscription per visual.
+
+        And the store's ``DataStoreMetadataChangedEvent``, when the control
+        was given a way to read the store's bounds.
+        """
+        specs = [
             SubscriptionSpec(
                 ClippingPlanesChangedEvent, self.on_changed, entity_id=visual_id
             )
             for visual_id in self._visual_ids
         ]
+        if self._data_store_id is not None and self._bounds_source is not None:
+            specs.append(
+                SubscriptionSpec(
+                    DataStoreMetadataChangedEvent,
+                    self.on_store_changed,
+                    entity_id=self._data_store_id,
+                )
+            )
+        return specs
 
     # -- edits ---------------------------------------------------------------
 
@@ -355,6 +429,26 @@ class ClippingPlanesEditor:
         position = sum(n * a for n, a in zip(normal, anchor)) / length
         self.set_rows(self._edited(index, normal=normal, position=position))
 
+    def set_facing(self, index: int, axis: int, sign: int) -> None:
+        """Face plane *index* along data axis *axis*, keeping side *sign*.
+
+        ``sign`` ``1`` keeps the side toward higher values on the axis,
+        ``-1`` the side toward lower ones.  The plane turns in place.
+        """
+        normal = [0.0] * len(self.axis_names)
+        normal[axis] = -1.0 if sign < 0 else 1.0
+        self.set_normal(index, normal)
+
+    def set_component(self, index: int, axis: int, value: float) -> None:
+        """Set the normal's entry on data axis *axis*; the others stay.
+
+        The normal is not rescaled, so the other entries read as they were
+        typed.  The plane turns in place.
+        """
+        normal = list(self.rows[index]["normal"])
+        normal[axis] = float(value)
+        self.set_normal(index, normal)
+
     def set_preset(self, index: int, preset: str) -> None:
         """Point plane *index* along data axis *preset*."""
         if preset == CUSTOM_PRESET:
@@ -381,10 +475,21 @@ class ClippingPlanesEditor:
         self.rows = rows
         self._show(list(self.rows), "")
 
+    def on_store_changed(self, event: DataStoreMetadataChangedEvent) -> None:
+        """The store's extent changed: the position ranges follow it."""
+        if self._bounds_source is None:
+            return
+        bounds = [[float(low), float(high)] for low, high in self._bounds_source()]
+        if bounds == self.bounds:
+            return
+        self.bounds = bounds
+        self._show(list(self.rows), "")
+
     def describe(self) -> list[Row]:
         """The rows with what a front end needs to draw each one.
 
-        Adds ``preset``, ``normal_text`` and the slider's ``low`` / ``high``.
+        Adds ``facing`` (:func:`facing_of`), ``preset``, ``normal_text`` and
+        the slider's ``low`` / ``high``.
         """
         described = []
         for row in self.rows:
@@ -392,6 +497,7 @@ class ClippingPlanesEditor:
             described.append(
                 {
                     **row,
+                    "facing": facing_of(row["normal"]),
                     "preset": preset_of(row["normal"], self.axis_names),
                     "normal_text": ", ".join(f"{v:g}" for v in row["normal"]),
                     "low": min(low, row["position"]),

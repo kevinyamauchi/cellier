@@ -14,12 +14,11 @@ from psygnal import Signal
 from cellier.gui._appearance_fields import VisualIdGroup
 from cellier.gui._clipping_planes import (
     CLIPPING_PLANES_TITLE,
-    CUSTOM_PRESET,
     ClippingPlanesEditor,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from uuid import UUID
 
     from cellier.events import SubscriptionSpec
@@ -29,38 +28,39 @@ _SLIDER_STEPS = 1000
 
 
 class _PlaneRow:
-    """The widgets of one plane.  Updated in place; never rebuilt by a move."""
+    """The widgets of one plane.  Updated in place; never rebuilt by a move.
+
+    The normal is laid out one column per data axis: two buttons named
+    after the axis (``+z`` and ``-z`` for an axis ``z``) that face the plane
+    along it, and under them the normal's entry on it.
+    """
 
     def __init__(self, owner: QtClippingPlanesControls, index: int, parent) -> None:
         from qtpy.QtCore import Qt
         from qtpy.QtWidgets import (
             QCheckBox,
-            QComboBox,
             QDoubleSpinBox,
             QGridLayout,
-            QLineEdit,
+            QHBoxLayout,
+            QLabel,
             QPushButton,
             QSlider,
+            QToolButton,
             QWidget,
         )
 
         self.index = index
         self._range = (0.0, 1.0)
         editor = owner._editor
+        self._editor = editor
         self.widget = QWidget(parent)
         grid = QGridLayout(self.widget)
-        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setContentsMargins(0, 2, 0, 6)
+        n_axes = len(editor.axis_names)
 
-        self.enabled = QCheckBox(self.widget)
+        self.enabled = QCheckBox(f"Plane {index + 1}", self.widget)
         self.enabled.setToolTip("Whether this plane clips. It stays in the list.")
         self.enabled.toggled.connect(lambda v: editor.set_enabled(self.index, v))
-
-        self.preset = QComboBox(self.widget)
-        self.preset.addItems([*editor.axis_names, CUSTOM_PRESET])
-        self.preset.setToolTip("The data axis the plane's normal points along.")
-        self.preset.currentTextChanged.connect(
-            lambda v: editor.set_preset(self.index, v)
-        )
 
         self.flip = QPushButton("Flip", self.widget)
         self.flip.setToolTip("Keep the other side of the plane.")
@@ -69,15 +69,56 @@ class _PlaneRow:
         self.remove = QPushButton("Remove", self.widget)
         self.remove.clicked.connect(lambda: editor.remove(self.index))
 
-        self.normal = QLineEdit(self.widget)
-        self.normal.setToolTip(
-            "The normal, one number per data axis ("
-            + ", ".join(editor.axis_names)
-            + "). It points to the side that is kept. Data units."
+        header = QHBoxLayout()
+        header.addWidget(self.enabled)
+        header.addStretch(1)
+        header.addWidget(self.flip)
+        header.addWidget(self.remove)
+        grid.addLayout(header, 0, 0, 1, n_axes + 1)
+
+        normal = QLabel("Normal", self.widget)
+        normal.setToolTip(
+            "The normal, one entry per data axis. It points to the side that "
+            "is kept. Only its direction matters. A button faces the plane "
+            "along its axis and keeps that side."
         )
-        self.normal.editingFinished.connect(
-            lambda: editor.set_normal_text(self.index, self.normal.text())
-        )
+        # Beside both of its rows: the buttons and the entries.
+        grid.addWidget(normal, 1, 0, 2, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        #: ``(axis index, sign)`` -> the button that faces the plane that way.
+        self.facing: dict[tuple[int, int], Any] = {}
+        #: The normal's entry on each data axis, in axis order.
+        self.components: list[Any] = []
+        for axis, name in enumerate(editor.axis_names):
+            column = axis + 1
+            buttons = QHBoxLayout()
+            buttons.setSpacing(2)
+            for sign, text, side in ((1, "+", "higher"), (-1, "-", "lower")):
+                button = QToolButton(self.widget)
+                button.setText(f"{text}{name}")
+                button.setCheckable(True)
+                button.setToolTip(
+                    f"Cut across {name} and keep the side toward {side} {name}."
+                )
+                button.clicked.connect(
+                    lambda _checked, a=axis, s=sign: self._on_facing(a, s)
+                )
+                buttons.addWidget(button)
+                self.facing[(axis, sign)] = button
+            grid.addLayout(buttons, 1, column, Qt.AlignmentFlag.AlignCenter)
+
+            component = QDoubleSpinBox(self.widget)
+            component.setDecimals(3)
+            component.setRange(-100.0, 100.0)
+            component.setSingleStep(0.1)
+            component.setKeyboardTracking(False)
+            component.setToolTip(f"The normal's entry on {name}.")
+            component.valueChanged.connect(
+                lambda v, a=axis: editor.set_component(self.index, a, v)
+            )
+            grid.addWidget(component, 2, column)
+            grid.setColumnStretch(column, 1)
+            self.components.append(component)
 
         self.slider = QSlider(Qt.Orientation.Horizontal, self.widget)
         self.slider.setRange(0, _SLIDER_STEPS)
@@ -90,19 +131,16 @@ class _PlaneRow:
         self.position.setKeyboardTracking(False)
         self.position.valueChanged.connect(lambda v: editor.set_position(self.index, v))
 
-        grid.addWidget(self.enabled, 0, 0)
-        grid.addWidget(self.preset, 0, 1)
-        grid.addWidget(self.normal, 0, 2)
-        grid.addWidget(self.flip, 0, 3)
-        grid.addWidget(self.remove, 0, 4)
-        grid.addWidget(self.slider, 1, 1, 1, 2)
-        grid.addWidget(self.position, 1, 3, 1, 2)
-        grid.setColumnStretch(2, 1)
-        self._editor = editor
+        grid.addWidget(QLabel("Position", self.widget), 3, 0)
+        along = QHBoxLayout()
+        along.addWidget(self.slider, 1)
+        along.addWidget(self.position)
+        grid.addLayout(along, 3, 1, 1, n_axes)
+
         self._inputs = (
             self.enabled,
-            self.preset,
-            self.normal,
+            *self.facing.values(),
+            *self.components,
             self.slider,
             self.position,
         )
@@ -111,15 +149,23 @@ class _PlaneRow:
         low, high = self._range
         self._editor.set_position(self.index, low + (high - low) * step / _SLIDER_STEPS)
 
+    def _on_facing(self, axis: int, sign: int) -> None:
+        # A click on the button already shown un-checks it and changes
+        # nothing, so nothing would draw it again.
+        self.facing[(axis, sign)].setChecked(True)
+        self._editor.set_facing(self.index, axis, sign)
+
     def show(self, row: Mapping[str, Any]) -> None:
         """Show *row* (from ``ClippingPlanesEditor.describe``); emits nothing."""
         for widget in self._inputs:
             widget.blockSignals(True)
         try:
             self.enabled.setChecked(bool(row["enabled"]))
-            self.preset.setCurrentText(row["preset"])
-            if not self.normal.hasFocus():
-                self.normal.setText(row["normal_text"])
+            facing = None if row["facing"] is None else tuple(row["facing"])
+            for key, button in self.facing.items():
+                button.setChecked(key == facing)
+            for component, value in zip(self.components, row["normal"]):
+                component.setValue(float(value))
             low, high = float(row["low"]), float(row["high"])
             self._range = (low, high)
             span = high - low
@@ -139,10 +185,12 @@ class _PlaneRow:
 class QtClippingPlanesControls(VisualIdGroup):
     """A visual's clipping planes: one row per plane, and an add button.
 
-    Each row has an enabled checkbox, the data axis the normal points along
-    (or ``custom``), the normal itself, a flip button, a position slider
-    along the normal and a remove button.  Values are in the visual's data
-    coordinates.  An edit is sent as ``ClippingPlanesUpdateEvent`` with the
+    Each row has an enabled checkbox, a flip button, a remove button, the
+    normal and a position slider along the normal.  The normal has one
+    column per data axis: two buttons named after the axis as the store's
+    coordinate system gives it (``+z`` and ``-z``) that face the plane
+    along the axis, and under them the normal's entry on it.  Values are in the visual's
+    data coordinates.  An edit is sent as ``ClippingPlanesUpdateEvent`` with the
     whole new tuple.  A moved plane updates its row in place, so a slider is
     not destroyed while it is dragged.
 
@@ -167,6 +215,12 @@ class QtClippingPlanesControls(VisualIdGroup):
         ``(low, high)`` of the data on each axis.
     planes :
         The current rows (``rows_from_planes(visual.clipping_planes)``).
+    data_store_id :
+        The store the visuals read.
+    bounds_source :
+        Reads the store's current ``(low, high)`` per axis.  Given with
+        *data_store_id*, the position ranges follow the store's extent;
+        without it they stay at *bounds*.
     title :
         The group's name.  Defaults to :data:`DEFAULT_TITLE`.
     parent :
@@ -187,6 +241,8 @@ class QtClippingPlanesControls(VisualIdGroup):
         axis_names: Sequence[str],
         bounds: Sequence[Sequence[float]],
         planes: Sequence[Mapping[str, Any]] = (),
+        data_store_id: UUID | str | None = None,
+        bounds_source: Callable[[], Sequence[Sequence[float]]] | None = None,
         title: str | None = None,
         parent=None,
     ) -> None:
@@ -227,6 +283,8 @@ class QtClippingPlanesControls(VisualIdGroup):
             self._id,
             self.changed.emit,
             self._show,
+            data_store_id=data_store_id,
+            bounds_source=bounds_source,
         )
         self._add.clicked.connect(lambda: self._editor.add())
         self._show(self._editor.rows, "")
@@ -262,7 +320,7 @@ class QtClippingPlanesControls(VisualIdGroup):
         self.closed.emit()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
-        """One ``ClippingPlanesChangedEvent`` per visual."""
+        """One ``ClippingPlanesChangedEvent`` per visual, and the store's extent."""
         return self._editor.subscription_specs()
 
     # -- model -> widget -------------------------------------------------------

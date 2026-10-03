@@ -18,6 +18,7 @@ from cellier.gui._clipping_planes import (
     CLIPPING_PLANES_TITLE,
     CUSTOM_PRESET,
     clipping_planes_seed,
+    facing_of,
     parse_normal,
     planes_from_rows,
     position_range,
@@ -96,12 +97,15 @@ def _act(widget, action, index=None, value=None) -> None:
     elif action == "enabled":
         row.enabled.setChecked(value)
     elif action == "preset":
-        row.preset.setCurrentText(value)
+        # Qt has a "+" and a "-" button per data axis, not a preset list.
+        row.facing[(widget.editor.axis_names.index(value), 1)].click()
     elif action == "position":
         row.position.setValue(value)
     elif action == "normal":
-        row.normal.setText(value)
-        row.normal.editingFinished.emit()
+        # Qt has one entry per data axis, not a typed normal.
+        entries = [float(part) for part in value.replace(",", " ").split()]
+        for component, entry in zip(row.components, entries):
+            component.setValue(entry)
 
 
 def _n_rows(widget) -> int:
@@ -147,6 +151,7 @@ def test_the_seed_is_read_off_the_store(controller):
     assert seed["axis_names"] == ["z", "y", "x"]
     assert seed["bounds"] == [[0.0, 10.0], [0.0, 20.0], [0.0, 40.0]]
     assert seed["coordinate_system"] == str(store.data_coordinate_system.id)
+    assert seed["data_store_id"] == str(store.id)
     assert seed["planes"] == []
 
 
@@ -220,10 +225,9 @@ def test_a_change_from_elsewhere_is_shown_and_sends_nothing(controller, toolkit)
     widget.close()
 
 
-@pytest.mark.parametrize("toolkit", ["qt", "anywidget"])
-def test_a_bad_normal_is_refused_with_a_reason(controller, toolkit):
+def test_a_bad_typed_normal_is_refused_with_a_reason(controller):
     visual, store = _add_points(controller)
-    widget = _make(toolkit, [visual.id], visual, store)
+    widget = _make("anywidget", [visual.id], visual, store)
     controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
     _act(widget, "add")
     before = visual.clipping_planes
@@ -232,6 +236,100 @@ def test_a_bad_normal_is_refused_with_a_reason(controller, toolkit):
     assert "3 entries" in widget.error
     _act(widget, "normal", 0, "1, 2, 0")
     assert widget.error == ""
+    widget.close()
+
+
+def test_the_qt_row_labels_the_normal_with_the_stores_axis_names(controller):
+    visual, store = _add_points(controller, names="tzyx")
+    widget = _make("qt", [visual.id], visual, store)
+    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
+    _act(widget, "add")
+    row = widget.row(0)
+    assert [button.text() for button in row.facing.values()] == [
+        "+t",
+        "-t",
+        "+z",
+        "-z",
+        "+y",
+        "-y",
+        "+x",
+        "-x",
+    ]
+    assert len(row.components) == 4
+    assert [c.value() for c in row.components] == [0.0, 0.0, 0.0, 1.0]
+
+
+def test_the_qt_facing_buttons_set_the_axis_and_the_kept_side(controller):
+    visual, store = _add_points(controller)
+    widget = _make("qt", [visual.id], visual, store)
+    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
+    _act(widget, "add")
+    row = widget.row(0)
+
+    def checked():
+        return [key for key, button in row.facing.items() if button.isChecked()]
+
+    assert checked() == [(2, 1)]
+    row.facing[(1, -1)].click()
+    np.testing.assert_array_equal(visual.clipping_planes[0].plane.normal, [0, -1, 0])
+    assert checked() == [(1, -1)]
+    # The plane turned in place: it still passes through the data's centre.
+    centre = [5.0, 10.0, 20.0]
+    assert visual.clipping_planes[0].plane.signed_distance(centre) == pytest.approx(0)
+    # A second click on the shown button changes nothing and stays checked.
+    row.facing[(1, -1)].click()
+    assert checked() == [(1, -1)]
+    # An oblique normal lies along no axis.
+    row.components[2].setValue(0.5)
+    np.testing.assert_array_equal(visual.clipping_planes[0].plane.normal, [0, -1, 0.5])
+    assert checked() == []
+    assert facing_of([0, -1, 0.5]) is None
+
+
+def test_a_zeroed_normal_is_refused_and_the_entry_put_back(controller):
+    visual, store = _add_points(controller)
+    widget = _make("qt", [visual.id], visual, store)
+    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
+    _act(widget, "add")
+    before = visual.clipping_planes
+    widget.row(0).components[2].setValue(0.0)
+    assert visual.clipping_planes == before
+    assert "zero" in widget.error
+    assert widget.row(0).components[2].value() == 1.0
+
+
+@pytest.mark.parametrize("toolkit", ["qt", "anywidget"])
+def test_the_position_range_follows_the_stores_extent(controller, toolkit):
+    from cellier.convenience import PointsControlsConfig
+    from cellier.convenience.layout._shared import appearance_specs
+
+    visual, store = _add_points(controller)
+    config = PointsControlsConfig(appearance=True, clipping_controls=True)
+    spec = next(
+        spec
+        for spec in appearance_specs(visual, config, store).specs
+        if spec.kind == "clipping_planes"
+    )
+    if toolkit == "qt":
+        from cellier.convenience.gui._appearance_widgets_qt import QT_BUILDERS
+
+        widget = QT_BUILDERS["clipping_planes"](spec, [visual.id], controller)
+        _QTBOT[-1].addWidget(widget.widget)
+    else:
+        from cellier.convenience.gui._appearance_widgets import ANYWIDGET_BUILDERS
+
+        widget = ANYWIDGET_BUILDERS["clipping_planes"](spec, [visual.id], controller)
+    controller.connect_widget(widget, subscription_specs=widget.subscription_specs())
+    _act(widget, "add")
+    described = widget.editor.describe()[0]
+    assert (described["low"], described["high"]) == (0.0, 40.0)
+
+    sent: list = []
+    widget.changed.connect(sent.append)
+    store.positions = np.array([[0, 0, 0], [10, 20, 80]], dtype=np.float32)
+    described = widget.editor.describe()[0]
+    assert (described["low"], described["high"]) == (0.0, 80.0)
+    assert sent == []  # the plane did not move
     widget.close()
 
 
