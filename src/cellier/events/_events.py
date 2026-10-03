@@ -33,6 +33,11 @@ class DimsChangedEvent(NamedTuple):
     thicknesses of **displayed** axes.  Every axis keeps a position while
     displayed (D36), but a displayed axis is not sliced, so what the scene
     shows is unchanged and nothing needs reslicing.
+
+    ``interactive`` is ``True`` when the change is a tick of a dims scrub:
+    it was marked interactive, or it came inside an open scope (see
+    :class:`DimsInteractionEvent`).  A scrub's start and end have their own
+    event; this flag is the per-tick "in progress" state.
     """
 
     source_id: UUID
@@ -41,6 +46,40 @@ class DimsChangedEvent(NamedTuple):
     displayed_axes_changed: bool
     slice_indices: Mapping[int, float] = NO_SLICE_POSITIONS
     region_changed: bool = True
+    interactive: bool = False
+
+
+class DimsInteractionEvent(NamedTuple):
+    """A dims scrub started or ended on a scene.
+
+    A scrub is a run of interactive slice-position changes: slider ticks,
+    or programmatic moves marked ``interactive=True`` or made inside
+    ``CellierController.dims_interaction``.  The start is emitted **before**
+    the first tick changes the dims model.  No event is emitted per tick;
+    ``DimsChangedEvent.interactive`` carries that.
+
+    Attributes
+    ----------
+    source_id : UUID
+        The source of the tick or scope that caused the transition.
+    scene_id : UUID
+        The scene being scrubbed.
+    phase : {"start", "end"}
+        Which transition this is.
+    reason : {"release", "settle", "jump", "cancel"} or None
+        Why the scrub ended: the last scope closed, the dims were still for
+        ``SchedulerConfig.dims_settle_s``, a change that was not interactive
+        arrived, or the displayed axes changed.  ``None`` for a start.
+    axes : frozenset[int]
+        The world axes moved by the scrub: the first tick's for a start,
+        every tick's for an end.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    phase: Literal["start", "end"]
+    reason: Literal["release", "settle", "jump", "cancel"] | None = None
+    axes: frozenset[int] = frozenset()
 
 
 class SliderAxesChangedEvent(NamedTuple):
@@ -57,9 +96,53 @@ class SliderAxesChangedEvent(NamedTuple):
 
 
 class CameraChangedEvent(NamedTuple):
+    """A canvas's camera changed.
+
+    ``source_id`` is the canvas's id.  ``interactive`` is ``True`` for a
+    change detected between frames (the camera controller, or anything else
+    that moved the pygfx camera) and for a programmatic move made with
+    ``interactive=True`` or inside ``CellierController.camera_interaction``;
+    it is ``False`` for a programmatic jump (``fit_camera``,
+    ``look_at_visual``, ``set_camera_state``).
+    """
+
     source_id: UUID
     scene_id: UUID
     camera_state: CameraState
+    interactive: bool = True
+
+
+class CameraInteractionEvent(NamedTuple):
+    """A camera motion started or ended on a canvas.
+
+    The camera counterpart of :class:`DimsInteractionEvent`, with the same
+    fields plus the canvas.  No event is emitted per frame;
+    ``CameraChangedEvent.interactive`` carries that.
+
+    Attributes
+    ----------
+    source_id : UUID
+        The source of the tick or scope that caused the transition.  The
+        canvas's id for motion driven by its camera controller.
+    scene_id : UUID
+        The scene the canvas shows.
+    canvas_id : UUID
+        The canvas whose camera is moving.
+    phase : {"start", "end"}
+        Which transition this is.
+    reason : {"release", "settle", "jump", "cancel"} or None
+        Why the motion ended: the camera controller stopped driving the
+        camera (or the last scope closed), the camera was still for
+        ``CameraConfig.settle_threshold_s``, a programmatic move that was
+        not interactive arrived, or the canvas switched between 2D and 3D.
+        ``None`` for a start.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    canvas_id: UUID
+    phase: Literal["start", "end"]
+    reason: Literal["release", "settle", "jump", "cancel"] | None = None
 
 
 class AppearanceChangedEvent(NamedTuple):
@@ -137,6 +220,27 @@ class PickWriteChangedEvent(NamedTuple):
 
 
 class AABBChangedEvent(NamedTuple):
+    source_id: UUID
+    visual_id: UUID
+    field_name: str
+    new_value: Any
+
+
+class MeshSectionChangedEvent(NamedTuple):
+    """A field of a mesh visual's ``section`` config changed.
+
+    Attributes
+    ----------
+    source_id : UUID
+        Who made the change, for echo filtering.
+    visual_id : UUID
+        The mesh visual.
+    field_name : str
+        ``"mode"``, ``"outline"``, ``"fill"`` or ``"outline_width"``.
+    new_value : Any
+        The field's new value.
+    """
+
     source_id: UUID
     visual_id: UUID
     field_name: str
@@ -239,9 +343,9 @@ class LoadingProgress(NamedTuple):
     complete : bool
         Every wanted chunk is resident or given up.
     target_deferred : bool
-        The latest plan was the backstop only: a slider tick with
+        The latest plan was the backstop only: a tick of a dims scrub with
         ``loading.dims_drag="backstop"``.  The target is planned once the
-        slider settles, so ``complete`` here does not mean full detail.
+        scrub ends, so ``complete`` here does not mean full detail.
     """
 
     needed_backstop: int = 0
@@ -312,6 +416,30 @@ class LoadingConfigChangedEvent(NamedTuple):
     source_id: UUID
     visual_id: UUID
     loading: Any
+
+
+class LodConfigChangedEvent(NamedTuple):
+    """A multiscale mesh's ``lod`` config changed.
+
+    Emitted for every change, whether it came from
+    ``CellierController.set_lod_config`` (or a ``LodConfigUpdateEvent``) or
+    from assigning ``visual.lod`` directly, so a control showing the
+    settings stays in step.
+
+    Parameters
+    ----------
+    source_id : UUID
+        Who asked for the change: the widget's id for a GUI edit, otherwise
+        the controller's.
+    visual_id : UUID
+        The visual.  The routing key.
+    lod : GeometryLodConfig
+        The complete config after the change.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    lod: Any
 
 
 class BackstopCompleteEvent(NamedTuple):
@@ -693,9 +821,26 @@ class ImagePickInfo(NamedTuple):
 
 
 class MeshPickInfo(NamedTuple):
-    """Element-level pick result for a mesh visual (stub; filled in a later phase)."""
+    """Element-level pick result for a mesh visual: what was drawn there.
 
-    face_index: int
+    Attributes
+    ----------
+    face_index : int or None
+        The face under the cursor, in the numbering of the level that was
+        drawn (the store's faces for a single-level mesh).  ``None`` for
+        ``part="fill"``: the area a section's loop encloses is no face.
+    part : {"face", "outline", "fill"}
+        ``"face"``: a face of the mesh (a 3D view, or a face lying in the
+        slice plane of a 2D view).  ``"outline"``: the section's outline;
+        ``face_index`` is the face the plane crosses there.  ``"fill"``: the
+        section's fill.
+    level : int
+        The level that was drawn, 0 the finest.
+    """
+
+    face_index: int | None
+    part: Literal["face", "outline", "fill"] = "face"
+    level: int = 0
 
 
 class LabelsPickInfo(NamedTuple):
@@ -1195,6 +1340,23 @@ PickEvent = (
 )
 
 
+class _CameraControllerEvent(NamedTuple):
+    """Internal: a canvas's camera controller started or stopped driving.
+
+    Emitted by ``CanvasView`` from inside a draw, after that frame's camera
+    change (if any) was reported.  ``driving`` is ``True`` while the pygfx
+    controller has a running action: a drag held (still or not), its damped
+    tail, a wheel or key animation.  Not part of the public catalogue;
+    consumed only by ``CellierController``, which maps it to a scope on the
+    canvas's camera tracker.
+    """
+
+    source_id: UUID
+    canvas_id: UUID
+    scene_id: UUID
+    driving: bool
+
+
 class _CanvasRawPointerEvent(NamedTuple):
     """Internal event emitted by RenderManager after render-layer translation.
 
@@ -1260,8 +1422,10 @@ class _CanvasRawPointerEvent(NamedTuple):
 
 CellierEventTypes = (
     DimsChangedEvent
+    | DimsInteractionEvent
     | SliderAxesChangedEvent
     | CameraChangedEvent
+    | CameraInteractionEvent
     | CanvasSizeChangedEvent
     | AppearanceChangedEvent
     | ChannelAppearanceChangedEvent
@@ -1277,6 +1441,7 @@ CellierEventTypes = (
     | ResliceProgressEvent
     | BackstopCompleteEvent
     | LoadingConfigChangedEvent
+    | LodConfigChangedEvent
     | ResliceCancelledEvent
     | FrameRenderedEvent
     | VisualAddedEvent

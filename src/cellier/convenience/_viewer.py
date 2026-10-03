@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 from uuid import UUID
 
@@ -17,11 +18,13 @@ from cellier.visuals._canvas_overlay import CanvasOverlay
 from cellier.visuals._scene_overlay import SceneOverlay
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Mapping
     from pathlib import Path
 
     import numpy as np
     from PySide6.QtWidgets import QWidget
 
+    from cellier._state import CameraState
     from cellier.convenience.gui._controls_config import (
         GraphControlsConfig,
         InMemoryImageControlsConfig,
@@ -38,6 +41,7 @@ if TYPE_CHECKING:
     from cellier.data.label._label_memory_store import LabelMemoryStore
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+    from cellier.data.mesh._mesh_multiscale_store import MultiscaleMeshStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.events import (
         BackstopCompleteEvent,
@@ -79,8 +83,13 @@ if TYPE_CHECKING:
         MultiscaleLabelVisual,
     )
     from cellier.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
-    from cellier.visuals._loading import ProgressiveLoadingConfig
-    from cellier.visuals._mesh_memory import MeshAppearance, MeshVisual
+    from cellier.visuals._loading import GeometryLodConfig, ProgressiveLoadingConfig
+    from cellier.visuals._mesh_memory import (
+        MeshAppearance,
+        MeshSectionConfig,
+        MeshVisual,
+        MultiscaleMeshVisual,
+    )
     from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 _T = TypeVar("_T", bound="BaseDataStore")
@@ -125,6 +134,10 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         ``"offscreen"`` viewers have no embeddable widget, so the layout
         builders (``build_canvas_widget``, ``launch``, ``show``, ``display``)
         reject them.
+    lighting : "none" or "default"
+        Lights in the scene.  ``"default"`` adds an ambient and a
+        directional light, which a mesh with ``MeshPhongAppearance`` needs
+        (without lights it renders black).  ``"none"`` (default) adds none.
     """
 
     def __init__(
@@ -135,6 +148,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         render_modes: set[str] | None = None,
         render_config: RenderManagerConfig | None = None,
         gui: Literal["qt", "anywidget", "offscreen"] = "qt",
+        lighting: Literal["none", "default"] = "none",
     ) -> None:
         resolved_render_modes = (
             render_modes if render_modes is not None else {"2d", "3d"}
@@ -146,6 +160,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
             coordinate_system=world_coordinate_system(axes),
             render_modes=resolved_render_modes,
             background=viewer_background(),
+            lighting=lighting,
         )
         # Callbacks fired once the scene's startup data is on the GPU; consumed
         # by the launcher (see convenience._launch._init_view).
@@ -619,6 +634,29 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         """
         return self._controller.set_loading_config(_visual_id(visual), **fields)
 
+    def set_lod_config(self, visual: object, **fields: Any) -> GeometryLodConfig:
+        """Change the level-of-detail settings of a multiscale mesh.
+
+        Mirrors :meth:`CellierController.set_lod_config`.  ``dims_drag_draw``
+        and ``camera_motion`` choose among the levels already loaded and
+        apply in the next frame; ``dims_drag`` decides what the next dims
+        scrub loads.
+
+        Parameters
+        ----------
+        visual : visual model or UUID
+            A multiscale mesh visual.
+        **fields :
+            ``GeometryLodConfig`` fields, e.g. ``camera_motion="full"``.
+            ``coarse_level`` cannot be changed.
+
+        Returns
+        -------
+        GeometryLodConfig
+            The visual's config after the call.
+        """
+        return self._controller.set_lod_config(_visual_id(visual), **fields)
+
     # ------------------------------------------------------------------
     # Capture
     # ------------------------------------------------------------------
@@ -913,6 +951,175 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         self._controller.set_displayed_axes(self._scene.id, new_displayed)
         self._controller.fit_camera(self._scene.id)
 
+    def set_slice_positions(
+        self, positions: Mapping[int, float], *, interactive: bool = False
+    ) -> None:
+        """Move the slice position of one or more world axes.
+
+        By default a **jump**: every visual loads in full at once.  With
+        ``interactive=True``, or inside :meth:`dims_interaction`, it is a
+        tick of a **scrub**: visuals in ``dims_drag="backstop"`` mode load
+        their coarse backstop only, and load in full when the scrub ends.
+        See ``CellierController.update_slice_indices``.
+
+        Parameters
+        ----------
+        positions : Mapping[int, float]
+            World axis index -> world position.  Other axes keep theirs.
+        interactive : bool
+            Whether the move is a tick of a scrub.
+        """
+        self._controller.update_slice_indices(
+            self._scene.id, positions, interactive=interactive
+        )
+
+    @contextmanager
+    def dims_interaction(self) -> Generator[None, None, None]:
+        """Scrub the dims for the length of a ``with`` block.
+
+        Every slice-position move inside the block is a scrub tick, so a
+        player or a scripted sweep loads coarse while it runs and in full
+        when the block exits::
+
+            with viewer.dims_interaction():
+                for t in range(n_frames):
+                    viewer.set_slice_positions({0: t})
+
+        A sweep that wants every position at full resolution does not open
+        one.
+        """
+        with self._controller.dims_interaction(self._scene.id):
+            yield
+
+    # ------------------------------------------------------------------
+    # Camera control
+    # ------------------------------------------------------------------
+
+    def _camera_canvas(self, canvas: UUID | None) -> UUID:
+        """Resolve the canvas a camera call targets (the only one by default)."""
+        canvas_ids = self.canvases
+        if canvas is not None:
+            if canvas not in canvas_ids:
+                raise ValueError(
+                    f"canvas {canvas} is not one of this viewer's canvases "
+                    f"{list(canvas_ids)}"
+                )
+            return canvas
+        if len(canvas_ids) != 1:
+            raise ValueError(
+                f"This viewer has {len(canvas_ids)} canvases; pass canvas= to "
+                f"say whose camera is meant."
+            )
+        return canvas_ids[0]
+
+    def get_camera_state(self, *, canvas: UUID | None = None) -> CameraState:
+        """Return a snapshot of a canvas's camera.
+
+        Parameters
+        ----------
+        canvas : UUID or None
+            One of :attr:`canvases`.  ``None`` (default) is the viewer's
+            single canvas.
+
+        Returns
+        -------
+        CameraState
+
+        Raises
+        ------
+        ValueError
+            If *canvas* is not this viewer's, or is omitted while the viewer
+            does not have exactly one canvas.
+        """
+        return self._controller.get_camera_state(self._camera_canvas(canvas))
+
+    def set_camera_state(
+        self,
+        state: CameraState,
+        *,
+        canvas: UUID | None = None,
+        interactive: bool = False,
+    ) -> None:
+        """Move a canvas's camera to *state*.
+
+        By default a **jump**: multiscale image and labels reslice at once
+        for the new view.  With ``interactive=True``, or inside
+        :meth:`camera_interaction`, it is a tick of a **motion**: nothing is
+        resliced until the motion ends.  See
+        ``CellierController.set_camera_state``.
+
+        Parameters
+        ----------
+        state : CameraState
+            The state to apply; :meth:`get_camera_state` returns one.
+        canvas : UUID or None
+            One of :attr:`canvases`.  ``None`` (default) is the viewer's
+            single canvas.
+        interactive : bool
+            Whether the move is a tick of a motion.
+
+        Raises
+        ------
+        ValueError
+            If the canvas cannot be resolved (see :meth:`get_camera_state`),
+            or *state* is for the other kind of camera.
+        """
+        self._controller.set_camera_state(
+            self._camera_canvas(canvas), state, interactive=interactive
+        )
+
+    def fit_camera(
+        self, *, canvas: UUID | None = None, interactive: bool = False
+    ) -> None:
+        """Fit the camera to the scene.
+
+        A jump, like :meth:`set_camera_state`.
+
+        Parameters
+        ----------
+        canvas : UUID or None
+            One of :attr:`canvases`.  ``None`` (default) fits every canvas of
+            the viewer.
+        interactive : bool
+            Whether the move is a tick of a camera motion instead of a jump.
+
+        Raises
+        ------
+        ValueError
+            If *canvas* is not one of this viewer's canvases.
+        """
+        if canvas is not None:
+            canvas = self._camera_canvas(canvas)
+        self._controller.fit_camera(self._scene.id, canvas, interactive=interactive)
+
+    @contextmanager
+    def camera_interaction(
+        self, *, canvas: UUID | None = None
+    ) -> Generator[None, None, None]:
+        """Move a camera as one motion for the length of a ``with`` block.
+
+        Every camera move inside the block is a tick of a motion, so a
+        fly-through reslices once, when the block exits, instead of at every
+        pose::
+
+            with viewer.camera_interaction():
+                for pose in path:
+                    viewer.set_camera_state(pose)
+
+        Parameters
+        ----------
+        canvas : UUID or None
+            One of :attr:`canvases`.  ``None`` (default) is the viewer's
+            single canvas.
+
+        Raises
+        ------
+        ValueError
+            If the canvas cannot be resolved; see :meth:`get_camera_state`.
+        """
+        with self._controller.camera_interaction(self._camera_canvas(canvas)):
+            yield
+
     # ------------------------------------------------------------------
     # Visual add methods
     # ------------------------------------------------------------------
@@ -1078,6 +1285,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        section: MeshSectionConfig | None = None,
     ) -> MeshVisual:
         """Add a mesh visual.
 
@@ -1111,6 +1319,11 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
             derived from the pick buffer, so turning it off stops them on
             this visual; asking for an outline as well turns it back on,
             with a warning.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view: the outline and fill of its
+            cross-section, and whether the cut is the slice plane
+            (``mode="cut"``) or the scene's slab (``mode="slab"``).
+            ``None`` (default) is an outline and a fill of the cut.
 
         Returns
         -------
@@ -1125,6 +1338,73 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
             outline=outline,
             ambient_occlusion=ambient_occlusion,
             pick_write=pick_write,
+            section=section,
+        )
+        self._store_controls([visual.id], controls)
+        return visual
+
+    def add_multiscale_mesh(
+        self,
+        data: MultiscaleMeshStore | UUID,
+        appearance: MeshAppearance,
+        name: str = "mesh",
+        transform: BaseTransform | None = None,
+        controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
+        section: MeshSectionConfig | None = None,
+        lod: GeometryLodConfig | None = None,
+    ) -> MultiscaleMeshVisual:
+        """Add a mesh with levels of detail.
+
+        Two levels are kept loaded, the finest and one coarse level.  A new
+        position shows the coarse level first and the finest when it has
+        loaded; a dims scrub loads the coarse level only until it ends.
+
+        Parameters
+        ----------
+        data : MultiscaleMeshStore or UUID
+            The mesh's levels, finest first, or the UUID of an
+            already-registered store.
+        appearance : MeshFlatAppearance, MeshPhongAppearance,
+            Appearance parameters, shared by both levels.
+        name : str
+            Human-readable label. Default ``"mesh"``.
+        transform : BaseTransform or None
+            Data-to-world transform. Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration.  When ``None`` (default), no
+            appearance controls are created.
+        outline : VisualOutline or None
+            Screen-space outline assignment; see :meth:`add_mesh`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion; see
+            :meth:`add_mesh`.
+        pick_write : bool
+            Whether the visual writes to the pick buffer; see
+            :meth:`add_mesh`.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view; see :meth:`add_mesh`.
+        lod : GeometryLodConfig or None
+            Which coarse level is kept (the coarsest by default), and what a
+            dims scrub loads and draws.
+
+        Returns
+        -------
+        MultiscaleMeshVisual
+        """
+        visual = self._controller.add_multiscale_mesh(
+            self._resolve_data_store(data),
+            self._scene.id,
+            appearance,
+            name,
+            transform,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
+            section=section,
+            lod=lod,
         )
         self._store_controls([visual.id], controls)
         return visual

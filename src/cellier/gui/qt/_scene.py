@@ -41,8 +41,9 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from psygnal import Signal
-from qtpy.QtCore import Qt, QTimer
+from qtpy.QtCore import QEvent, QObject, Qt, QTimer
 from qtpy.QtWidgets import (
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -56,6 +57,7 @@ from superqt import QLabeledDoubleSlider
 
 from cellier.events import (
     DimsChangedEvent,
+    DimsInteractionUpdateEvent,
     DimsUpdateEvent,
     SliderAxesChangedEvent,
     SubscriptionSpec,
@@ -67,11 +69,16 @@ from cellier.gui._axis_values import (
 )
 from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
 from cellier.gui._dims import initial_slice_indices as seed_slice_indices
+from cellier.gui._dims import thickness_axes
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
 
     from cellier.gui._axis_values import AxisValues
+
+#: Decimals a thickness box shows on a discrete axis, which has no
+#: ``decimals`` of its own.
+THICKNESS_DECIMALS: int = 3
 
 #: Styles the continuous sliders only.  A styled groove stops Qt drawing
 #: native tick marks, and a discrete axis's integer slider relies on those
@@ -123,6 +130,71 @@ QLabel { font-size: 12px; }
 """
 
 
+#: How many ``step_size`` steps Page Up / Page Down moves a continuous axis.
+KEY_PAGE_STEPS: int = 10
+
+#: Signed step, in units of the single step, per arrow key.
+_ARROW_KEY_DIRECTIONS = {
+    Qt.Key.Key_Right: 1,
+    Qt.Key.Key_Up: 1,
+    Qt.Key.Key_Left: -1,
+    Qt.Key.Key_Down: -1,
+}
+_PAGE_KEY_DIRECTIONS = {Qt.Key.Key_PageUp: 1, Qt.Key.Key_PageDown: -1}
+
+
+class _ContinuousSliderKeys(QObject):
+    """Keyboard stepping for a continuous axis's ``QLabeledDoubleSlider``.
+
+    superqt's float slider keeps its value in Python and does not override
+    ``keyPressEvent``, so a key press falls through to ``QSlider``'s C++
+    handler.  That steps the hidden integer value of the base class, which
+    nothing reads: the float value does not move and no signal the control
+    listens to fires.  This filter, installed on the inner slider (the widget
+    that holds focus), takes the navigation keys instead and sets the float
+    value, so a key step emits ``valueChanged`` exactly as a mouse move does.
+
+    Arrow keys move by the slider's single step (the axis's ``step_size``),
+    Page Up and Page Down by ``KEY_PAGE_STEPS`` of them, Home and End jump to
+    the ends.
+
+    Parameters
+    ----------
+    slider :
+        The labeled slider to step.  Also the filter's Qt parent, which
+        keeps the filter alive as long as the slider.
+    """
+
+    def __init__(self, slider: QLabeledDoubleSlider) -> None:
+        super().__init__(slider)
+        self._slider = slider
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.KeyPress:
+            return False
+        target = self._target(event.key())
+        if target is None:
+            return False
+        # Clamped by the slider; a no-op at either end.
+        self._slider.setValue(target)
+        return True
+
+    def _target(self, key: int) -> float | None:
+        """The value *key* moves the slider to, or ``None`` if not handled."""
+        slider = self._slider
+        if key == Qt.Key.Key_Home:
+            return slider.minimum()
+        if key == Qt.Key.Key_End:
+            return slider.maximum()
+        if key in _ARROW_KEY_DIRECTIONS:
+            steps = _ARROW_KEY_DIRECTIONS[key]
+        elif key in _PAGE_KEY_DIRECTIONS:
+            steps = KEY_PAGE_STEPS * _PAGE_KEY_DIRECTIONS[key]
+        else:
+            return None
+        return slider.value() + steps * slider.singleStep()
+
+
 class QtDimsControl:
     """Bidirectional dims slider panel + 2D/3D toggle wired to the cellier v2 bus.
 
@@ -171,6 +243,14 @@ class QtDimsControl:
         The world axes that get a slider when not displayed; typically
         ``scene.slider_axes``.  ``None`` (the default) gives every axis in
         *axis_values* one.  Kept current by ``SliderAxesChangedEvent``.
+    thickness_axes :
+        The axes whose slider row gets a half-thickness box ("+/-", world
+        units, minimum 0), bound to the scene's per-axis thickness.  ``None``
+        (the default) gives every axis in *axis_values* one; a scene passes
+        its axes that are not channel axes.
+    initial_thickness :
+        Starting half-thicknesses; typically
+        ``scene.dims.selection.thickness``.  An axis absent from it is 0.
     axes_2d :
         Axis indices to display when toggling to 2D, or ``None`` to omit the
         toggle button entirely (e.g. a scene with fewer than 3 axes).
@@ -193,6 +273,8 @@ class QtDimsControl:
         initial_slice_indices: dict[int, float] | None = None,
         initial_displayed_axes: tuple[int, ...] = (),
         slider_axes: tuple[int, ...] | None = None,
+        thickness_axes: Collection[int] | None = None,
+        initial_thickness: Mapping[int, float] | None = None,
         debounce_ms: int | None = None,
         axes_2d: tuple[int, ...] | None = None,
         axes_3d: tuple[int, ...] | None = None,
@@ -224,6 +306,9 @@ class QtDimsControl:
         )
         self._rate_limit_timer.timeout.connect(self._on_rate_limit_tick)
         self._slider_dirty = False
+        # Whether this control holds a dims interaction scope: a slider is
+        # pressed.  One flag for all sliders; a user presses one at a time.
+        self._scope_open = False
 
         # ── Qt seam 1: build container and sliders ───────────────────────────
         self._container = QWidget(parent)
@@ -240,13 +325,27 @@ class QtDimsControl:
         self._sliders: dict[int, QLabeledDoubleSlider | QSlider] = {}
         self._rows: dict[int, QWidget] = {}
         self._readouts: dict[int, QLabel] = {}
+        # The half-thickness box of each axis that has one.
+        self._thickness_boxes: dict[int, QDoubleSpinBox] = {}
         self._displayed_axes: tuple[int, ...] = initial_displayed_axes
         _initial = initial_slice_indices or {}
+        _thickness = initial_thickness or {}
+        _thickness_axes = (
+            set(self._axis_values) if thickness_axes is None else set(thickness_axes)
+        )
 
         for axis, spec in self._axis_values.items():
             if isinstance(spec, DiscreteAxisValues):
                 row = self._build_discrete_row(axis, spec)
                 self._set_value(axis, _initial.get(axis, spec.values[0]))
+                if axis in _thickness_axes:
+                    self._add_thickness_box(
+                        row.layout(),
+                        axis,
+                        THICKNESS_DECIMALS,
+                        1.0,
+                        _thickness.get(axis, 0.0),
+                    )
             else:
                 sld = QLabeledDoubleSlider(Qt.Orientation.Horizontal)
                 # Display only; before setValue so the first position is not
@@ -254,12 +353,33 @@ class QtDimsControl:
                 sld.setDecimals(spec.decimals)
                 sld.setRange(spec.min, spec.max)
                 sld.setValue(_initial.get(axis, spec.min))
+                # One wheel notch scrolls 3 single steps, capped at the page
+                # step; equal steps make a notch one step_size, as on a
+                # discrete row.  The key filter reads the single step too.
+                sld.setSingleStep(spec.step_size)
+                sld.setPageStep(spec.step_size)
                 # Capture `axis` by value in the default-argument closure.
                 sld.valueChanged.connect(
                     lambda value, ax=axis: self._on_slider_changed(ax, value)
                 )
+                sld.sliderPressed.connect(self._on_slider_pressed)
+                sld.sliderReleased.connect(self._on_slider_released)
+                # The inner slider holds keyboard focus; see the filter.
+                sld.findChild(QSlider).installEventFilter(_ContinuousSliderKeys(sld))
                 self._sliders[axis] = sld
                 row = sld
+                if axis in _thickness_axes:
+                    row = QWidget()
+                    row_layout = QHBoxLayout(row)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
+                    row_layout.addWidget(sld, stretch=1)
+                    self._add_thickness_box(
+                        row_layout,
+                        axis,
+                        spec.decimals,
+                        spec.step_size,
+                        _thickness.get(axis, 0.0),
+                    )
             layout.addRow(axis_labels.get(axis, str(axis)), row)
             self._rows[axis] = row
 
@@ -310,7 +430,11 @@ class QtDimsControl:
         return {axis: self._world_value(axis) for axis in self._sliders}
 
     def close(self) -> None:
-        """Emit ``closed`` to trigger bus unsubscription via the controller."""
+        """Emit ``closed`` to trigger bus unsubscription via the controller.
+
+        A scope still open (a control closed mid-drag) is ended first.
+        """
+        self._end_scope()
         self.closed.emit()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
@@ -346,6 +470,11 @@ class QtDimsControl:
                 value = event.slice_indices.get(axis)
                 if value is not None:
                     self._set_value(axis, value)
+            thickness = getattr(sel, "thickness", None) or {}
+            for axis, box in self._thickness_boxes.items():
+                box.blockSignals(True)
+                box.setValue(float(thickness.get(axis, 0.0)))
+                box.blockSignals(False)
 
         # The displayed axes are applied even from our own echo: the event is
         # the model's state, and applying it twice is harmless.
@@ -363,6 +492,45 @@ class QtDimsControl:
         if not self._rate_limit_timer.isActive():
             self._submit_slider_values()
             self._rate_limit_timer.start()
+
+    def _on_slider_pressed(self) -> None:
+        """Open a dims interaction scope: the scrub can then end on release.
+
+        The press can come after the first tick (a press on a superqt slider
+        nudges the value first, and a groove click jumps before it presses).
+        Nothing depends on the order: slider ticks are interactive anyway.
+        """
+        if self._scope_open:
+            return
+        self._scope_open = True
+        self.changed.emit(
+            DimsInteractionUpdateEvent(
+                source_id=self._id, scene_id=self._scene_id, phase="begin"
+            )
+        )
+
+    def _on_slider_released(self) -> None:
+        """Flush the throttle, then close the scope.
+
+        In that order: the end plans in full, and it must plan the final
+        position.  A drag usually leaves that position waiting in the
+        throttle; left there, it would land after the release and start a
+        new scrub.
+        """
+        if self._slider_dirty:
+            self._rate_limit_timer.stop()
+            self._submit_slider_values()
+        self._end_scope()
+
+    def _end_scope(self) -> None:
+        if not self._scope_open:
+            return
+        self._scope_open = False
+        self.changed.emit(
+            DimsInteractionUpdateEvent(
+                source_id=self._id, scene_id=self._scene_id, phase="end"
+            )
+        )
 
     def _on_rate_limit_tick(self) -> None:
         if self._slider_dirty:
@@ -382,6 +550,47 @@ class QtDimsControl:
                 scene_id=self._scene_id,
                 slice_indices=updates,
                 displayed_axes=None,
+                # A slider move is a scrub tick (interaction tracker 4.8).
+                interactive=True,
+            )
+        )
+
+    # ── Thickness ────────────────────────────────────────────────────────────
+
+    def _add_thickness_box(
+        self, row_layout, axis: int, decimals: int, step: float, value: float
+    ) -> None:
+        """Append a "+/-" half-thickness box for *axis* to its slider row.
+
+        World units, minimum 0.  The scene's thickness is the only thickness
+        in the slicing path, so this box is how much depth every visual
+        shows along the axis.
+        """
+        box = QDoubleSpinBox()
+        box.setDecimals(decimals)
+        box.setRange(0.0, 1e9)
+        box.setSingleStep(step)
+        box.setValue(float(value))
+        # A value typed in is submitted once, when editing finishes.
+        box.setKeyboardTracking(False)
+        box.setToolTip(
+            "Half-thickness of the slice along this axis, in world units. 0 is a plane."
+        )
+        box.valueChanged.connect(
+            lambda value, ax=axis: self._on_thickness_changed(ax, value)
+        )
+        row_layout.addWidget(QLabel("+/-"))
+        row_layout.addWidget(box)
+        self._thickness_boxes[axis] = box
+
+    def _on_thickness_changed(self, axis: int, value: float) -> None:
+        self.changed.emit(
+            DimsUpdateEvent(
+                source_id=self._id,
+                scene_id=self._scene_id,
+                slice_indices=None,
+                displayed_axes=None,
+                thickness={axis: float(value)},
             )
         )
 
@@ -449,6 +658,8 @@ class QtDimsControl:
         sld.valueChanged.connect(
             lambda _position, ax=axis: self._on_discrete_slider_changed(ax)
         )
+        sld.sliderPressed.connect(self._on_slider_pressed)
+        sld.sliderReleased.connect(self._on_slider_released)
         row_layout.addWidget(sld, stretch=1)
         row_layout.addWidget(readout)
         self._sliders[axis] = sld
@@ -616,6 +827,8 @@ class QtCanvasWidget:
             initial_slice_indices=initial_slice_indices,
             initial_displayed_axes=initial_displayed_axes,
             slider_axes=scene.slider_axes,
+            thickness_axes=thickness_axes(scene),
+            initial_thickness=getattr(selection, "thickness", None),
             axes_2d=axes_2d,
             axes_3d=axes_3d,
             parent=parent,

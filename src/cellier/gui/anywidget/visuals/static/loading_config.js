@@ -33,6 +33,7 @@ function render({ model, el }) {
   for (const spec of model.get("fields")) {
     const row = document.createElement("div");
     row.className = "cellier-app-row";
+    if (spec.tooltip) row.title = spec.tooltip;
     const label = document.createElement("label");
     label.className = "cellier-app-label";
     label.textContent = spec.label;
@@ -90,6 +91,8 @@ function render({ model, el }) {
       const message = model.get("error") || "";
       error.textContent = message;
       error.style.display = message ? "" : "none";
+      // Only the mesh section control has `hidden` (shown in 2D views only).
+      el.style.display = model.get("hidden") ? "none" : "";
     } finally {
       guard = false;
     }
@@ -98,6 +101,7 @@ function render({ model, el }) {
   model.on("change:config", update);
   model.on("change:error", update);
   model.on("change:title", update);
+  model.on("change:hidden", update);
   update();
 }
 

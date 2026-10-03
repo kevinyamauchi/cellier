@@ -101,7 +101,15 @@ def importance(snap: tuple[int, int, int, int, int]) -> tuple:
 
 
 class Environment:
-    """A simulated clock and store, random actions, and the invariant checks."""
+    """A simulated clock and store, random actions, and the invariant checks.
+
+    Every cache here has the default policy; ``test_property_general.py``
+    subclasses this with random policies.  The random stream of this class
+    is what ``trace_baseline.json`` was recorded from: do not add a draw.
+    """
+
+    #: The core under test; a subclass may substitute a mutant.
+    core_class = SchedulerCore
 
     def __init__(self, seed: int) -> None:
         self.rng = np.random.default_rng(seed)
@@ -112,7 +120,7 @@ class Environment:
             retry_max_attempts=int(self.rng.integers(1, 4)),
             retry_backoff_s=0.05,
         )
-        self.core = SchedulerCore(self.config, now=lambda: self.clock)
+        self.core = self.core_class(self.config, now=lambda: self.clock)
         self.core.trace = self._on_trace
         self.core.on_complete = self._on_complete
         self.fail_p = float(self.rng.choice([0.0, 0.02, 0.1]))
@@ -410,11 +418,12 @@ class Environment:
 
     def check(self) -> None:
         core = self.core
-        # 2: the in-flight budget.
-        shared, lane = core.in_flight
+        # 2: the in-flight budget, one per lane.
+        shared, lane, compute = core.in_flight
         assert 0 <= shared <= self.config.max_in_flight
         assert 0 <= lane <= self.config.backstop_reserved
-        assert shared + lane == len(self.reads)
+        assert 0 <= compute <= self.config.compute_budget
+        assert shared + lane + compute == len(self.reads)
         for cache_id in core.cache_ids:
             self._check_cache(cache_id)
 
@@ -461,13 +470,18 @@ class Environment:
         # 11: the draw is exactly the painter's-order oracle.
         expected = self._expected_lut(cache_id)
         assert residency.lut == expected, f"cache {cache_id}: draw != oracle"
-        # 4: everything drawn is resident and current.
-        for cell, key in residency.lut.items():
-            row = reg.find(key)
-            assert row >= 0 and reg.state[row] == _RESIDENT, (cell, key)
-            slot_key, data = residency.slots[int(reg.slot[row])]
-            assert slot_key == key
-            assert data == self.versions[key], f"stale draw of {key}"
+        # 4: everything drawn is resident and current.  Checked once per
+        # distinct key, in one lookup: many cells draw the same chunk, and a
+        # lookup per cell was most of this check's time.
+        drawn = sorted(set(residency.lut.values()))
+        if drawn:
+            rows, found = reg.find_many(np.asarray(drawn, dtype=reg.key.dtype))
+            resident = found & (reg.state[rows] == _RESIDENT)
+            assert resident.all(), [k for k, ok in zip(drawn, resident) if not ok]
+            for key, row in zip(drawn, rows.tolist()):
+                slot_key, data = residency.slots[int(reg.slot[row])]
+                assert slot_key == key
+                assert data == self.versions[key], f"stale draw of {key}"
         # 6: a complete backstop covers its cells with the current slice.
         t = self.t_of.get(cache_id)
         backstop = [k for k, c in wanted.items() if c == _BACKSTOP]
@@ -482,13 +496,17 @@ class Environment:
                         f"cache {cache_id}: old slice drawn over a complete backstop"
                     )
 
+    def _max_attempts(self, cache_id: int) -> int:
+        """Reads of a key before the cache gives it up."""
+        return self.config.retry_max_attempts
+
     def _expected_lut(self, cache_id: int) -> dict[tuple[int, int], int]:
         """Design 5.8 as an oracle, from the registry columns directly."""
         reg = self.core.registry(cache_id)
         live = reg.state != DEAD
         visible = live & (reg.tier == _VISIBLE)
         done = (reg.state == _RESIDENT) | (
-            (reg.state == _FAILED) & (reg.attempts >= self.config.retry_max_attempts)
+            (reg.state == _FAILED) & (reg.attempts >= self._max_attempts(cache_id))
         )
         background_on = not done[visible].all()
         rows = np.flatnonzero(live & (reg.state == _RESIDENT)).tolist()
@@ -512,6 +530,10 @@ class Environment:
         return out
 
 
+#: What each parametrised run did, by seed, for the reach test.
+_RUN_STATS: dict[int, Counter[str]] = {}
+
+
 def _run(seed: int, steps: int, prefill: bool) -> Counter[str]:
     env = Environment(seed)
     if prefill:
@@ -528,7 +550,7 @@ def _run(seed: int, steps: int, prefill: bool) -> Counter[str]:
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
 def test_invariants_hold_on_random_traces(seed: int) -> None:
-    stats = _run(seed, STEPS, prefill=False)
+    stats = _RUN_STATS[seed] = _run(seed, STEPS, prefill=False)
     # The trace exercised the machinery, not just the happy path.
     assert stats["trace_commit"] > 0
     assert stats["pass"] > 0
@@ -536,17 +558,22 @@ def test_invariants_hold_on_random_traces(seed: int) -> None:
 
 @pytest.mark.parametrize("seed", [4, 5, 6, 7])
 def test_invariants_hold_from_a_full_atlas(seed: int) -> None:
-    stats = _run(seed, STEPS, prefill=True)
+    stats = _RUN_STATS[seed] = _run(seed, STEPS, prefill=True)
     assert stats["prefill_full"] > 0
     # From a full atlas, kept arrivals must evict to be placed (V1/V2).
     assert stats["trace_evict"] > 0
 
 
 def test_the_traces_reach_every_rule() -> None:
-    """Across seeds, every decision the invariants guard actually happens."""
+    """Across seeds, every decision the invariants guard actually happens.
+
+    Read off the parametrised runs above, which pytest runs first; a seed
+    they did not run here (a ``-k`` selection) is run now.
+    """
     total: Counter[str] = Counter()
     for seed in range(8):
-        total += _run(seed, 500, prefill=seed % 2 == 1)
+        stats = _RUN_STATS.get(seed)
+        total += stats if stats is not None else _run(seed, STEPS, seed >= 4)
     for kind in (
         "trace_evict",
         "trace_discard",

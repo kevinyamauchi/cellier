@@ -9,6 +9,7 @@ register one data store and fan a visual out to every panel.
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 from uuid import UUID
 
@@ -28,10 +29,12 @@ from cellier.scene.dims import (
 from cellier.scene.scene import Scene
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Mapping
     from pathlib import Path
 
     import numpy as np
 
+    from cellier._state import CameraState
     from cellier.convenience.gui._controls_config import (
         BaseControlsConfig,
         GraphControlsConfig,
@@ -48,6 +51,7 @@ if TYPE_CHECKING:
     from cellier.data.image._image_memory_store import ImageMemoryStore
     from cellier.data.label._label_memory_store import LabelMemoryStore
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
+    from cellier.data.mesh import MultiscaleMeshStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.events import (
@@ -85,8 +89,13 @@ if TYPE_CHECKING:
         MultiscaleLabelVisual,
     )
     from cellier.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
-    from cellier.visuals._loading import ProgressiveLoadingConfig
-    from cellier.visuals._mesh_memory import MeshAppearance, MeshVisual
+    from cellier.visuals._loading import GeometryLodConfig, ProgressiveLoadingConfig
+    from cellier.visuals._mesh_memory import (
+        MeshAppearance,
+        MeshSectionConfig,
+        MeshVisual,
+        MultiscaleMeshVisual,
+    )
     from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 
 _T = TypeVar("_T", bound="BaseDataStore")
@@ -808,11 +817,150 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         }
         if not midpoints:
             return
+        self.set_slice_positions(midpoints)
+
+    def set_slice_positions(
+        self, positions: Mapping[int, float], *, interactive: bool = False
+    ) -> None:
+        """Move the slice position of one or more world axes on every panel.
+
+        Once, through the dims controller, when the panels are linked.  By
+        default a **jump**: every visual loads in full at once.  With
+        ``interactive=True``, or inside :meth:`dims_interaction`, it is a
+        tick of a **scrub**; see ``CellierController.update_slice_indices``.
+
+        Parameters
+        ----------
+        positions : Mapping[int, float]
+            World axis index -> world position.  Other axes keep theirs.
+        interactive : bool
+            Whether the move is a tick of a scrub.
+        """
         if self.axis_sync_enabled:
-            self._dims_controller.set_slice_positions(midpoints)
+            self._dims_controller.set_slice_positions(
+                positions, interactive=interactive
+            )
             return
         for scene in self._scenes.values():
-            self._controller.update_slice_indices(scene.id, midpoints)
+            self._controller.update_slice_indices(
+                scene.id, positions, interactive=interactive
+            )
+
+    @contextmanager
+    def dims_interaction(self) -> Generator[None, None, None]:
+        """Scrub the dims of all four panels for the length of a ``with`` block.
+
+        Every slice-position move inside the block is a scrub tick on every
+        panel it changes, so a player loads coarse while it runs and in full
+        when the block exits::
+
+            with viewer.dims_interaction():
+                for t in range(n_frames):
+                    viewer.set_slice_positions({0: t})
+        """
+        with ExitStack() as stack:
+            for scene in self._scenes.values():
+                stack.enter_context(self._controller.dims_interaction(scene.id))
+            yield
+
+    # ------------------------------------------------------------------
+    # Camera control
+    # ------------------------------------------------------------------
+
+    def _panel_canvas(self, panel: str) -> UUID:
+        """The canvas of one panel."""
+        if panel not in _PANEL_KEYS:
+            raise ValueError(
+                f"Unknown panel {panel!r}. Expected one of {list(_PANEL_KEYS)}."
+            )
+        canvas_ids = self._controller.get_canvas_ids(self._scenes[panel].id)
+        if not canvas_ids:
+            raise ValueError(f"Panel {panel!r} has no canvas yet.")
+        return canvas_ids[0]
+
+    def get_camera_state(self, panel: str) -> CameraState:
+        """Return a snapshot of one panel's camera.
+
+        Parameters
+        ----------
+        panel : {"xy", "xz", "yz", "vol"}
+            The panel.
+
+        Raises
+        ------
+        ValueError
+            If *panel* is not a panel key, or the panel has no canvas yet.
+        """
+        return self._controller.get_camera_state(self._panel_canvas(panel))
+
+    def set_camera_state(
+        self, panel: str, state: CameraState, *, interactive: bool = False
+    ) -> None:
+        """Move one panel's camera to *state*.
+
+        The four cameras are independent.  By default a **jump**; with
+        ``interactive=True``, or inside :meth:`camera_interaction`, a tick of
+        a **motion**.  See ``CellierController.set_camera_state``.
+
+        Parameters
+        ----------
+        panel : {"xy", "xz", "yz", "vol"}
+            The panel.
+        state : CameraState
+            The state to apply; :meth:`get_camera_state` returns one.
+        interactive : bool
+            Whether the move is a tick of a motion.
+
+        Raises
+        ------
+        ValueError
+            If *panel* is not a panel key, the panel has no canvas yet, or
+            *state* is for the other kind of camera.
+        """
+        self._controller.set_camera_state(
+            self._panel_canvas(panel), state, interactive=interactive
+        )
+
+    def fit_camera(
+        self, panel: str | None = None, *, interactive: bool = False
+    ) -> None:
+        """Fit a panel's camera, or every panel's, to its scene.
+
+        Parameters
+        ----------
+        panel : {"xy", "xz", "yz", "vol"} or None
+            The panel to fit.  ``None`` (default) fits all four.
+        interactive : bool
+            Whether the move is a tick of a camera motion instead of a jump.
+
+        Raises
+        ------
+        ValueError
+            If *panel* is not a panel key.
+        """
+        if panel is not None and panel not in _PANEL_KEYS:
+            raise ValueError(
+                f"Unknown panel {panel!r}. Expected one of {list(_PANEL_KEYS)}."
+            )
+        for key in _PANEL_KEYS if panel is None else (panel,):
+            self._controller.fit_camera(self._scenes[key].id, interactive=interactive)
+
+    @contextmanager
+    def camera_interaction(self, panel: str) -> Generator[None, None, None]:
+        """Move one panel's camera as one motion for a ``with`` block.
+
+        Parameters
+        ----------
+        panel : {"xy", "xz", "yz", "vol"}
+            The panel whose camera moves.
+
+        Raises
+        ------
+        ValueError
+            If *panel* is not a panel key, or the panel has no canvas yet.
+        """
+        with self._controller.camera_interaction(self._panel_canvas(panel)):
+            yield
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -980,6 +1128,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         controls: MeshControlsConfig | None = None,
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
+        section: MeshSectionConfig | None = None,
     ) -> dict[str, MeshVisual]:
         """Add a mesh to every panel from a single data store.
 
@@ -1008,6 +1157,12 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
             MIP-family mode, included otherwise.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view: the outline and fill of its
+            cross-section, and whether the cut is the slice plane
+            (``mode="cut"``) or the scene's slab (``mode="slab"``).
+            ``None`` (default) is an outline and a fill of the cut.  Each
+            panel's visual gets its own copy.
 
         Returns
         -------
@@ -1023,6 +1178,75 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 transform,
                 outline=outline,
                 ambient_occlusion=ambient_occlusion,
+                section=None if section is None else section.model_copy(),
+            )
+        )
+        self._record_controls(visuals, controls, name)
+        return visuals
+
+    def add_multiscale_mesh(
+        self,
+        data: MultiscaleMeshStore | UUID,
+        appearance: MeshAppearance,
+        name: str = "mesh",
+        transform: BaseTransform | None = None,
+        controls: MeshControlsConfig | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        section: MeshSectionConfig | None = None,
+        lod: GeometryLodConfig | None = None,
+    ) -> dict[str, MultiscaleMeshVisual]:
+        """Add a mesh with levels of detail to every panel, from one store.
+
+        Each panel keeps two levels loaded, the finest and one coarse level.
+        The three 2D panels draw the cross-section of the level; the 3D
+        panel draws the surface.  A dims scrub loads the coarse level only
+        until it ends, and the 3D panel draws the coarse level while its
+        camera moves.
+
+        Parameters
+        ----------
+        data : MultiscaleMeshStore or UUID
+            The mesh's levels, finest first, or the UUID of an
+            already-registered store.
+        appearance : MeshFlatAppearance, MeshPhongAppearance,
+            Appearance parameters, shared by both levels.
+        name : str
+            Base label; each panel's visual is named ``f"{name}_{key}"``.
+        transform : BaseTransform or None
+            Data-to-world transform.  Defaults to identity when ``None``.
+        controls : MeshControlsConfig or None
+            Appearance controls configuration; see :meth:`add_mesh`.
+        outline : VisualOutline or None
+            Screen-space outline assignment; see :meth:`add_mesh`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion; see
+            :meth:`add_mesh`.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view; see :meth:`add_mesh`.  Each
+            panel's visual gets its own copy.
+        lod : GeometryLodConfig or None
+            Which coarse level is kept (the coarsest by default), what a
+            dims scrub loads and draws, and what a moving camera draws.  The
+            same for every panel; change it later with
+            :meth:`set_lod_config`.
+
+        Returns
+        -------
+        dict[str, MultiscaleMeshVisual]
+        """
+        store = self._resolve_data_store(data)
+        visuals = self._fan_out(
+            lambda key, scene: self._controller.add_multiscale_mesh(
+                store,
+                scene.id,
+                appearance,
+                f"{name}_{key}",
+                transform,
+                outline=outline,
+                ambient_occlusion=ambient_occlusion,
+                section=None if section is None else section.model_copy(),
+                lod=lod,
             )
         )
         self._record_controls(visuals, controls, name)
@@ -1540,6 +1764,35 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         result = self._controller.set_loading_config(group[0], **fields)
         for vid in group[1:]:
             self._controller.set_loading_config(vid, **fields)
+        return result
+
+    def set_lod_config(self, visual: object, **fields: Any) -> GeometryLodConfig:
+        """Change the level-of-detail settings of every panel of a mesh.
+
+        Mirrors :meth:`CellierController.set_lod_config`, applied to each
+        panel.  The merged config is validated before any panel changes, so
+        an invalid value raises and changes nothing.
+
+        Parameters
+        ----------
+        visual : UUID, visual model, or dict
+            Any panel's multiscale mesh, or the dict
+            :meth:`add_multiscale_mesh` returned.
+        **fields :
+            ``GeometryLodConfig`` fields, e.g. ``camera_motion="full"``.
+            ``coarse_level`` cannot be changed.
+
+        Returns
+        -------
+        GeometryLodConfig
+            The first panel's config after the call.
+        """
+        group = self.image_group(visual)
+        # The first write validates; the rest cannot fail differently, since
+        # the panels are kept equal.
+        result = self._controller.set_lod_config(group[0], **fields)
+        for vid in group[1:]:
+            self._controller.set_lod_config(vid, **fields)
         return result
 
     def set_image_composite(self, visual: object, composite: bool) -> None:

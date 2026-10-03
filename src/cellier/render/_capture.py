@@ -183,9 +183,11 @@ def capture_scene(
         gui="offscreen",
         size=(width, height),
     )
+    # A screenshot shows the finest level, also in the middle of a scrub.
+    canvas_view.is_capture = True
     # Deliberately no event bus: a capture is an observer, and a canvas that
     # emits would push CameraChangedEvent onto the bus, which the controller
-    # answers with a settle reslice.  Taking a screenshot must not reload the
+    # answers with a camera reslice.  Taking a screenshot must not reload the
     # scene under the window the user is looking at.
     try:
         _seed_camera(canvas_view, seed, render_manager, scene_id)

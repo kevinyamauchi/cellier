@@ -12,6 +12,7 @@ from psygnal import Signal
 
 from cellier.events import (
     DimsChangedEvent,
+    DimsInteractionUpdateEvent,
     DimsUpdateEvent,
     SliderAxesChangedEvent,
     SubscriptionSpec,
@@ -22,7 +23,7 @@ from cellier.gui._axis_values import (
     nearest_value_index,
 )
 from cellier.gui._constants import DIMS_SLIDER_THROTTLE_MS
-from cellier.gui._dims import initial_slice_indices
+from cellier.gui._dims import initial_slice_indices, thickness_axes
 from cellier.gui.anywidget._teardown import close_aux_widgets
 
 if TYPE_CHECKING:
@@ -78,6 +79,16 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     ``SliderAxesChangedEvent``.
     """
 
+    thickness = traitlets.Dict().tag(sync=True)
+    """Axis index (str) to that axis's half-thickness, in world units.
+
+    One entry per axis that has a thickness box; 0 is a plane.  The scene's
+    thickness is the only thickness in the slicing path.
+    """
+
+    thickness_axes = traitlets.List().tag(sync=True)
+    """World axes whose slider row gets a "+/-" half-thickness box."""
+
     throttle_ms = traitlets.Int(DIMS_SLIDER_THROTTLE_MS).tag(sync=True)
     """How often a slider drag reaches the bus, in ms.
 
@@ -91,6 +102,11 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     # Incremented by the JS click handler; observed on the Python side.
     _clicks = traitlets.Int(0).tag(sync=True)
 
+    # Whether this panel holds a dims interaction scope: a slider is pressed
+    # in the browser.  A class default, because ``close`` reads it and
+    # ipywidgets closes a widget whose ``__init__`` raised.
+    _scope_open = False
+
     def __init__(
         self,
         *,
@@ -100,6 +116,8 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         slice_indices: dict,
         displayed_axes: list | tuple = (),
         slider_axes: list | tuple | None = None,
+        thickness_axes: list | tuple | None = None,
+        thickness: Mapping[int, float] | None = None,
         axes_2d: tuple[int, ...] | None = None,
         axes_3d: tuple[int, ...] | None = None,
         **kwargs,
@@ -108,7 +126,16 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         is_3d = len(displayed_axes) == 3
         coerced = coerce_axis_values(axis_values)
         slices = {str(k): float(v) for k, v in slice_indices.items()}
+        # ``None`` gives every axis a box, as a panel built by hand expects.
+        boxed = (
+            [int(a) for a in coerced]
+            if thickness_axes is None
+            else [int(a) for a in thickness_axes if int(a) in coerced]
+        )
+        given = {int(k): float(v) for k, v in (thickness or {}).items()}
         super().__init__(
+            thickness={str(a): given.get(a, 0.0) for a in boxed},
+            thickness_axes=boxed,
             slice_indices=slices,
             axis_labels={str(k): str(v) for k, v in axis_labels.items()},
             axis_values={
@@ -132,7 +159,9 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         self._model_displayed_during_toggle: tuple[int, ...] | None = None
 
         self.observe(self._on_slice_indices, names="slice_indices")
+        self.observe(self._on_thickness, names="thickness")
         self.observe(self._on_toggle_click, names="_clicks")
+        self.on_msg(self._on_custom_message)
 
     @classmethod
     def from_scene(
@@ -175,6 +204,8 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
             slice_indices=initial_slice_indices(selection, axis_values),
             displayed_axes=getattr(selection, "displayed_axes", ()),
             slider_axes=scene.slider_axes,
+            thickness_axes=thickness_axes(scene),
+            thickness=getattr(selection, "thickness", None),
             axes_2d=axes_2d,
             axes_3d=axes_3d,
         )
@@ -206,6 +237,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
         process-global table that only ``close()`` clears.
         """
+        self._end_scope()
         self.closed.emit()
         close_aux_widgets(self)
         super().close()
@@ -226,6 +258,14 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
             for axis, value in event.slice_indices.items():
                 new_slices[str(axis)] = float(value)
             self._set_field("slice_indices", new_slices)
+            model_thickness = getattr(selection, "thickness", None) or {}
+            self._set_field(
+                "thickness",
+                {
+                    str(axis): float(model_thickness.get(int(axis), 0.0))
+                    for axis in self.thickness_axes
+                },
+            )
         # The displayed axes are applied even from our own echo: the event is
         # the model's state, and applying it twice is harmless.
         self._apply_displayed(tuple(selection.displayed_axes))
@@ -272,6 +312,81 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
                 scene_id=self._scene_id,
                 slice_indices=updates,
                 displayed_axes=None,
+                # A slider move is a scrub tick (interaction tracker 4.8).
+                interactive=True,
+            )
+        )
+
+    def _on_thickness(self, change) -> None:
+        """Submit the half-thicknesses a box in the browser changed."""
+        if self._applying:
+            return
+        old = change.get("old") or {}
+        # Only the axes that changed: the controller merges.
+        updates = {
+            int(axis): float(value)
+            for axis, value in (change.get("new") or {}).items()
+            if axis not in old or float(old[axis]) != float(value)
+        }
+        if not updates:
+            return
+        self.changed.emit(
+            DimsUpdateEvent(
+                source_id=self._id,
+                scene_id=self._scene_id,
+                slice_indices=None,
+                displayed_axes=None,
+                thickness=updates,
+            )
+        )
+
+    def _on_custom_message(self, _widget, content, _buffers) -> None:
+        """Handle the slider press and release messages from the browser.
+
+        ``{"type": "interaction", "phase": "begin"}`` opens this panel's dims
+        interaction scope.  ``{"type": "interaction", "phase": "end",
+        "slice_indices": {...}}`` applies the final position and then closes
+        it, so the scrub ends, and plans in full, on that position.
+
+        The end message carries the position because a custom message can
+        overtake the ``slice_indices`` sync sent before it.  The sync that
+        arrives afterwards finds the position already applied and moves
+        nothing.  A ``begin`` that arrives after the first ticks is harmless:
+        slider ticks are interactive with or without a scope.
+        """
+        if not isinstance(content, dict) or content.get("type") != "interaction":
+            return
+        phase = content.get("phase")
+        if phase == "begin":
+            self._begin_scope()
+        elif phase == "end":
+            final = {
+                str(axis): float(value)
+                for axis, value in (content.get("slice_indices") or {}).items()
+            }
+            if final:
+                # Through the trait, so the observer submits what moved as an
+                # interactive tick and the browser's model agrees.
+                self.slice_indices = {**self.slice_indices, **final}
+            self._end_scope()
+
+    def _begin_scope(self) -> None:
+        if self._scope_open:
+            return
+        self._scope_open = True
+        self.changed.emit(
+            DimsInteractionUpdateEvent(
+                source_id=self._id, scene_id=self._scene_id, phase="begin"
+            )
+        )
+
+    def _end_scope(self) -> None:
+        if not self._scope_open:
+            return
+        self._scope_open = False
+        self.changed.emit(
+            DimsInteractionUpdateEvent(
+                source_id=self._id, scene_id=self._scene_id, phase="end"
             )
         )
 

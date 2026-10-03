@@ -15,6 +15,7 @@ from cellier.events._events import (
     CanvasConnectedEvent,
     CanvasSizeChangedEvent,
     FrameRenderedEvent,
+    _CameraControllerEvent,
 )
 from cellier.logging import _CAMERA_LOGGER
 from cellier.render._cellier_blender import (
@@ -76,6 +77,21 @@ class CanvasView:
     ``CameraState`` snapshot each frame in ``_draw_frame``.  The
     ``_applying_model_state`` flag suppresses detection during
     programmatic camera updates to prevent feedback loops.
+
+    The view drives its pygfx camera controllers itself
+    (``auto_update=False``): each frame it ticks the active controller and
+    applies the state it returns, **before** the comparison.  A moved camera
+    is therefore detected in the frame that draws it, and whether the
+    controller is still driving the camera (a drag held, its damped tail, a
+    wheel or key animation) is known through public pygfx API.  Changes of
+    that answer are reported as ``_CameraControllerEvent``.
+
+    Attributes
+    ----------
+    camera_moving : bool
+        Whether this canvas's camera is in motion, set by the controller's
+        camera tracker through ``RenderManager.set_camera_moving``.  Read by
+        per-frame draw choices (a visual that draws coarse during motion).
 
     Parameters
     ----------
@@ -139,6 +155,16 @@ class CanvasView:
         self._accum_dirty: bool = False
         self._tick_visuals_fn: Callable[[], None] | None = None
         self._closed: bool = False
+        # Whether the active camera controller had a running action in the
+        # last frame drawn; see ``_draw_frame``.
+        self._driving: bool = False
+        self.camera_moving: bool = False
+        # A capture canvas (a screenshot): it draws the finest level whatever
+        # the scene's interaction state.
+        self.is_capture: bool = False
+        # True for the length of ``_draw_frame``: planning must not run
+        # inside a draw, so the controller queues reslices it detects there.
+        self._drawing: bool = False
         self._resize_filter: object | None = None
 
         self._fov = fov
@@ -191,12 +217,24 @@ class CanvasView:
         # Both camera/controller pairs are created upfront so toggling only
         # requires enabling/disabling — no construction or destruction.
         self._camera_3d = gfx.PerspectiveCamera(fov, 16 / 9, depth_range=depth_range)
+        # ``auto_update=False``: the controllers still turn input into
+        # actions, but ``_draw_frame`` ticks them and applies the camera
+        # state, and ``_on_controller_input`` requests the draws.
         self._controller_3d = gfx.OrbitController(
-            camera=self._camera_3d, register_events=self._renderer
+            camera=self._camera_3d, register_events=self._renderer, auto_update=False
         )
         self._camera_2d = gfx.OrthographicCamera(maintain_aspect=True)
         self._controller_2d = gfx.PanZoomController(
-            camera=self._camera_2d, register_events=self._renderer
+            camera=self._camera_2d, register_events=self._renderer, auto_update=False
+        )
+        self._renderer.add_event_handler(
+            self._on_controller_input,
+            "pointer_down",
+            "pointer_up",
+            "pointer_move",
+            "wheel",
+            "key_down",
+            "key_up",
         )
 
         # Activate the initial dim; disable the other controller.
@@ -250,6 +288,11 @@ class CanvasView:
 
         self._last_camera_state: CameraState = self.capture_camera_state()
         self._overlays: list[GFXCanvasOverlay] = []
+        # A hold on drawing (see ``hold_draws``): how long, its test, and
+        # the deadline set by the first frame skipped.
+        self._hold_seconds: float = 0.0
+        self._hold_waiting: Callable[[], bool] | None = None
+        self._hold_deadline: float | None = None
         self._canvas.request_draw(self._draw_frame)
 
     def _create_canvas(
@@ -739,29 +782,91 @@ class CanvasView:
         self.invalidate_accumulation()
         self._canvas.request_draw(self._draw_frame)
 
-    def apply_camera_state(self, request: ReslicingRequest) -> None:
-        """Apply a camera snapshot from the model layer (programmatic move).
+    def request_frame(self) -> None:
+        """Ask the canvas for a frame without discarding accumulation.
 
-        The ``_applying_model_state`` guard prevents the resulting camera
-        setter calls from firing ``_on_controller_event``, which would
-        otherwise cause a feedback loop: model change -> apply to pygfx ->
-        controller event -> model change -> ...
+        For a frame whose content did not change: the next step of a camera
+        controller's animation, or the still picture after a camera motion
+        ended.  :meth:`request_draw` is the one for content changes.
+        """
+        if not self._closed:
+            self._canvas.request_draw()
+
+    def _on_controller_input(self, event) -> None:
+        """Request a frame for input the camera controller will act on.
+
+        With ``auto_update=False`` pygfx no longer requests draws for input.
+        A hover (a move with no button held) drives nothing, so it draws
+        nothing.  Only matters on an on-demand canvas; the Qt and anywidget
+        canvases draw continuously.
+        """
+        if not self._controller.enabled:
+            return
+        if event.type == "pointer_move" and not event.buttons:
+            return
+        # The camera is about to move: draw it now, whatever is loading.
+        self.release_hold()
+        self.request_frame()
+
+    def accept_camera_state(self) -> bool:
+        """Take the camera's current state as the one already reported.
+
+        Call after moving the pygfx camera programmatically.  The next draw
+        then sees no difference, so the move is not mistaken for camera
+        motion; the caller reports it instead.  The accumulation history is
+        discarded, because the camera really did move.
+
+        Returns
+        -------
+        bool
+            ``True`` if the camera differs from the last reported state.
+            ``False`` if nothing moved, in which case nothing is changed.
+        """
+        current = self.capture_camera_state()
+        if current == self._last_camera_state:
+            return False
+        self._last_camera_state = current
+        self.invalidate_accumulation()
+        return True
+
+    @property
+    def last_camera_state(self) -> CameraState:
+        """The camera state most recently reported or accepted."""
+        return self._last_camera_state
+
+    def set_camera_state(self, state: CameraState) -> None:
+        """Apply a ``CameraState`` to the active pygfx camera.
+
+        Only the fields of the active camera's kind are applied: a
+        perspective camera takes ``fov``, an orthographic one ``extent``.
+        ``up`` is not applied: it is the up direction the rotation already
+        gives.  The caller reports the move; see :meth:`accept_camera_state`.
 
         Parameters
         ----------
-        request : ReslicingRequest
-            Camera snapshot to apply.
+        state : CameraState
+            The state to apply.
+
+        Raises
+        ------
+        ValueError
+            If *state* is for the other kind of camera than the active one.
         """
-        self._applying_model_state = True
-        try:
-            self._camera.world.position = tuple(request.camera_pos)
-        finally:
-            self._applying_model_state = False
-        # Caching the new state suppresses the diff in ``_draw_frame``, which
-        # is what stops the feedback loop -- but the camera really did move,
-        # so the history has to be discarded here instead.
-        self._last_camera_state = self.capture_camera_state()
-        self.invalidate_accumulation()
+        expected = "orthographic" if self._dim == "2d" else "perspective"
+        if state.camera_type != expected:
+            raise ValueError(
+                f"Cannot apply a {state.camera_type!r} camera state to a "
+                f"canvas showing {self._dim}: its camera is {expected}."
+            )
+        camera = self._camera
+        if self._dim == "2d":
+            camera.width, camera.height = state.extent
+        else:
+            camera.fov = state.fov
+        camera.world.position = state.position
+        camera.world.rotation = state.rotation
+        camera.zoom = state.zoom
+        camera.depth_range = state.depth_range
 
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
@@ -942,18 +1047,81 @@ class CanvasView:
                 depth_range=depth_range,
             )
 
+    def hold_draws(self, seconds: float, waiting: Callable[[], bool]) -> None:
+        """Let the next frames be skipped while *waiting* is true.
+
+        A frame that comes while *waiting* returns ``True`` is not rendered,
+        so the canvas keeps showing what it last drew.  The first frame
+        skipped starts the clock: frames are skipped for at most *seconds*
+        from it, then one is drawn whatever *waiting* says.  The hold ends
+        with the first frame drawn, or on camera input.  Asking again while
+        frames are being skipped does not restart the clock, so no frame is
+        delayed by more than *seconds*.
+
+        Parameters
+        ----------
+        seconds : float
+            The longest a frame is delayed; 0 or less does nothing.
+        waiting : Callable[[], bool]
+            Whether there is still something to wait for.
+        """
+        if seconds <= 0.0:
+            return
+        self._hold_seconds = seconds
+        self._hold_waiting = waiting
+
+    def release_hold(self) -> None:
+        """End a hold: the next frame is drawn."""
+        self._hold_seconds = 0.0
+        self._hold_waiting = None
+        self._hold_deadline = None
+
+    def _holding(self) -> bool:
+        if self._hold_waiting is None:
+            return False
+        now = time.perf_counter()
+        if self._hold_deadline is None:
+            self._hold_deadline = now + self._hold_seconds
+        if now < self._hold_deadline and self._hold_waiting():
+            return True
+        self.release_hold()
+        return False
+
     def _draw_frame(self) -> None:
         # A draw already queued with the backend can still arrive after close();
         # rendering it would touch a released surface.
         if self._closed:
             return
+        if self._holding():
+            # Nothing is rendered, so the canvas keeps its last picture.
+            # An on-demand canvas needs asking for the frame that ends this.
+            self._canvas.request_draw()
+            return
+        self._drawing = True
+        try:
+            self._draw_frame_inner()
+        finally:
+            self._drawing = False
 
+    def _draw_frame_inner(self) -> None:
         # Content changed since the last frame: the history is of a picture
         # that no longer applies.  Ahead of the render, so the stale blend
         # never lands even once.
         if self._accum_dirty:
             self._accum_dirty = False
             self._accum_pass.reset()
+
+        # Drive the camera controller.  ``tick`` returns the camera state
+        # while the controller has a running action and ``None`` otherwise;
+        # with ``auto_update=False`` it does not apply the state, so that is
+        # done here.  Ahead of the comparison below, so the change is seen in
+        # the frame that draws it.  Each driven frame asks for the next, as
+        # pygfx does when it drives.
+        controller_state = self._controller.tick() if self._controller.enabled else None
+        driving = controller_state is not None
+        if driving:
+            self._camera.set_state(controller_state)
+            self.request_frame()
 
         # Detect camera changes by comparing against the cached state.
         current_state = self.capture_camera_state()
@@ -979,8 +1147,23 @@ class CanvasView:
                     source_id=self._canvas_id,
                     scene_id=self._scene_id,
                     camera_state=current_state,
+                    interactive=True,
                 )
             )
+
+        # After the change above, so the last camera change of a motion
+        # re-arms the stillness timer before the controller's scope closes.
+        if driving != self._driving:
+            self._driving = driving
+            if self._event_bus is not None:
+                self._event_bus.emit(
+                    _CameraControllerEvent(
+                        source_id=self._canvas_id,
+                        canvas_id=self._canvas_id,
+                        scene_id=self._scene_id,
+                        driving=driving,
+                    )
+                )
 
         if self._tick_visuals_fn is not None:
             self._tick_visuals_fn()

@@ -16,6 +16,17 @@ function render({ model, el }) {
   // throttle and sending every value of a drag to the slicer.
   const THROTTLE_MS = model.get("throttle_ms") ?? 50;
 
+  // Signed step_size multiples a key moves a continuous slider.
+  const PAGE_STEPS = 10;
+  const KEY_STEPS = {
+    ArrowRight: 1,
+    ArrowUp: 1,
+    ArrowLeft: -1,
+    ArrowDown: -1,
+    PageUp: PAGE_STEPS,
+    PageDown: -PAGE_STEPS,
+  };
+
   let guard = false;
 
   const dimsContainer = document.createElement("div");
@@ -36,7 +47,7 @@ function render({ model, el }) {
     toggleButton.textContent = model.get("label");
   }
 
-  let rows = {}; // axis(str) -> { row, input, readout, spec, dragging }
+  let rows = {}; // axis(str) -> { row, input, readout, spec, dragging, thickness }
 
   // Datalist ids must be unique within the tree the input lives in (the page,
   // or marimo's shadow root), and two dims panels can share one.
@@ -64,6 +75,80 @@ function render({ model, el }) {
     current[axis] = Number(value);
     model.set("slice_indices", current);
     model.save_changes();
+  }
+
+  // A half-thickness box: world units, minimum 0, where 0 is a plane.  The
+  // scene's thickness is the only thickness in the slicing path, so this is
+  // how much depth every visual shows along the axis.  Submitted on "change"
+  // (Enter, blur or a spinner step), not on every keystroke.
+  function submitThickness(axis, value) {
+    if (guard) return;
+    const number = Math.max(0, Number(value));
+    if (!Number.isFinite(number)) return;
+    const current = { ...(model.get("thickness") || {}) };
+    current[axis] = number;
+    model.set("thickness", current);
+    model.save_changes();
+  }
+
+  function buildThickness(axis, spec, entry, row) {
+    const boxed = (model.get("thickness_axes") || []).map(String);
+    if (!boxed.includes(String(axis))) return;
+    const sign = document.createElement("span");
+    sign.className = "cellier-dim-thickness-sign";
+    sign.textContent = "+/-";
+    const box = document.createElement("input");
+    box.type = "number";
+    box.className = "cellier-dim-thickness";
+    box.min = 0;
+    box.step = spec.kind === "discrete" ? 1 : spec.step_size;
+    box.title =
+      "Half-thickness of the slice along this axis, in world units. 0 is a plane.";
+    const current = (model.get("thickness") || {})[axis];
+    box.value = current !== undefined ? current : 0;
+    box.addEventListener("change", () => {
+      if (!(Number(box.value) >= 0)) box.value = 0;
+      submitThickness(axis, box.value);
+    });
+    row.appendChild(sign);
+    row.appendChild(box);
+    entry.thickness = box;
+  }
+
+  // A dims interaction scope, held while a slider is pressed, so the scrub
+  // ends on release instead of waiting for stillness.  One at a time: a user
+  // presses one slider.
+  //
+  // The end message CARRIES the final position.  It cannot rely on the
+  // slice_indices write that precedes it: a custom message can overtake a
+  // traitlet sync (in Jupyter while the kernel is busy, in marimo always),
+  // and Python would then end the scrub on a position the slider has left.
+  let scope = null; // { axis, value: () => world value, entry }
+
+  function beginScope(axis, entry, value) {
+    if (scope !== null) endScope();
+    scope = { axis, entry, value };
+    model.send({ type: "interaction", phase: "begin" });
+    // On the window, not the input: the pointer is often released off the
+    // slider, and a press with no move fires no "change".
+    window.addEventListener("pointerup", endScope, true);
+    window.addEventListener("pointercancel", endScope, true);
+  }
+
+  function endScope() {
+    if (scope === null) return;
+    const { axis, entry, value } = scope;
+    scope = null;
+    window.removeEventListener("pointerup", endScope, true);
+    window.removeEventListener("pointercancel", endScope, true);
+    entry.dragging = false;
+    // What the throttle still holds is superseded by the final position.
+    pending = null;
+    model.send({
+      type: "interaction",
+      phase: "end",
+      slice_indices: { [axis]: Number(value()) },
+    });
   }
 
   function scheduleSubmit(axis, value) {
@@ -142,6 +227,7 @@ function render({ model, el }) {
         // drag; applying them would pull the handle backwards mid-gesture.
         input.addEventListener("pointerdown", () => {
           entry.dragging = true;
+          beginScope(axis, entry, () => spec.values[Number(input.value)]);
         });
         input.addEventListener("pointercancel", () => {
           entry.dragging = false;
@@ -154,6 +240,7 @@ function render({ model, el }) {
         input.addEventListener("change", () => {
           entry.dragging = false;
           pending = null;
+          endScope(); // if the release did not already
           submit(axis, spec.values[Number(input.value)]);
         });
       } else {
@@ -166,7 +253,25 @@ function render({ model, el }) {
         input.value = slices[axis] !== undefined ? slices[axis] : spec.min;
         readout.textContent = formatPosition(input.value, spec.decimals);
 
+        input.addEventListener("pointerdown", () => {
+          beginScope(axis, entry, () => input.value);
+        });
         input.addEventListener("input", () => {
+          readout.textContent = formatPosition(input.value, spec.decimals);
+          scheduleSubmit(axis, input.value); // live, throttled
+        });
+        // With step "any" the browser picks its own keyboard step, so the
+        // arrow and page keys are handled here: one step_size per arrow,
+        // PAGE_STEPS of them per page key (the Qt panel's steps too).  Home
+        // and End keep the browser's jump to the ends.
+        input.addEventListener("keydown", (event) => {
+          const steps = KEY_STEPS[event.key];
+          if (steps === undefined) return;
+          event.preventDefault();
+          const target = Number(input.value) + steps * spec.step_size;
+          const clamped = Math.min(spec.max, Math.max(spec.min, target));
+          if (clamped === Number(input.value)) return;
+          input.value = clamped;
           readout.textContent = formatPosition(input.value, spec.decimals);
           scheduleSubmit(axis, input.value); // live, throttled
         });
@@ -174,6 +279,7 @@ function render({ model, el }) {
           // Final flush on release so the last position always lands even if
           // it arrived between throttle ticks.
           pending = null;
+          endScope(); // if the release did not already
           submit(axis, input.value);
         });
       }
@@ -181,6 +287,7 @@ function render({ model, el }) {
       row.appendChild(label);
       row.appendChild(input);
       row.appendChild(readout);
+      buildThickness(axis, spec, entry, row);
       dimsContainer.appendChild(row);
       rows[axis] = entry;
     }
@@ -220,6 +327,22 @@ function render({ model, el }) {
     }
   }
 
+  function syncThickness() {
+    guard = true;
+    try {
+      const thickness = model.get("thickness") || {};
+      for (const axis of Object.keys(rows)) {
+        const box = rows[axis].thickness;
+        if (!box || document.activeElement === box) continue;
+        if (Object.prototype.hasOwnProperty.call(thickness, axis)) {
+          box.value = thickness[axis];
+        }
+      }
+    } finally {
+      guard = false;
+    }
+  }
+
   function syncDiscrete() {
     guard = true;
     try {
@@ -243,6 +366,8 @@ function render({ model, el }) {
   model.on("change:axis_labels", build);
   model.on("change:slice_indices", syncValues);
   model.on("change:discrete_index", syncDiscrete);
+  model.on("change:thickness", syncThickness);
+  model.on("change:thickness_axes", build);
   model.on("change:displayed_axes", updateVisibility);
   model.on("change:slider_axes", updateVisibility);
   model.on("change:label", updateToggle);

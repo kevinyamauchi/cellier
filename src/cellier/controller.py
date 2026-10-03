@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
+from cellier._interaction_driver import _InteractionDriver
 from cellier.data._axes import (
     data_axes_from_world,
     default_data_to_world,
@@ -32,6 +33,7 @@ from cellier.events import (
     BackgroundUpdateEvent,
     BackstopCompleteEvent,
     CameraChangedEvent,
+    CameraInteractionEvent,
     CanvasAddedEvent,
     CanvasConnectedEvent,
     CanvasSizeChangedEvent,
@@ -40,6 +42,8 @@ from cellier.events import (
     DataStoreContentsChangedEvent,
     DataStoreMetadataChangedEvent,
     DimsChangedEvent,
+    DimsInteractionEvent,
+    DimsInteractionUpdateEvent,
     DimsUpdateEvent,
     EventBus,
     FrameRenderedEvent,
@@ -48,6 +52,10 @@ from cellier.events import (
     LoadingConfigChangedEvent,
     LoadingConfigUpdateEvent,
     LoadingProgress,
+    LodConfigChangedEvent,
+    LodConfigUpdateEvent,
+    MeshSectionChangedEvent,
+    MeshSectionUpdateEvent,
     OverlayChangedEvent,
     OverlayUpdateEvent,
     PickWriteChangedEvent,
@@ -94,6 +102,7 @@ from cellier.events._events import (
     MeshPickInfo,
     PointsPickEvent,
     PointsPickInfo,
+    _CameraControllerEvent,
     _CanvasRawPointerEvent,
 )
 from cellier.logging import (
@@ -124,7 +133,7 @@ from cellier.render.visuals._image_memory import GFXImageMemoryVisual
 from cellier.render.visuals._label_memory import GFXLabelMemoryVisual
 from cellier.render.visuals._label_multiscale import GFXMultiscaleLabelVisual
 from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
-from cellier.render.visuals._mesh_memory import GFXMeshMemoryVisual
+from cellier.render.visuals._mesh import GFXMeshVisual
 from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
 from cellier.render.visuals._scene_overlay import GFXSceneBoundingBox
 from cellier.scene._background import BackgroundAppearance
@@ -191,11 +200,15 @@ from cellier.visuals._labels import (
     MultiscaleLabelVisual,
 )
 from cellier.visuals._lines_memory import LinesMemoryAppearance, LinesVisual
-from cellier.visuals._loading import ProgressiveLoadingConfig
+from cellier.visuals._loading import GeometryLodConfig, ProgressiveLoadingConfig
 from cellier.visuals._mesh_memory import (
+    SECTION_RESLICE_FIELDS,
+    BaseMeshVisual,
     MeshAppearance,
     MeshPhongAppearance,
+    MeshSectionConfig,
     MeshVisual,
+    MultiscaleMeshVisual,
 )
 from cellier.visuals._points_memory import PointsMarkerAppearance, PointsVisual
 from cellier.visuals._scene_overlay import SceneBoundingBox, SceneOverlay
@@ -207,6 +220,7 @@ if TYPE_CHECKING:
     from psygnal import EmissionInfo
     from PySide6.QtWidgets import QWidget
 
+    from cellier._interaction import Transition
     from cellier._state import CameraState, DimsState
     from cellier.data._base_data_store import BaseDataStore
     from cellier.data._changes import StoreChange
@@ -215,6 +229,7 @@ if TYPE_CHECKING:
     from cellier.data.label._label_memory_store import LabelMemoryStore
     from cellier.data.lines._lines_memory_store import LinesMemoryStore
     from cellier.data.mesh._mesh_memory_store import MeshMemoryStore
+    from cellier.data.mesh._mesh_multiscale_store import MultiscaleMeshStore
     from cellier.data.points._points_memory_store import PointsMemoryStore
     from cellier.gui._protocol import WidgetView
     from cellier.render._config import RenderManagerConfig
@@ -228,7 +243,12 @@ if TYPE_CHECKING:
 _RESLICE_FIELDS: frozenset[str] = frozenset({"lod_bias", "force_level", "frustum_cull"})
 
 #: Visuals that load nothing while they draw nothing; showing one reslices it.
-_SKIP_WHEN_HIDDEN = (BaseImageVisual,)
+#: The scheduled ones are retired while hidden: their reads stop.
+_SKIP_WHEN_HIDDEN = (BaseImageVisual, BaseMeshVisual)
+
+#: Visuals the chunk scheduler loads.  A ``"contents"`` store change needs no
+#: new plan for them: invalidation already requeued what they want.
+_SCHEDULED_VISUALS = (MultiscaleImageVisual, MultiscaleLabelVisual, BaseMeshVisual)
 
 
 #: The pick event for each render-layer pick detail that is complete as
@@ -324,8 +344,9 @@ def _visual_render_config(visual: BaseVisual) -> VisualRenderConfig:
     VisualRenderConfig
         LOD settings from a multiscale visual's appearance, its backstop
         settings (``render_config.loading``), and
-        ``slicing_enabled=False`` for an image visual that draws nothing:
-        hidden, or composite with no drawn channel (unified image design 3.3).
+        ``slicing_enabled=False`` for an image or mesh visual that draws
+        nothing: hidden, or a composite image with no drawn channel (unified
+        image design 3.3).
     """
     slicing_enabled = not (
         isinstance(visual, _SKIP_WHEN_HIDDEN) and visual.draws_nothing()
@@ -346,6 +367,11 @@ def _visual_render_config(visual: BaseVisual) -> VisualRenderConfig:
 # Default None means the bridge falls back to the controller's own ID.
 _source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
     "_source_id_override", default=None
+)
+
+# Parallel context variable for update_section_field / _make_section_handler.
+_section_source_id_override: contextvars.ContextVar[UUID | None] = (
+    contextvars.ContextVar("_section_source_id_override", default=None)
 )
 
 # Parallel context variable for update_aabb_field / _make_aabb_handler.
@@ -413,6 +439,12 @@ class _OverlayEntry:
 # ``LoadingConfigChangedEvent`` (``set_loading_config``).
 _loading_source_id_override: contextvars.ContextVar[UUID | None] = (
     contextvars.ContextVar("_loading_source_id_override", default=None)
+)
+
+# Parallel context variable for ``visual.lod`` changes, stamped on
+# ``LodConfigChangedEvent`` (``set_lod_config``).
+_lod_source_id_override: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
+    "_lod_source_id_override", default=None
 )
 
 # Parallel context variable for the per-visual render settings (outline slot
@@ -769,12 +801,36 @@ class CellierController:
         self._canvases_awaiting_fit: set[UUID] = set()
         # render_modes registered per scene (determines which nodes visuals build)
         self._scene_render_modes: dict[UUID, set[Literal["2d", "3d"]]] = {}
-        # Camera settle
-        self._settle_tasks: dict[UUID, asyncio.Task] = {}
-        # Dims settle, per scene: the pending task and the visuals that
-        # ticked backstop-only since the last settle (design v3 5.10).
-        self._dims_settle_tasks: dict[UUID, asyncio.Task] = {}
-        self._dims_settle_pending: dict[UUID, set[UUID]] = {}
+        # Camera motion, one tracker per canvas (interaction tracker design
+        # 4.5, 4.6).
+        self._camera_driver = _InteractionDriver(
+            lambda: self._render_manager.config.camera.settle_threshold_s,
+            self._on_camera_transition,
+        )
+        # Camera reslices detected inside a draw or a commit round, where
+        # planning must not run: one task per scene on the loop, or, with no
+        # loop, scenes resliced when the frame being drawn has rendered.
+        self._camera_reslice_tasks: dict[UUID, asyncio.Task] = {}
+        self._camera_reslices_after_draw: list[UUID] = []
+        # Per scene: camera-sensitive visuals a scrub left planned coarse
+        # because a camera of the scene was moving when it ended.  That
+        # camera's end plans them in full.
+        self._camera_handoff: dict[UUID, set[UUID]] = {}
+        # True while this controller emits the ``CameraChangedEvent`` of a
+        # programmatic move, which it has already acted on.
+        self._announcing_camera_move: bool = False
+        # Dims scrubs, one tracker per scene (interaction tracker design
+        # 4.3, 4.4).  Per scene: the visuals that planned coarse during the
+        # current scrub, the sliced axes it has moved, and, while
+        # ``update_slice_indices`` applies a tick, whether that tick is
+        # interactive.
+        self._dims_driver = _InteractionDriver(
+            lambda: self._render_manager.config.scheduler.dims_settle_s,
+            self._on_dims_transition,
+        )
+        self._dims_scrub_pending: dict[UUID, set[UUID]] = {}
+        self._dims_scrub_axes: dict[UUID, set[int]] = {}
+        self._dims_ticks: dict[UUID, bool] = {}
         # Reslices after store changes, capped per store at
         # ``SchedulerConfig.store_change_max_hz`` (design v3 5.14): the loop
         # time of the last one, the trailing one waiting to run, and whether
@@ -836,6 +892,16 @@ class CellierController:
             owner_id=self._id,
         )
         self._outgoing_events.subscribe(
+            _CameraControllerEvent,
+            self._on_camera_controller_event,
+            owner_id=self._id,
+        )
+        self._outgoing_events.subscribe(
+            FrameRenderedEvent,
+            self._on_frame_rendered_run_reslices,
+            owner_id=self._id,
+        )
+        self._outgoing_events.subscribe(
             CanvasSizeChangedEvent,
             self._on_canvas_size_changed,
             owner_id=self._id,
@@ -872,6 +938,11 @@ class CellierController:
             owner_id=self._id,
         )
         self._incoming_events.subscribe(
+            DimsInteractionUpdateEvent,
+            self._on_dims_interaction_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
             SliderOverrideUpdateEvent,
             self._on_slider_override_update,
             owner_id=self._id,
@@ -879,6 +950,11 @@ class CellierController:
         self._incoming_events.subscribe(
             AABBUpdateEvent,
             self._on_aabb_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            MeshSectionUpdateEvent,
+            self._on_section_update,
             owner_id=self._id,
         )
         self._incoming_events.subscribe(
@@ -924,6 +1000,11 @@ class CellierController:
         self._incoming_events.subscribe(
             LoadingConfigUpdateEvent,
             self._on_loading_config_update,
+            owner_id=self._id,
+        )
+        self._incoming_events.subscribe(
+            LodConfigUpdateEvent,
+            self._on_lod_config_update,
             owner_id=self._id,
         )
 
@@ -1297,11 +1378,12 @@ class CellierController:
     def _reslice_store_readers(self, store_id: UUID) -> None:
         """Reslice the visuals reading *store_id* after a change.
 
-        A multiscale visual needs no new plan for a ``"contents"`` change:
-        invalidation already requeued the chunks it wants, and the scheduler
-        refetches them.  Only an ``"extent"`` change, which can change what
-        should be planned, replans it.  Every other visual loads whole
-        slices and is resliced for either kind.
+        A visual the chunk scheduler loads (multiscale image and labels, the
+        mesh) needs no new plan for a ``"contents"`` change: invalidation
+        already requeued what it wants, and the scheduler reads it again.
+        Only an ``"extent"`` change, which can change what should be planned,
+        replans it.  Every other visual loads whole slices and is resliced
+        for either kind.
         """
         extent = self._store_reslice_extent.pop(store_id, False)
         try:
@@ -1314,25 +1396,28 @@ class CellierController:
             "extent" if extent else "contents",
         )
         for _scene_id, visual in self._store_readers(store_id):
-            chunked = isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual))
-            if chunked and not extent:
+            if isinstance(visual, _SCHEDULED_VISUALS) and not extent:
                 continue
             self.reslice_visual(visual.id)
 
     def _deferred_reslice_tasks(self) -> list[asyncio.Task]:
-        """Reslices waiting on a timer: dims settles and store-change reslices.
+        """Reslices still to come: interaction ends, queued and store-change ones.
 
+        The stillness timers of dims scrubs and camera motions, camera
+        reslices queued from a draw, and rate-capped store-change reslices.
         Quiescence helpers (``convenience.capture``, the test drains) await
         these before waiting on the loaders, or they would see an idle
         scheduler while a reslice is still to come.
         """
         return [
-            task
-            for task in (
-                *self._dims_settle_tasks.values(),
-                *self._store_reslice_tasks.values(),
-            )
-            if not task.done()
+            *self._dims_driver.tasks(),
+            *self._camera_driver.tasks(),
+            *(
+                task
+                for tasks in (self._camera_reslice_tasks, self._store_reslice_tasks)
+                for task in tasks.values()
+                if not task.done()
+            ),
         ]
 
     # ------------------------------------------------------------------
@@ -1409,7 +1494,7 @@ class CellierController:
             return self._add_points_visual(scene_id, visual_model)
         elif isinstance(visual_model, LinesVisual):
             return self._add_lines_visual(scene_id, visual_model)
-        elif isinstance(visual_model, MeshVisual):
+        elif isinstance(visual_model, BaseMeshVisual):
             return self._add_mesh_visual(scene_id, visual_model)
         elif isinstance(visual_model, GraphVisual):
             return self._add_graph_visual(scene_id, visual_model)
@@ -1600,6 +1685,7 @@ class CellierController:
         outline: VisualOutline | None = None,
         ambient_occlusion: bool | None = None,
         pick_write: bool = True,
+        section: MeshSectionConfig | None = None,
     ) -> MeshVisual:
         """Add a mesh visual to a scene.
 
@@ -1635,6 +1721,11 @@ class CellierController:
             derived from the pick buffer, so turning it off stops them on
             this visual; asking for an outline as well turns it back on,
             with a warning.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view: the outline and fill of its
+            cross-section, and whether the cut is the slice plane
+            (``mode="cut"``) or the scene's slab (``mode="slab"``).
+            ``None`` (default) is an outline and a fill of the cut.
 
         Returns
         -------
@@ -1646,6 +1737,87 @@ class CellierController:
             data_store_id=str(data.id),
             appearance=appearance,
             transform=resolved_transform,
+            **({} if section is None else {"section": section}),
+        )
+        _apply_render_settings(
+            visual_model,
+            outline=outline,
+            ambient_occlusion=ambient_occlusion,
+            pick_write=pick_write,
+        )
+        return self.add_visual(scene_id, visual_model, data_store=data)
+
+    def add_multiscale_mesh(
+        self,
+        data: MultiscaleMeshStore,
+        scene_id: UUID,
+        appearance: MeshAppearance,
+        name: str = "mesh",
+        transform: AffineTransform | None = None,
+        outline: VisualOutline | None = None,
+        ambient_occlusion: bool | None = None,
+        pick_write: bool = True,
+        section: MeshSectionConfig | None = None,
+        lod: GeometryLodConfig | None = None,
+    ) -> MultiscaleMeshVisual:
+        """Add a mesh with levels of detail to a scene.
+
+        Two levels are kept loaded: the finest, and one coarse level.  When
+        the position changes the coarse level is read first, so the mesh is
+        back on screen sooner, and the finest replaces it when it has
+        loaded.  A pick reports which level was drawn
+        (``MeshPickInfo.level``, 0 the finest).  The bounding box and a
+        camera fit use the finest level's extent.
+
+        Parameters
+        ----------
+        data : MultiscaleMeshStore
+            The mesh's levels, finest first.  A store of one level loads as
+            a plain mesh.
+        scene_id : UUID
+            ID of an existing scene.
+        appearance : MeshFlatAppearance | MeshPhongAppearance
+            Appearance, shared by both levels.  Use MeshPhongAppearance with
+            ``lighting="default"`` on the scene for shaded rendering.
+        name : str
+            Human-readable label.  Default ``"mesh"``.
+        transform : AffineTransform or None
+            Data-to-world transform for this visual. Defaults to identity when
+            ``None``.
+        outline : VisualOutline or None
+            Screen-space outline assignment; see :meth:`add_mesh`.
+        ambient_occlusion : bool or None
+            Whether this visual receives ambient occlusion; see
+            :meth:`add_mesh`.
+        pick_write : bool
+            Whether the visual writes to the pick buffer; see
+            :meth:`add_mesh`.
+        section : MeshSectionConfig or None
+            How the mesh is drawn in a 2D view; see :meth:`add_mesh`.
+        lod : GeometryLodConfig or None
+            Which coarse level is kept (``coarse_level``, 1-based; the
+            coarsest by default), and when it is loaded and drawn.
+
+        Returns
+        -------
+        MultiscaleMeshVisual
+
+        Raises
+        ------
+        ValueError
+            If ``lod.coarse_level`` names a level the store does not have.
+        """
+        resolved_lod = GeometryLodConfig() if lod is None else lod
+        # Before anything is registered, so a refused level leaves no store.
+        resolved_lod.coarse_scale_index(data.level_count)
+        resolved_transform = self._prepare_transform(scene_id, data, transform)
+        visual_model = MultiscaleMeshVisual(
+            name=name,
+            data_store_id=str(data.id),
+            appearance=appearance,
+            transform=resolved_transform,
+            lod=resolved_lod,
+            **({} if section is None else {"section": section}),
         )
         _apply_render_settings(
             visual_model,
@@ -2229,6 +2401,10 @@ class CellierController:
         if isinstance(visual_model, GraphVisual):
             self._wire_trail(visual_model)
         self._wire_aabb(visual_model)
+        if isinstance(visual_model, BaseMeshVisual):
+            self._wire_section(visual_model)
+        if isinstance(visual_model, MultiscaleMeshVisual):
+            self._wire_lod(visual_model)
         self._wire_transform(visual_model, scene_id)
         self._wire_render_config(visual_model)
         self._wire_pick_write(visual_model)
@@ -2248,6 +2424,7 @@ class CellierController:
             (SingleAppearanceChangedEvent, "on_single_appearance_changed"),
             (ImageCompositeChangedEvent, "on_image_composite_changed"),
             (AABBChangedEvent, "on_aabb_changed"),
+            (MeshSectionChangedEvent, "on_section_changed"),
             (VisualVisibilityChangedEvent, "on_visibility_changed"),
             (TrailChangedEvent, "on_trail_changed"),
             (TransformChangedEvent, "on_transform_changed"),
@@ -2519,9 +2696,9 @@ class CellierController:
     def _add_mesh_visual(
         self,
         scene_id: UUID,
-        visual_model: MeshVisual,
-    ) -> MeshVisual:
-        """Wire and register a pre-built MeshVisual."""
+        visual_model: BaseMeshVisual,
+    ) -> BaseMeshVisual:
+        """Wire and register a pre-built mesh visual, of one level or two."""
         import warnings
 
         if isinstance(visual_model.appearance, MeshPhongAppearance):
@@ -2538,10 +2715,23 @@ class CellierController:
         render_modes = self._scene_render_modes.get(
             scene_id, {"3d"} if len(displayed_axes) == 3 else {"2d"}
         )
-        gfx_visual = GFXMeshMemoryVisual(
+        coarse_level = None
+        if isinstance(visual_model, MultiscaleMeshVisual):
+            level_count = getattr(data_store, "level_count", None)
+            if level_count is None:
+                raise TypeError(
+                    "A MultiscaleMeshVisual needs a MultiscaleMeshStore, got "
+                    f"{type(data_store).__name__}."
+                )
+            # Refuses a coarse_level the store does not have; None for a
+            # store of one level, which then loads as a plain mesh.
+            coarse_level = visual_model.lod.coarse_scale_index(level_count)
+        gfx_visual = GFXMeshVisual(
             visual_model=visual_model,
             render_modes=render_modes,
             transform=visual_model.transform,
+            axis_extents=data_store.axis_extents,
+            coarse_level=coarse_level,
         )
         self._register_visual(
             scene_id, visual_model, gfx_visual, data_store, displayed_axes
@@ -3226,7 +3416,7 @@ class CellierController:
         # range, which may have an invalid near plane and render nothing on the
         # first toggle.  Only the reserve camera is touched here: re-setting the
         # active camera's range would change its captured state and spuriously
-        # emit a CameraChangedEvent (scheduling an unwanted settle reslice).
+        # emit a CameraChangedEvent (starting an unwanted camera motion).
         for dim_key, camera_model in canvas_model.cameras.items():
             if dim_key == initial_dim:
                 continue
@@ -3317,12 +3507,23 @@ class CellierController:
         """
         return self._model.data.stores[store_id]
 
-    def fit_camera(self, scene_id: UUID, canvas_id: UUID | None = None) -> None:
+    def fit_camera(
+        self,
+        scene_id: UUID,
+        canvas_id: UUID | None = None,
+        *,
+        interactive: bool = False,
+    ) -> None:
         """Fit the camera to the current scene bounding box.
 
         Safe to call immediately after ``add_image`` / ``add_image_multiscale``
         and transform assignment — the node matrix is set at construction time
         so no chunk data needs to be loaded first.
+
+        The move is a **jump**: camera-sensitive visuals (multiscale image
+        and labels) reslice at once for the fitted view, and a camera motion
+        in progress on the canvas ends.  A fit that leaves the camera where
+        it is does nothing.  See :meth:`set_camera_state` for *interactive*.
 
         Parameters
         ----------
@@ -3331,6 +3532,8 @@ class CellierController:
         canvas_id : UUID or None
             If provided, fit only that canvas.  When ``None`` (default),
             all canvases attached to *scene_id* are fitted.
+        interactive : bool
+            Whether the move is a tick of a camera motion instead of a jump.
         """
         gfx_scene = self._render_manager.get_scene(scene_id)
         targets = (
@@ -3342,8 +3545,7 @@ class CellierController:
             canvas = self._render_manager._canvases.get(cid)
             if canvas is not None:
                 canvas.show_object(gfx_scene)
-                state = canvas.capture_camera_state()
-                self._update_camera_model(scene_id, cid, state)
+                self._after_programmatic_camera_move(cid, interactive=interactive)
         # A fit already walked the scene graph, so this is the cheapest
         # moment to re-derive the ambient occlusion radius from the scene
         # bounding box.
@@ -3588,8 +3790,28 @@ class CellierController:
         scene = self._model.scenes[scene_id]
         configs: dict[UUID, VisualRenderConfig] = {}
         for visual in scene.visuals:
-            configs[visual.id] = _visual_render_config(visual)
+            configs[visual.id] = self._render_config_for(scene_id, visual)
         return configs
+
+    def _render_config_for(
+        self, scene_id: UUID, visual: BaseVisual
+    ) -> VisualRenderConfig:
+        """Build one visual's render settings, with the plan mode of the moment.
+
+        The one place a plan mode is decided, so every reslice path agrees:
+        while the scene's dims are being scrubbed, a visual with
+        ``plans_coarse_on_scrub`` plans ``BACKSTOP_ONLY`` and joins the
+        scene's pending set, which the scrub's end plans in full.  A visual
+        that scrub handed to a camera end stays ``BACKSTOP_ONLY`` until then.
+        """
+        config = _visual_render_config(visual)
+        if visual.plans_coarse_on_scrub and self._dims_driver.is_active(scene_id):
+            self._dims_scrub_pending.setdefault(scene_id, set()).add(visual.id)
+            return dataclasses.replace(config, plan_mode=PlanMode.BACKSTOP_ONLY)
+        if visual.id in self._camera_handoff.get(scene_id, ()):
+            # Left to a camera end by the scrub that just ended (4.6).
+            return dataclasses.replace(config, plan_mode=PlanMode.BACKSTOP_ONLY)
+        return config
 
     # ------------------------------------------------------------------
     # Coordinate systems: the registry, and the runtime systems
@@ -4266,6 +4488,7 @@ class CellierController:
                     displayed_axes_changed=displayed_axes_changed,
                     slice_indices=dict(selection.slice_indices),
                     region_changed=region_changed,
+                    interactive=self._dims_ticks.get(scene_id, False),
                 )
             )
 
@@ -4324,14 +4547,19 @@ class CellierController:
         for canvas_id in self._scene_to_canvases.get(scene_id, []):
             canvas_view = self._render_manager._canvases[canvas_id]
             first_visit = canvas_view.switch_dim(new_dim)
-            if not first_visit:
-                continue
-            if not canvas_view.show_object(gfx_scene):
+            if first_visit and not canvas_view.show_object(gfx_scene):
                 # The visuals' geometry was rebuilt for the new axes a moment
                 # ago and the reslice that fills it has not committed yet, so
                 # there is nothing to fit to.  Take the fit when the data
                 # lands instead of raising here.
                 self._canvases_awaiting_fit.add(canvas_id)
+            # The switch replaces the view, so a motion in progress is
+            # cancelled, and a first-visit fit is reported here instead of
+            # being seen as motion on the next frame.  Neither reslices: the
+            # displayed-axes change that brought us here plans the scene,
+            # after this, from the fitted camera.
+            self._announce_camera_move(canvas_id, interactive=False)
+            self._camera_driver.cancel(canvas_id, canvas_id)
 
     def _wire_transform(
         self,
@@ -4602,6 +4830,70 @@ class CellierController:
             self._request_draw_for_visual(visual_id)
 
         return _on_aabb_psygnal
+
+    def _wire_section(self, visual: BaseMeshVisual) -> None:
+        """Subscribe to all field changes on a mesh visual's section config."""
+        handler = self._make_section_handler(visual.id)
+        visual.section.events.connect(handler)
+        self._visual_psygnal_handlers.setdefault(visual.id, []).append(
+            (visual.section.events, handler)
+        )
+
+    def _wire_lod(self, visual: MultiscaleMeshVisual) -> None:
+        """Carry a replaced ``lod`` config to the render layer.
+
+        ``dims_drag_draw`` and ``camera_motion`` choose among levels that
+        are already loaded, so they apply in the next frame with no read.
+        ``dims_drag`` is read by the next plan.  Emits
+        ``LodConfigChangedEvent``.
+        """
+        visual_id = visual.id
+
+        def _on_lod(lod: GeometryLodConfig) -> None:
+            self._outgoing_events.emit(
+                LodConfigChangedEvent(
+                    source_id=_lod_source_id_override.get() or self._id,
+                    visual_id=visual_id,
+                    lod=lod,
+                )
+            )
+            self._render_manager.set_visual_lod(visual_id, lod)
+            scene_id = self._visual_to_scene.get(visual_id)
+            for canvas_id in self._scene_to_canvases.get(scene_id, ()):
+                self._render_manager.request_frame(canvas_id)
+
+        visual.events.lod.connect(_on_lod)
+        self._visual_psygnal_handlers.setdefault(visual_id, []).append(
+            (visual.events.lod, _on_lod)
+        )
+
+    def _make_section_handler(self, visual_id: UUID) -> Callable:
+        """Return a psygnal catch-all handler for a mesh's section config.
+
+        ``mode``, ``outline`` and ``fill`` are part of what the mesh reads
+        (the request key), so a change reslices the visual; the mesh is not
+        drawn until the new section has loaded.  ``outline_width`` is a
+        material setting and only asks for a frame.
+        """
+
+        def _on_section_psygnal(info: EmissionInfo) -> None:
+            field_name: str = info.signal.name
+            new_value = info.args[0]
+            resolved_source_id = _section_source_id_override.get() or self._id
+            self._outgoing_events.emit(
+                MeshSectionChangedEvent(
+                    source_id=resolved_source_id,
+                    visual_id=visual_id,
+                    field_name=field_name,
+                    new_value=new_value,
+                )
+            )
+            if field_name in SECTION_RESLICE_FIELDS:
+                if visual_id in self._visual_to_scene:
+                    self.reslice_visual(visual_id)
+            self._request_draw_for_visual(visual_id)
+
+        return _on_section_psygnal
 
     def _wire_visual_render(self, visual: BaseVisual) -> None:
         """Bridge a visual's screen-space render settings to bus and renderer.
@@ -5160,7 +5452,7 @@ class CellierController:
             geometry visuals.  See :meth:`on_scene_ready`.
 
             The callback tracks *this* reslice generation.  If a superseding
-            reslice (e.g. a camera-settle reload) cancels these in-flight reads
+            reslice (e.g. a camera-motion reload) cancels these in-flight reads
             before they commit, the cancelled visual never reports completion
             and the callback may not fire.  Callers that need a guaranteed
             startup signal should suppress camera-driven reslicing during the
@@ -5265,7 +5557,7 @@ class CellierController:
         """
         scene_id = self._visual_to_scene[visual_id]
         dims_state = self._dims_state_for_scene(scene_id)
-        cfg = _visual_render_config(self.get_visual_model(visual_id))
+        cfg = self._render_config_for(scene_id, self.get_visual_model(visual_id))
         self._render_manager.reslice_visual(
             visual_id, dims_state, cfg, selections=self._selections_for_scene(scene_id)
         )
@@ -5376,93 +5668,181 @@ class CellierController:
     def _on_dims_changed_bus(self, event: DimsChangedEvent) -> None:
         """Bus handler -- reslice the scene when what it shows changed.
 
-        A slider tick plans multiscale visuals in ``dims_drag="backstop"``
-        mode backstop-only and restarts the scene's dims settle timer; when
-        it fires they plan in full (design v3 5.10).  Every other visual,
-        and every visual on a displayed-axes change, plans in full at once.
+        The plan modes come from the scene's dims tracker (see
+        :meth:`_render_config_for`): during a scrub, visuals with
+        ``plans_coarse_on_scrub`` plan backstop-only and the scrub's end
+        plans them in full; otherwise everything plans in full at once.
+
+        A tick made through :meth:`update_slice_indices` has already been
+        given to the tracker.  A displayed-axes change cancels a scrub.  Any
+        other region change (a thickness, a direct model write) is a tick
+        with no ``interactive`` flag: a jump, unless a scope is open.
         """
         if not event.region_changed:
             return
         scene_id = event.scene_id
-        drag = (
-            set() if event.displayed_axes_changed else self._backstop_drag_ids(scene_id)
-        )
-        if not drag:
-            # A full reslice of the scene supersedes a pending settle.
-            self._cancel_dims_settle(scene_id)
-            self.reslice_scene(scene_id)
-            return
-        configs = self._build_visual_configs_for_scene(scene_id)
-        for visual_id in drag:
-            configs[visual_id] = dataclasses.replace(
-                configs[visual_id], plan_mode=PlanMode.BACKSTOP_ONLY
+        tracked = scene_id in self._dims_ticks
+        if event.displayed_axes_changed:
+            self._dims_driver.cancel(scene_id, event.source_id)
+        elif not tracked:
+            self._dims_driver.tick(scene_id, event.source_id, interactive=False)
+        self.reslice_scene(scene_id)
+        # A read that lands within the hold is drawn with no blank frame.
+        self._render_manager.hold_draws(scene_id)
+        if not tracked:
+            self._dims_driver.settle_without_loop(scene_id)
+
+    def _on_dims_transition(self, scene_id: UUID, transition: Transition) -> None:
+        """Announce a scrub's start or end, and plan in full at its end.
+
+        An end by release or stillness plans the visuals that planned coarse
+        during the scrub.  An end by a jump or a cancel plans nothing here:
+        the jump's or the displayed-axes change's own full reslice follows.
+        """
+        axes = frozenset(self._dims_scrub_axes.get(scene_id, ()))
+        pending: set[UUID] = set()
+        # Before the reslice this transition causes: what a frame draws of a
+        # visual with levels of detail depends on it.
+        self._render_manager.set_dims_scrubbing(scene_id, transition.phase == "start")
+        if transition.phase == "end":
+            self._dims_scrub_axes.pop(scene_id, None)
+            pending = self._dims_scrub_pending.pop(scene_id, set())
+            # The finest level returns in the next frame, with no input.
+            for canvas_id in self._scene_to_canvases.get(scene_id, ()):
+                self._render_manager.request_frame(canvas_id)
+        self._outgoing_events.emit(
+            DimsInteractionEvent(
+                source_id=transition.source_id,
+                scene_id=scene_id,
+                phase=transition.phase,
+                reason=transition.reason,
+                axes=axes,
             )
-        self._render_manager.reslice_scene(
-            scene_id,
-            self._dims_state_for_scene(scene_id),
-            configs,
-            selections=self._selections_for_scene(scene_id),
         )
-        self._schedule_dims_settle(scene_id, drag)
-
-    def _backstop_drag_ids(self, scene_id: UUID) -> set[UUID]:
-        """Visuals of *scene_id* whose slider ticks plan backstop-only."""
-        return {
-            visual.id
-            for visual in self._model.scenes[scene_id].visuals
-            if isinstance(visual, (MultiscaleImageVisual, MultiscaleLabelVisual))
-            and visual.render_config.loading.dims_drag == "backstop"
-        }
-
-    def _schedule_dims_settle(self, scene_id: UUID, visual_ids: set[UUID]) -> None:
-        """(Re)start *scene_id*'s dims settle, adding *visual_ids* to it."""
-        self._dims_settle_pending.setdefault(scene_id, set()).update(visual_ids)
-        existing = self._dims_settle_tasks.pop(scene_id, None)
-        if existing is not None and not existing.done():
-            existing.cancel()
-        try:
-            task = asyncio.get_running_loop().create_task(
-                self._dims_settle_after(scene_id)
-            )
-        except RuntimeError:
-            # No event loop, so no reads either: settle at once.
-            self._settle_dims(scene_id)
+        if transition.phase != "end" or transition.reason in ("jump", "cancel"):
             return
-        self._dims_settle_tasks[scene_id] = task
-
-    async def _dims_settle_after(self, scene_id: UUID) -> None:
-        await asyncio.sleep(self._render_manager.config.scheduler.dims_settle_s)
-        self._dims_settle_tasks.pop(scene_id, None)
-        self._settle_dims(scene_id)
-
-    def _settle_dims(self, scene_id: UUID) -> None:
-        """Plan in full the visuals that ticked backstop-only."""
-        pending = self._dims_settle_pending.pop(scene_id, set())
         scene = self._model.scenes.get(scene_id)
         if scene is None:
             return
-        target = frozenset(pending & {visual.id for visual in scene.visuals})
+        live = {visual.id: visual for visual in scene.visuals}
+        target = pending & set(live)
+        if self._scene_camera_moving(scene_id):
+            # Planned now, the camera-sensitive ones would issue target reads
+            # from a camera that is still moving, for a view its end
+            # replaces.  They keep their backstop until that end plans them.
+            handed = {vid for vid in target if live[vid].requires_camera_reslice}
+            if handed:
+                self._camera_handoff.setdefault(scene_id, set()).update(handed)
+                target -= handed
         if not target:
             return
         _SCHEDULER_LOGGER.info(
-            "dims_settle  scene=%s visuals=%d: planning the target",
+            "dims_scrub_end  scene=%s reason=%s visuals=%d: planning the target",
             scene_id,
+            transition.reason,
             len(target),
         )
         self._render_manager.reslice_scene(
             scene_id=scene_id,
             dims_state=self._dims_state_for_scene(scene_id),
             visual_configs=self._build_visual_configs_for_scene(scene_id),
-            target_visual_ids=target,
+            target_visual_ids=frozenset(target),
             selections=self._selections_for_scene(scene_id),
         )
 
-    def _cancel_dims_settle(self, scene_id: UUID) -> None:
-        """Drop *scene_id*'s pending dims settle, if any."""
-        self._dims_settle_pending.pop(scene_id, None)
-        task = self._dims_settle_tasks.pop(scene_id, None)
-        if task is not None and not task.done():
-            task.cancel()
+    def _forget_dims_interaction(self, scene_id: UUID) -> None:
+        """Drop *scene_id*'s scrub state; no event, and its timer is cancelled."""
+        self._dims_driver.drop(scene_id)
+        self._render_manager.set_dims_scrubbing(scene_id, False)
+        self._dims_scrub_pending.pop(scene_id, None)
+        self._dims_scrub_axes.pop(scene_id, None)
+
+    # ------------------------------------------------------------------
+    # Dims interaction (scrubbing)
+    # ------------------------------------------------------------------
+
+    def begin_dims_interaction(self, scene_id: UUID, *, source_id: UUID) -> None:
+        """Open a dims interaction scope on a scene.
+
+        While any scope is open, every slice-position change on the scene is
+        a scrub tick, whatever its ``interactive`` flag: visuals that opted
+        in plan coarse, and plan in full when the scrub ends.  Opening a
+        scope starts nothing by itself; the first tick does.  Holding still
+        for ``SchedulerConfig.dims_settle_s`` still ends a scrub, and the
+        next tick starts a new one.
+
+        A slider calls this when it is pressed.  Scripts normally use
+        :meth:`dims_interaction`.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene whose dims are about to be scrubbed.
+        source_id : UUID
+            Who holds the scope.  One scope is counted per source.
+
+        Raises
+        ------
+        KeyError
+            If *scene_id* is not registered.
+        """
+        if scene_id not in self._model.scenes:
+            raise KeyError(f"No scene with id {scene_id}")
+        self._dims_driver.begin_scope(scene_id, source_id)
+
+    def end_dims_interaction(self, scene_id: UUID, *, source_id: UUID) -> None:
+        """Close a dims interaction scope opened by *source_id*.
+
+        Closing the last open scope ends a scrub at once (``"release"``):
+        the visuals that planned coarse plan in full without waiting for the
+        stillness time.  Closing a scope that is not open does nothing.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene the scope was opened on.
+        source_id : UUID
+            The source that opened it.
+        """
+        self._dims_driver.end_scope(scene_id, source_id)
+
+    @contextmanager
+    def dims_interaction(self, scene_id: UUID) -> Generator[None, None, None]:
+        """Scrub a scene's dims for the length of a ``with`` block.
+
+        Every :meth:`update_slice_indices` inside the block is a scrub tick,
+        so a player or a scripted sweep loads coarse while it runs and in
+        full when the block exits::
+
+            with controller.dims_interaction(scene_id):
+                for t in frames:
+                    controller.update_slice_indices(scene_id, {0: t})
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene to scrub.
+        """
+        source_id = uuid4()
+        self.begin_dims_interaction(scene_id, source_id=source_id)
+        try:
+            yield
+        finally:
+            self.end_dims_interaction(scene_id, source_id=source_id)
+
+    def dims_interaction_state(self, scene_id: UUID) -> Literal["idle", "active"]:
+        """Whether *scene_id*'s dims are being scrubbed.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene to query.
+
+        Returns
+        -------
+        {"idle", "active"}
+        """
+        return self._dims_driver.state(scene_id).value
 
     # ------------------------------------------------------------------
     # Model mutation with source-ID threading
@@ -5474,6 +5854,7 @@ class CellierController:
         slice_indices: Mapping[int, float],
         *,
         source_id: UUID | None = None,
+        interactive: bool = False,
     ) -> None:
         """Move the slice position of one or more world axes on a scene.
 
@@ -5485,6 +5866,15 @@ class CellierController:
         GUI widgets should pass ``source_id=self._id`` so their own
         ``DimsChangedEvent`` subscription can ignore the echo.
 
+        By default the move is a **jump**: every visual plans in full at
+        once, and a scrub in progress on the scene ends.  With
+        ``interactive=True``, or inside an open scope
+        (:meth:`dims_interaction`), it is a tick of a **scrub**: visuals
+        that opted in (``dims_drag="backstop"``) plan coarse, and plan in
+        full when the scrub ends, on release or after
+        ``SchedulerConfig.dims_settle_s`` of stillness.  A call that moves no
+        sliced axis is neither.
+
         Parameters
         ----------
         scene_id :
@@ -5494,6 +5884,8 @@ class CellierController:
         source_id :
             UUID to stamp on the emitted ``DimsChangedEvent``.  Defaults
             to the controller's own ID.
+        interactive :
+            Whether the move is a tick of a scrub.  Sliders pass ``True``.
 
         Raises
         ------
@@ -5511,7 +5903,8 @@ class CellierController:
         merged.update(
             {int(axis): float(value) for axis, value in slice_indices.items()}
         )
-        if merged == dims.selection.slice_indices:
+        current = dims.selection.slice_indices
+        if merged == current:
             return
         resolved_source_id = source_id if source_id is not None else self._id
         _SOURCE_ID_LOGGER.debug(
@@ -5519,12 +5912,33 @@ class CellierController:
             scene_id,
             resolved_source_id,
         )
+        # Only a sliced axis changes what the scene shows, so only that is a
+        # tick.  The tracker hears of it before the positions change: a
+        # scrub's start event then reaches its listeners (the ortho mirror)
+        # ahead of the tick's own consequences.
+        displayed = set(dims.selection.displayed_axes)
+        ticked = {
+            axis
+            for axis, value in merged.items()
+            if axis not in displayed and current.get(axis) != value
+        }
+        if ticked:
+            if interactive or self._dims_driver.scope_open(scene_id):
+                self._dims_scrub_axes.setdefault(scene_id, set()).update(ticked)
+            self._dims_driver.tick(
+                scene_id, resolved_source_id, interactive=interactive
+            )
+            self._dims_ticks[scene_id] = self._dims_driver.is_active(scene_id)
         token = _source_id_override.set(source_id)
         try:
             dims.selection.slice_indices = merged
         finally:
             _source_id_override.reset(token)
+            self._dims_ticks.pop(scene_id, None)
             _SOURCE_ID_LOGGER.debug("reset  scene=%s", scene_id)
+        if ticked:
+            # No event loop means no timer: the scrub ends here.
+            self._dims_driver.settle_without_loop(scene_id)
 
     def update_thickness(
         self,
@@ -6035,6 +6449,124 @@ class CellierController:
         for visual_id in visual_ids:
             self.set_image_composite(visual_id, composite, source_id=source_id)
 
+    def update_section_field(
+        self,
+        visual_id: UUID,
+        field: str,
+        value: Any,
+        *,
+        source_id: UUID | None = None,
+    ) -> None:
+        """Set one field of a mesh visual's 2D section config.
+
+        ``mode``, ``outline`` and ``fill`` change what the mesh reads, so
+        the mesh loads again and is not drawn until it has;
+        ``outline_width`` applies at once.
+
+        Parameters
+        ----------
+        visual_id :
+            Target mesh visual.
+        field :
+            Attribute name on ``MeshSectionConfig``: ``"mode"``,
+            ``"outline"``, ``"fill"`` or ``"outline_width"``.
+        value :
+            New value for the field.
+        source_id :
+            UUID to stamp on the emitted ``MeshSectionChangedEvent``, so a
+            GUI widget can ignore its own echo.  Defaults to the
+            controller's own ID.
+
+        Raises
+        ------
+        TypeError
+            If the visual is not a mesh.
+        """
+        visual = self.get_visual_model(visual_id)
+        if not isinstance(visual, BaseMeshVisual):
+            raise TypeError(
+                f"Visual {visual_id} is a {type(visual).__name__}; only a mesh "
+                "visual has a section config."
+            )
+        token = _section_source_id_override.set(source_id)
+        try:
+            setattr(visual.section, field, value)
+        finally:
+            _section_source_id_override.reset(token)
+
+    def set_lod_config(
+        self,
+        visual_id: UUID,
+        *,
+        source_id: UUID | None = None,
+        **fields: Any,
+    ) -> GeometryLodConfig:
+        """Change the level-of-detail settings of a multiscale mesh.
+
+        ``dims_drag_draw`` and ``camera_motion`` choose among the levels
+        already loaded: they apply in the next frame, with nothing read.
+        ``dims_drag`` decides what the next dims scrub loads.  Emits
+        ``LodConfigChangedEvent``.  Nothing happens when the merged config
+        equals the current one.
+
+        Parameters
+        ----------
+        visual_id :
+            Target visual.
+        source_id :
+            UUID to stamp on the emitted ``LodConfigChangedEvent``.  GUI
+            widgets pass ``source_id=self._id`` so their own subscription
+            can ignore the echo.
+        **fields :
+            ``GeometryLodConfig`` fields to replace: ``dims_drag``,
+            ``dims_drag_draw``, ``camera_motion``.
+
+        Returns
+        -------
+        GeometryLodConfig
+            The visual's new config.
+
+        Raises
+        ------
+        TypeError
+            If the visual has no levels of detail.
+        ValueError
+            If a field is unknown or its value invalid, or if
+            ``coarse_level`` is changed: which coarse level is kept is
+            fixed when the visual is added.
+        """
+        visual = self.get_visual_model(visual_id)
+        if not isinstance(visual, MultiscaleMeshVisual):
+            raise TypeError(
+                f"Visual {visual_id} is a {type(visual).__name__}; only a "
+                "multiscale mesh has a level-of-detail config."
+            )
+        unknown = set(fields) - set(GeometryLodConfig.model_fields)
+        if unknown:
+            raise ValueError(
+                f"Unknown GeometryLodConfig field(s) {sorted(unknown)}; "
+                f"expected any of {sorted(GeometryLodConfig.model_fields)}."
+            )
+        new = GeometryLodConfig.model_validate({**visual.lod.model_dump(), **fields})
+        if new.coarse_level != visual.lod.coarse_level:
+            raise ValueError(
+                "coarse_level cannot be changed on a visual that is in a "
+                "scene: remove the visual and add it again with the new lod."
+            )
+        if new == visual.lod:
+            return new
+        token = _lod_source_id_override.set(source_id)
+        try:
+            visual.lod = new
+        finally:
+            _lod_source_id_override.reset(token)
+        return new
+
+    def _on_lod_config_update(self, event: LodConfigUpdateEvent) -> None:
+        self.set_lod_config(
+            event.visual_id, source_id=event.source_id, **{event.field: event.value}
+        )
+
     def update_aabb_field(
         self,
         visual_id: UUID,
@@ -6152,16 +6684,38 @@ class CellierController:
         # not it is displayed (D36), so neither write can leave one uncovered.
         if event.slice_indices is not None:
             self.update_slice_indices(
-                event.scene_id, event.slice_indices, source_id=event.source_id
+                event.scene_id,
+                event.slice_indices,
+                source_id=event.source_id,
+                interactive=event.interactive,
             )
         if event.displayed_axes is not None:
             self.update_displayed_axes(
                 event.scene_id, event.displayed_axes, source_id=event.source_id
             )
+        if event.thickness is not None:
+            # Merged: a spin box names only its own axis.
+            current = self._model.scenes[event.scene_id].dims.selection.thickness
+            self.update_thickness(
+                event.scene_id,
+                {**current, **event.thickness},
+                source_id=event.source_id,
+            )
+
+    def _on_dims_interaction_update(self, event: DimsInteractionUpdateEvent) -> None:
+        if event.phase == "begin":
+            self.begin_dims_interaction(event.scene_id, source_id=event.source_id)
+        else:
+            self.end_dims_interaction(event.scene_id, source_id=event.source_id)
 
     def _on_slider_override_update(self, event: SliderOverrideUpdateEvent) -> None:
         self.set_slider_override(
             event.scene_id, event.axis, event.value, source_id=event.source_id
+        )
+
+    def _on_section_update(self, event: MeshSectionUpdateEvent) -> None:
+        self.update_section_field(
+            event.visual_id, event.field, event.value, source_id=event.source_id
         )
 
     def _on_aabb_update(self, event: AABBUpdateEvent) -> None:
@@ -6196,31 +6750,32 @@ class CellierController:
         )
 
     # ------------------------------------------------------------------
-    # Camera settle
+    # Camera reslicing
     # ------------------------------------------------------------------
 
     @property
     def camera_reslice_enabled(self) -> bool:
-        """Whether camera movement triggers automatic reslicing."""
+        """Whether camera movement triggers automatic reslicing.
+
+        While ``False`` the camera trackers still run and still emit
+        ``CameraInteractionEvent``; only the reslices at a motion's end and
+        at a programmatic jump are skipped.
+        """
         return self._render_manager.config.camera.reslice_enabled
 
     @camera_reslice_enabled.setter
     def camera_reslice_enabled(self, value: bool) -> None:
         self._render_manager.config.camera.reslice_enabled = value
         if not value:
-            self._cancel_settle_tasks()
+            self._cancel_queued_camera_reslices()
 
-    def _cancel_settle_tasks(self) -> None:
-        """Cancel and forget every pending camera-settle task.
-
-        Shared by the ``camera_reslice_enabled`` setter and :meth:`close`.
-        ``remove_scene`` and ``remove_canvas`` cancel only their own subset,
-        because they leave the rest of the controller running.
-        """
-        for task in self._settle_tasks.values():
+    def _cancel_queued_camera_reslices(self) -> None:
+        """Cancel and forget every camera reslice queued from a draw."""
+        for task in self._camera_reslice_tasks.values():
             if not task.done():
                 task.cancel()
-        self._settle_tasks.clear()
+        self._camera_reslice_tasks.clear()
+        self._camera_reslices_after_draw.clear()
 
     @property
     def render_config(self) -> RenderManagerConfig:
@@ -6498,7 +7053,12 @@ class CellierController:
 
     @property
     def camera_settle_threshold_s(self) -> float:
-        """Debounce delay before reslice after camera movement."""
+        """Stillness, in seconds, after which a camera motion ends.
+
+        ``CameraConfig.settle_threshold_s``: the camera tracker's stillness
+        time.  A motion driven by the camera controller normally ends sooner,
+        when the controller stops driving the camera.
+        """
         return self._render_manager.config.camera.settle_threshold_s
 
     @camera_settle_threshold_s.setter
@@ -6516,31 +7076,373 @@ class CellierController:
         canvas_model.size = (event.width, event.height)
 
     def _on_camera_changed(self, event: CameraChangedEvent) -> None:
-        """Synchronous bus handler: updates camera model and schedules settle task."""
+        """Bus handler: a canvas reported that its camera changed.
+
+        Writes the model camera and ticks the canvas's camera tracker.  A
+        change detected between frames is interactive: nothing is resliced
+        until the motion ends.  A change that is not interactive and not
+        inside a scope is a jump, and reslices (from the loop, because this
+        runs inside a draw).
+        """
+        if self._announcing_camera_move:
+            return  # this controller's own programmatic move: already handled
         self._update_camera_model(event.scene_id, event.source_id, event.camera_state)
-
-        if not self._render_manager.config.camera.reslice_enabled:
-            return
-
         canvas_id = event.source_id
-        existing = self._settle_tasks.get(canvas_id)
-        if existing is not None and not existing.done():
-            _CAMERA_LOGGER.debug(
-                "settle_cancel  canvas=%s  scene=%s",
-                canvas_id,
-                event.scene_id,
-            )
-            existing.cancel()
+        interactive = event.interactive or self._camera_driver.scope_open(canvas_id)
+        self._camera_driver.tick(canvas_id, canvas_id, interactive=interactive)
+        if interactive:
+            self._camera_driver.settle_without_loop(canvas_id)
+        else:
+            self._camera_reslice(event.scene_id, queue=True)
 
+    def _on_camera_controller_event(self, event: _CameraControllerEvent) -> None:
+        """Map "the camera controller is driving the camera" to a scope.
+
+        The scope covers a drag while it is held, its damped tail after the
+        button is released, and a wheel or key animation, so the motion ends
+        (``"release"``) one frame after the camera stops.
+        """
+        if event.driving:
+            self._camera_driver.begin_scope(event.canvas_id, event.canvas_id)
+        else:
+            self._camera_driver.end_scope(event.canvas_id, event.canvas_id)
+
+    def _on_camera_transition(self, canvas_id: UUID, transition: Transition) -> None:
+        """Announce a camera motion's start or end, and reslice at its end.
+
+        An end by release or stillness reslices the scene's camera-sensitive
+        visuals.  An end by a jump leaves that to the jump, and a cancel to
+        the displayed-axes change that caused it.
+        """
+        moving = transition.phase == "start"
+        # At once, whatever follows: the frame being drawn reads it.
+        self._render_manager.set_camera_moving(canvas_id, moving)
+        scene_id = self._canvas_to_scene.get(canvas_id)
+        if scene_id is None:
+            return
         _CAMERA_LOGGER.debug(
-            "settle_schedule  canvas=%s  scene=%s  threshold=%.3fs",
+            "camera_motion  canvas=%s  scene=%s  phase=%s  reason=%s",
             canvas_id,
-            event.scene_id,
-            self._render_manager.config.camera.settle_threshold_s,
+            scene_id,
+            transition.phase,
+            transition.reason,
         )
-        self._settle_tasks[canvas_id] = asyncio.create_task(
-            self._settle_after(canvas_id, event.scene_id)
+        self._outgoing_events.emit(
+            CameraInteractionEvent(
+                source_id=transition.source_id,
+                scene_id=scene_id,
+                canvas_id=canvas_id,
+                phase=transition.phase,
+                reason=transition.reason,
+            )
         )
+        if moving:
+            return
+        # A visual with no camera reslice gets no commit at the end, and so
+        # no draw: without this its still picture would wait for the next
+        # input.  Not ``CanvasView.request_draw``, which resets accumulation.
+        self._render_manager.request_frame(canvas_id)
+        if transition.reason == "cancel":
+            self._camera_handoff.pop(scene_id, None)
+        elif transition.reason != "jump":
+            self._camera_reslice(scene_id, queue=self._drawing())
+
+    def _drawing(self) -> bool:
+        """Whether any canvas is inside its draw callback right now."""
+        return any(
+            canvas_view._drawing
+            for canvas_view in self._render_manager._canvases.values()
+        )
+
+    def _scene_camera_moving(self, scene_id: UUID) -> bool:
+        """Whether the camera of any canvas of *scene_id* is in motion."""
+        return any(
+            self._camera_driver.is_active(canvas_id)
+            for canvas_id in self._scene_to_canvases.get(scene_id, ())
+        )
+
+    def _camera_reslice(self, scene_id: UUID, *, queue: bool) -> None:
+        """Reslice *scene_id* for its cameras, now or from the loop.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene whose camera moved.
+        queue : bool
+            ``True`` when called from inside a draw or a commit round, where
+            planning must not run.  The reslice is then a task on the loop,
+            one per scene.  With no loop it runs when the frame being drawn
+            has rendered, or at once if no frame is being drawn.
+        """
+        if not queue:
+            self._run_camera_reslice(scene_id)
+            return
+        existing = self._camera_reslice_tasks.get(scene_id)
+        if existing is not None and not existing.done():
+            return  # it reads the cameras when it runs
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            if self._drawing():
+                if scene_id not in self._camera_reslices_after_draw:
+                    self._camera_reslices_after_draw.append(scene_id)
+            else:
+                self._run_camera_reslice(scene_id)
+            return
+        self._camera_reslice_tasks[scene_id] = loop.create_task(
+            self._camera_reslice_later(scene_id)
+        )
+
+    async def _camera_reslice_later(self, scene_id: UUID) -> None:
+        self._camera_reslice_tasks.pop(scene_id, None)
+        self._run_camera_reslice(scene_id)
+
+    def _on_frame_rendered_run_reslices(self, _event: FrameRenderedEvent) -> None:
+        """Run the camera reslices a draw queued when there is no event loop."""
+        if not self._camera_reslices_after_draw:
+            return
+        scene_ids, self._camera_reslices_after_draw = (
+            self._camera_reslices_after_draw,
+            [],
+        )
+        for scene_id in scene_ids:
+            self._run_camera_reslice(scene_id)
+
+    def _run_camera_reslice(self, scene_id: UUID) -> None:
+        """Plan the scene's camera-sensitive visuals for its current cameras.
+
+        One request per canvas of the scene, not only the one that moved:
+        chunk residency is per visual and the last pass wins, so a reslice
+        of one canvas would replace what the others want.  The plan modes
+        come from the scene's dims tracker, so this plans coarse during a
+        scrub.
+
+        With camera reslicing disabled only the visuals a scrub handed over
+        are planned: they are owed their full plan.
+        """
+        scene = self._model.scenes.get(scene_id)
+        if scene is None:
+            return
+        handed = self._camera_handoff.pop(scene_id, set())
+        if self._render_manager.config.camera.reslice_enabled:
+            target_ids = frozenset(
+                visual.id for visual in scene.visuals if visual.requires_camera_reslice
+            )
+        else:
+            target_ids = frozenset(
+                visual.id for visual in scene.visuals if visual.id in handed
+            )
+        if not target_ids:
+            return
+        _CAMERA_LOGGER.info(
+            "camera_reslice  scene=%s  visuals=%d",
+            scene_id,
+            len(target_ids),
+        )
+        self._render_manager.reslice_scene(
+            scene_id=scene_id,
+            dims_state=self._dims_state_for_scene(scene_id),
+            visual_configs=self._build_visual_configs_for_scene(scene_id),
+            target_visual_ids=target_ids,
+            selections=self._selections_for_scene(scene_id),
+        )
+
+    def _announce_camera_move(self, canvas_id: UUID, *, interactive: bool) -> bool:
+        """Report a programmatic move of a canvas's pygfx camera.
+
+        Takes the camera's state as the canvas's baseline, so the next draw
+        does not see the move as motion; writes the model camera; and emits
+        ``CameraChangedEvent`` for outside listeners.
+
+        Returns
+        -------
+        bool
+            ``False`` if the camera did not move, in which case nothing was
+            written or emitted.
+        """
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        scene_id = self._canvas_to_scene.get(canvas_id)
+        if canvas_view is None or scene_id is None:
+            return False
+        if not canvas_view.accept_camera_state():
+            return False
+        state = canvas_view.last_camera_state
+        self._update_camera_model(scene_id, canvas_id, state)
+        self._announcing_camera_move = True
+        try:
+            self._outgoing_events.emit(
+                CameraChangedEvent(
+                    source_id=canvas_id,
+                    scene_id=scene_id,
+                    camera_state=state,
+                    interactive=interactive,
+                )
+            )
+        finally:
+            self._announcing_camera_move = False
+        return True
+
+    def _after_programmatic_camera_move(
+        self, canvas_id: UUID, *, interactive: bool = False, queue: bool = False
+    ) -> None:
+        """The one path every controller call that moves a pygfx camera takes.
+
+        A move that leaves the camera unchanged stops at once: no tick and
+        no reslice.  Otherwise the move is reported
+        (:meth:`_announce_camera_move`) and given to the canvas's camera
+        tracker.  Interactive (flagged, or inside a scope) it is a tick of a
+        motion; if not it is a jump, which reslices now.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose camera was moved.
+        interactive : bool
+            Whether the caller asked for a motion tick.
+        queue : bool
+            ``True`` when called from inside a draw or a commit round; the
+            jump's reslice is then queued (see :meth:`_camera_reslice`).
+        """
+        interactive = interactive or self._camera_driver.scope_open(canvas_id)
+        if not self._announce_camera_move(canvas_id, interactive=interactive):
+            return
+        self._camera_driver.tick(canvas_id, canvas_id, interactive=interactive)
+        if interactive:
+            self._camera_driver.settle_without_loop(canvas_id)
+        else:
+            self._camera_reslice(self._canvas_to_scene[canvas_id], queue=queue)
+
+    def _forget_camera_interaction(self, canvas_id: UUID) -> None:
+        """Drop *canvas_id*'s motion state; no event, and its timer is cancelled."""
+        self._camera_driver.drop(canvas_id)
+
+    def _forget_scene_camera_reslices(self, scene_id: UUID) -> None:
+        """Drop what is queued or owed for *scene_id*'s cameras."""
+        self._camera_handoff.pop(scene_id, None)
+        task = self._camera_reslice_tasks.pop(scene_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        if scene_id in self._camera_reslices_after_draw:
+            self._camera_reslices_after_draw.remove(scene_id)
+
+    # ------------------------------------------------------------------
+    # Camera interaction (motion)
+    # ------------------------------------------------------------------
+
+    def begin_camera_interaction(self, canvas_id: UUID, *, source_id: UUID) -> None:
+        """Open a camera interaction scope on a canvas.
+
+        While any scope is open, every camera move on the canvas is a tick
+        of a motion, programmatic ones included: nothing is resliced until
+        the motion ends.  Opening a scope starts nothing by itself; the
+        first move does.  Holding still for ``CameraConfig.settle_threshold_s``
+        still ends a motion, and the next move starts a new one.
+
+        The canvas's own camera controller holds a scope while it drives the
+        camera.  Scripts normally use :meth:`camera_interaction`.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose camera is about to move.
+        source_id : UUID
+            Who holds the scope.  One scope is counted per source.
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        """
+        if canvas_id not in self._canvas_to_scene:
+            raise KeyError(f"No canvas with id {canvas_id}")
+        self._camera_driver.begin_scope(canvas_id, source_id)
+
+    def end_camera_interaction(self, canvas_id: UUID, *, source_id: UUID) -> None:
+        """Close a camera interaction scope opened by *source_id*.
+
+        Closing the last open scope ends a motion at once (``"release"``):
+        the scene's camera-sensitive visuals reslice without waiting for the
+        stillness time.  Closing a scope that is not open does nothing.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas the scope was opened on.
+        source_id : UUID
+            The source that opened it.
+        """
+        self._camera_driver.end_scope(canvas_id, source_id)
+
+    @contextmanager
+    def camera_interaction(self, canvas_id: UUID) -> Generator[None, None, None]:
+        """Move a canvas's camera as one motion for the length of a ``with`` block.
+
+        Every programmatic move inside the block is a tick of a motion, so a
+        fly-through reslices once, when the block exits, instead of at every
+        pose::
+
+            with controller.camera_interaction(canvas_id):
+                for pose in path:
+                    controller.set_camera_state(canvas_id, pose)
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose camera moves.
+        """
+        source_id = uuid4()
+        self.begin_camera_interaction(canvas_id, source_id=source_id)
+        try:
+            yield
+        finally:
+            self.end_camera_interaction(canvas_id, source_id=source_id)
+
+    def camera_interaction_state(self, canvas_id: UUID) -> Literal["idle", "active"]:
+        """Whether *canvas_id*'s camera is in motion.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to query.
+
+        Returns
+        -------
+        {"idle", "active"}
+        """
+        return self._camera_driver.state(canvas_id).value
+
+    def set_camera_state(
+        self, canvas_id: UUID, state: CameraState, *, interactive: bool = False
+    ) -> None:
+        """Move a canvas's camera to *state*.
+
+        By default the move is a **jump**: the scene's camera-sensitive
+        visuals (multiscale image and labels) reslice at once, and a motion
+        in progress on the canvas ends.  With ``interactive=True``, or inside
+        :meth:`camera_interaction`, it is a tick of a **motion**: nothing is
+        resliced until the motion ends, on release or after
+        ``CameraConfig.settle_threshold_s`` of stillness.  A state equal to
+        the camera's current one does nothing.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            ID of a registered canvas.
+        state : CameraState
+            The state to apply; :meth:`get_camera_state` returns one.  Its
+            ``camera_type`` must match the canvas's active camera.
+        interactive : bool
+            Whether the move is a tick of a motion.
+
+        Raises
+        ------
+        KeyError
+            If *canvas_id* is not registered.
+        ValueError
+            If *state* is for the other kind of camera.
+        """
+        self.get_canvas_view(canvas_id).set_camera_state(state)
+        self._after_programmatic_camera_move(canvas_id, interactive=interactive)
 
     def _update_camera_model(
         self, scene_id: UUID, canvas_id: UUID, camera_state: CameraState
@@ -6589,36 +7491,6 @@ class CellierController:
             camera_model.width = camera_state.extent[0]
             camera_model.height = camera_state.extent[1]
 
-    async def _settle_after(self, canvas_id: UUID, scene_id: UUID) -> None:
-        """Wait for the settle threshold, then reslice camera-sensitive visuals."""
-        try:
-            await asyncio.sleep(self._render_manager.config.camera.settle_threshold_s)
-        except asyncio.CancelledError:
-            raise
-
-        scene = self._model.scenes[scene_id]
-        target_ids = frozenset(v.id for v in scene.visuals if v.requires_camera_reslice)
-
-        if not target_ids:
-            return
-
-        dims_state = self._dims_state_for_scene(scene_id)
-        visual_configs = self._build_visual_configs_for_scene(scene_id)
-
-        _CAMERA_LOGGER.info(
-            "settle_reslice  scene=%s  visuals=%d",
-            scene_id,
-            len(target_ids),
-        )
-
-        self._render_manager.reslice_scene(
-            scene_id=scene_id,
-            dims_state=dims_state,
-            visual_configs=visual_configs,
-            target_visual_ids=target_ids,
-            selections=self._selections_for_scene(scene_id),
-        )
-
     # ------------------------------------------------------------------
     # Camera operations
     # ------------------------------------------------------------------
@@ -6629,8 +7501,13 @@ class CellierController:
         canvas_id: UUID,
         view_direction: tuple[float, float, float] = (-1, -1, -1),
         up: tuple[float, float, float] = (0, 0, 1),
+        *,
+        interactive: bool = False,
     ) -> None:
         """Fit the camera to a visual's bounding box.
+
+        A **jump**, like :meth:`fit_camera`: camera-sensitive visuals
+        reslice at once for the new view.
 
         Parameters
         ----------
@@ -6642,18 +7519,23 @@ class CellierController:
             Camera look direction vector (need not be normalized).
         up : tuple[float, float, float]
             Camera up vector.
+        interactive : bool
+            Whether the move is a tick of a camera motion instead of a jump;
+            see :meth:`set_camera_state`.
         """
         self._render_manager.look_at_visual(visual_id, canvas_id, view_direction, up)
-        scene_id = self._visual_to_scene[visual_id]
-        state = self.get_canvas_view(canvas_id).capture_camera_state()
-        self._update_camera_model(scene_id, canvas_id, state)
+        self._after_programmatic_camera_move(canvas_id, interactive=interactive)
 
     def set_camera_depth_range(
         self,
         canvas_id: UUID,
         depth_range: tuple[float, float],
+        *,
+        interactive: bool = False,
     ) -> None:
         """Set the near/far clip distances for a canvas camera.
+
+        A **jump**, like :meth:`fit_camera`.
 
         Parameters
         ----------
@@ -6661,8 +7543,12 @@ class CellierController:
             ID of the target canvas.
         depth_range : tuple[float, float]
             ``(near, far)`` clip distances in world units.
+        interactive : bool
+            Whether the move is a tick of a camera motion instead of a jump;
+            see :meth:`set_camera_state`.
         """
         self._render_manager.set_camera_depth_range(canvas_id, depth_range)
+        self._after_programmatic_camera_move(canvas_id, interactive=interactive)
 
     # ------------------------------------------------------------------
     # Stubs for future features
@@ -6799,13 +7685,12 @@ class CellierController:
         for visual_model in list(scene.visuals):
             self.remove_visual(visual_model.id)
 
-        # 2. Cancel any pending camera-settle tasks for this scene's canvases,
-        #    and its dims settle.
+        # 2. Drop the interaction state of the scene and its canvases: no
+        #    event, and every timer and queued reslice is cancelled.
         for canvas_id in self._scene_to_canvases.get(scene_id, []):
-            task = self._settle_tasks.pop(canvas_id, None)
-            if task is not None and not task.done():
-                task.cancel()
-        self._cancel_dims_settle(scene_id)
+            self._forget_camera_interaction(canvas_id)
+        self._forget_scene_camera_reslices(scene_id)
+        self._forget_dims_interaction(scene_id)
 
         # 3. Overlays drawn in this scene -- its own and its canvases' --
         #    lose their bridges and render objects with it.
@@ -6851,7 +7736,7 @@ class CellierController:
         """Remove a canvas from its scene, disconnecting all wiring.
 
         Teardown order mirrors ``remove_scene`` for the canvas-level steps:
-        1. Cancel any pending camera-settle task.
+        1. Drop the canvas's camera motion state.
         2. Remove bus subscriptions owned by this canvas.
         3. Update controller lookup maps.
         4. Remove from the model layer.
@@ -6869,10 +7754,8 @@ class CellierController:
         """
         scene_id = self._canvas_to_scene[canvas_id]
 
-        # 1. Cancel any pending camera-settle task.
-        task = self._settle_tasks.pop(canvas_id, None)
-        if task is not None and not task.done():
-            task.cancel()
+        # 1. Drop the canvas's camera motion state (no event; timer cancelled).
+        self._forget_camera_interaction(canvas_id)
 
         # 2. Remove bus subscriptions owned by this canvas.
         self._outgoing_events.unsubscribe_all(canvas_id)
@@ -7043,6 +7926,44 @@ class CellierController:
             weak=weak,
         )
 
+    def on_dims_interaction(
+        self,
+        scene_id: UUID,
+        callback: Callable[[DimsInteractionEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a dims scrub starts or ends.
+
+        The callback receives a ``DimsInteractionEvent``.  The start is
+        emitted before the scrub's first tick changes the dims model.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``DimsInteractionEvent`` on each start and end.
+        owner_id :
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._outgoing_events.subscribe(
+            DimsInteractionEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
     def on_camera_changed(
         self,
         scene_id: UUID,
@@ -7076,6 +7997,44 @@ class CellierController:
         """
         return self._outgoing_events.subscribe(
             CameraChangedEvent,
+            callback,
+            entity_id=scene_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_camera_interaction(
+        self,
+        scene_id: UUID,
+        callback: Callable[[CameraInteractionEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a camera motion starts or ends.
+
+        The callback receives a ``CameraInteractionEvent`` for every canvas
+        of *scene_id*; its ``canvas_id`` says which.
+
+        Parameters
+        ----------
+        scene_id :
+            The scene to watch.
+        callback :
+            Called with the ``CameraInteractionEvent`` on each start and end.
+        owner_id :
+            UUID under which this subscription is registered.  Pass the
+            caller's own UUID so ``unsubscribe_owner(owner_id)`` removes it
+            during teardown.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._outgoing_events.subscribe(
+            CameraInteractionEvent,
             callback,
             entity_id=scene_id,
             owner_id=owner_id,
@@ -8178,9 +9137,9 @@ class CellierController:
                     gfx_scene = self._render_manager.get_scene(scene_id)
                 if canvas_view.show_object(gfx_scene):
                     self._canvases_awaiting_fit.discard(canvas_id)
-                    self._update_camera_model(
-                        scene_id, canvas_id, canvas_view.capture_camera_state()
-                    )
+                    # A jump.  This can run in the commit round of a draw,
+                    # where planning must not: the reslice is queued.
+                    self._after_programmatic_camera_move(canvas_id, queue=True)
             canvas_view.request_draw()
 
     def on_scene_added(
@@ -8333,9 +9292,9 @@ class CellierController:
         not by Python refcounting, so dropping the controller alone leaks them
         (see :meth:`CanvasView.close`).
 
-        Cancels the pending camera-settle tasks and every in-flight slice
-        task -- including the ones the slice coordinator no longer tracks --
-        so a closed controller holds no live ``asyncio.Task``.
+        Cancels the interaction timers, the queued camera reslices and every
+        in-flight slice task -- including the ones the slice coordinator no
+        longer tracks -- so a closed controller holds no live ``asyncio.Task``.
 
         Also disconnects the psygnal bridges from the model and clears the
         event buses.  Those hold the
@@ -8351,10 +9310,12 @@ class CellierController:
         # task only observes its CancelledError once the loop runs again.  What
         # is guaranteed here is that nothing stays tracked and nothing is left
         # un-cancelled -- not that everything has already stopped.
-        self._cancel_settle_tasks()
-        for scene_id in list(self._dims_settle_tasks):
-            self._cancel_dims_settle(scene_id)
-        self._dims_settle_pending.clear()
+        self._camera_driver.close()
+        self._cancel_queued_camera_reslices()
+        self._camera_handoff.clear()
+        self._dims_driver.close()
+        self._dims_scrub_pending.clear()
+        self._dims_scrub_axes.clear()
         for task in self._store_reslice_tasks.values():
             task.cancel()
         self._store_reslice_tasks.clear()
@@ -8389,6 +9350,74 @@ class CellierController:
         # reachable through them.
         self._outgoing_events.clear()
         self._incoming_events.clear()
+
+    def on_section_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[MeshSectionChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a mesh's section config changes.
+
+        Parameters
+        ----------
+        visual_id :
+            The mesh visual to watch.
+        callback :
+            Called with the ``MeshSectionChangedEvent``: ``source_id`` for
+            echo filtering, ``field_name`` and ``new_value``.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._outgoing_events.subscribe(
+            MeshSectionChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def on_lod_config_changed(
+        self,
+        visual_id: UUID,
+        callback: Callable[[LodConfigChangedEvent], None],
+        *,
+        owner_id: UUID,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback fired when a multiscale mesh's lod config changes.
+
+        Parameters
+        ----------
+        visual_id :
+            The multiscale mesh visual to watch.
+        callback :
+            Called with the ``LodConfigChangedEvent``: ``source_id`` for
+            echo filtering, and ``lod``, the complete new config.
+        owner_id :
+            UUID under which this subscription is registered.
+        weak :
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+        """
+        return self._outgoing_events.subscribe(
+            LodConfigChangedEvent,
+            callback,
+            entity_id=visual_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
 
     def on_aabb_changed(
         self,

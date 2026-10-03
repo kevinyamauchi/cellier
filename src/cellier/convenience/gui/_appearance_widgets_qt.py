@@ -52,6 +52,7 @@ def _qt_loading(spec, visual_ids, controller):
     return QtLoadingIndicator(
         visual_ids,
         initial={vid: controller.loading_progress(vid) for vid in visual_ids},
+        levels=spec.values.get("levels", False),
         title=spec.title,
     )
 
@@ -64,6 +65,25 @@ def _qt_loading_config(spec, visual_ids, controller):
         loading=spec.values["loading"],
         n_levels=spec.values["n_levels"],
         title=spec.title,
+    )
+
+
+def _qt_lod_config(spec, visual_ids, controller):
+    from cellier.gui.qt.visuals import QtLodConfigControls
+
+    return QtLodConfigControls(visual_ids, lod=spec.values["lod"], title=spec.title)
+
+
+def _qt_mesh_section(spec, visual_ids, controller):
+    from cellier.gui._mesh_section import section_display_seed
+    from cellier.gui.qt.visuals import QtMeshSectionControls
+
+    # Seeded now and then followed: DimsChangedEvent fires only on a change.
+    return QtMeshSectionControls(
+        visual_ids,
+        section=spec.values["section"],
+        title=spec.title,
+        displayed_dimensions=section_display_seed(controller, visual_ids),
     )
 
 
@@ -165,6 +185,8 @@ QT_BUILDERS = {
     "aabb": _qt_aabb,
     "loading": _qt_loading,
     "loading_config": _qt_loading_config,
+    "mesh_section": _qt_mesh_section,
+    "lod_config": _qt_lod_config,
     "visual_outline": _qt_visual_outline,
     "labels_outline": _qt_labels_outline,
     "visual_occlusion": _qt_visual_occlusion,

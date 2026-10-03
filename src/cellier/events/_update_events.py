@@ -8,7 +8,7 @@ dispatch each event to the corresponding ``update_*`` method, threading
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,12 +57,45 @@ class DimsUpdateEvent(NamedTuple):
     displayed_axes :
         Tuple of axis indices to display, or ``None`` to leave the
         current displayed axes unchanged.
+    interactive :
+        Whether the slice-position change is a tick of a scrub (a slider
+        being moved).  GUI sliders pass ``True``; the default is a jump,
+        which plans in full at once.
+    thickness :
+        Mapping of axis index -> half-thickness in world units for the axes
+        whose thickness changed, or ``None`` to leave every thickness
+        unchanged.  **Merged** into the scene's thickness, like
+        ``slice_indices``.
     """
 
     source_id: UUID
     scene_id: UUID
     slice_indices: dict[int, float] | None
     displayed_axes: tuple[int, ...] | None
+    interactive: bool = False
+    thickness: dict[int, float] | None = None
+
+
+class DimsInteractionUpdateEvent(NamedTuple):
+    """Request to open or close a dims interaction scope on a scene.
+
+    A slider sends ``"begin"`` when it is pressed and ``"end"`` when it is
+    released, so a scrub ends on release instead of waiting for stillness.
+    The press may arrive after the first tick; nothing depends on the order.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  One scope is counted per source.
+    scene_id :
+        Target scene.
+    phase :
+        ``"begin"`` or ``"end"``.
+    """
+
+    source_id: UUID
+    scene_id: UUID
+    phase: Literal["begin", "end"]
 
 
 class SliderOverrideUpdateEvent(NamedTuple):
@@ -86,6 +119,27 @@ class SliderOverrideUpdateEvent(NamedTuple):
     scene_id: UUID
     axis: int
     value: bool | None
+
+
+class MeshSectionUpdateEvent(NamedTuple):
+    """Request to set one field of a mesh visual's ``section`` config.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``MeshSectionChangedEvent``.
+    visual_id :
+        Target mesh visual.
+    field :
+        Attribute name on ``MeshSectionConfig``, e.g. ``"outline"``.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field: str
+    value: Any
 
 
 class AABBUpdateEvent(NamedTuple):
@@ -298,6 +352,33 @@ class LoadingConfigUpdateEvent(NamedTuple):
     value: Any
 
 
+class LodConfigUpdateEvent(NamedTuple):
+    """Request to set one ``GeometryLodConfig`` field on a visual.
+
+    Only a multiscale mesh has a level-of-detail config (``visual.lod``).
+    The controller merges the field into the visual's current config and
+    validates the result.  ``coarse_level`` is fixed when the visual is
+    added, so a request to change it raises.
+
+    Fields
+    ------
+    source_id :
+        Caller's UUID.  Stamped on the outgoing ``LodConfigChangedEvent``
+        so the caller can echo-filter on its own subscription.
+    visual_id :
+        Target visual.
+    field :
+        A ``GeometryLodConfig`` field name, e.g. ``"camera_motion"``.
+    value :
+        New value for the field.
+    """
+
+    source_id: UUID
+    visual_id: UUID
+    field: str
+    value: Any
+
+
 class TrailUpdateEvent(NamedTuple):
     """Request to set or clear the trail window on one axis of a graph visual.
 
@@ -326,6 +407,7 @@ class TrailUpdateEvent(NamedTuple):
 CellierUpdateEventTypes = (
     AppearanceUpdateEvent
     | DimsUpdateEvent
+    | DimsInteractionUpdateEvent
     | SliderOverrideUpdateEvent
     | AABBUpdateEvent
     | OverlayUpdateEvent
@@ -336,6 +418,7 @@ CellierUpdateEventTypes = (
     | RenderConfigUpdateEvent
     | VisualRenderUpdateEvent
     | LoadingConfigUpdateEvent
+    | LodConfigUpdateEvent
     | TrailUpdateEvent
 )
 

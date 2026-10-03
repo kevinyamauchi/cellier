@@ -44,13 +44,21 @@ class SchedulerConfig(BaseModel):
     backstop_reserved : int
         Extra reads only backstop chunks may use, so a backstop never waits
         behind target reads.
+    compute_budget : int
+        Reads outstanding at once over every cache whose reads are compute
+        work in an executor (``CachePolicy(resource="compute")``: a mesh
+        being sliced).  Separate from ``max_in_flight``: a compute read
+        takes neither a shared slot nor a backstop slot, and I/O reads never
+        take one of these.
     commit_fallback_s : float
         Commits normally run just before a frame is drawn.  If an arrival has
         waited this long with no frame, a timer commits it (a canvas that is
         not drawing, or a slow client).
     dims_settle_s : float
-        Stillness after the last dims change before visuals in
-        ``dims_drag="backstop"`` mode load their target.
+        The dims tracker's stillness time: seconds without a slice-position
+        change after which a dims scrub ends, and visuals in
+        ``dims_drag="backstop"`` mode load their target.  A scrub also ends,
+        sooner, when its slider is released.
     store_change_max_hz : float
         Most reslices per second a changing store triggers.  A store that
         announces changes faster (a live acquisition, a stream of edits)
@@ -66,6 +74,7 @@ class SchedulerConfig(BaseModel):
 
     max_in_flight: int = Field(default=32, gt=0)
     backstop_reserved: int = Field(default=8, ge=0)
+    compute_budget: int = Field(default=4, gt=0)
     commit_fallback_s: float = Field(default=0.05, gt=0.0)
     dims_settle_s: float = Field(default=0.15, gt=0.0)
     store_change_max_hz: float = Field(default=30.0, gt=0.0)
@@ -301,9 +310,13 @@ class CameraConfig(BaseModel):
         When ``False`` camera movement never triggers a reslice.
         Manual calls to ``CellierController.reslice_scene`` still work.
     settle_threshold_s : float
-        Seconds of camera stillness required before a reslice is
-        triggered. Lower values give more responsive LOD updates;
-        higher values reduce redundant I/O during fast panning.
+        The camera tracker's stillness time: seconds without a camera
+        change after which a camera motion ends and camera-sensitive visuals
+        reslice.  A motion driven by the camera controller normally ends
+        sooner, in the frame after the controller stops moving the camera
+        (a drag released and its damped tail finished); this is what ends a
+        motion while a drag is held still.  Lower values give more
+        responsive LOD updates; higher values reduce redundant I/O.
     """
 
     reslice_enabled: bool = True
@@ -333,6 +346,16 @@ class RenderManagerConfig(BaseModel):
         Screen-space ambient occlusion settings.  Disabled by default.
         The pass that implements it is still called SSAO -- that is the
         algorithm's name -- but the setting is named for what it does.
+    draw_hold_ms : float
+        After a dims change, how long a canvas may skip frames, keeping its
+        last picture, while a visual that hides until its data loads (a
+        mesh) waits for its read.  A read that lands within this time is
+        drawn with no blank frame before it; after it the canvas draws as
+        usual, the visual hidden until it loads.  The picture kept is of
+        the position just left, and this is the most the hold delays a
+        frame.  A canvas draws about every 33 ms, so a value under that
+        skips one frame at most.  0 turns the hold off.  Camera input ends
+        a hold at once.
 
     Examples
     --------
@@ -357,3 +380,4 @@ class RenderManagerConfig(BaseModel):
     ambient_occlusion: AmbientOcclusionConfig = Field(
         default_factory=AmbientOcclusionConfig
     )
+    draw_hold_ms: float = Field(default=50.0, ge=0.0)
