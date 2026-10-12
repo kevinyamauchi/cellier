@@ -18,6 +18,9 @@ One exception is on record: the two ``2d_*/fit::0_keys`` arrays were captured
 again when the 2D tile sort became stable.  They held the same keys in the tie
 order of the machine that wrote them (256 tiles at 32 distinct distances), an
 order no other platform reproduced.
+
+The ``*_cls`` arrays hold the backstop's class as 1; it is 255 now.  They
+are compared through ``_recorded_class`` until they are captured again.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import pytest
 from pygfx.renderers.wgpu.shader.base import BaseShader
 
 from cellier.data import ImageMemoryStore, LabelMemoryStore
+from cellier.render.scheduling import ChunkClass
 from cellier.transform import AffineTransform
 from cellier.visuals import (
     ClippingPlane,
@@ -44,6 +48,7 @@ from cellier.visuals import (
 )
 from tests._gpu_budget import SMALL_BUDGETS
 from tests._plane_fixtures import ANISO, ISO, open_pyramid
+from tests.render.scheduling._trace import RECORDED_BACKSTOP
 
 GOLDEN = Path(__file__).resolve().parents[1] / "data" / "plane_golden"
 WRITE = os.environ.get("PLANE_GOLDEN_WRITE") == "1"
@@ -81,7 +86,9 @@ def _transform(controller, scene_id, store, voxel):
 
 def _add(controller, pyramid_root, spec, *, dim, labels=False, bias=1.0, planes=()):
     store, voxel = open_pyramid(pyramid_root(spec, labels=labels), spec)
-    scene = controller.add_scene(dim=dim, name="s")
+    scene = controller.add_scene(
+        displayed_axes=("z", "y", "x") if dim == "3d" else ("y", "x"), name="s"
+    )
     transform = _transform(controller, scene.id, store, voxel)
     system = store.data_coordinate_systems[0]
     clipping = tuple(
@@ -232,6 +239,21 @@ def _flatten(cases):
     return flat
 
 
+def _recorded_class(cls: np.ndarray) -> np.ndarray:
+    """A plan's class array as the golden recorded it.
+
+    The request class became a priority with the backstop at 255
+    (``plans/progressive_intermediate_level_design_v2.md`` 5.1); the golden
+    holds it as 1.  The integer changed and no plan did, so it is translated
+    back here and the golden is untouched, as ``scheduling/_trace.py`` does
+    for the trace baseline.  Both translations go when that plan's Phase 7
+    recaptures the class arrays.
+    """
+    out = np.array(cls)
+    out[out == int(ChunkClass.BACKSTOP)] = RECORDED_BACKSTOP
+    return out
+
+
 def test_plans_equal_the_golden(controller, pyramid_root):
     flat = _flatten(_cases(controller, pyramid_root))
     path = GOLDEN / "plans.npz"
@@ -241,6 +263,7 @@ def test_plans_equal_the_golden(controller, pyramid_root):
         pytest.skip(f"wrote {len(flat)} arrays to {path}")
     golden = np.load(path)
     assert set(golden.files) == set(flat), sorted(set(golden.files) ^ set(flat))[:10]
+    flat = {k: _recorded_class(v) if k.endswith("_cls") else v for k, v in flat.items()}
     wrong = [k for k in flat if not np.array_equal(golden[k], flat[k])]
     assert not wrong, f"{len(wrong)} of {len(flat)} differ, e.g. {wrong[:5]}"
 
@@ -293,7 +316,7 @@ def _wgsl_cases(controller, pyramid_root, render_scene):
     for mode in ("mip", "iso", "minip"):
 
         def build(mode=mode):
-            scene = controller.add_scene(dim="3d", name=mode)
+            scene = controller.add_scene(displayed_axes=("z", "y", "x"), name=mode)
             controller.add_image(
                 data=ImageMemoryStore(data=cube, name=mode),
                 scene_id=scene.id,
@@ -306,7 +329,7 @@ def _wgsl_cases(controller, pyramid_root, render_scene):
         out[f"image_memory/{mode}"] = digest(_capture_wgsl(controller, build))
 
     def build_labels():
-        scene = controller.add_scene(dim="3d", name="lab")
+        scene = controller.add_scene(displayed_axes=("z", "y", "x"), name="lab")
         controller.add_labels(
             data=LabelMemoryStore(data=labels, name="lab"), scene_id=scene.id
         )
@@ -320,7 +343,7 @@ def _wgsl_cases(controller, pyramid_root, render_scene):
         # The mode lives on the single appearance; build with it directly.
         def build_mode(mode=mode):
             store, _ = open_pyramid(pyramid_root(ANISO), ANISO)
-            scene = controller.add_scene(dim="3d", name=mode)
+            scene = controller.add_scene(displayed_axes=("z", "y", "x"), name=mode)
             controller.add_image_multiscale(
                 data=store,
                 scene_id=scene.id,
@@ -340,7 +363,7 @@ def _wgsl_cases(controller, pyramid_root, render_scene):
 
         def build_mode(mode=mode):
             store, _ = open_pyramid(pyramid_root(ANISO, labels=True), ANISO)
-            scene = controller.add_scene(dim="3d", name=mode)
+            scene = controller.add_scene(displayed_axes=("z", "y", "x"), name=mode)
             controller.add_labels_multiscale(
                 data=store,
                 scene_id=scene.id,
