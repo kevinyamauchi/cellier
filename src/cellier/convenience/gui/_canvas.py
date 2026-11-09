@@ -35,7 +35,7 @@ def _resolve_gui(viewer: Viewer, gui: str | None) -> str:
 class AnywidgetCanvasView:
     """An anywidget canvas leaf plus its dims panel leaf.
 
-    Returned by :func:`build_canvas_widget` for ``gui="anywidget"``.  Composes
+    Returned by `build_canvas_widget` for ``gui="anywidget"``.  Composes
     to a single column: canvas above the dims sliders.
 
     Appearance controls are **not** part of this view.  An earlier design put
@@ -53,7 +53,7 @@ class AnywidgetCanvasView:
         Axis slice sliders plus the 2D/3D toggle button, below the canvas.
     canvas_size : tuple[int, int]
         The CSS pixel size the canvas was constructed with.  Reused by
-        :meth:`compose` as the column's responsive min-width floor.
+        `compose` as the column's responsive min-width floor.
     """
 
     canvas: object
@@ -223,7 +223,7 @@ def build_canvas_widget(
     Creates a canvas attached to the viewer's scene and connects its dims
     sliders to the controller event bus.  For ``gui="qt"`` this returns a
     ``QtCanvasWidget`` (canvas above a dims slider panel); for
-    ``gui="anywidget"`` it returns an :class:`AnywidgetCanvasView` holding the
+    ``gui="anywidget"`` it returns an `AnywidgetCanvasView` holding the
     canvas and control-panel leaves plus a ``compose(host)`` method.
 
     Parameters
@@ -235,7 +235,7 @@ def build_canvas_widget(
         ``ContinuousAxisValues`` for a free slider or a
         ``DiscreteAxisValues`` for one that steps through listed values.
         Typically obtained from
-        :func:`cellier.convenience.axis_values_from_viewer`, with any
+        `cellier.convenience.axis_values_from_viewer`, with any
         discrete axes replaced by the caller.
     gui : "qt", "anywidget", or None
         GUI toolkit.  Defaults to ``viewer.gui`` when ``None``; raises if it
@@ -269,7 +269,7 @@ def build_canvas_widget(
     QtCanvasWidget or AnywidgetCanvasView
         For ``gui="qt"``, a widget composing the render surface and dims
         slider panel (embed ``canvas_widget.widget``).  For
-        ``gui="anywidget"``, an :class:`AnywidgetCanvasView`.
+        ``gui="anywidget"``, an `AnywidgetCanvasView`.
 
     Raises
     ------

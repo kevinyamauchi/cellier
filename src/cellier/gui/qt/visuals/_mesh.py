@@ -157,7 +157,7 @@ class QtMeshSectionControls(VisualIdGroup):
     section :
         The current config, as ``MeshSectionConfig.model_dump()``.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     displayed_dimensions :
         Scene id to how many dimensions it displays now (2 or 3, from
         ``len(scene.dims.selection.displayed_axes)`` of each scene the

@@ -36,7 +36,7 @@ _ACCEPTED_LABEL_DTYPES = {np.int8, np.int16, np.int32}
 class OMEZarrLabelDataStore(TensorStoreCacheMixin, BaseDataStore):
     """Multiscale OME-Zarr label store returning int32 bricks.
 
-    Use the :meth:`from_path` class method to construct from a URI that
+    Use the `from_path` class method to construct from a URI that
     points to an OME-NGFF label group (containing ``ome`` → ``multiscales``
     metadata).
 
@@ -71,7 +71,7 @@ class OMEZarrLabelDataStore(TensorStoreCacheMixin, BaseDataStore):
         ``data_coordinate_systems[0]`` when not given; otherwise generated.
     data_coordinate_systems : list[DataCoordinateSystem]
         One system per resolution level, finest first, and the store's only
-        record of its axis names, types and units.  :meth:`from_path` builds
+        record of its axis names, types and units.  `from_path` builds
         them from the NGFF axis metadata (every axis ``sampling="discrete"``)
         or from a caller's level-0 system.  Each system's ``datastore_id``
         must equal ``id``.
@@ -278,7 +278,7 @@ class OMEZarrLabelDataStore(TensorStoreCacheMixin, BaseDataStore):
 
         The edge convention: an axis of ``size`` voxels spans
         ``[-0.5, size - 0.5]``.  See
-        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        `axis_extents`.
         """
         return gridded_axis_extents(self.level_shapes[0])
 

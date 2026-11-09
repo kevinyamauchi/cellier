@@ -2,7 +2,7 @@
 
 Every frame this module produces comes from a **dedicated offscreen canvas**,
 never from the canvas a user is looking at.  That is the whole design, and it
-is what buys the contract :func:`capture_scene` states: two captures of the
+is what buys the contract `capture_scene` states: two captures of the
 same viewer state produce byte-identical arrays.
 
 A live canvas cannot deliver that.  It is scheduler-driven (nothing can make
@@ -141,7 +141,7 @@ def capture_scene(
         would need more raises rather than returning an unsettled frame.
     residual : float
         How much of the accumulator's error may remain when
-        ``frames="converged"`` stops.  See :func:`frames_to_settle`.
+        ``frames="converged"`` stops.  See `frames_to_settle`.
 
     Returns
     -------
@@ -314,7 +314,7 @@ def write_png(path: str | Path, image: np.ndarray) -> None:
         Destination file.
     image : np.ndarray
         ``(height, width, 4)`` uint8 array, as returned by
-        :func:`capture_scene`.
+        `capture_scene`.
 
     Raises
     ------

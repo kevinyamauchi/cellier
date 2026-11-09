@@ -44,13 +44,13 @@ _STATIC = Path(__file__).parent / "static"
 class AnywidgetDimsPanel(anywidget.AnyWidget):
     """Renders per-axis slice sliders and an optional 2D/3D toggle button.
 
-    Satisfies the :class:`cellier.gui._protocol.WidgetView` contract so
+    Satisfies the `cellier.gui._protocol.WidgetView` contract so
     ``CellierController.connect_widget`` wires it the same way as Qt widgets.
     The toggle button is included automatically when constructed with
-    *axes_2d*/*axes_3d* (see :meth:`from_scene`), e.g. omitted for a scene
+    *axes_2d*/*axes_3d* (see `from_scene`), e.g. omitted for a scene
     with fewer than 3 axes.
 
-    Construct via :meth:`from_scene`, then wire with::
+    Construct via `from_scene`, then wire with::
 
         dims = AnywidgetDimsPanel.from_scene(scene, axis_values)
         controller.connect_widget(dims, subscription_specs=dims.subscription_specs())
@@ -72,7 +72,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
     Derived here from ``slice_indices`` whenever it changes, so the rule for
     which listed value a between-values position shows lives in Python
-    (:func:`~cellier.gui._axis_values.nearest_value_index`) rather than being
+    (`nearest_value_index`) rather than being
     copied into ``dims_panel.js``.
     """
 
@@ -99,7 +99,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
     Synced rather than hard-coded in ``dims_panel.js`` so this and the Qt
     front end coalesce drags at the same rate -- see
-    :data:`cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS`.
+    `cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS`.
     """
 
     has_toggle = traitlets.Bool(False).tag(sync=True)

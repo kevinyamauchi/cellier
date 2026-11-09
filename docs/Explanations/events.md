@@ -999,23 +999,6 @@ class LodConfigChangedEvent(NamedTuple):
     visual_id: UUID
     lod: GeometryLodConfig
 
-
-class ResliceCancelledEvent(NamedTuple):
-    """Fired when an in-flight reslice task is cancelled.
-
-    Parameters
-    ----------
-    source_id :
-        Always the ``SliceCoordinator``'s ID.
-    scene_id :
-        The scene whose task was cancelled.
-    visual_id :
-        The visual whose task was cancelled.
-    """
-
-    source_id: UUID
-    scene_id: UUID
-    visual_id: UUID
 ```
 
 ### Render events
@@ -1115,7 +1098,7 @@ family, and all seven share the mouse event's context fields -- `source_id`
 
 Subscribe with `controller.on_pick(canvas_id, event_type, callback, *,
 owner_id, weak=False)` (mirrored on `Viewer` and `OrthoViewer`) and remove
-with `unsubscribe_pick`.  A pick event is emitted only for a hit, after the
+with the returned handle's `unsubscribe()`.  A pick event is emitted only for a hit, after the
 mouse event for the same pointer event, and carries its `gesture_id`: a press,
 its drag moves and its release share one id, and a hover move has `None`.
 
@@ -1304,7 +1287,6 @@ CellierEventTypes = (
     | RenderPlanesChangedEvent
     | PlaneInteractionEvent
     | PlaneGizmoChangedEvent
-    | ResliceCancelledEvent
     | FrameRenderedEvent
     | VisualAddedEvent
     | VisualRemovedEvent
@@ -1402,6 +1384,7 @@ is small (tens of entries) so this has no measurable cost.
         owner_id: UUID | None = None,
         weak: bool = False,
         entity_field: str | None = None,
+        on_remove: Callable[[], None] | None = None,
     ) -> SubscriptionHandle:
         """Register callback to be called when event_type is emitted.
 
@@ -1428,11 +1411,16 @@ is small (tens of entries) so this has no measurable cost.
             this subscription only.  ``None`` (the default) uses the
             event type's canonical field.  See "Filtering on a
             non-canonical field" below.
+        on_remove :
+            Cleanup run once when the subscription is removed, by any
+            route except ``clear()``.  See "Removing one subscription"
+            below.
 
         Returns
         -------
         SubscriptionHandle
-            Opaque token for individual removal via ``unsubscribe()``.
+            Removes this subscription on its own: ``handle.unsubscribe()``
+            or ``bus.unsubscribe(handle)``.
 
         Raises
         ------
@@ -1454,6 +1442,24 @@ is small (tens of entries) so this has no measurable cost.
         entity_id: UUID | None = None,
     ) -> list[SubscriberInfo]: ...
 ```
+
+**Removing one subscription.** A `SubscriptionHandle` holds its UUID and a
+weak reference to the bus that made it, so `handle.unsubscribe()` works
+without the bus at hand, `handle.active` says whether it is still registered,
+and a handle kept after the controller is gone neither keeps the bus alive
+nor fails (it reads as inactive).  Every route that removes a subscription
+-- `unsubscribe`, `unsubscribe_all`, and the lazy clean-up of a dead weak
+callback in `emit` -- goes through one private `_remove`, which marks the
+record removed and runs its `on_remove` cleanup exactly once.  An emission
+already in progress skips a record removed by an earlier subscriber.
+`clear()` is teardown and skips the cleanups.
+
+The controller relies on this for pick gating: `on_pick` passes a cleanup that
+uncounts the subscription, so the per-canvas and per-type pick counters stay
+right however the subscription ends, including `unsubscribe_owner` with a
+widget's id and a garbage-collected weak callback.  The one-shot helpers
+(`on_canvas_connected`, `on_canvas_first_frame`, `on_scene_ready`) return
+their handle too, so a pending callback can be cancelled.
 
 ### Entity ID resolution
 
@@ -1484,7 +1490,6 @@ _ENTITY_FIELD: dict[type, str] = {
     RenderPlanesChangedEvent:          "visual_id",
     PlaneInteractionEvent:          "visual_id",
     PlaneGizmoChangedEvent:    "canvas_id",
-    ResliceCancelledEvent:             "visual_id",
     FrameRenderedEvent:                "canvas_id",
     VisualAddedEvent:                  "scene_id",
     VisualRemovedEvent:                "scene_id",
@@ -2303,7 +2308,6 @@ from cellier.events._events import (
     PickWriteChangedEvent,
     PointsPickEvent,
     PointsPickInfo,
-    ResliceCancelledEvent,
     ResliceCompletedEvent,
     ResliceProgressEvent,
     ResliceStartedEvent,

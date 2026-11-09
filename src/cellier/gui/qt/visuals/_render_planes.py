@@ -1,7 +1,7 @@
 """The Qt "Render planes" control of a visual.
 
 One row per plane, described and edited by
-:class:`cellier.gui._render_planes.RenderPlanesEditor`.  The rows are those
+`cellier.gui._render_planes.RenderPlanesEditor`.  The rows are those
 of the "Clipping planes" control with the extents added.
 """
 
@@ -382,7 +382,7 @@ class QtRenderPlanesControls(VisualIdGroup):
         ``get_render_plane_gizmo_data(controller, visual_id, canvas_id)``.
         Without *gizmo_target* the rows have no gizmo toggle.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

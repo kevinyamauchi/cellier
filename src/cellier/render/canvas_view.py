@@ -74,10 +74,10 @@ class CanvasView:
     instead it receives a ``get_scene_fn`` callable that is invoked each
     frame so ownership of the scene stays with ``SceneManager``.
 
-    Camera change detection is implemented by comparing a cached
-    ``CameraState`` snapshot each frame in ``_draw_frame``.  The
-    ``_applying_model_state`` flag suppresses detection during
-    programmatic camera updates to prevent feedback loops.
+    Camera changes are detected each frame by comparing the camera's
+    ``CameraState`` with the one from the previous frame, and reported as a
+    ``CameraChangedEvent`` on the event bus.  A camera update applied from
+    the model is not reported, so it does not feed back.
 
     The view drives its pygfx camera controllers itself
     (``auto_update=False``): each frame it ticks the active controller and
@@ -85,7 +85,7 @@ class CanvasView:
     is therefore detected in the frame that draws it, and whether the
     controller is still driving the camera (a drag held, its damped tail, a
     wheel or key animation) is known through public pygfx API.  Changes of
-    that answer are reported as ``_CameraControllerEvent``.
+    that answer are reported to the controller on the event bus.
 
     Attributes
     ----------
@@ -116,7 +116,7 @@ class CanvasView:
         When ``True``, install a blender carrying the ``outline_id`` render
         target so label outlines have a per-pixel label key.  Costs 4 bytes
         per pixel.  Deciding here is the cheap path, not the only one:
-        :meth:`ensure_render_targets` adds it later for the price of one
+        `ensure_render_targets` adds it later for the price of one
         recompile frame.
     ambient_occlusion_enabled : bool
         When ``True``, install a blender carrying the ``normal`` render
@@ -731,7 +731,7 @@ class CanvasView:
         camera's side of the centre.  At a field of view of 0 the configured
         range ``(near, far)`` is therefore widened to ``(-far, far)``; above
         0 it is used as given.  The configured range is what
-        :meth:`capture_camera_state` reports, so a round trip through the
+        `capture_camera_state` reports, so a round trip through the
         camera model brings the same range back when the field of view
         changes.
 
@@ -755,8 +755,10 @@ class CanvasView:
     def set_depth_range(self, depth_range: tuple[float, float] | None) -> None:
         """Set the active camera near/far clip distances.
 
-        On the 3D camera this is the configured range, which is widened
-        while the field of view is 0; see :meth:`_sync_depth_range_3d`.
+        On the 3D camera this is the configured range.  While the field of
+        view is 0 the camera uses ``(min(near, -far), far)`` instead: pygfx
+        places such a camera at the centre of what it is fitted to, so a
+        positive near plane would cut away the half nearest the camera.
 
         Parameters
         ----------
@@ -772,7 +774,7 @@ class CanvasView:
     ) -> None:
         """Set the near/far clip distances on the 2D or 3D camera.
 
-        Unlike :meth:`set_depth_range`, this targets a specific camera
+        Unlike `set_depth_range`, this targets a specific camera
         regardless of which is currently active.  Both the 2D orthographic
         and 3D perspective cameras are created up front (see ``__init__``),
         so the reserve camera must have its depth range set independently —
@@ -846,7 +848,7 @@ class CanvasView:
         -------
         view_dir, up : tuple[float, float, float]
             In rendered ``(x, y, z)`` order.  The 2D camera's are fixed; the
-            3D camera's are set by :meth:`set_fit_orientation_3d`.
+            3D camera's are set by `set_fit_orientation_3d`.
         """
         if self._dim == "2d":
             return (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)
@@ -859,7 +861,7 @@ class CanvasView:
     ) -> None:
         """Set the orientation the 3D camera is fitted with.
 
-        Nothing moves: the next :meth:`show_object` in 3D uses it.
+        Nothing moves: the next `show_object` in 3D uses it.
 
         Parameters
         ----------
@@ -1085,8 +1087,8 @@ class CanvasView:
 
         Call whenever the image that *should* be drawn changes, so the
         next frame is not an average with a picture that no longer
-        applies.  Cheap and idempotent: it sets a flag that
-        ``_draw_frame`` consumes, and the pass itself only zeroes a
+        applies.  Cheap and idempotent: it sets a flag that the next frame
+        consumes before it draws, and the pass itself only zeroes a
         counter.
 
         Every content change needs this, not just the conspicuous ones.
@@ -1112,7 +1114,7 @@ class CanvasView:
 
         For a frame whose content did not change: the next step of a camera
         controller's animation, or the still picture after a camera motion
-        ended.  :meth:`request_draw` is the one for content changes.
+        ended.  `request_draw` is the one for content changes.
         """
         if not self._closed:
             self._canvas.request_draw()
@@ -1167,7 +1169,7 @@ class CanvasView:
         A perspective camera with a ``fov`` of 0 takes ``extent`` as well,
         where the state has one: it is what an orthographic zoom changes.
         ``up`` is not applied: it is the up direction the rotation already
-        gives.  The caller reports the move; see :meth:`accept_camera_state`.
+        gives.  The caller reports the move; see `accept_camera_state`.
 
         Parameters
         ----------
@@ -1203,7 +1205,7 @@ class CanvasView:
 
         Targets *dim*'s camera whether or not it is the one shown.  The
         caller reports a move of the shown camera; see
-        :meth:`accept_camera_state`.
+        `accept_camera_state`.
 
         Parameters
         ----------
@@ -1280,11 +1282,7 @@ class CanvasView:
         self._event_bus = event_bus
 
     def set_controller_enabled(self, enabled: bool) -> None:
-        """Enable or disable the active camera controller for this canvas.
-
-        ``self._controller`` already points to the currently active
-        controller (``_controller_2d`` or ``_controller_3d`` depending on
-        the canvas dim), so this correctly targets whichever type is in use.
+        """Enable or disable this canvas's camera controllers, 2D and 3D.
 
         Sets both dims' controllers: the one shown at once, the other for
         when the canvas switches to it.
@@ -1405,7 +1403,7 @@ class CanvasView:
 
         Safe to call repeatedly; it does nothing when the targets are
         already present, which is the common case.  **Not safe to call from
-        inside a draw callback** -- see :func:`ensure_extra_targets`.
+        inside a draw callback** -- see `ensure_extra_targets`.
 
         Parameters
         ----------
@@ -1455,7 +1453,7 @@ class CanvasView:
         ``depth_range`` is ``None`` where the camera's range is automatic,
         which the 2D camera's is until one is set.  For the 3D camera it is
         the configured range, not the one widened for a field of view of 0
-        (see :meth:`_sync_depth_range_3d`), and ``extent`` is the camera's
+        (see `set_depth_range`), and ``extent`` is the camera's
         width and height at a field of view of 0 and ``(0.0, 0.0)`` above
         it.
         """

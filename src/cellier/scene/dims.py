@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 #: One axis of a world coordinate system, stated explicitly.
 #:
-#: Either a built :class:`~cellier.transform.Axis` or a
+#: Either a built `Axis` or a
 #: ``(name, axis_type)`` pair.  There is no bare-string form: ``Axis.axis_type``
 #: has no default, and a channel or time axis silently typed ``"space"`` is
 #: rejected far from where it was written -- by ``from_axis_map``, which
@@ -71,7 +71,7 @@ def world_coordinate_system(
 ) -> WorldCoordinateSystem:
     """Coerce an axis specification into a world coordinate system.
 
-    A :class:`WorldCoordinateSystem` passes through unchanged, so its axis
+    A `WorldCoordinateSystem` passes through unchanged, so its axis
     **ids** survive -- which matters, because every stored transform names its
     endpoints by id.  Anything else builds a new system with fresh ids.
 

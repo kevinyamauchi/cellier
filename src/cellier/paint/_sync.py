@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class SyncPaintController(AbstractPaintController):
-    """Paint controller for :class:`LabelMemoryStore`.
+    """Paint controller for `LabelMemoryStore`.
 
     Directly and synchronously mutates the backing numpy array on every
     brush application, then announces the write with

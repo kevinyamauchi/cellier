@@ -38,11 +38,11 @@ class PaintStrokeCommand:
 
 
 class ActiveStroke:
-    """Accumulator that builds a :class:`PaintStrokeCommand` during a drag.
+    """Accumulator that builds a `PaintStrokeCommand` during a drag.
 
     ``record`` is called once per brush application.  Successive calls
     concatenate their voxel arrays.  ``finalise`` constructs the
-    immutable :class:`PaintStrokeCommand`.  After ``finalise``, no further
+    immutable `PaintStrokeCommand`.  After ``finalise``, no further
     ``record`` calls are permitted.
 
     Parameters
@@ -129,7 +129,7 @@ class ActiveStroke:
 
 
 class CommandHistory:
-    """Bounded deque of :class:`PaintStrokeCommand` with undo/redo pointers.
+    """Bounded deque of `PaintStrokeCommand` with undo/redo pointers.
 
     Only the undo stack is bounded by ``max_depth``; the redo stack is
     unbounded because it is cleared by ``push`` before it can grow

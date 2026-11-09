@@ -7,6 +7,7 @@ clipping planes helpers read what a clipping planes control of either
 toolkit is built from (its planes, its store's bounds, and where its gizmo
 is drawn); the render planes helpers do the same for a render planes
 control.  The axis values models say which values each dims slider can take.
+`image_control_values` builds the starting state of an image control.
 """
 
 from cellier.gui._appearance_fields import as_rgba, hex_to_rgba, rgba_to_hex
@@ -17,6 +18,7 @@ from cellier.gui._clipping_planes import (
     get_clipping_plane_gizmo_data,
     get_clipping_planes_data_from_visual,
 )
+from cellier.gui._image_controls import image_control_values
 from cellier.gui._render_planes import (
     RenderPlaneGizmoTarget,
     get_render_plane_gizmo_data,
@@ -35,5 +37,6 @@ __all__ = [
     "get_render_plane_gizmo_data",
     "get_render_planes_data_from_visual",
     "hex_to_rgba",
+    "image_control_values",
     "rgba_to_hex",
 ]

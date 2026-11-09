@@ -73,7 +73,7 @@ class BackgroundAppearance(CellierEventedModel):
 def viewer_background() -> BackgroundAppearance:
     """The background ``Viewer`` and ``OrthoViewer`` start with.
 
-    A uniform :data:`VIEWER_BACKGROUND_COLOR` (black).  The gradient colors
+    A uniform `VIEWER_BACKGROUND_COLOR` (black).  The gradient colors
     keep their defaults, so switching ``mode`` to ``"vertical_gradient"``
     shows the usual gray gradient.  A scene built directly (``add_scene``,
     ``Scene``) keeps ``BackgroundAppearance``'s own default, the gradient.

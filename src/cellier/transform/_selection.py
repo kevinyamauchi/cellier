@@ -38,10 +38,10 @@ class RegionSelection(CellierModel):
     which round.  Both halves come from the editor's index and thickness,
     and the validator checks that the translation reaches the region.  So
     neither is ever rebuilt from the other: a consumer that needs the
-    position reads :attr:`slice_position`, and one that needs the extent
+    position reads `slice_position`, and one that needs the extent
     reads the region.  Recovering the position as the midpoint of the
     region's bounds can miss it by an ulp, and a zero-thickness plane put
-    there excludes the translation -- use :meth:`with_planes_at_slice` to
+    there excludes the translation -- use `with_planes_at_slice` to
     narrow a slab to a plane.
 
     A region relative to the translation (an extent around the position,
@@ -156,7 +156,7 @@ class RegionSelection(CellierModel):
         For every world axis in *axes*, the region's constraints on that axis
         alone (a half-space whose normal is non-zero only there) are replaced
         by the zero-thickness plane ``x = p``, with ``p`` read from
-        :attr:`slice_position`.  Every other constraint is kept as it is.
+        `slice_position`.  Every other constraint is kept as it is.
         The plane is built from the translation itself, not from the
         region's bounds, so the result always passes the validator (see the
         class docstring).

@@ -60,8 +60,8 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     """Read-only display widget for dataset metadata.
 
     Shows ``(label, value)`` rows as a table inside a collapsible
-    ``<details>`` block.  A sectioned :class:`DatasetInfo` passed to
-    :meth:`from_info` additionally draws nested blocks and matrix tables, so
+    ``<details>`` block.  A sectioned `DatasetInfo` passed to
+    `from_info` additionally draws nested blocks and matrix tables, so
     the anywidget front end renders everything Qt does -- before this it
     could only draw a flat row list, and a store's affine or per-level
     shapes were reachable from Qt alone.
@@ -100,7 +100,7 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     """``[[label, value], ...]``, the synced form of the ``rows`` argument."""
 
     sections = traitlets.List().tag(sync=True)
-    """The synced form of a :class:`DatasetInfo`'s sections.
+    """The synced form of a `DatasetInfo`'s sections.
 
     Empty for a widget built from plain ``rows``, which the front end then
     draws as a single flat table.  When both are set, ``sections`` wins:
@@ -122,7 +122,7 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     def section_labels(self) -> list[str]:
         """The sections drawn, in the order they are drawn.
 
-        The twin of :meth:`cellier.gui.qt.QtDatasetInfo.section_labels`, and
+        The twin of `cellier.gui.qt.QtDatasetInfo.section_labels`, and
         it exists for the same reason: one ``DatasetInfo`` must draw the same
         way on both front ends, and nothing else makes that checkable.
 
@@ -142,7 +142,7 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     def from_info(
         cls, info: DatasetInfo, *, title: str | None = None
     ) -> AnywidgetDatasetInfo:
-        """Build from a sectioned :class:`DatasetInfo`.
+        """Build from a sectioned `DatasetInfo`.
 
         The anywidget twin of ``QtDatasetInfo.from_info``; the two draw the
         same sections in the same order.

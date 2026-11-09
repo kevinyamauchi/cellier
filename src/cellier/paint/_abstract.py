@@ -28,13 +28,32 @@ if TYPE_CHECKING:
 class AbstractPaintController(ABC):
     """Minimal shared base for paint controllers.
 
-    Owns: EventBus subscriptions, :class:`CommandHistory`,
-    :class:`ActiveStroke` accumulation, and camera-controller locking on
+    Owns: EventBus subscriptions, `CommandHistory`,
+    `ActiveStroke` accumulation, and camera-controller locking on
     the bound canvas.
 
-    Concrete subclasses override the ``_read_old_values``,
-    ``_write_values``, ``_on_stroke_completed``, ``commit``, and
-    ``abort`` hooks to plug in storage-specific behaviour.
+    A press starts a stroke and every move and the release extend it with
+    a ball of *brush_radius_voxels* round the pointer.  A press is ignored
+    when it falls outside the data, and refused, with a ``UserWarning``,
+    when the visual cannot be painted faithfully in the current view (for
+    example a tilted 2D view of the data).  The brush skips voxels the
+    visual's clipping planes cut away.
+
+    Subclassing
+    -----------
+    A storage backend subclasses this and supplies:
+
+    * ``_data_shape`` (tuple of int, the shape of the painted array),
+      ``_displayed_axes`` (the two data axes the 2D view shows) and
+      ``_store_dtype`` (the array's NumPy dtype), set *before* calling
+      ``super().__init__``, which raises ``AttributeError`` otherwise.
+    * ``_read_old_values`` and ``_write_values``: read and write the
+      voxels a brush touches.
+    * ``_on_stroke_completed``: called once per finished stroke, for
+      example to flush or upload it.
+    * ``commit`` and ``abort``: end the session.
+
+    The underscored methods are hooks for subclasses, not for callers.
 
     Parameters
     ----------
@@ -45,7 +64,7 @@ class AbstractPaintController(ABC):
         Mouse subscriptions are scoped to this canvas; its camera
         controller is disabled for the session duration.
     data_store_id : UUID
-        Recorded on every :class:`PaintStrokeCommand` for history
+        Recorded on every `PaintStrokeCommand` for history
         attribution.
     brush_value : int
     brush_radius_voxels : float
@@ -179,7 +198,7 @@ class AbstractPaintController(ABC):
     def _coord_within_data_bounds(self, world_coord: np.ndarray) -> bool:
         """True if *world_coord* maps to a valid voxel in the data array.
 
-        Performs the same axis swap as :meth:`_apply_brush` so the bounds
+        Performs the same axis swap as `_apply_brush` so the bounds
         check uses data-array (row, col) order rather than pygfx world
         (x, y) order.
         """
@@ -303,17 +322,48 @@ class AbstractPaintController(ABC):
 
     @abstractmethod
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
-        """Return pre-paint values for each voxel in the store's native dtype."""
+        """Return the current values of the voxels a brush is about to paint.
+
+        Parameters
+        ----------
+        voxel_indices : np.ndarray
+            ``(n, ndim)`` integer voxel indices, inside the data.
+
+        Returns
+        -------
+        np.ndarray
+            ``(n,)`` values in the store's dtype (``_store_dtype``).  They
+            are recorded on the stroke, so undo can restore them.
+        """
         ...
 
     @abstractmethod
     def _write_values(self, voxel_indices: np.ndarray, values: np.ndarray) -> None:
-        """Write *values* to the backing store; synchronous and IO-free."""
+        """Write *values* to the voxels; synchronous and without IO.
+
+        Called on the GUI thread for every brush step, and by undo and
+        redo, so it must not block on disk or network.  Stage the writes
+        and persist them in `commit` (or ``_on_stroke_completed``).
+
+        Parameters
+        ----------
+        voxel_indices : np.ndarray
+            ``(n, ndim)`` integer voxel indices, inside the data.
+        values : np.ndarray
+            ``(n,)`` values in the store's dtype.
+        """
         ...
 
     @abstractmethod
     def _on_stroke_completed(self, command: PaintStrokeCommand) -> None:
-        """Called after each stroke is finalised and pushed to history."""
+        """Called after each stroke is finished and pushed to the history.
+
+        Parameters
+        ----------
+        command : PaintStrokeCommand
+            The finished stroke: every voxel it painted, with old and new
+            values.
+        """
         ...
 
     @abstractmethod

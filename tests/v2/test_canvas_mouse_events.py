@@ -433,7 +433,7 @@ def test_on_pick_subscription_enables_gate_and_unsubscribe_disables():
     )
     assert rm._pick_details_enabled.get(canvas_id) is True
 
-    controller.unsubscribe_pick(handle)
+    controller.unsubscribe(handle)
     assert rm._pick_details_enabled.get(canvas_id) is False
 
 
@@ -445,7 +445,7 @@ def test_mouse_subscriptions_do_not_enable_the_gate():
 
     handle = controller.on_mouse_press_2d(canvas_id, lambda e: None, owner_id=uuid4())
     assert rm._pick_details_enabled.get(canvas_id, False) is False
-    controller.unsubscribe_mouse(handle)
+    handle.unsubscribe()
 
 
 def test_on_pick_refuses_a_mouse_event_type():
@@ -468,10 +468,10 @@ def test_gate_stays_enabled_until_last_subscriber_removed():
     h2 = controller.on_pick(canvas_id, ImagePickEvent, lambda e: None, owner_id=owner)
     assert rm._pick_details_enabled.get(canvas_id) is True
 
-    controller.unsubscribe_pick(h1)
+    h1.unsubscribe()
     assert rm._pick_details_enabled.get(canvas_id) is True
 
-    controller.unsubscribe_pick(h2)
+    controller.unsubscribe(h2)
     assert rm._pick_details_enabled.get(canvas_id) is False
 
 

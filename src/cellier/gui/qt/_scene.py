@@ -147,7 +147,7 @@ class _ThicknessSpinBox(QDoubleSpinBox):
     """A half-thickness box whose stepped changes are ticks of a drag.
 
     ``stepBy`` serves the arrows, the arrow keys, the wheel and Page
-    Up/Down; while it runs, :attr:`stepping` is true, and the change it
+    Up/Down; while it runs, `stepping` is true, and the change it
     makes is sent ``interactive=True``.  A typed value goes through
     ``valueChanged`` alone and is a jump.  A spin box has no press or
     release to close a scope on, so the drag ends on stillness
@@ -227,7 +227,7 @@ class QtDimsControl:
 
     Follows the bus-widget pattern:
 
-    - One ``UUID`` (``self._id``) shared by the sliders and the toggle.
+    - One widget id shared by the sliders and the toggle.
     - Subscribed to ``DimsChangedEvent`` via ``controller.connect_widget``.
     - Echo-filters its own changes using ``source_id``.
     - Suppresses re-entrant slider signals with ``blockSignals`` when applying
@@ -761,7 +761,7 @@ class QtCanvasWidget:
     height.  The dims control includes the 2D/3D toggle button (when the
     scene has 3+ axes), so no separate toggle widget is needed.
 
-    Prefer constructing via :meth:`from_scene_and_canvas` rather than calling
+    Prefer constructing via `from_scene_and_canvas` rather than calling
     ``__init__`` directly.
 
     Parameters

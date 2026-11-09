@@ -205,7 +205,7 @@ class MeshMemoryStore(BaseDataStore):
         The bounding box of the vertices, with no padding -- a vertex is a point,
         not a cell, so there is no half-voxel to add.  ``None`` when the
         store is empty.  See
-        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        `axis_extents`.
         """
         return self._cached_axis_extents(lambda: geometry_axis_extents(self.positions))
 
@@ -298,7 +298,7 @@ class MeshMemoryStore(BaseDataStore):
         Parameters
         ----------
         request : MeshSliceRequest
-            Built by ``GFXMeshVisual``.
+            Built by the render layer from the current view.
 
         Returns
         -------

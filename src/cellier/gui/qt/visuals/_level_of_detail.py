@@ -39,7 +39,7 @@ class QtLevelOfDetailControls(VisualIdGroup):
     Drives ``settled_lod_bias``, ``coarsest_while_moving_3d`` and
     ``coarsest_while_moving_2d`` on a multiscale image or labels
     appearance.  The checkbox shows and edits the setting of the view the
-    control is in: the 3D one while :attr:`n_displayed_dimensions` is 3,
+    control is in: the 3D one while `n_displayed_dimensions` is 3,
     the 2D one otherwise.
 
     Changing ``settled_lod_bias`` reslices, so its ``AppearanceUpdateEvent``
@@ -67,13 +67,13 @@ class QtLevelOfDetailControls(VisualIdGroup):
         What the view displays now, 2 or 3.
     scene_ids :
         Scenes whose ``DimsChangedEvent`` the control follows to keep
-        :attr:`n_displayed_dimensions` current.
+        `n_displayed_dimensions` current.
     lod_range :
         ``(min, max)`` of the slider.
     decimals :
         Decimal places shown beside the slider.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

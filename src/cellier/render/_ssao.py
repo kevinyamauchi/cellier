@@ -8,9 +8,9 @@ single-channel textures::
     _AOCompositePass  colorTex + _ao_blur_tex                  -> targetTex
 
 Structurally this follows
-:class:`~cellier.render._temporal_accumulation.TemporalAccumulationPass`
+`TemporalAccumulationPass`
 -- private textures, lazily reallocated on size change -- rather than
-:class:`~cellier.render._outline.OutlinePass`, which owns none.  The
+`OutlinePass`, which owns none.  The
 private textures exist because the occlusion field has to be blurred
 before it is applied, and a blur cannot read the target it writes.
 
@@ -18,7 +18,7 @@ Unlike the pick buffer, the depth target ships with ``TEXTURE_BINDING``
 already granted, and ``flush()`` hands it to any pass declaring
 ``USES_DEPTH = True``.  So this pass needs no usage grant and no blender
 subclass; the ``normal`` target it *prefers* for volumes does, and that is
-:mod:`cellier.render._cellier_blender`'s job.
+`cellier.render._cellier_blender`'s job.
 
 ``r8unorm`` for the intermediates gives 256 levels of occlusion -- ample
 for a quantity that is blurred and then multiplied -- at one byte per
@@ -421,7 +421,8 @@ class SSAOPass(EffectPass):
 
         The rotation is a counter (mod 4096), not a random draw, so N frames
         from zero always produce the same sequence.  Rewinding is what makes
-        a capture of N frames reproducible -- see ``cellier.render._capture``.
+        a capture of N frames reproducible (``CellierController.screenshot``
+        rewinds it before drawing).
         """
         self._frame_index = 0
 

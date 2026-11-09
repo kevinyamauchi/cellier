@@ -7,9 +7,9 @@ Each brush application:
 1. Reads pre-paint values from the open ``WriteBuffer`` (read-your-writes
    through a private tensorstore transaction).
 2. Stages the new values into the same buffer.
-3. Marks the dirty level-0 bricks in the :class:`WriteLayer`.
+3. Marks the dirty level-0 bricks in the `WriteLayer`.
 4. Writes the new values into the GPU paint cache + LUT via
-   :meth:`CellierController._patch_painted_tiles_2d`.
+   `CellierController._patch_painted_tiles_2d`.
 
 The shader composites the paint cache over the base sample, so painted
 voxels are visible on the next frame.  No reslice or eviction occurs
@@ -71,9 +71,9 @@ class MultiscalePaintController(AbstractPaintController):
     canvas_id :
     data_store :
         The store behind a ``MultiscaleLabelVisual``: an
-        ``OMEZarrLabelDataStore`` or a ``MultiscaleZarrDataStore``.
-        Must expose ``_ts_stores: list[ts.TensorStore]`` and
-        ``level_shapes`` / ``level_scales``.
+        ``OMEZarrLabelDataStore`` or a ``MultiscaleZarrDataStore``.  Paint
+        is written through the store's open tensorstore handles, which a
+        store opens when it is constructed; ``ValueError`` if it has none.
     visual_block_size :
         Tile / brick side length used by the visual's render config.
         Must match the ``MultiscaleLabelRenderConfig.block_size`` of the
@@ -88,7 +88,7 @@ class MultiscalePaintController(AbstractPaintController):
     autosave_interval_s :
         If set, a ``QTimer`` fires every this many seconds to flush staged
         paint to disk, rebuild the pyramid, and reset the GPU paint
-        textures.  A flushed write is permanent: :meth:`abort` then
+        textures.  A flushed write is permanent: `abort` then
         discards only the paint staged after it.  ``None`` disables
         autosave.
     """

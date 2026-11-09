@@ -689,9 +689,9 @@ class _GFXLabelMemoryCore(RenderPlanesMixin, ClippingPlanesMixin):
 class GFXLabelMemoryVisual(BrickRouteHost, _GFXLabelMemoryCore):
     """Render-layer visual for an in-memory labels visual.
 
-    The planar path and 3D views (:class:`_GFXLabelMemoryCore`), and the brick
+    The planar path and 3D views (`_GFXLabelMemoryCore`), and the brick
     route for a tilted 2D view
-    (:class:`~cellier.render.visuals._brick_route_host.BrickRouteHost`).
+    (`BrickRouteHost`).
     """
 
     def _build_inner(self, model, axes):

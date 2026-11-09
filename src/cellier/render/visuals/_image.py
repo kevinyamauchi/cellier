@@ -246,7 +246,7 @@ def _level_scale_and_translation(
     voxel coordinates to level-0, over every data axis.  *fetch_axes* names
     the ascending data axes the brick grid is built over, and the vectors come
     back in that order -- which is the order the fetched array carries
-    (:func:`_fetch_order`).  Callers that feed these into shader-space
+    (`_fetch_order`).  Callers that feed these into shader-space
     geometry must reverse the local axis order via ``swap_axes`` first.
 
     The axis selection happens here rather than in a rank-reduced transform: a
@@ -824,7 +824,7 @@ class MultiscaleBrickLayout3D:
         Rendering brick side length in voxels.
     fetch_axes : tuple[int, ...]
         The ascending data axes this grid is built over, which is the order
-        the fetched array carries (:func:`_fetch_order`).  The transforms are
+        the fetched array carries (`_fetch_order`).  The transforms are
         projected onto them here.
     """
 
@@ -1015,7 +1015,7 @@ def _geometry_fetch_axes(
 ) -> tuple[int, ...]:
     """The data axes a geometry for *displayed_axes* is built over, ascending.
 
-    Those the displayed world axes map to (:func:`_world_axes_to_data_axes`)
+    Those the displayed world axes map to (`_world_axes_to_data_axes`)
     -- or, when one of them is a world axis the data does not reach, a
     placeholder: a 2D store seen edge-on is such a view, and draws nothing,
     but its geometry is still built.  The placeholder is the data axes the
@@ -1555,7 +1555,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
     Owns GPU resources (brick caches, LUT textures, pygfx nodes) for both
     2D and 3D rendering, and the chunk scheduler's adapter for each atlas
     (``residency_3d`` / ``residency_2d``).  The public
-    :class:`GFXMultiscaleImageVisual` plans once and turns the plan into a
+    `GFXMultiscaleImageVisual` plans once and turns the plan into a
     desired set per drawn channel through its slots.  Appearance is
     applied by that wrapper: a slot builds its nodes with neutral
     defaults.
@@ -1933,7 +1933,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         Returns ``(old_node, new_node)`` for the active node so the caller
         can swap it in the scene graph.  The geometry of the mode
         *displayed_axes* selects is replaced when its fetch axes changed
-        (:meth:`_sync_geometry_3d`).
+        (`_sync_geometry_3d`).
 
         Parameters
         ----------
@@ -2010,7 +2010,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
     ) -> None:
         """Bring the built 2D geometry in line with *displayed_axes*.
 
-        See :meth:`_sync_geometry_3d`.
+        See `_sync_geometry_3d`.
         """
         fetch_2d = _geometry_fetch_axes(
             self._transform, displayed_axes, len(self._full_level_shapes[0])
@@ -2981,7 +2981,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         3-D bricks decode a centred-normalised surface hit (``norm_pos``) mapped
         back to voxels via ``norm_size`` / ``dataset_size``; the 2-D node is a
         tile-grid proxy whose ``index`` is rescaled to level-0 pixels.  See
-        :mod:`cellier.render.visuals._pick`.
+        `cellier.render.visuals._pick`.
         """
         if isinstance(hit_object, NormSizedVolume):
             if self._norm_size is None or self._dataset_size is None:
@@ -3064,7 +3064,7 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
     def reset_tick(self) -> None:
         """Rewind the per-frame jitter seed to its construction value.
 
-        The counterpart to :meth:`tick`, called before a reproducible capture.
+        The counterpart to `tick`, called before a reproducible capture.
         This is the only visual with per-frame state; every other ``tick`` is
         a no-op and needs no reset.
         """
@@ -3299,7 +3299,7 @@ class GFXMultiscaleImageVisual(RenderPlanesMixin, ClippingPlanesMixin):
     """Render-layer visual for one ``MultiscaleImageVisual``.
 
     Draws the image single-channel or composited from a pool of
-    :class:`_MultiscaleImageSlot`.  The pool holds one slot when the visual
+    `_MultiscaleImageSlot`.  The pool holds one slot when the visual
     has no ``channel_axis``, so a plain image keeps the whole GPU budget, and
     ``max_channels`` slots when it does, each with ``budget / pool size``.
     Slots are keyed by channel index; single mode on index ``k`` reuses

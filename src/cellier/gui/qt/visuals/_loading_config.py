@@ -49,7 +49,7 @@ class QtLoadingConfigControls(VisualIdGroup):
     n_levels :
         The visual's level count, the most "Backstop level" offers.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

@@ -851,7 +851,7 @@ def appearance_targets(viewer: object) -> list[ControlTarget]:
 
     A group is offered only when at least one item of its controls list
     draws in the appearance dock for that group
-    (:func:`draws_in_appearance_dock`): offering one with nothing to draw
+    (`draws_in_appearance_dock`): offering one with nothing to draw
     would only lead to an empty panel.  Multi-scene aware: an ``OrthoViewer``
     records two groups per fanned-out add, the 2D panels and the 3D panel,
     each keyed by its first visual and labelled by the viewer; the
@@ -942,7 +942,7 @@ OVERLAY_PLACEHOLDER = "No overlays"
 def overlay_targets(viewer: object) -> list[ControlTarget]:
     """Every overlay an ``OverlayControls()`` dock can drive.
 
-    In :attr:`Viewer.overlays` order.  Overlays of a type with no controls
+    In `Viewer.overlays` order.  Overlays of a type with no controls
     table entry are skipped rather than offered with an empty panel.  The
     target's ``visual`` slot holds the overlay model and ``config`` is
     ``None``: an overlay has no ``controls=`` list, and its controls are
@@ -1149,7 +1149,7 @@ def missing_dock_node(
     controls : list[Control] or None
         The ``controls=`` of one visual.
     nodes : frozenset[str]
-        From :func:`dock_node_names`.
+        From `dock_node_names`.
     clipping_node : str
         The node that shows clipping planes controls on this viewer:
         ``"AppearanceControls"`` on a ``Viewer``, where the control is part

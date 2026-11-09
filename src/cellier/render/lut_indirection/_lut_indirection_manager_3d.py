@@ -175,7 +175,7 @@ class LutIndirectionManager3D:
         phases : sequence of np.ndarray
             Index arrays into the bricks, in painting order.
         loop_below : int
-            See :func:`paint_lut`.
+            See `paint_lut`.
         """
         values = np.column_stack(
             [slot_grid_pos[:, 2], slot_grid_pos[:, 1], slot_grid_pos[:, 0], levels]

@@ -362,5 +362,5 @@ _RENDER_PLANES = TypeAdapter(tuple[RenderPlane, ...])
 
 
 def validate_render_planes(value: object) -> tuple[RenderPlane, ...]:
-    """Coerce *value* to a tuple of :class:`RenderPlane`, or raise."""
+    """Coerce *value* to a tuple of `RenderPlane`, or raise."""
     return _RENDER_PLANES.validate_python(value)

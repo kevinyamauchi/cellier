@@ -233,7 +233,7 @@ def literal_choices(appearance: Any, field: str) -> tuple[str, ...]:
 
     Reads the field's ``Literal`` annotation, so the in-memory and multiscale
     variants of a field need no separate lists -- each model answers for
-    itself.  Debug-only values are dropped per :data:`DEBUG_FIELD_VALUES`.
+    itself.  Debug-only values are dropped per `DEBUG_FIELD_VALUES`.
 
     Returns an empty tuple when the field is not a ``Literal``.
     """

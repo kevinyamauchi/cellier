@@ -90,11 +90,11 @@ def _open_ts_stores(
         ``["s0", "s1", "s2"]``.
     context :
         Context every level is opened on, so they share one chunk cache
-        (:func:`~cellier.data._tensorstore_cache.build_context`).
+        (`build_context`).
     recheck :
         Whether cached chunks are revalidated on read: always, never, or
         once (``"open"``); see
-        :func:`~cellier.data._tensorstore_cache.recheck_spec_options`.
+        `recheck_spec_options`.
 
     Returns
     -------
@@ -153,7 +153,7 @@ class MultiscaleZarrDataStore(TensorStoreCacheMixin, BaseDataStore):
     data_coordinate_systems :
         One system per resolution level, finest first.  The store reads no
         axis metadata, so these come from the caller --
-        :meth:`from_scale_and_translation` builds them from a level-0
+        `from_scale_and_translation` builds them from a level-0
         system -- or, when left empty, from the scene's world axes once the
         store is added to a scene.  Each system's ``datastore_id`` must equal
         ``id``.
@@ -308,7 +308,7 @@ class MultiscaleZarrDataStore(TensorStoreCacheMixin, BaseDataStore):
 
         The edge convention: an axis of ``size`` voxels spans
         ``[-0.5, size - 0.5]``.  See
-        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        `axis_extents`.
         """
         return gridded_axis_extents(self.level_shapes[0])
 

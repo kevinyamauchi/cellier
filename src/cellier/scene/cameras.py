@@ -50,7 +50,7 @@ class BaseCameraController(CellierEventedModel):
 class OrbitCameraController(BaseCameraController):
     """Orbit controller of a 3D perspective camera.
 
-    See :class:`BaseCameraController`.
+    See `BaseCameraController`.
 
     Parameters
     ----------
@@ -64,7 +64,7 @@ class OrbitCameraController(BaseCameraController):
 class PanZoomCameraController(BaseCameraController):
     """Pan/zoom controller of a 2D orthographic camera.
 
-    See :class:`BaseCameraController`.
+    See `BaseCameraController`.
 
     Parameters
     ----------
@@ -120,8 +120,8 @@ class BaseCamera(CellierEventedModel):
     id : UUID4
         Unique identifier. Auto-generated.
     controller : CameraControllerType
-        The camera's controller model: an :class:`OrbitCameraController`
-        for a perspective camera, a :class:`PanZoomCameraController` for an
+        The camera's controller model: an `OrbitCameraController`
+        for a perspective camera, a `PanZoomCameraController` for an
         orthographic one.  Replacing it applies the new one's ``enabled``.
     """
 
@@ -189,7 +189,7 @@ class BaseCamera(CellierEventedModel):
 
 
 class PerspectiveCamera(BaseCamera):
-    """A canvas's 3D perspective camera; see :class:`BaseCamera`.
+    """A canvas's 3D perspective camera; see `BaseCamera`.
 
     Parameters
     ----------
@@ -247,7 +247,7 @@ class PerspectiveCamera(BaseCamera):
 
 
 class OrthographicCamera(BaseCamera):
-    """A canvas's 2D orthographic camera; see :class:`BaseCamera`.
+    """A canvas's 2D orthographic camera; see `BaseCamera`.
 
     Parameters
     ----------

@@ -44,7 +44,7 @@ class QtAABBWidget(VisualIdGroup):
         Starting CSS color string for the color swatch (e.g. ``"#ff00ff"``).
     title :
         The name shown on the group frame.  Defaults to
-        :data:`DEFAULT_TITLE`.
+        `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """
@@ -142,7 +142,7 @@ class QtAABBWidget(VisualIdGroup):
         """The titled group to insert into a layout.
 
         The rows inside only mean something together, so the group names
-        them; reach for :attr:`control` for the bare rows.
+        them; reach for `control` for the bare rows.
         """
         return self._group
 

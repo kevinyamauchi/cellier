@@ -4,21 +4,21 @@ For one visual in one 2D view, ``L`` and ``t`` are the effective
 ``data -> world`` linear block and translation, ``D`` the two displayed
 world axes, ``S`` the sliced ones and ``s`` the slice position:
 
-* the **frame** (:func:`slice_plane_frame`) parameterises the pullback
+* the **frame** (`slice_plane_frame`) parameterises the pullback
   ``P = {p : L[S, :] p + t[S] = s[S]}`` by the displayed world coordinates:
   ``p = p0 + c0 u0 + c1 u1`` lands on world ``c`` in the displayed axes;
-* the **projection geometry** (:func:`classify_projection`) describes a
+* the **projection geometry** (`classify_projection`) describes a
   slab over one sliced world axis ``a``: the data axes it varies over and
   the data direction of a pixel's ray, which runs along world ``a``;
-* the **ray step** (:func:`ray_step`) is one drawn-level voxel along that
+* the **ray step** (`ray_step`) is one drawn-level voxel along that
   ray, the Euclidean voxel length (never the max-norm);
-* the **footprint** (:func:`slice_footprint`) is the data box cut by the
+* the **footprint** (`slice_footprint`) is the data box cut by the
   slice or the slab, as a convex polygon in the displayed world axes;
-* :func:`projection_axis` and :func:`choose_slice_route` are the rules of
+* `projection_axis` and `choose_slice_route` are the rules of
   4.2 and 5.2.2, as pure functions.
 
 Everything is float64 and reads ``classification.effective_transform``, so
-it agrees with :func:`~cellier.transform.classify_view` about what is
+it agrees with `classify_view` about what is
 zero.  A non-affine (non-uniform) axis may be sliced: it is pinned to the
 data value its slice position maps back to.  It may not be displayed or
 projected along, because nothing here is affine in it.
@@ -497,7 +497,7 @@ def ray_step(
     ----------
     ray_direction_data : np.ndarray
         ``d``, level-0 data units per world unit
-        (:attr:`ProjectionGeometry.ray_direction_data`).
+        (`ProjectionGeometry.ray_direction_data`).
     level_scale : Sequence[float] or None
         The drawn level's voxel size in level-0 voxels, per data axis;
         ``None`` is level 0.
@@ -667,7 +667,7 @@ def choose_slice_route(
     classification : ViewClassification
         The visual against the view.
     projection : ProjectionGeometry or None
-        Set when the visual projects in this view (:func:`projection_axis`
+        Set when the visual projects in this view (`projection_axis`
         returned an axis); labels never pass one.
 
     Returns

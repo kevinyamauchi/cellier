@@ -51,7 +51,7 @@ class QtTrailControls(VisualIdGroup):
     trail :
         The visual's current ``{axis: TrailConfig}``.  Read, never held.
     title :
-        The name shown on the group frame.  Defaults to :data:`DEFAULT_TITLE`.
+        The name shown on the group frame.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

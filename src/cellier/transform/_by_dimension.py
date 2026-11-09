@@ -75,7 +75,7 @@ def _derived_system_id(*parts: object) -> uuid.UUID:
 
 
 class TransformBlock(CellierModel):
-    """One block of a :class:`ByDimensionTransform`.
+    """One block of a `ByDimensionTransform`.
 
     Parameters
     ----------
@@ -212,7 +212,7 @@ class ByDimensionTransform(BaseTransform):
         """Build a transform by stating which axis corresponds to which.
 
         Every argument but ``axis_transforms`` keeps the meaning it has in
-        :meth:`AffineTransform.from_axis_map`, so a caller who needs no
+        `AffineTransform.from_axis_map`, so a caller who needs no
         per-axis block writes exactly the ``from_axis_map`` call and the
         non-uniform case is a one-key diff rather than a different
         idiom.
@@ -867,7 +867,7 @@ class ByDimensionTransform(BaseTransform):
             A region in the output coordinate system.
         output_coordinate_system : CoordinateSystem
             This transform's **output** system, the one *region* is in, as
-            for :meth:`AffineTransform.imap_region`.  A region that is not
+            for `AffineTransform.imap_region`.  A region that is not
             axis-aligned is pulled back through the equivalent affine,
             which checks it and raises ``ValueError`` for any other
             system.  The result is always in this transform's input

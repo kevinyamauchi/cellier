@@ -6,8 +6,8 @@ no fixtures", and this walk needs the controller (to wire widgets to the bus)
 and handles widgets.  Keeping them apart keeps that promise true.
 
 Everything toolkit-specific is reached through the injected
-:class:`~cellier.convenience._hosts.LayoutHost` and the
-:class:`~cellier.convenience._backend.GuiBackend` it carries, so this file
+`LayoutHost` and the
+`GuiBackend` it carries, so this file
 imports neither Qt nor anywidget.
 """
 

@@ -1,7 +1,7 @@
 """The Qt "Clipping planes" control of a visual.
 
 One row per plane, described and edited by
-:class:`cellier.gui._clipping_planes.ClippingPlanesEditor`.
+`cellier.gui._clipping_planes.ClippingPlanesEditor`.
 """
 
 from __future__ import annotations
@@ -291,7 +291,7 @@ class QtClippingPlanesControls(VisualIdGroup):
         The target's visual must be one of *visual_id*.  Without
         *gizmo_target* the rows have no gizmo toggle.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

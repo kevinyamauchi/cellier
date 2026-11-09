@@ -25,7 +25,7 @@ Examples::
         --panel xy --scale 2 --out /tmp/xy.png
 
 The capture is reproducible: run it twice, get identical bytes.  ``Qt`` is
-forced onto its offscreen platform plugin by :func:`main` before the target is
+forced onto its offscreen platform plugin by `main` before the target is
 imported, so a target that builds a Qt viewer works with no display attached.
 Importing this module has no such side effect.
 """

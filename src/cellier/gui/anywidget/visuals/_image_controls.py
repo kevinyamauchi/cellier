@@ -6,7 +6,7 @@ writes a whole dict back; the Python side diffs it against the previous value
 and emits one update event per changed field.
 
 Which rows show follows the same rule as Qt
-(:func:`cellier.gui._image_controls.row_visible`), applied in the front end
+(`cellier.gui._image_controls.row_visible`), applied in the front end
 from ``n_displayed_dimensions`` and the mode lists, which the Python side
 sets and the front end only reads.
 """
@@ -61,10 +61,10 @@ class AnywidgetImageControls(VisualIdGroup, anywidget.AnyWidget):
         and choices.  Its layout is internal.  The
         convenience viewers build it when an ``ImageControl`` is in a
         visual's ``controls=`` list; code that builds this widget directly
-        gets it from ``cellier.gui._image_controls.image_control_values``
-        (private, and may change).
+        gets it from `cellier.gui.image_control_values` and passes it
+        through unchanged.
     title :
-        The heading.  Defaults to :data:`DEFAULT_TITLE`.
+        The heading.  Defaults to `DEFAULT_TITLE`.
     n_displayed_dimensions :
         How many dimensions the driven visuals' scenes display now, 2 or 3.
         Seeds the rows that are shown only in 3D.  Default 3, which shows

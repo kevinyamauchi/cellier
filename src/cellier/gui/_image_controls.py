@@ -238,10 +238,10 @@ def row_visible(
     -------
     bool
         ``render_mode`` rows are shown in 3D; ``iso_threshold`` rows in 3D for
-        a mode in :data:`THRESHOLD_MODES`, and in both on a MaskedImage;
-        ``attenuation`` rows in 3D for a mode in :data:`ATTENUATION_MODES`.
-        On a MaskedImage the :data:`MASKED_THREE_D_FIELDS` rows are shown in
-        3D and the :data:`MASKED_TWO_D_FIELDS` rows in 2D.  Every other row
+        a mode in `THRESHOLD_MODES`, and in both on a MaskedImage;
+        ``attenuation`` rows in 3D for a mode in `ATTENUATION_MODES`.
+        On a MaskedImage the `MASKED_THREE_D_FIELDS` rows are shown in
+        3D and the `MASKED_TWO_D_FIELDS` rows in 2D.  Every other row
         is always shown.
     """
     if masked:
@@ -370,7 +370,7 @@ def image_update_event(
     field : str
         The field name.
     value : Any
-        The control's value; converted with :func:`to_model_value`.
+        The control's value; converted with `to_model_value`.
     channel : int or None
         The channel index, for ``page="channel"``.
 
@@ -395,7 +395,7 @@ def image_update_event(
 def mode_values(appearance: Any) -> dict[str, Any]:
     """A single or channel appearance, in control terms.
 
-    Only the :data:`MODE_FIELDS` the appearance carries: the surface and band
+    Only the `MODE_FIELDS` the appearance carries: the surface and band
     fields are a MaskedImage's alone.
     """
     values = {
@@ -422,6 +422,12 @@ def image_control_values(
 ) -> dict[str, Any]:
     """Everything either front end needs to build the image control.
 
+    The result is the *values* argument of `QtImageControls` and of the
+    anywidget image control.  The convenience viewers call this for every
+    ``ImageControl`` in a ``controls=`` list; call it yourself only when
+    building the widget directly.  The dict's layout is internal: pass it
+    through unchanged.
+
     Parameters
     ----------
     visual : BaseImageVisual
@@ -446,7 +452,7 @@ def image_control_values(
         Iso-threshold slider bounds.  ``None``: the contrast slider's on an
         image, whose threshold is in the same units; on a MaskedImage, whose
         threshold is in the mask's units, a window of ``max(1, |t|)`` either
-        side of the threshold ``t`` (:func:`default_threshold_range`).
+        side of the threshold ``t``.
     thickness_range : tuple[float, float] or None
         A MaskedImage's thickness slider bounds, world units.  ``None``:
         ``(0, max(10, 4 * thickness))``.  Ignored for other images.

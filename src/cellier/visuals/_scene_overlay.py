@@ -46,7 +46,7 @@ class SceneOverlay(CellierEventedModel):
 
 
 class SceneBoundingBoxAppearance(CellierEventedModel):
-    """Appearance model for a :class:`SceneBoundingBox`.
+    """Appearance model for a `SceneBoundingBox`.
 
     Parameters
     ----------

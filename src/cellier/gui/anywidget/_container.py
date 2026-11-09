@@ -46,7 +46,7 @@ class AnywidgetBox(anywidget.AnyWidget):
         (see ``LayoutHost.dock_panel``).
     padding : int
         Inner padding in pixels, on all four sides.  Defaults to ``0``.  Used
-        by :class:`~cellier.convenience._hosts.JupyterHost` to keep the
+        by `JupyterHost` to keep the
         outermost box from touching the notebook cell / sidecar tab edges;
         nested boxes leave this at ``0`` so only the outer border shows.
     title : str

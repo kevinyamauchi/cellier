@@ -40,7 +40,7 @@ def gridded_axis_extents(shape: Sequence[int]) -> tuple[tuple[float, float], ...
     ``[i - 0.5, i + 0.5)``, so an axis of ``size`` voxels spans
     ``[-0.5, size - 0.5]`` -- half a voxel beyond the first and last
     centres.  This is the convention
-    :func:`~cellier.render.visuals._slicing.round_world_to_voxel` documents
+    `round_world_to_voxel` documents
     and the whole render layer already uses; returning the centres
     ``(0, size - 1)`` instead would understate every axis by half a voxel at
     each end.
@@ -153,9 +153,9 @@ class BaseDataStore(CellierEventedModel):
     id : str
         The unique identifier for the data store.
     data_changed : Signal
-        Emits a :class:`~cellier.data._changes.StoreChange` whenever the
+        Emits a `StoreChange` whenever the
         store's data changes: automatically when a data field is reassigned,
-        and on :meth:`notify_changed` after an in-place write.  A controller
+        and on `notify_changed` after an in-place write.  A controller
         that registers the store relays it to the event bus and reslices the
         visuals reading the store.  Changes must happen on the main thread.
     """
@@ -460,9 +460,9 @@ class BaseDataStore(CellierEventedModel):
         to say one thing.
 
         There are exactly two implementations.  Gridded stores use
-        :func:`gridded_axis_extents` -- the **edge** convention,
+        `gridded_axis_extents` -- the **edge** convention,
         ``(-0.5, size - 0.5)``, because a voxel is centred on its index.
-        Geometry stores use :func:`geometry_axis_extents` -- the bounding
+        Geometry stores use `geometry_axis_extents` -- the bounding
         box of their vertices, with no padding, because a vertex is a point.
 
         **Cached by geometry stores.**  Their extent is a pass over every

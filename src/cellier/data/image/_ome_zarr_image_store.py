@@ -181,7 +181,7 @@ def _open_ome_ts_stores(
         Per-level relative array paths.
     context : ts.Context
         Context every level is opened on, so they share one chunk cache
-        (:func:`~cellier.data._tensorstore_cache.build_context`).
+        (`build_context`).
     anonymous : bool
         When True, read an ``s3://`` store without signing requests (for
         public buckets).  ``gs://`` needs no setting: a public bucket is
@@ -189,7 +189,7 @@ def _open_ome_ts_stores(
         Default False.
     recheck : bool
         Whether cached chunks are revalidated on read
-        (:func:`~cellier.data._tensorstore_cache.recheck_spec_options`).
+        (`recheck_spec_options`).
         Default False.
     """
     stores: list[ts.TensorStore] = []
@@ -317,7 +317,7 @@ def _ngff_coordinate_systems(
 
     A caller's level-0 system replaces the metadata outright, which is also
     the way past a blank ``type``.  Either way the coarser levels are copied
-    from level 0 by :func:`~cellier.data._axes.level_systems`.
+    from level 0 by `level_systems`.
 
     Parameters
     ----------
@@ -368,7 +368,7 @@ def _omero_channel_labels(metadata: Any) -> list[str] | None:
 class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
     """Data store for an OME-Zarr v0.5 image read via tensorstore.
 
-    Use the :meth:`from_path` class method to construct from an OME-Zarr URI.
+    Use the `from_path` class method to construct from an OME-Zarr URI.
 
     Parameters
     ----------
@@ -405,7 +405,7 @@ class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
         ``data_coordinate_systems[0]`` when not given; otherwise generated.
     data_coordinate_systems : list[DataCoordinateSystem]
         One system per resolution level, finest first, and the store's only
-        record of its axis names, types and units.  :meth:`from_path` builds
+        record of its axis names, types and units.  `from_path` builds
         them from the NGFF axis metadata (every axis ``sampling="discrete"``)
         or from a caller's level-0 system.  Each system's ``datastore_id``
         must equal ``id``.
@@ -680,7 +680,7 @@ class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
 
         The edge convention: an axis of ``size`` voxels spans
         ``[-0.5, size - 0.5]``.  See
-        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        `axis_extents`.
         """
         return gridded_axis_extents(self.level_shapes[0])
 

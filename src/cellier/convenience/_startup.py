@@ -6,7 +6,7 @@ only thing a caller could observe was the happy ending -- ``on_ready`` fired
 once everything had worked, and nothing at all fired when it had not.  A
 viewer that never finished starting looked exactly like one still working.
 
-This module makes the sequence answerable.  :class:`StartupTracker` records
+This module makes the sequence answerable.  `StartupTracker` records
 where each scene has got to, so ``viewer.startup_state`` can be *read* at any
 moment with no callback, no event loop and no front end -- which is what makes
 a blank panel diagnosable from a notebook cell instead of from a debugger.
@@ -64,7 +64,7 @@ class StartupState(str, Enum):
 
     Not an error -- slow remote data legitimately takes a while -- but the
     signal that something is worth looking at.  A stalled scene keeps its
-    :attr:`StartupTracker.stalled_at` state so the report can say *what* it
+    `StartupTracker.stalled_at` state so the report can say *what* it
     was waiting for.
     """
 

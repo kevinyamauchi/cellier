@@ -40,7 +40,7 @@ class QtLodConfigControls(VisualIdGroup):
     lod :
         The current config, as ``GeometryLodConfig.model_dump()``.
     title :
-        The group's name.  Defaults to :data:`DEFAULT_TITLE`.
+        The group's name.  Defaults to `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """

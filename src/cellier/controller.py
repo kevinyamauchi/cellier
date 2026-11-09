@@ -102,6 +102,7 @@ from cellier.events import (
     SingleAppearanceUpdateEvent,
     SliderAxesChangedEvent,
     SliderOverrideUpdateEvent,
+    SubscriberInfo,
     SubscriptionHandle,
     SubscriptionSpec,
     TrailChangedEvent,
@@ -460,7 +461,7 @@ def _has_bijection(transform: Any) -> bool:
 
 
 def _visual_family(visual: BaseVisual) -> str:
-    """The :data:`_DRAWABLE` key of a visual model."""
+    """The `_DRAWABLE` key of a visual model."""
     if isinstance(visual, MultiscaleImageVisual):
         return "image_multiscale"
     if isinstance(visual, BaseImageVisual):
@@ -518,7 +519,7 @@ def retained_raster_axes(
 ) -> tuple[int, ...]:
     """The data axes a placement keeps off the brick route, ascending.
 
-    The pure core of :meth:`CellierController._retained_data_axes`, with the
+    The pure core of `CellierController._retained_data_axes`, with the
     transform and its classification passed in, so the value side of a
     MaskedImage is placed by the same rule as the visual.
 
@@ -913,7 +914,7 @@ def _apply_palette(controller, value) -> None:
 #: Every settable render-config field, and how it reaches the GPU.
 #:
 #: Keys are ``(section, dotted field)``.  A field absent from this table is
-#: not settable through :meth:`CellierController.update_render_config_field`,
+#: not settable through `CellierController.update_render_config_field`,
 #: which is deliberate for two of them: ``OutlineLayerConfig.color`` exists on
 #: the shared layer model but does nothing on the *selection* layer, whose
 #: colour comes from the palette slot carried in the LUT.  Recording that here
@@ -1354,16 +1355,14 @@ class CellierController:
         # of the last one and the one waiting.
         self._surface_replan_at: dict[UUID, float] = {}
         self._surface_replan_tasks: dict[UUID, asyncio.Task] = {}
-        # Per-canvas count of active pick-event subscribers (``on_pick``).
-        # Drives RenderManager pick-detail gating (Decision 4).  Keyed by
-        # canvas_id.
-        self._pick_subscriber_counts: dict[UUID, int] = {}
-        # The same count per (canvas, pick event type): a pick event is built,
+        # The live ``on_pick`` subscriptions per canvas.  The render layer
+        # extracts pick details for a canvas only while it has one.  Each
+        # subscription leaves this set through its bus ``on_remove`` cleanup,
+        # whichever route removes it.
+        self._pick_subscriptions: dict[UUID, set[SubscriptionHandle]] = {}
+        # The count per (canvas, pick event type): a pick event is built,
         # and image and labels values are read, only while its type has one.
         self._pick_event_counts: dict[tuple[UUID, type], int] = {}
-        # A pick SubscriptionHandle's id -> (canvas, event type), so that
-        # unsubscribe_pick can decrement the right counters.
-        self._pick_handles: dict[int, tuple[UUID, type]] = {}
         # In-flight asynchronous pick value reads: the ``move`` read per
         # canvas, which a newer pointer event cancels, and every read per
         # visual, which ``remove_visual`` cancels.
@@ -1563,8 +1562,9 @@ class CellierController:
     def set_widget_parent(self, parent: object) -> None:
         """Set the Qt parent for subsequently created canvas widgets.
 
-        Only meaningful when ``self._gui == "qt"``; the anywidget gui ignores
-        the parent (notebook canvases are not laid out by a Qt parent).
+        Only meaningful for a controller built with ``gui="qt"``; the
+        anywidget and offscreen guis ignore the parent (their canvases are
+        not laid out by a Qt parent).
         """
         self._widget_parent = parent
 
@@ -1592,7 +1592,7 @@ class CellierController:
         4. Canvases     — restored with their cameras: field of view,
                           clipping planes, controller ``enabled`` and, where
                           the model has one, the pose; see
-                          :meth:`add_canvas_model`.
+                          `add_canvas_model`.
 
         The model does not record a GUI toolkit; pass the one to build the
         canvases with as *gui*.
@@ -1656,7 +1656,7 @@ class CellierController:
     ) -> CellierController:
         """Deserialize a ViewerModel from disk and construct a controller.
 
-        See :meth:`from_model` for what is restored.
+        See `from_model` for what is restored.
 
         Parameters
         ----------
@@ -1876,7 +1876,7 @@ class CellierController:
         Finally, for an ``"extent"`` change, reslice the visuals reading the
         store, so a caller that changes a store need not reslice by hand,
         at most ``SchedulerConfig.store_change_max_hz`` times a second
-        per store (:meth:`_request_store_reslice`).
+        per store (`_request_store_reslice`).
         """
         readers = [
             (scene_id, visual.id) for scene_id, visual in self._store_readers(store_id)
@@ -2254,7 +2254,7 @@ class CellierController:
             render mode is ``"plane"``, in the scene's world space; at most
             four.  Build them from the scene's world coordinate system
             (``RenderPlane.from_point_normal``).  They can be changed later
-            with :meth:`set_render_planes`.  Default none.
+            with `set_render_planes`.  Default none.
         render_config : InMemoryImageRenderConfig or None
             The GPU configuration of the brick route, which draws a tilted
             2D view of the image.  ``None`` uses the defaults.
@@ -2332,7 +2332,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -2377,7 +2377,7 @@ class CellierController:
             render mode is ``"plane"``, in the scene's world space; at most
             four.  Build them from the scene's world coordinate system
             (``RenderPlane.from_point_normal``).  They can be changed later
-            with :meth:`set_render_planes`.  Default none.
+            with `set_render_planes`.  Default none.
         render_config : InMemoryLabelRenderConfig or None
             The GPU configuration of the brick route, which draws a tilted
             2D view of the labels.  ``None`` uses the defaults.
@@ -2448,7 +2448,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -2534,15 +2534,15 @@ class CellierController:
             Data-to-world transform for this visual. Defaults to identity when
             ``None``.
         outline : VisualOutline or None
-            Screen-space outline assignment; see :meth:`add_mesh`.
+            Screen-space outline assignment; see `add_mesh`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion; see
-            :meth:`add_mesh`.
+            `add_mesh`.
         pick_write : bool
             Whether the visual writes to the pick buffer; see
-            :meth:`add_mesh`.
+            `add_mesh`.
         section : MeshSectionConfig or None
-            How the mesh is drawn in a 2D view; see :meth:`add_mesh`.
+            How the mesh is drawn in a 2D view; see `add_mesh`.
         lod : GeometryLodConfig or None
             Which coarse level is kept (``coarse_level``, 1-based; the
             coarsest by default), and when it is loaded and drawn.
@@ -2615,7 +2615,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -2690,7 +2690,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -2773,7 +2773,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -2859,7 +2859,7 @@ class CellierController:
     ) -> MultiscaleImageVisual:
         """Add a multiscale image visual to a scene.
 
-        The multiscale twin of :meth:`add_image`; see it for the two modes.
+        The multiscale twin of `add_image`; see it for the two modes.
 
         Parameters
         ----------
@@ -2906,7 +2906,7 @@ class CellierController:
             render mode is ``"plane"``, in the scene's world space; at most
             four.  Build them from the scene's world coordinate system
             (``RenderPlane.from_point_normal``).  They can be changed later
-            with :meth:`set_render_planes`.  Default none.
+            with `set_render_planes`.  Default none.
 
         Returns
         -------
@@ -2915,7 +2915,7 @@ class CellierController:
         Raises
         ------
         ValueError
-            As :meth:`add_image`.
+            As `add_image`.
         """
         if render_config is None:
             render_config = MultiscaleImageRenderConfig()
@@ -3003,7 +3003,7 @@ class CellierController:
         name : str
             Human-readable name.  Default ``"masked image"``.
         outline, ambient_occlusion, pick_write, clipping_planes
-            As :meth:`add_image_multiscale`.
+            As `add_image_multiscale`.
 
         Returns
         -------
@@ -3093,7 +3093,7 @@ class CellierController:
         outline : VisualOutline or None
             Screen-space outline assignment.  ``None`` (default) leaves the
             visual unoutlined.  Requires the outline pass to be enabled;
-            see :attr:`outline_enabled`.
+            see `outline_enabled`.
         ambient_occlusion : bool or None
             Whether this visual receives ambient occlusion.  ``None``
             (default) is automatic: excluded while it renders in a
@@ -3138,7 +3138,7 @@ class CellierController:
             render mode is ``"plane"``, in the scene's world space; at most
             four.  Build them from the scene's world coordinate system
             (``RenderPlane.from_point_normal``).  They can be changed later
-            with :meth:`set_render_planes`.  Default none.
+            with `set_render_planes`.  Default none.
 
         Returns
         -------
@@ -3480,7 +3480,7 @@ class CellierController:
         """Refuse a MaskedImage whose stores cannot be drawn together.
 
         Runs before any render object is built, on every path in
-        (:meth:`add_masked_image` and :meth:`add_visual` from a model).
+        (`add_masked_image` and `add_visual` from a model).
 
         Returns
         -------
@@ -3519,7 +3519,7 @@ class CellierController:
     def _masked_image_fit_refusal(self, visual: MaskedImageVisual) -> str | None:
         """Why an in-memory side of *visual* no longer fits, or ``None``.
 
-        Refused when added (:meth:`_check_masked_image`); a live store that
+        Refused when added (`_check_masked_image`); a live store that
         grows later cannot be, so the view draws nothing of the visual
         while it does not fit.
         """
@@ -3932,16 +3932,16 @@ class CellierController:
         transform, and is not added to ``scene.visuals``.  It is stored in the
         ``Canvas.overlays`` list of *canvas_id*, making it part of the
         serializable model, and its fields are live: assign to them directly
-        or through :meth:`update_overlay_field`.
+        or through `update_overlay_field`.
 
         Parameters
         ----------
         canvas_id : UUID
             ID of the canvas that should display the overlay.  Use
-            :meth:`get_canvas_ids` to look up canvas IDs for a scene.
+            `get_canvas_ids` to look up canvas IDs for a scene.
         overlay : CanvasOverlay
             Model-layer overlay description, e.g. a
-            :class:`~cellier.visuals.CenteredAxes2D`.
+            `CenteredAxes2D`.
 
         Returns
         -------
@@ -3966,7 +3966,7 @@ class CellierController:
     def show_draw_status(self, canvas_id: UUID, overlay: DrawStatusOverlay) -> None:
         """Draw the visuals a canvas's view does not draw, as text on it.
 
-        Unlike :meth:`add_canvas_overlay` the overlay is not put in
+        Unlike `add_canvas_overlay` the overlay is not put in
         ``Canvas.overlays``: it is a viewer setting (the convenience viewers
         attach one to every canvas they make), not part of the scene, so
         overlay listings and docks are unchanged.  Its fields stay live.
@@ -4012,7 +4012,7 @@ class CellierController:
         main pass, on every canvas showing the scene.  Its geometry follows
         the scene: it is rebuilt when visuals are added or removed, a
         transform is replaced, the displayed axes change, or a store changes
-        (signalled by :meth:`reslice_visual`).  It is stored in
+        (signalled by `reslice_visual`).  It is stored in
         ``Scene.overlays``, and its fields are live.
 
         Parameters
@@ -4021,7 +4021,7 @@ class CellierController:
             ID of the scene that should hold the overlay.
         overlay : SceneOverlay
             Model-layer overlay description, e.g. a
-            :class:`~cellier.visuals.SceneBoundingBox`.
+            `SceneBoundingBox`.
 
         Returns
         -------
@@ -4277,7 +4277,7 @@ class CellierController:
     def _forget_overlay(self, overlay_id: UUID) -> None:
         """Disconnect and detach one overlay, leaving its model list alone.
 
-        Used by :meth:`remove_overlay` and by scene and canvas teardown, where
+        Used by `remove_overlay` and by scene and canvas teardown, where
         the model list goes away with its owner.
         """
         entry = self._overlays.pop(overlay_id, None)
@@ -4303,7 +4303,7 @@ class CellierController:
         """Set one field on an overlay model.
 
         Tags the emitted ``OverlayChangedEvent`` with *source_id*.  GUI
-        widgets should pass ``source_id=self._id`` so their own subscription
+        widgets should pass their own widget id so their own subscription
         can ignore the echo.
 
         Parameters
@@ -4503,11 +4503,11 @@ class CellierController:
         in ``canvas_model.cameras`` gets its model's field of view, clipping
         planes and controller ``enabled``.  A camera whose model has a pose
         (``position``/``rotation`` other than the defaults; see
-        :attr:`~cellier.scene.cameras.BaseCamera.has_pose`) starts at it,
+        `has_pose`) starts at it,
         with its zoom, extent and up, and is not fitted when its dim is
         first shown; any other camera is fitted as usual.  From then on,
         assigning a camera model's fields moves its camera; see
-        :class:`~cellier.scene.cameras.BaseCamera`.
+        `BaseCamera`.
 
         Parameters
         ----------
@@ -4709,7 +4709,7 @@ class CellierController:
         The move is a **jump**: camera-sensitive visuals (multiscale image
         and labels) reslice at once for the fitted view, and a camera motion
         in progress on the canvas ends.  A fit that leaves the camera where
-        it is does nothing.  See :meth:`set_camera_state` for *interactive*.
+        it is does nothing.  See `set_camera_state` for *interactive*.
 
         Parameters
         ----------
@@ -4767,10 +4767,10 @@ class CellierController:
     def canvas_ids(self) -> tuple[UUID, ...]:
         """IDs of every canvas registered with this controller, across scenes.
 
-        Scene-scoped callers want :meth:`get_canvas_ids`; this is for code that
+        Scene-scoped callers want `get_canvas_ids`; this is for code that
         must find canvases without knowing which scene they belong to -- the Qt
         window composite in
-        :func:`~cellier.convenience.screenshot_window` walks this to discover
+        `screenshot_window` walks this to discover
         which canvases live inside a given window.
         """
         return tuple(self._render_manager._canvases)
@@ -4779,8 +4779,8 @@ class CellierController:
         """Return the render-layer ``CanvasView`` for *canvas_id*.
 
         Provides access to the rendering backend (camera, widget, overlays)
-        for a canvas registered via :meth:`add_canvas` or
-        :meth:`add_canvas_model`.
+        for a canvas registered via `add_canvas` or
+        `add_canvas_model`.
 
         Parameters
         ----------
@@ -4840,13 +4840,13 @@ class CellierController:
 
         *canvas_id* selects a **viewpoint, not a surface**: the capture copies
         that canvas's camera, dimensionality and depth range, then renders its
-        own frame.  Use :meth:`screenshot_scene` to capture a scene that has
+        own frame.  Use `screenshot_scene` to capture a scene that has
         no canvas at all.
 
         What the capture shows is the data **currently resident on the GPU**.
         It does not reslice, so a multiscale scene is captured at the level of
         detail already loaded; a higher *scale* enlarges that level rather
-        than fetching a finer one.  Call :meth:`on_scene_ready` (or use the
+        than fetching a finer one.  Call `on_scene_ready` (or use the
         convenience launchers' ``on_ready``) before capturing if a load may
         still be in flight.
 
@@ -4906,7 +4906,7 @@ class CellierController:
     ) -> np.ndarray:
         """Capture *scene_id* without needing a canvas to exist.
 
-        The same offscreen capture as :meth:`screenshot`, but with the camera
+        The same offscreen capture as `screenshot`, but with the camera
         fitted to the scene rather than copied from a canvas -- so a scene can
         be captured with no window, no widget and no event loop.
 
@@ -4928,7 +4928,7 @@ class CellierController:
         scale : float
             Multiplier applied to *size*.
         frames : int or "converged"
-            See :meth:`screenshot`.
+            See `screenshot`.
         dim : str or None
             ``"2d"`` or ``"3d"``.  Inferred from the scene's displayed axes
             when ``None``.
@@ -4992,7 +4992,7 @@ class CellierController:
         end stays ``BACKSTOP_ONLY`` until then.
 
         A drag of the visual's planes has no plan mode: while it holds the
-        plan nothing is planned at all (:meth:`_plane_drag_holds_plan`), and
+        plan nothing is planned at all (`_plane_drag_holds_plan`), and
         a reslice that does reach here during one is a jump, planned in full.
         A drag of the visual's transform plans ``BACKSTOP_ONLY`` in a 2D view
         with ``plans_coarse_while_moving``, and holds the plan in a 3D view
@@ -5195,7 +5195,7 @@ class CellierController:
         ``(z, y, x) -> (x, y, z)`` reversal is not carried here; it stays at
         the pygfx boundary.
 
-        The embedding is built by :meth:`_build_rendered_embedding`.
+        The embedding is built by `_build_rendered_embedding`.
         """
         scene = self._model.scenes[scene_id]
         world = scene.dims.world_coordinate_system
@@ -5273,7 +5273,7 @@ class CellierController:
 
         Each vector is the argument when it lies on the displayed axes, else
         the canvas model's, else the default; see
-        :func:`~cellier.scene._fit_orientation.resolve_fit_orientation`.
+        `resolve_fit_orientation`.
         The scene must display three axes.
         """
         scene = self._model.scenes[scene_id]
@@ -5373,7 +5373,7 @@ class CellierController:
     ) -> None:
         """Build the space one visual's geometry is uploaded in, for one mode.
 
-        See :meth:`_retained_data_axes` for why the axis correspondence is read
+        See `_retained_data_axes` for why the axis correspondence is read
         off the transform rather than assumed positional.
         """
         if not data_store.data_coordinate_systems:
@@ -5469,7 +5469,7 @@ class CellierController:
         Returns
         -------
         RenderSpaces or None
-            ``None`` whenever :meth:`render_spaces` is (the view does not
+            ``None`` whenever `render_spaces` is (the view does not
             draw the visual, no canvas yet, ...), so the two sides cannot
             disagree about whether the visual is placed; also for a visual
             that is not a MaskedImage.
@@ -5562,7 +5562,7 @@ class CellierController:
     def view_classification(self, visual_id: UUID) -> ViewClassification | None:
         """How a visual's transform lines up with its scene's current view.
 
-        See :func:`cellier.transform.classify_view`.  Cached on the
+        See `cellier.transform.classify_view`.  Cached on the
         transform object and the displayed axes.
 
         Parameters
@@ -5667,7 +5667,7 @@ class CellierController:
         planar path, with the same layout axes, as long as its three world
         axes still read those data axes.  A tilt through a different three
         axes re-lays it out.  The scope's end drops the entry
-        (:meth:`_release_sticky_route`).
+        (`_release_sticky_route`).
         """
         visual = self._model_visual_or_none(visual_id)
         if not isinstance(visual, _RASTER_VISUALS):
@@ -6262,8 +6262,8 @@ class CellierController:
         image at an angle, say -- draws nothing of it rather than something
         wrong: the visual is not sliced and its nodes are out of the scene
         until a view or transform that draws it arrives. Each change is
-        announced by a :class:`DrawStatusChangedEvent`
-        (:meth:`on_draw_status_changed`) and each change into "not drawn" is
+        announced by a `DrawStatusChangedEvent`
+        (`on_draw_status_changed`) and each change into "not drawn" is
         logged once as a warning on the ``cellier.draw_status`` logger.
 
         Parameters
@@ -6301,15 +6301,17 @@ class CellierController:
         scene_id :
             The scene whose visuals to watch.
         callback :
-            Called with the :class:`DrawStatusChangedEvent`.
+            Called with the `DrawStatusChangedEvent`.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             DrawStatusChangedEvent,
@@ -6324,7 +6326,7 @@ class CellierController:
 
         A visual the view does not draw is taken out of the scene graph (it
         neither draws nor picks, whatever it last loaded); a change emits a
-        :class:`DrawStatusChangedEvent`; a change into "not drawn" logs one
+        `DrawStatusChangedEvent`; a change into "not drawn" logs one
         warning.
         """
         scene = self._model.scenes.get(scene_id)
@@ -7349,7 +7351,7 @@ class CellierController:
         """Return a handler that emits TransformChangedEvent and triggers reslice.
 
         The reslice is skipped when ``_suppress_reslice`` is True, which is
-        managed by the :meth:`suppress_reslice` context manager.
+        managed by the `suppress_reslice` context manager.
         """
 
         def _on_transform(new_transform: AffineTransform) -> None:
@@ -7450,7 +7452,7 @@ class CellierController:
         1. ``events.composite`` -- emits ``ImageCompositeChangedEvent``,
            re-checks the scene's slider axes and reslices.  On the model event,
            so a direct ``visual.composite = ...`` behaves like
-           :meth:`set_image_composite`.
+           `set_image_composite`.
         2. ``single.events`` -- per-field ``SingleAppearanceChangedEvent``.
         3. ``events.single`` -- a replaced ``single`` model: moves connection 2
            and emits one event with ``field_name=None``.
@@ -7631,7 +7633,7 @@ class CellierController:
         Raises
         ------
         ValueError
-            Naming :meth:`set_image_render_mode`.
+            Naming `set_image_render_mode`.
         """
         visual = self.get_visual_model(visual_id)
         modes = self._channel_render_modes.setdefault(visual_id, {})
@@ -7885,7 +7887,7 @@ class CellierController:
         """Set one screen-space render field on a visual.
 
         The seam a GUI drives, and the twin of
-        :meth:`update_render_config_field` for the per-visual half.  Writes
+        `update_render_config_field` for the per-visual half.  Writes
         the model; the psygnal bridge does the rest.
 
         Parameters
@@ -7902,7 +7904,7 @@ class CellierController:
             New value for the field.
         source_id :
             UUID to stamp on the emitted ``VisualRenderChangedEvent``.  GUI
-            widgets should pass ``source_id=self._id`` so their own
+            widgets should pass their own widget id so their own
             subscription can ignore the echo.
 
         Raises
@@ -7965,7 +7967,7 @@ class CellierController:
             A multiscale image or labels visual.
         source_id :
             UUID to stamp on the emitted ``LoadingConfigChangedEvent``.  GUI
-            widgets pass ``source_id=self._id`` so their own subscription can
+            widgets pass their own widget id so their own subscription can
             ignore the echo.
         **fields :
             ``ProgressiveLoadingConfig`` fields: ``backstop_level``,
@@ -8038,8 +8040,8 @@ class CellierController:
         The seam a GUI drives.  An axis that already has a window is edited
         in place, one field event per field that differs, so nudging one spin
         box reslices once rather than rebuilding the whole trail.  Adding or
-        removing an axis replaces ``visual.trail``, which is what rewires the
-        per-config handlers (see :meth:`_wire_trail`).
+        removing an axis replaces ``visual.trail`` as a whole (one
+        ``TrailChangedEvent`` with ``field_name=None``).
 
         Parameters
         ----------
@@ -8053,7 +8055,7 @@ class CellierController:
             one no other visual holds.
         source_id :
             UUID to stamp on the emitted ``TrailChangedEvent``.  GUI widgets
-            should pass ``source_id=self._id`` so their own subscription can
+            should pass their own widget id so their own subscription can
             ignore the echo.
 
         Raises
@@ -8349,7 +8351,7 @@ class CellierController:
             (across every canvas attached to the scene).  Visuals with no data
             in the current view (culled, empty, or hidden) do not delay it.
             Works uniformly for in-memory, multiscale, multichannel, and
-            geometry visuals.  See :meth:`on_scene_ready`.
+            geometry visuals.  See `on_scene_ready`.
 
             The callback tracks *this* reslice generation.  If a superseding
             reslice (e.g. a camera-motion reload) cancels these in-flight reads
@@ -8361,6 +8363,16 @@ class CellierController:
             Owner under which the temporary ``on_ready`` subscriptions are
             registered (for teardown).  Defaults to the controller's own id.
         """
+        self._reslice_scene(scene_id, on_ready=on_ready, owner_id=owner_id)
+
+    def _reslice_scene(
+        self,
+        scene_id: UUID,
+        *,
+        on_ready: Callable[[], None] | None,
+        owner_id: UUID | None,
+    ) -> SubscriptionHandle | None:
+        """Run `reslice_scene`; return the readiness handle, if any."""
         dims_state = self._dims_state_for_scene(scene_id)
         visual_configs = self._build_visual_configs_for_scene(scene_id)
 
@@ -8370,9 +8382,9 @@ class CellierController:
             self._render_manager.reslice_scene(
                 scene_id, dims_state, visual_configs, selections=selections
             )
-            return
+            return None
 
-        self._notify_when_resliced(
+        return self._notify_when_resliced(
             scene_id,
             on_ready,
             owner_id or self._id,
@@ -8387,7 +8399,7 @@ class CellierController:
         callback: Callable[[], None],
         owner_id: UUID,
         trigger: Callable[[], None],
-    ) -> None:
+    ) -> SubscriptionHandle:
         """Arm a one-shot quiescence tracker, then run *trigger* to reslice.
 
         The tracker counts visuals announced by ``ResliceStartedEvent`` and
@@ -8397,9 +8409,19 @@ class CellierController:
         on a synchronous bus, the pending count is fully known the instant
         *trigger* returns — so the "armed" flag suppresses any premature fire
         from synchronous empty-batch completions until the full count is in.
+
+        The tracker is two subscriptions; removing either (through the
+        returned handle, or by owner) removes the other and disarms the
+        callback.  The returned handle is the ``ResliceStartedEvent`` one: it
+        is active until the callback fires or is cancelled.
         """
         state = {"pending": 0, "armed": True, "fired": False}
         handles: list[SubscriptionHandle] = []
+
+        def _cancel() -> None:
+            state["fired"] = True
+            for handle in handles:
+                self._outgoing_events.unsubscribe(handle)
 
         def _finish() -> None:
             if state["fired"]:
@@ -8428,6 +8450,7 @@ class CellierController:
                 _on_started,
                 entity_id=scene_id,
                 owner_id=owner_id,
+                on_remove=_cancel,
             )
         )
         # ResliceCompletedEvent routes by visual_id, so subscribe as a
@@ -8437,6 +8460,7 @@ class CellierController:
                 ResliceCompletedEvent,
                 _on_completed,
                 owner_id=owner_id,
+                on_remove=_cancel,
             )
         )
 
@@ -8447,6 +8471,7 @@ class CellierController:
         # window and fire immediately if there was nothing to load.
         state["armed"] = False
         _maybe_fire()
+        return handles[0]
 
     def reslice_visual(self, visual_id: UUID) -> None:
         """Trigger a data load for one visual.
@@ -8470,11 +8495,9 @@ class CellierController:
         its underlying data — for example, repositioning a static-geometry mesh
         by translation only.
 
-        .. warning::
-            ``_suppress_reslice`` is a flat boolean.  Nested calls or concurrent
-            async tasks that mutate transforms inside overlapping
-            ``suppress_reslice`` blocks will interfere.  Replace with a depth
-            counter if that becomes necessary.
+        Not reentrant: the block sets one flag and clears it on exit, so
+        when blocks nest (or overlap across async tasks), leaving the inner
+        one turns reslicing back on for the rest of the outer one.
         """
         self._suppress_reslice = True
         try:
@@ -8512,7 +8535,7 @@ class CellierController:
         -------
         AffineTransform
             Ready to hand to any ``add_*`` or to
-            :meth:`set_visual_transform`.
+            `set_visual_transform`.
 
         Raises
         ------
@@ -8564,11 +8587,11 @@ class CellierController:
         """Bus handler -- reslice the scene when what it shows changed.
 
         The plan modes come from the scene's dims tracker (see
-        :meth:`_render_config_for`): during a scrub, visuals with
+        `_render_config_for`): during a scrub, visuals with
         ``plans_coarse_while_moving`` plan backstop-only and the scrub's end
         plans them in full; otherwise everything plans in full at once.
 
-        A tick made through :meth:`update_slice_indices` has already been
+        A tick made through `update_slice_indices` has already been
         given to the tracker.  A displayed-axes change cancels a scrub.  Any
         other region change (a thickness, a direct model write) is a tick
         with no ``interactive`` flag: a jump, unless a scope is open.
@@ -8683,7 +8706,7 @@ class CellierController:
         next tick starts a new one.
 
         A slider calls this when it is pressed.  Scripts normally use
-        :meth:`dims_interaction`.
+        `dims_interaction`.
 
         Parameters
         ----------
@@ -8721,7 +8744,7 @@ class CellierController:
     def dims_interaction(self, scene_id: UUID) -> Generator[None, None, None]:
         """Scrub a scene's dims for the length of a ``with`` block.
 
-        Every :meth:`update_slice_indices` inside the block is a scrub tick,
+        Every `update_slice_indices` inside the block is a scrub tick,
         so a player or a scripted sweep loads coarse while it runs and in
         full when the block exits::
 
@@ -8774,13 +8797,13 @@ class CellierController:
         or not it is displayed, so this never adds or removes one.
 
         Tags the emitted bus event with *source_id*.
-        GUI widgets should pass ``source_id=self._id`` so their own
+        GUI widgets should pass their own widget id so their own
         ``DimsChangedEvent`` subscription can ignore the echo.
 
         By default the move is a **jump**: every visual plans in full at
         once, and a scrub in progress on the scene ends.  With
         ``interactive=True``, or inside an open scope
-        (:meth:`dims_interaction`), it is a tick of a **scrub**: visuals
+        (`dims_interaction`), it is a tick of a **scrub**: visuals
         that opted in (``coarsest_while_moving_3d`` or ``_2d``) plan coarse, and plan in
         full when the scrub ends, on release or after
         ``SchedulerConfig.dims_settle_s`` of stillness.  A call that moves no
@@ -8862,7 +8885,7 @@ class CellierController:
         """Replace a scene's per-axis half-thicknesses.
 
         A change on a sliced axis is a tick of the scene's dims tracker, as a
-        slice move is: inside :meth:`dims_interaction`, or with
+        slice move is: inside `dims_interaction`, or with
         *interactive*, it is a tick of a drag -- visuals that plan coarse
         while moving load their backstop only, and plan in full when the drag
         ends (``dims_settle_s`` after the last tick, without a scope).
@@ -8977,7 +9000,7 @@ class CellierController:
         """Set one field on a visual's appearance model.
 
         Tags the emitted bus event with *source_id*.
-        GUI widgets should pass ``source_id=self._id`` so their own
+        GUI widgets should pass their own widget id so their own
         ``AppearanceChangedEvent`` subscription can ignore the echo.
 
         Parameters
@@ -9018,7 +9041,7 @@ class CellierController:
         """Set one field on a scene's background appearance model.
 
         Tags the emitted bus event with *source_id*.  GUI widgets should pass
-        ``source_id=self._id`` so their own ``BackgroundChangedEvent``
+        their own widget id so their own ``BackgroundChangedEvent``
         subscription can ignore the echo.
 
         Parameters
@@ -9088,11 +9111,11 @@ class CellierController:
     ) -> None:
         """Set one appearance field across a group of visuals in lock-step.
 
-        Fan-out over :meth:`update_appearance_field` so every visual in the
+        Fan-out over `update_appearance_field` so every visual in the
         group -- the per-panel visuals of an ``OrthoViewer``, say -- receives
         the same change.  This is the programmatic write-side companion to the
         widget subscribe-to-all read side, matching
-        :meth:`update_channel_group_field`.
+        `update_channel_group_field`.
 
         Parameters
         ----------
@@ -9121,7 +9144,7 @@ class CellierController:
 
         The AABB is **not** an appearance field: it lives on ``visual.aabb``
         and travels on ``AABBChangedEvent``, so it needs its own group helper
-        rather than riding on :meth:`update_appearance_group_field`.
+        rather than riding on `update_appearance_group_field`.
 
         Parameters
         ----------
@@ -9150,7 +9173,7 @@ class CellierController:
         """Set one field on one channel of an image visual.
 
         Tags the emitted bus event with *source_id*.  GUI widgets should pass
-        ``source_id=self._id`` so their own ``ChannelAppearanceChangedEvent``
+        their own widget id so their own ``ChannelAppearanceChangedEvent``
         subscription can ignore the echo.
 
         This mutates a single visual only.  When a channel is shared in
@@ -9164,7 +9187,7 @@ class CellierController:
 
         ``render_mode`` is the exception to "one channel": every channel of
         an image has the same render mode, so setting it here sets it on all
-        of them, as :meth:`set_image_render_mode` does.  *source_id* is
+        of them, as `set_image_render_mode` does.  *source_id* is
         stamped on this channel's event only; the other channels' events
         carry the controller's id, so the caller's echo filter lets them
         through.
@@ -9464,7 +9487,7 @@ class CellierController:
         Raises
         ------
         ValueError
-            As :meth:`set_image_composite`, for any visual in the group.
+            As `set_image_composite`, for any visual in the group.
         """
         if composite:
             for visual_id in visual_ids:
@@ -9553,7 +9576,7 @@ class CellierController:
             Target visual.
         source_id :
             UUID to stamp on the emitted ``LodConfigChangedEvent``.  GUI
-            widgets pass ``source_id=self._id`` so their own subscription
+            widgets pass their own widget id so their own subscription
             can ignore the echo.
         **fields :
             ``GeometryLodConfig`` fields to replace: ``dims_drag``,
@@ -9623,7 +9646,7 @@ class CellierController:
             level-0 data coordinates.  Empty removes them all.
         source_id :
             UUID to stamp on the emitted ``ClippingPlanesChangedEvent``.
-            GUI widgets pass ``source_id=self._id`` so their own
+            GUI widgets pass their own widget id so their own
             subscription can ignore the echo.
 
         Returns
@@ -9672,7 +9695,7 @@ class CellierController:
         """Move one clipping plane of a visual; the others stay.
 
         The plane keeps its id, its place in the tuple and its ``enabled``
-        flag.  Goes through :meth:`set_clipping_planes`, so it emits
+        flag.  Goes through `set_clipping_planes`, so it emits
         ``ClippingPlanesChangedEvent`` and does nothing for an equal plane.
 
         Parameters
@@ -9732,7 +9755,7 @@ class CellierController:
         The planes are drawn only in a 3D view, and only while the visual's
         render mode is ``"plane"``; otherwise the tuple is stored and
         announced and nothing else happens.  Inside
-        :meth:`plane_interaction` the change is a tick of a drag.
+        `plane_interaction` the change is a tick of a drag.
 
         Parameters
         ----------
@@ -9743,7 +9766,7 @@ class CellierController:
             world space.  At most four.  Empty removes them all.
         source_id :
             UUID to stamp on the emitted ``RenderPlanesChangedEvent``.  GUI
-            widgets pass ``source_id=self._id`` so their own subscription
+            widgets pass their own widget id so their own subscription
             can ignore the echo.
 
         Returns
@@ -9929,7 +9952,7 @@ class CellierController:
 
         The plane keeps its id and its place in the tuple; its pose, extents
         and ``enabled`` flag are taken from *plane*.  Goes through
-        :meth:`set_render_planes`, so it emits ``RenderPlanesChangedEvent``
+        `set_render_planes`, so it emits ``RenderPlanesChangedEvent``
         and does nothing for an equal plane.
 
         Parameters
@@ -9953,7 +9976,7 @@ class CellierController:
         KeyError
             If the visual has no render plane with that id.
         ValueError
-            As :meth:`set_render_planes`.
+            As `set_render_planes`.
         """
         plane_id = UUID(str(plane_id))
         self.get_render_plane(visual_id, plane_id)  # KeyError if absent
@@ -10007,7 +10030,7 @@ class CellierController:
         """Whether to skip a plan of *visual* because its planes are dragged.
 
         When ``True`` the visual needs a plan, made when the drag ends
-        (:meth:`_on_plane_transition`).  The last plan stays the desired set
+        (`_on_plane_transition`).  The last plan stays the desired set
         meanwhile, so the bricks already loaded are still drawn; a
         ``BACKSTOP_ONLY`` plan would drop them.
         """
@@ -10087,7 +10110,7 @@ class CellierController:
         inside a drag plans as it does outside one.
 
         A plane gizmo calls this when a handle is grabbed.
-        Scripts normally use :meth:`plane_interaction`.
+        Scripts normally use `plane_interaction`.
 
         Parameters
         ----------
@@ -10219,7 +10242,7 @@ class CellierController:
         """Plan a visual's target once a drag of its transform has ended.
 
         Only when every motion of the visual has stopped, as after a plane
-        drag (:meth:`_plan_after_plane_drag`).
+        drag (`_plan_after_plane_drag`).
         """
         if self._plane_interaction_driver.is_active(visual_id):
             visual = self._model_visual_or_none(visual_id)
@@ -10249,7 +10272,7 @@ class CellierController:
         about one frame.
 
         A rotation slider calls this when it is pressed.  Scripts normally
-        use :meth:`transform_interaction`.
+        use `transform_interaction`.
 
         Parameters
         ----------
@@ -10342,7 +10365,7 @@ class CellierController:
         gains a component on an axis the view does not show.
 
         The canvas's one gizmo serves both kinds of plane: a gizmo on a
-        render plane (:meth:`add_render_plane_gizmo`) is closed too.
+        render plane (`add_render_plane_gizmo`) is closed too.
 
         Emits ``PlaneGizmoChangedEvent`` with ``kind="clipping"``.
 
@@ -10486,7 +10509,7 @@ class CellierController:
     ) -> str:
         """Why a plane cannot have a gizmo in a canvas now, or ``""`` if it can.
 
-        What :meth:`add_clipping_plane_gizmo` would refuse, as a sentence a
+        What `add_clipping_plane_gizmo` would refuse, as a sentence a
         control can show: the canvas is in 2D, or the plane has a component
         on an axis the 3D view does not show.
 
@@ -10525,7 +10548,7 @@ class CellierController:
     ) -> str:
         """Why a render plane cannot have a gizmo in a canvas now, or ``""``.
 
-        What :meth:`add_render_plane_gizmo` would refuse, as a sentence a
+        What `add_render_plane_gizmo` would refuse, as a sentence a
         control can show: the canvas is in 2D, the visual is not in the
         ``"plane"`` render mode, or the plane's axes are not the displayed
         ones.
@@ -10666,7 +10689,7 @@ class CellierController:
         """Set one field on a visual's AABB params model.
 
         Tags the emitted bus event with *source_id*.
-        GUI widgets should pass ``source_id=self._id`` so their own
+        GUI widgets should pass their own widget id so their own
         ``AABBChangedEvent`` subscription can ignore the echo.
 
         Parameters
@@ -10706,7 +10729,7 @@ class CellierController:
         """Set ``displayed_axes`` on a scene's dims.
 
         Tags the emitted bus event with *source_id*.
-        GUI widgets should pass ``source_id=self._id`` so their own
+        GUI widgets should pass their own widget id so their own
         ``DimsChangedEvent`` subscription can ignore the echo.
 
         Parameters
@@ -10743,9 +10766,9 @@ class CellierController:
     ) -> None:
         """Set displayed axes on a scene's dims (preferred public API).
 
-        Equivalent to :meth:`update_displayed_axes`.  The controller's
-        psygnal bridge fires ``_rebuild_visuals_geometry`` and
-        ``_switch_canvas_cameras`` automatically when the model field changes.
+        Equivalent to `update_displayed_axes`.  When the axes change, every
+        visual in the scene is rebuilt for the new axes, and when their count
+        changes the scene's canvases switch between their 2D and 3D cameras.
 
         Parameters
         ----------
@@ -10874,7 +10897,7 @@ class CellierController:
         """Live rendering configuration.
 
         Mutating a field here changes the model but not the GPU state, and
-        notifies no widget.  :meth:`update_render_config_field` and the
+        notifies no widget.  `update_render_config_field` and the
         dedicated properties (``ambient_occlusion_power`` and friends) do all three in
         one step, and are what a GUI should drive.
         """
@@ -10899,8 +10922,8 @@ class CellierController:
         the model, pushes the change to the GPU by whichever route that
         field needs, and emits a ``RenderConfigChangedEvent`` so subscribed
         widgets follow along.  Which fields recompile a shader and which are
-        plain uniforms is a property of the field, recorded once in
-        :data:`_RENDER_CONFIG_ROUTES`, so no caller has to know.
+        plain uniforms is a property of the field, recorded once in the
+        controller, so no caller has to know.
 
         Parameters
         ----------
@@ -10913,7 +10936,7 @@ class CellierController:
             New value for the field.
         source_id :
             UUID to stamp on the emitted ``RenderConfigChangedEvent``.  GUI
-            widgets should pass ``source_id=self._id`` so their own
+            widgets should pass their own widget id so their own
             subscription can ignore the echo.  Defaults to the controller's
             own ID.
 
@@ -11004,9 +11027,9 @@ class CellierController:
         """Occlusion hemisphere radius in scene units, or ``None`` for auto.
 
         ``None`` derives the radius from the scene bounding box diagonal
-        (:attr:`ambient_occlusion_auto_radius_fraction`, 2 percent by default), which is
+        (`ambient_occlusion_auto_radius_fraction`, 2 percent by default), which is
         the only default that means anything across cellier's coordinate
-        systems.  :attr:`ambient_occlusion_effective_radius` reports what that came to.
+        systems.  `ambient_occlusion_effective_radius` reports what that came to.
         """
         return self._render_manager.ambient_occlusion_radius
 
@@ -11029,7 +11052,7 @@ class CellierController:
     def ambient_occlusion_effective_radius(self) -> float | None:
         """The occlusion radius actually in use, in scene units.
 
-        The explicit :attr:`ambient_occlusion_radius` when one is set, otherwise the
+        The explicit `ambient_occlusion_radius` when one is set, otherwise the
         auto-derived value.  Read-only, and the number worth showing next to
         the radius control: a radius means nothing until it can be compared
         with the scale of the thing being rendered.  ``None`` when there is
@@ -11386,7 +11409,7 @@ class CellierController:
 
         A move that leaves the camera unchanged stops at once: no tick and
         no reslice.  Otherwise the move is reported
-        (:meth:`_announce_camera_move`) and given to the canvas's camera
+        (`_announce_camera_move`) and given to the canvas's camera
         tracker.  Interactive (flagged, or inside a scope) it is a tick of a
         motion; if not it is a jump, which reslices now.
 
@@ -11398,7 +11421,7 @@ class CellierController:
             Whether the caller asked for a motion tick.
         queue : bool
             ``True`` when called from inside a draw or a commit round; the
-            jump's reslice is then queued (see :meth:`_camera_reslice`).
+            jump's reslice is then queued (see `_camera_reslice`).
         """
         interactive = interactive or self._camera_driver.scope_open(canvas_id)
         if not self._announce_camera_move(canvas_id, interactive=interactive):
@@ -11436,7 +11459,7 @@ class CellierController:
         still ends a motion, and the next move starts a new one.
 
         The canvas's own camera controller holds a scope while it drives the
-        camera.  Scripts normally use :meth:`camera_interaction`.
+        camera.  Scripts normally use `camera_interaction`.
 
         Parameters
         ----------
@@ -11516,7 +11539,7 @@ class CellierController:
         By default the move is a **jump**: the scene's camera-sensitive
         visuals (multiscale image and labels) reslice at once, and a motion
         in progress on the canvas ends.  With ``interactive=True``, or inside
-        :meth:`camera_interaction`, it is a tick of a **motion**: nothing is
+        `camera_interaction`, it is a tick of a **motion**: nothing is
         resliced until the motion ends, on release or after
         ``CameraConfig.settle_threshold_s`` of stillness.  A state equal to
         the camera's current one does nothing.
@@ -11526,7 +11549,7 @@ class CellierController:
         canvas_id : UUID
             ID of a registered canvas.
         state : CameraState
-            The state to apply; :meth:`get_camera_state` returns one.  Its
+            The state to apply; `get_camera_state` returns one.  Its
             ``camera_type`` must match the canvas's active camera.
         interactive : bool
             Whether the move is a tick of a motion.
@@ -11616,7 +11639,7 @@ class CellierController:
         """Start a new canvas's cameras from its camera models.
 
         Each camera's controller gets the model's ``enabled``.  A camera
-        whose model has a pose (:attr:`BaseCamera.has_pose`) is placed at
+        whose model has a pose (`BaseCamera.has_pose`) is placed at
         it and counts as fitted, so the first switch to its dim keeps it;
         one without is left to be fitted.  The field of view and depth
         ranges were applied when the canvas was built.
@@ -11677,7 +11700,7 @@ class CellierController:
             handlers.append((camera_model.events, handler))
 
     def _disconnect_camera_models(self, canvas_id: UUID) -> None:
-        """Undo :meth:`_connect_camera_models` for *canvas_id*."""
+        """Undo `_connect_camera_models` for *canvas_id*."""
         for signal, handler in self._canvas_psygnal_handlers.pop(canvas_id, []):
             with suppress(Exception):
                 signal.disconnect(handler)
@@ -11709,7 +11732,7 @@ class CellierController:
         """Apply an assignment to *camera_model*'s field *name* to the camera.
 
         A move of the camera shown is a jump (reslicing at once), reported
-        as for :meth:`set_camera_state`, which also writes the model back.
+        as for `set_camera_state`, which also writes the model back.
         A move of the other camera only places it; its model is written
         back here, since nothing reports that camera.
         """
@@ -11762,7 +11785,7 @@ class CellierController:
     ) -> None:
         """Fit the camera to a visual's bounding box.
 
-        A **jump**, like :meth:`fit_camera`: camera-sensitive visuals
+        A **jump**, like `fit_camera`: camera-sensitive visuals
         reslice at once for the new view.
 
         Parameters
@@ -11785,7 +11808,7 @@ class CellierController:
             (default) is the canvas's own ``fit_up_3d``.
         interactive : bool
             Whether the move is a tick of a camera motion instead of a jump;
-            see :meth:`set_camera_state`.
+            see `set_camera_state`.
 
         Raises
         ------
@@ -11824,7 +11847,7 @@ class CellierController:
     ) -> None:
         """Set the near/far clip distances for a canvas camera.
 
-        A **jump**, like :meth:`fit_camera`.
+        A **jump**, like `fit_camera`.
 
         Parameters
         ----------
@@ -11835,7 +11858,7 @@ class CellierController:
             the range automatic.
         interactive : bool
             Whether the move is a tick of a camera motion instead of a jump;
-            see :meth:`set_camera_state`.
+            see `set_camera_state`.
         """
         self._render_manager.set_camera_depth_range(canvas_id, depth_range)
         self._after_programmatic_camera_move(canvas_id, interactive=interactive)
@@ -11891,7 +11914,7 @@ class CellierController:
             If the visual type has no registered paint controller.
         ValueError
             If the view or the transform does not allow painting
-            (:meth:`paint_refusal`).
+            (`paint_refusal`).
         """
         from cellier.visuals._label_memory import LabelMemoryVisual
         from cellier.visuals._labels import MultiscaleLabelVisual
@@ -12007,6 +12030,7 @@ class CellierController:
         for canvas_id in self._scene_to_canvases.pop(scene_id, []):
             self._disconnect_camera_models(canvas_id)
             self._outgoing_events.unsubscribe_all(canvas_id)
+            self._remove_pick_subscriptions(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
             self._forget_rendered(canvas_id)
         self._outgoing_events.unsubscribe_all(scene_id)
@@ -12065,9 +12089,7 @@ class CellierController:
         #    model handlers.
         self._disconnect_camera_models(canvas_id)
         self._outgoing_events.unsubscribe_all(canvas_id)
-        self._pick_subscriber_counts.pop(canvas_id, None)
-        for key in [key for key in self._pick_event_counts if key[0] == canvas_id]:
-            del self._pick_event_counts[key]
+        self._remove_pick_subscriptions(canvas_id)
         self._cancel_move_pick_read(canvas_id)
 
         # 3. Update controller lookup maps, dropping the canvas's overlays.
@@ -12236,7 +12258,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
-            Pass to ``EventBus.unsubscribe()`` for individual removal.
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             DimsChangedEvent,
@@ -12275,6 +12297,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             DimsInteractionEvent,
@@ -12314,6 +12337,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             CameraChangedEvent,
@@ -12352,6 +12376,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             CameraInteractionEvent,
@@ -12777,7 +12802,7 @@ class CellierController:
     ) -> None:
         """Read the voxels in *reads* from *store* and emit ``build(values)``.
 
-        See :meth:`_read_store_values` for when the event is emitted.
+        See `_read_store_values` for when the event is emitted.
         """
 
         def emit(values: dict) -> None:
@@ -12872,45 +12897,57 @@ class CellierController:
             if read_id in reads:
                 del self._move_pick_reads[canvas_id]
 
-    def _register_pick_subscriber(
-        self, canvas_id: UUID, handle: SubscriptionHandle
-    ) -> SubscriptionHandle:
-        """Record a pick subscription and enable pick details for its canvas.
+    def _add_pick_subscriber(
+        self, canvas_id: UUID, event_type: type, handle: SubscriptionHandle
+    ) -> None:
+        """Count a new ``on_pick`` subscription.
 
-        Increments the per-canvas picking-subscriber count; the first
-        subscriber flips on element-detail extraction in the render layer.
-
-        Parameters
-        ----------
-        canvas_id : UUID
-            The canvas the subscription watches.
-        handle : SubscriptionHandle
-            The handle returned by the bus subscription.
-
-        Returns
-        -------
-        SubscriptionHandle
-            The same handle, for convenient return from the callers.
+        The canvas's first pick subscription turns on pick-detail extraction
+        in the render layer.
         """
-        count = self._pick_subscriber_counts.get(canvas_id, 0)
-        self._pick_subscriber_counts[canvas_id] = count + 1
-        if count == 0:
+        handles = self._pick_subscriptions.setdefault(canvas_id, set())
+        if not handles:
             self._render_manager.set_pick_details_enabled(canvas_id, True)
-        return handle
+        handles.add(handle)
+        key = (canvas_id, event_type)
+        self._pick_event_counts[key] = self._pick_event_counts.get(key, 0) + 1
 
-    def unsubscribe_mouse(self, handle: SubscriptionHandle) -> None:
-        """Remove a subscription created by an ``on_mouse_*`` method.
+    def _release_pick_subscriber(
+        self, canvas_id: UUID, event_type: type, handle: SubscriptionHandle
+    ) -> None:
+        """Uncount an ``on_pick`` subscription; its bus ``on_remove`` cleanup.
 
-        Mouse subscriptions do not gate pick details; this is
-        ``EventBus.unsubscribe``, kept so a handle from ``on_pick`` passed
-        here by mistake still updates the pick counters.
-
-        Parameters
-        ----------
-        handle : SubscriptionHandle
-            A handle returned by one of the ``on_mouse_*`` methods.
+        The last subscription for an event type stops building that type's
+        events (and the image and labels value reads); the canvas's last turns
+        pick-detail extraction off.  Does nothing for a handle already
+        released.
         """
-        self.unsubscribe_pick(handle)
+        handles = self._pick_subscriptions.get(canvas_id)
+        if handles is None or handle not in handles:
+            return
+        handles.discard(handle)
+        key = (canvas_id, event_type)
+        remaining = self._pick_event_counts.get(key, 0) - 1
+        if remaining <= 0:
+            self._pick_event_counts.pop(key, None)
+        else:
+            self._pick_event_counts[key] = remaining
+        if not handles:
+            del self._pick_subscriptions[canvas_id]
+            self._render_manager.set_pick_details_enabled(canvas_id, False)
+
+    def _remove_pick_subscriptions(self, canvas_id: UUID) -> None:
+        """Remove every ``on_pick`` subscription watching *canvas_id*.
+
+        For canvas removal: a subscription another owner made on the canvas
+        could never fire again, so it is removed (its handle goes inactive)
+        rather than left behind with the canvas's counters.
+        """
+        for handle in list(self._pick_subscriptions.get(canvas_id, ())):
+            self._outgoing_events.unsubscribe(handle)
+        self._pick_subscriptions.pop(canvas_id, None)
+        for key in [key for key in self._pick_event_counts if key[0] == canvas_id]:
+            del self._pick_event_counts[key]
 
     def on_pick(
         self,
@@ -12940,7 +12977,7 @@ class CellierController:
         canvas_id : UUID
             The canvas to watch.
         event_type : type
-            One of :data:`cellier.events.PICK_EVENT_TYPES`: ``ImagePickEvent``,
+            One of `cellier.events.PICK_EVENT_TYPES`: ``ImagePickEvent``,
             ``MaskedImagePickEvent``, ``LabelsPickEvent``, ``PointsPickEvent``,
             ``LinesPickEvent``, ``MeshPickEvent`` or ``GraphPickEvent``.  A
             MaskedImage emits ``MaskedImagePickEvent`` only, not
@@ -12948,15 +12985,18 @@ class CellierController:
         callback : Callable
             Called with each pick event.
         owner_id : UUID
-            UUID under which this subscription is registered for bulk removal
-            via ``unsubscribe_all(owner_id)``.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak : bool
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
-            Pass it to :meth:`unsubscribe_pick`.
+            Call its ``unsubscribe()`` to remove this subscription.  However
+            it is removed (the handle, `unsubscribe_owner`, a weak
+            callback being collected, or the canvas being removed), the
+            gating above is updated.
 
         Raises
         ------
@@ -12968,45 +13008,20 @@ class CellierController:
             raise TypeError(
                 f"on_pick takes a pick event type ({names}), got {event_type!r}."
             )
+
+        def release() -> None:
+            self._release_pick_subscriber(canvas_id, event_type, handle)
+
         handle = self._outgoing_events.subscribe(
             event_type,
             callback,
             entity_id=canvas_id,
             owner_id=owner_id,
             weak=weak,
+            on_remove=release,
         )
-        key = (canvas_id, event_type)
-        self._pick_event_counts[key] = self._pick_event_counts.get(key, 0) + 1
-        self._pick_handles[id(handle)] = key
-        return self._register_pick_subscriber(canvas_id, handle)
-
-    def unsubscribe_pick(self, handle: SubscriptionHandle) -> None:
-        """Remove a subscription created by :meth:`on_pick`.
-
-        Keeps the per-canvas and per-type subscriber counts accurate: the last
-        subscriber for a type stops its value reads, and the last for a canvas
-        disables pick-detail extraction there.
-
-        Parameters
-        ----------
-        handle : SubscriptionHandle
-            A handle returned by :meth:`on_pick`.
-        """
-        key = self._pick_handles.pop(id(handle), None)
-        if key is not None:
-            canvas_id, _event_type = key
-            remaining = self._pick_event_counts.get(key, 0) - 1
-            if remaining <= 0:
-                self._pick_event_counts.pop(key, None)
-            else:
-                self._pick_event_counts[key] = remaining
-            count = self._pick_subscriber_counts.get(canvas_id, 0) - 1
-            if count <= 0:
-                self._pick_subscriber_counts.pop(canvas_id, None)
-                self._render_manager.set_pick_details_enabled(canvas_id, False)
-            else:
-                self._pick_subscriber_counts[canvas_id] = count
-        self._outgoing_events.unsubscribe(handle)
+        self._add_pick_subscriber(canvas_id, event_type, handle)
+        return handle
 
     def on_mouse_press_2d(
         self,
@@ -13020,15 +13035,20 @@ class CellierController:
 
         Parameters
         ----------
-        canvas_id :
+        canvas_id : UUID
             The canvas to watch.
-        callback :
-            Called with the CanvasMousePress2DEvent on each press.
-        owner_id :
-            UUID under which this subscription is registered for bulk
-            removal via unsubscribe_all(owner_id).
-        weak :
+        callback : Callable
+            Called with the ``CanvasMousePress2DEvent`` on each press.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
             If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         handle = self._outgoing_events.subscribe(
             CanvasMousePress2DEvent,
@@ -13047,7 +13067,25 @@ class CellierController:
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-move event on a 2D canvas."""
+        """Register a callback fired on every pointer-move event on a 2D canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to watch.
+        callback : Callable
+            Called with the ``CanvasMouseMove2DEvent`` on each move.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
+        """
         handle = self._outgoing_events.subscribe(
             CanvasMouseMove2DEvent,
             callback,
@@ -13065,7 +13103,25 @@ class CellierController:
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-up event on a 2D canvas."""
+        """Register a callback fired on every pointer-up event on a 2D canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to watch.
+        callback : Callable
+            Called with the ``CanvasMouseRelease2DEvent`` on each release.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
+        """
         handle = self._outgoing_events.subscribe(
             CanvasMouseRelease2DEvent,
             callback,
@@ -13087,15 +13143,20 @@ class CellierController:
 
         Parameters
         ----------
-        canvas_id :
+        canvas_id : UUID
             The canvas to watch.
-        callback :
-            Called with the CanvasMousePress3DEvent on each press.
-        owner_id :
-            UUID under which this subscription is registered for bulk
-            removal via unsubscribe_all(owner_id).
-        weak :
+        callback : Callable
+            Called with the ``CanvasMousePress3DEvent`` on each press.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
             If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         handle = self._outgoing_events.subscribe(
             CanvasMousePress3DEvent,
@@ -13114,7 +13175,25 @@ class CellierController:
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-move event on a 3D canvas."""
+        """Register a callback fired on every pointer-move event on a 3D canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to watch.
+        callback : Callable
+            Called with the ``CanvasMouseMove3DEvent`` on each move.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
+        """
         handle = self._outgoing_events.subscribe(
             CanvasMouseMove3DEvent,
             callback,
@@ -13132,7 +13211,25 @@ class CellierController:
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired on every pointer-up event on a 3D canvas."""
+        """Register a callback fired on every pointer-up event on a 3D canvas.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to watch.
+        callback : Callable
+            Called with the ``CanvasMouseRelease3DEvent`` on each release.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
+        """
         handle = self._outgoing_events.subscribe(
             CanvasMouseRelease3DEvent,
             callback,
@@ -13167,7 +13264,7 @@ class CellierController:
     def _invalidate_painted_regions(self, store_id: UUID, regions: tuple) -> list[int]:
         """Drop GPU data painted over, so the next reslice fetches it again.
 
-        Used by :class:`MultiscalePaintController` after flushing a paint
+        Used by `MultiscalePaintController` after flushing a paint
         transaction.  Every atlas reading the store drops its resident bricks
         and tiles that overlap *regions*, at every level.
 
@@ -13194,7 +13291,7 @@ class CellierController:
     ) -> int:
         """Write paint into the visual's GPU paint cache (Phase-2 fast path).
 
-        Used by :class:`MultiscalePaintController._write_values` for
+        Used by `MultiscalePaintController._write_values` for
         sub-frame visible feedback in 2-D paint sessions.
 
         Parameters
@@ -13226,7 +13323,7 @@ class CellierController:
     def _clear_painted_tiles_2d(self, visual_id: UUID) -> None:
         """Clear the GPU paint textures for *visual_id*.
 
-        Called by :class:`MultiscalePaintController.commit` and ``abort`` at
+        Called by `MultiscalePaintController.commit` and ``abort`` at
         session end.
         """
         scene_id = self._visual_to_scene[visual_id]
@@ -13266,6 +13363,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             AppearanceChangedEvent,
@@ -13292,13 +13390,15 @@ class CellierController:
         callback :
             Called with the ``VisualVisibilityChangedEvent``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             VisualVisibilityChangedEvent,
@@ -13368,7 +13468,7 @@ class CellierController:
         the visual is outlined per label rather than as one silhouette, and
         **the colour comes from the label, not from** *slot* -- a nonzero
         *slot* only makes the visual eligible for the boundaries layer, and
-        :meth:`set_label_selection` is what puts a palette colour on
+        `set_label_selection` is what puts a palette colour on
         individual labels.  In ``"whole_object"`` and ``"all_boundaries"``
         mode *slot* is the colour, exactly as on every other visual.  Per
         label keys need the canvas to have been built with outlines
@@ -13413,7 +13513,7 @@ class CellierController:
 
         Excluding a visual sets ``pick_write = True`` on it, because the
         occlusion pass identifies pixels through the pick buffer -- the
-        same side effect :meth:`set_visual_outline` has, and worth knowing
+        same side effect `set_visual_outline` has, and worth knowing
         if you had deliberately turned picking off.  **The automatic rule
         needs picking too**: a MIP visual with ``pick_write = False``
         cannot be identified per pixel, so it receives occlusion despite
@@ -13467,7 +13567,7 @@ class CellierController:
         ----------
         visual_id :
             A labels visual, already given an outline with
-            :meth:`set_visual_outline`.
+            `set_visual_outline`.
         selection :
             ``{label value: palette slot}``.  Slots are clamped into
             ``1..15`` and index ``OutlineConfig.palette`` as ``slot - 1``.
@@ -13558,13 +13658,15 @@ class CellierController:
         callback :
             Called with the ``SceneAddedEvent``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             SceneAddedEvent,
@@ -13591,13 +13693,15 @@ class CellierController:
         callback :
             Called with the ``SceneRemovedEvent``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             SceneRemovedEvent,
@@ -13627,13 +13731,15 @@ class CellierController:
         callback :
             Called with the ``VisualAddedEvent``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             VisualAddedEvent,
@@ -13664,13 +13770,15 @@ class CellierController:
         callback :
             Called with the ``VisualRemovedEvent``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             VisualRemovedEvent,
@@ -13687,7 +13795,7 @@ class CellierController:
         Releases the render surfaces and GPU resources held by the controller.
         Closing is explicit because the canvases are owned by the GUI backend,
         not by Python refcounting, so dropping the controller alone leaks them
-        (see :meth:`CanvasView.close`).
+        (see `CanvasView.close`).
 
         Cancels the interaction timers, the queued camera reslices, the chunk
         scheduler's read tasks and timers and every pick read, so a closed
@@ -13759,6 +13867,10 @@ class CellierController:
         # reachable through them.
         self._outgoing_events.clear()
         self._incoming_events.clear()
+        # clear() skips the on_remove cleanups, so drop the pick state they
+        # would have kept in step.
+        self._pick_subscriptions.clear()
+        self._pick_event_counts.clear()
 
     def on_section_changed(
         self,
@@ -13778,13 +13890,15 @@ class CellierController:
             Called with the ``MeshSectionChangedEvent``: ``source_id`` for
             echo filtering, ``field_name`` and ``new_value``.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             MeshSectionChangedEvent,
@@ -13814,13 +13928,15 @@ class CellierController:
             canvas's gizmo is now on, or ``None`` for all three when it has
             none.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             PlaneGizmoChangedEvent,
@@ -13848,13 +13964,15 @@ class CellierController:
             Called with the ``PlaneInteractionEvent`` on each start and
             end.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             PlaneInteractionEvent,
@@ -13883,13 +14001,15 @@ class CellierController:
             for echo filtering, and ``clipping_planes``, the complete new
             tuple.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             ClippingPlanesChangedEvent,
@@ -13917,13 +14037,15 @@ class CellierController:
             Called with the ``RenderPlanesChangedEvent``: ``source_id`` for
             echo filtering, and ``render_planes``, the complete new tuple.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             RenderPlanesChangedEvent,
@@ -13951,13 +14073,15 @@ class CellierController:
             Called with the ``LodConfigChangedEvent``: ``source_id`` for
             echo filtering, and ``lod``, the complete new config.
         owner_id :
-            UUID under which this subscription is registered.
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
         weak :
             If True, hold only a weak reference to *callback*.
 
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             LodConfigChangedEvent,
@@ -13996,6 +14120,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             AABBChangedEvent,
@@ -14034,6 +14159,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             ResliceStartedEvent,
@@ -14072,6 +14198,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             ResliceCompletedEvent,
@@ -14094,7 +14221,7 @@ class CellierController:
         Fired at most once per event-loop iteration: after each plan, each
         frame that commits the visual's data, a read given up, or an
         invalidation.  ``event.progress`` is a
-        :class:`~cellier.events.LoadingProgress`.  Only multiscale visuals
+        `LoadingProgress`.  Only multiscale visuals
         load progressively; others never fire it.
 
         Parameters
@@ -14112,6 +14239,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             ResliceProgressEvent,
@@ -14149,6 +14277,7 @@ class CellierController:
         Returns
         -------
         SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
         """
         return self._outgoing_events.subscribe(
             BackstopCompleteEvent,
@@ -14182,7 +14311,7 @@ class CellierController:
         callback: Callable[[], None],
         *,
         owner_id: UUID | None = None,
-    ) -> None:
+    ) -> SubscriptionHandle:
         """Reslice *scene_id* and fire *callback* once all its data is on the GPU.
 
         This triggers a reslice of every visual in the scene and invokes
@@ -14191,7 +14320,7 @@ class CellierController:
         data in the current view (frustum-culled, empty slab, or hidden) do not
         delay the callback.
 
-        Unlike :meth:`on_reslice_completed` (which fires per-visual on every
+        Unlike `on_reslice_completed` (which fires per-visual on every
         cycle), this is a scene-level, one-shot readiness signal — the right
         hook for fitting the camera or hiding a startup spinner once a mixed
         scene of multiscale images, in-memory images, and geometry has fully
@@ -14206,8 +14335,18 @@ class CellierController:
         owner_id : UUID or None
             Owner under which the temporary subscriptions are registered.
             Defaults to the controller's own id.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Active until *callback* fires.  Its ``unsubscribe()`` cancels the
+            callback; the reslice itself still runs.  Already inactive when
+            the scene had nothing to load and *callback* ran before this
+            returned.
         """
-        self.reslice_scene(scene_id, on_ready=callback, owner_id=owner_id)
+        handle = self._reslice_scene(scene_id, on_ready=callback, owner_id=owner_id)
+        assert handle is not None
+        return handle
 
     def on_canvas_connected(
         self,
@@ -14215,10 +14354,10 @@ class CellierController:
         callback: Callable[[], None],
         *,
         owner_id: UUID | None = None,
-    ) -> None:
+    ) -> SubscriptionHandle:
         """Fire *callback* once *canvas_id*'s front end is live and able to draw.
 
-        The weaker, earlier sibling of :meth:`on_canvas_first_frame`: it says
+        The weaker, earlier sibling of `on_canvas_first_frame`: it says
         the canvas *can* render, not that it *has*.  On Qt the two nearly
         coincide; on the anywidget backend the canvas exists in Python long
         before the browser mounts it, and a frame may never arrive at all --
@@ -14235,11 +14374,19 @@ class CellierController:
         owner_id : UUID or None
             Owner for the temporary subscription.  Defaults to the
             controller's own id.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Active until *callback* fires; its ``unsubscribe()`` cancels the
+            callback.  Already inactive when the canvas was connected and
+            *callback* ran before this returned.
         """
         canvas_view = self._render_manager._canvases.get(canvas_id)
         if canvas_view is not None and canvas_view.connected:
             callback()
-            return
+            # Never registered, so it reads as inactive.
+            return SubscriptionHandle(self._outgoing_events)
 
         state: dict[str, Any] = {"fired": False, "handle": None}
 
@@ -14257,6 +14404,7 @@ class CellierController:
             entity_id=canvas_id,
             owner_id=owner_id or self._id,
         )
+        return state["handle"]
 
     def on_canvas_first_frame(
         self,
@@ -14264,7 +14412,7 @@ class CellierController:
         callback: Callable[[], None],
         *,
         owner_id: UUID | None = None,
-    ) -> None:
+    ) -> SubscriptionHandle:
         """Fire *callback* once *canvas_id* has rendered its first frame.
 
         The first rendered frame guarantees the canvas has reached its final
@@ -14285,6 +14433,12 @@ class CellierController:
         owner_id : UUID or None
             Owner under which the temporary subscription is registered.
             Defaults to the controller's own id.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Active until *callback* fires; its ``unsubscribe()`` cancels the
+            callback.
         """
         owner = owner_id or self._id
         state: dict[str, Any] = {"fired": False, "handle": None}
@@ -14308,19 +14462,135 @@ class CellierController:
         canvas_view = self._render_manager._canvases.get(canvas_id)
         if canvas_view is not None:
             canvas_view.request_draw()
+        return state["handle"]
+
+    def subscribe(
+        self,
+        event_type: type,
+        callback: Callable[[Any], None],
+        *,
+        owner_id: UUID,
+        entity_id: UUID | None = None,
+        weak: bool = False,
+    ) -> SubscriptionHandle:
+        """Register a callback for any event the controller emits.
+
+        The general form of the ``on_*`` methods, for the events that have
+        none (``TransformChangedEvent``, ``BackgroundChangedEvent``,
+        ``CanvasSizeChangedEvent``, ...).  An ``on_*`` method, where there is
+        one, is the same subscription with the entity id named.
+
+        Parameters
+        ----------
+        event_type : type
+            An event class from ``cellier.events``.
+        callback : Callable
+            Called with each event of that type.
+        owner_id : UUID
+            UUID under which this subscription is registered, so
+            `unsubscribe_owner` removes it with the rest of the owner's.
+        entity_id : UUID or None
+            Only events whose routing key equals this id reach *callback*.
+            Each event class names its routing key (a ``scene_id``,
+            ``visual_id``, ``canvas_id``, ...).  ``None`` (the default)
+            receives every event of the type.
+        weak : bool
+            If True, hold only a weak reference to *callback*.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Call its ``unsubscribe()`` to remove this subscription.
+
+        Raises
+        ------
+        TypeError
+            If *event_type* is a pick event (use `on_pick`, which also
+            turns pick extraction on), an ``*UpdateEvent`` or anything else
+            the controller does not emit.
+        ValueError
+            If *entity_id* is given for an event type with no routing key
+            (``RenderConfigChangedEvent``: filter on its ``section``).
+        """
+        import typing
+
+        from cellier.events._bus import _ENTITY_FIELD
+        from cellier.events._events import CellierEventTypes
+
+        if event_type in PICK_EVENT_TYPES:
+            raise TypeError(
+                f"Subscribe to {event_type.__name__} with on_pick, which also "
+                "turns pick extraction on for the canvas."
+            )
+        if event_type not in typing.get_args(CellierEventTypes):
+            name = getattr(event_type, "__name__", repr(event_type))
+            raise TypeError(
+                f"{name} is not an event the controller emits.  An "
+                "*UpdateEvent is a request: emit it on incoming_events."
+            )
+        if entity_id is not None and event_type not in _ENTITY_FIELD:
+            raise ValueError(
+                f"{event_type.__name__} has no routing key, so it cannot be "
+                "filtered by entity_id; pass entity_id=None."
+            )
+        return self._outgoing_events.subscribe(
+            event_type,
+            callback,
+            entity_id=entity_id,
+            owner_id=owner_id,
+            weak=weak,
+        )
+
+    def get_subscribers(
+        self, event_type: type, *, entity_id: UUID | None = None
+    ) -> list[SubscriberInfo]:
+        """List who is subscribed to an event the controller emits.
+
+        For debugging: the controller's own handlers, render visuals and
+        widgets show up alongside your callbacks.  See
+        ``EventBus.get_subscribers``, which this reads from.
+
+        Parameters
+        ----------
+        event_type : type
+            The event class, e.g. ``DimsChangedEvent``.
+        entity_id : UUID or None
+            Only the subscriptions that would fire for this entity's events:
+            those scoped to it and the unscoped ones.  ``None`` lists all.
+
+        Returns
+        -------
+        list[SubscriberInfo]
+            One entry per subscription, in registration order.
+        """
+        return self._outgoing_events.get_subscribers(event_type, entity_id=entity_id)
+
+    def unsubscribe(self, handle: SubscriptionHandle) -> None:
+        """Remove one subscription made by any ``on_*`` method.
+
+        The same as ``handle.unsubscribe()``.  Does nothing when the
+        subscription was already removed.
+
+        Parameters
+        ----------
+        handle : SubscriptionHandle
+            The handle an ``on_*`` method returned.
+        """
+        handle.unsubscribe()
 
     def unsubscribe_owner(self, owner_id: UUID) -> None:
         """Remove all event subscriptions registered under *owner_id*.
 
         GUI widgets should call this from their Qt ``closeEvent`` or
         ``destroyed`` signal handler to deterministically clean up their
-        bus subscriptions.
+        bus subscriptions.  To remove one subscription, use its handle's
+        ``unsubscribe()`` (or `unsubscribe`).
 
         Parameters
         ----------
         owner_id :
             The UUID used as ``owner_id`` when the subscriptions were
-            registered (typically the widget's own ``self._id``).
+            registered (for a widget wired by `connect_widget`, the widget's id).
         """
         self._outgoing_events.unsubscribe_all(owner_id)
 
@@ -14344,13 +14614,15 @@ class CellierController:
         widget :
             Any object exposing:
 
-            * ``widget._id`` — a ``UUID`` identifying the widget.
-            * ``widget.changed`` — a psygnal ``Signal`` that emits a
-              ``CellierUpdateEventTypes`` instance when the user changes a
-              value.  Connected to ``incoming_events.emit``.
+            * ``widget._id`` — a ``UUID`` identifying the widget.  The
+              widget passes it as ``source_id`` on its changes, and it is
+              the ``owner_id`` of the widget's subscriptions.
+            * ``widget.changed`` — a psygnal ``Signal`` that emits an
+              ``*UpdateEvent`` when the user changes a value.  Connected to
+              ``incoming_events.emit``.
             * ``widget.closed`` — a psygnal ``Signal`` (no arguments) emitted
-              when the widget is closed.  Triggers
-              ``unsubscribe_owner(widget._id)``.
+              when the widget is closed.  Removes every subscription
+              registered for the widget (`unsubscribe_owner`).
 
         subscription_specs :
             Optional list of ``SubscriptionSpec`` entries describing which

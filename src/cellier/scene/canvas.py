@@ -31,7 +31,10 @@ class Canvas(CellierEventedModel):
         scene, as the component along each world axis, by axis id.  An axis
         left out has component 0.  ``None`` (default) looks along minus all
         three displayed axes.  Used only while every axis it has a component
-        on is displayed; see ``cellier.scene._fit_orientation``.
+        on is displayed; otherwise the default is used (the direction is
+        never projected onto the displayed axes).  When the view direction
+        and the up direction come out parallel, both fall back to the
+        defaults.
     fit_up_3d : dict[UUID4, float] or None
         The up direction of a fitted 3D camera, given like
         *fit_view_direction_3d*.  ``None`` (default) is the first displayed

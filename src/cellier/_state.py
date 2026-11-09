@@ -33,14 +33,49 @@ class AxisAlignedSelectionState(NamedTuple):
 
 
 class DimsState(NamedTuple):
-    """Current dimension display state for a scene."""
+    """A scene's dims: axis names and which axes are shown where.
+
+    Attributes
+    ----------
+    axis_labels : tuple[str, ...]
+        The name of each world axis, in world order.
+    selection : AxisAlignedSelectionState
+        The displayed axes and every axis's position and thickness.
+    """
 
     axis_labels: tuple[str, ...]
     selection: AxisAlignedSelectionState
 
 
 class CameraState(NamedTuple):
-    """Immutable snapshot of the active camera's logical state."""
+    """A snapshot of a canvas's active camera.
+
+    Positions and directions are in the renderer's ``(x, y, z)`` frame: x is
+    the last displayed world axis, so a scene showing ``("z", "y", "x")``
+    has renderer x = world x and renderer z = world z.  Pass it back to
+    ``CellierController.set_camera_state`` to restore a view.
+
+    Attributes
+    ----------
+    camera_type : str
+        ``"perspective"`` for a 3D view, ``"orthographic"`` for a 2D one.
+    position : tuple[float, float, float]
+        Camera position.
+    rotation : tuple[float, float, float, float]
+        Orientation as a quaternion ``(x, y, z, w)``.
+    up : tuple[float, float, float]
+        The camera's up vector; always ``(0, 1, 0)`` for a 2D camera.
+    fov : float
+        Vertical field of view in degrees; ``0`` for an orthographic camera.
+    zoom : float
+        Zoom factor.
+    extent : tuple[float, float]
+        The visible ``(width, height)`` in world units for an orthographic
+        camera; ``(0, 0)`` for a perspective one.
+    depth_range : tuple[float, float] or None
+        The ``(near, far)`` clipping distances, or ``None`` when the range
+        is automatic (worked out from what the camera is fitted to).
+    """
 
     camera_type: Literal["perspective", "orthographic"]
     position: tuple[float, float, float]

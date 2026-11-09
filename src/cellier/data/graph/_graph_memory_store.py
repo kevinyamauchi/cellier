@@ -82,7 +82,7 @@ class GraphMemoryStore(BaseDataStore):
     ------------
     The flat numpy arrays are the **source of truth** and are what
     serializes; the ``spatial_graph`` index is a derived, lazily built
-    private attribute reachable through :attr:`graph`.  A store used only
+    private attribute reachable through `graph`.  A store used only
     with ``slice_strategy="mask"`` never builds an index at all, which is
     what makes ``spatial-graph`` optional at *runtime* and not merely at
     import time.
@@ -96,7 +96,7 @@ class GraphMemoryStore(BaseDataStore):
     when building a pick payload, never on the per-frame path.
 
     ``get_data`` runs the filter in the event loop's default executor, so a
-    large graph or a wide trail does not stall the loop; :meth:`read` is
+    large graph or a wide trail does not stall the loop; `read` is
     the same filter, synchronous.
 
     Parameters
@@ -144,7 +144,7 @@ class GraphMemoryStore(BaseDataStore):
         ``sampling="discrete"`` when its column holds sample indices, such
         as a tracking graph's frame numbers.  Empty by default, in which
         case the store takes the scene's world axes when it is added to a
-        scene.  :meth:`from_geff` builds it from the file's axis metadata.
+        scene.  `from_geff` builds it from the file's axis metadata.
     level_scales : list[tuple[float, ...]]
         Unused by this single-resolution store; left empty.
     level_translations : list[tuple[float, ...]]
@@ -292,7 +292,7 @@ class GraphMemoryStore(BaseDataStore):
         """Build a store from raw arrays -- the dependency-free path.
 
         No spatial index is constructed here, and none is constructed at all
-        unless :attr:`graph` is touched or ``slice_strategy="roi"``.
+        unless `graph` is touched or ``slice_strategy="roi"``.
 
         Parameters
         ----------
@@ -359,7 +359,7 @@ class GraphMemoryStore(BaseDataStore):
         construction.  ``Controller.add_graph(transform=...)`` still wins
         when passed explicitly, as it does for every other visual.
 
-        See :mod:`cellier.data.graph._geff_io` for the reader details.
+        See `cellier.data.graph._geff_io` for the reader details.
 
         Parameters
         ----------
@@ -378,7 +378,7 @@ class GraphMemoryStore(BaseDataStore):
         data_coordinate_system : DataCoordinateSystem | None
             The store's coordinate system.  ``None`` builds one from the
             loaded axes' geff metadata; see
-            :func:`~cellier.data.graph._geff_io.data_axes_from_geff`.  A
+            `data_axes_from_geff`.  A
             system that is passed is used as-is, and the store adopts its
             ``datastore_id`` as its ``id``.
         name : str
@@ -468,7 +468,7 @@ class GraphMemoryStore(BaseDataStore):
         The bounding box of the nodes, with no padding -- a vertex is a point,
         not a cell, so there is no half-voxel to add.  ``None`` when the
         store is empty.  See
-        :attr:`~cellier.data._base_data_store.BaseDataStore.axis_extents`.
+        `axis_extents`.
         """
         return self._cached_axis_extents(lambda: geometry_axis_extents(self.positions))
 
@@ -796,14 +796,14 @@ class GraphMemoryStore(BaseDataStore):
     async def get_data(self, request: GraphSliceRequest) -> GraphData:
         """Return slab-filtered graph data for *request*.
 
-        The filter (:meth:`read`) runs in the loop's default executor.  A
+        The filter (`read`) runs in the loop's default executor.  A
         filter that raises because the store changed under it fails this
         read; the change's invalidation reads again.
 
         Parameters
         ----------
         request : GraphSliceRequest
-            Planned by ``GFXGraphMemoryVisual.plan``.
+            Planned by the render layer from the current view.
 
         Returns
         -------
@@ -814,7 +814,7 @@ class GraphMemoryStore(BaseDataStore):
         return await loop.run_in_executor(None, self.read, request)
 
     def read(self, request: GraphSliceRequest) -> GraphData:
-        """The filter of :meth:`get_data`, run on the calling thread.
+        """The filter of `get_data`, run on the calling thread.
 
         Inclusion rule
         --------------
@@ -828,7 +828,7 @@ class GraphMemoryStore(BaseDataStore):
         Parameters
         ----------
         request : GraphSliceRequest
-            Planned by ``GFXGraphMemoryVisual.plan``.
+            Planned by the render layer from the current view.
 
         Returns
         -------

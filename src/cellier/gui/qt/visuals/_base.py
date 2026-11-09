@@ -112,7 +112,7 @@ class QtAppearanceField:
 
         This is the whole control, name included -- what a caller wants in
         every case except reaching for the input itself, which is
-        :attr:`control`.
+        `control`.
         """
         return self._row
 
@@ -120,8 +120,7 @@ class QtAppearanceField:
     def control(self):
         """The bare input inside the row -- the checkbox, slider or combo.
 
-        For tests and for callers driving the input directly.  Layer 2's
-        ``_read`` / ``_apply`` use ``self._control`` and never go through here.
+        For tests and for callers driving the input directly.
         """
         return self._control
 
@@ -145,8 +144,8 @@ class QtAppearanceField:
 
         Assigning to it behaves like a user edit -- the control moves *and* the
         change reaches the bus -- which is also what assigning to the anywidget
-        trait does.  To push a value in without emitting (an inbound bus
-        write), use ``_apply``.
+        trait does.  Changes arriving from the bus move the control without
+        emitting.
         """
         return self._read()
 

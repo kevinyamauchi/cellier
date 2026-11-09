@@ -119,7 +119,7 @@ class QtDatasetInfo:
 
     Shows ``(label, value)`` rows inside a ``superqt.QCollapsible``, the Qt
     idiom for the anywidget front end's ``<details>`` block.  Built from rows
-    for the general case, or from a :class:`DatasetInfo` via :meth:`from_info`
+    for the general case, or from a `DatasetInfo` via `from_info`
     for the sectioned description a data store returns from its
     ``dataset_info()``, which adds nested blocks and matrix tables.
 
@@ -136,7 +136,7 @@ class QtDatasetInfo:
         coerced to ``str``.
     title :
         The name shown on the collapsible header.  Defaults to
-        :data:`DEFAULT_TITLE`.
+        `DEFAULT_TITLE`.
     parent :
         Optional Qt parent widget.
     """
@@ -251,13 +251,13 @@ class QtDatasetInfo:
         self._nested_by_label[label] = nested
 
     def _add_row_section(self, section: RowSection) -> None:
-        """Draw a :class:`RowSection`, nesting it when it carries a label."""
+        """Draw a `RowSection`, nesting it when it carries a label."""
         self._add_rows(section.rows, label=section.label)
         if section.label is not None and not section.collapsed:
             self._nested_by_label[section.label].expand(animate=False)
 
     def _add_matrix_section(self, section: MatrixSection) -> None:
-        """Draw a :class:`MatrixSection` as a non-editable table."""
+        """Draw a `MatrixSection` as a non-editable table."""
         from qtpy.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
         n_rows = len(section.row_labels)
@@ -299,7 +299,7 @@ class QtDatasetInfo:
         title: str | None = None,
         parent=None,
     ) -> QtDatasetInfo:
-        """Build from a sectioned :class:`DatasetInfo`.
+        """Build from a sectioned `DatasetInfo`.
 
         Draws each section in the shape it declares: inline rows, a nested
         collapsible, or a matrix table.  Anything a store can say about

@@ -58,7 +58,7 @@ class OrthoCanvasGrid:
         """The composed Qt grid, for embedding in a hand-built Qt layout.
 
         Qt only, and a convenience: the layout system reaches the grid through
-        :meth:`compose` like any other center leaf.
+        `compose` like any other center leaf.
         """
         if self._widget is None:
             from cellier.convenience._hosts import QtLayoutHost
@@ -90,7 +90,7 @@ def build_ortho_grid_widget(
     fit_view_direction_3d: Mapping[AxisRef, float] | None = None,
     fit_up_3d: Mapping[AxisRef, float] | None = None,
 ) -> OrthoCanvasGrid:
-    """Build the 2x2 canvas grid for an :class:`OrthoViewer`.
+    """Build the 2x2 canvas grid for an `OrthoViewer`.
 
     Creates (or reuses) a canvas per panel with wired dims sliders, and returns
     a leaf whose ``compose(host)`` lays them out as a labelled grid -- ``XY``
@@ -102,7 +102,7 @@ def build_ortho_grid_widget(
         The orthoviewer whose four scenes are attached.
     axis_values : Mapping[int, AxisValues]
         Axis index to the values that axis's slider can take, typically
-        from :func:`cellier.convenience.axis_values_from_ortho`.
+        from `cellier.convenience.axis_values_from_ortho`.
     gui : "qt", "anywidget", or None
         Defaults to ``ortho.gui``; raises if it conflicts with it.
     fov : float

@@ -38,7 +38,7 @@ axes than the pullback has dimensions.
 ``tau = COUPLING_TOLERANCE``.  Floating-point noise -- a 90 degree rotation
 built from ``cos`` and ``sin`` carries ``6e-17`` -- would otherwise turn an
 axis-aligned view oblique.  The snapped entries are zeroed in
-:attr:`ViewClassification.effective_transform`, which is what every consumer
+`ViewClassification.effective_transform`, which is what every consumer
 places and slices with, so the classification and the drawing agree; the
 user's transform is never modified.
 
@@ -295,7 +295,7 @@ def effective_transform(transform: BaseTransform | None) -> BaseTransform | None
     """*transform* with near-zero couplings set to exactly zero.
 
     What every render and slicing consumer places and slices with, so that
-    they agree with :func:`classify_view` -- a 90 degree rotation built from
+    they agree with `classify_view` -- a 90 degree rotation built from
     ``cos`` and ``sin`` carries ``6e-17`` where the classifier sees zero, and
     an axis-aligned path reading the raw matrix would see a rotation.  The
     view does not matter: the tolerance is relative to the whole matrix's

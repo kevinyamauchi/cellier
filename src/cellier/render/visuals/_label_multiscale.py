@@ -680,7 +680,7 @@ class GFXMultiscaleLabelVisual(
     def prepare_slice_route(self, axes: tuple[int, int, int]) -> None:
         """Build the slice node's resources and put its atlas on the GPU now.
 
-        See :meth:`GFXMultiscaleImageVisual.prepare_slice_route`.
+        See `GFXMultiscaleImageVisual.prepare_slice_route`.
         """
         axes = tuple(int(axis) for axis in axes)
         if "3d" not in self.render_modes:
@@ -696,7 +696,7 @@ class GFXMultiscaleLabelVisual(
     def set_slice_footprint(self, polygon: np.ndarray) -> None:
         """Adopt the slice's footprint: the node's bounds and its outline.
 
-        See :meth:`GFXMultiscaleImageVisual.set_slice_footprint`.
+        See `GFXMultiscaleImageVisual.set_slice_footprint`.
         """
         points = _footprint_points(polygon)
         bounds = None
@@ -837,7 +837,7 @@ class GFXMultiscaleLabelVisual(
     ) -> None:
         """Bring the built 2D geometry in line with *displayed_axes*.
 
-        See :meth:`_sync_geometry_3d`.
+        See `_sync_geometry_3d`.
         """
         fetch_2d = _geometry_fetch_axes(
             self._transform, displayed_axes, len(self._full_level_shapes[0])
@@ -1543,7 +1543,7 @@ class GFXMultiscaleLabelVisual(
         config: VisualRenderConfig,
         mode: PlanMode = PlanMode.FULL,
     ) -> list[DesiredSet]:
-        """Plan the 2D atlas's tiles; the 2D half of :meth:`plan`."""
+        """Plan the 2D atlas's tiles; the 2D half of `plan`."""
         if self._image_geometry_2d is None or self._block_cache_2d is None:
             return []
         view_min_world, view_max_world = viewport_2d(request)

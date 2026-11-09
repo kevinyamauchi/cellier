@@ -169,7 +169,7 @@ class RenderManager:
 
     Owns the scene registry, canvas registry, chunk scheduler, pick-value
     reader and slice coordinator.  Exposes two reslicing entry points:
-    :meth:`reslice_scene` and :meth:`reslice_visual`.  Reslicing every
+    `reslice_scene` and `reslice_visual`.  Reslicing every
     scene is ``CellierController.reslice_all``.
 
     Scenes, canvases, and visuals are registered via the ``add_*``
@@ -1382,7 +1382,7 @@ class RenderManager:
         Returns
         -------
         UUID or None
-            The read's id, for :meth:`cancel_pick_read`.
+            The read's id, for `cancel_pick_read`.
         """
         if not requests:
             return None
@@ -1419,7 +1419,8 @@ class RenderManager:
         canvas_id : UUID
             The canvas whose extraction state should change.
         enabled : bool
-            True to extract typed ``VisualPickDetails`` on each pointer event.
+            True to extract the typed per-visual pick details (the
+            ``*PickInfo`` types) on each pointer event.
         """
         self._pick_details_enabled[canvas_id] = enabled
 
@@ -1563,7 +1564,7 @@ class RenderManager:
         """Remove a scene and all its visuals and canvases.
 
         Each visual and each canvas is closed explicitly: see
-        :meth:`SceneManager.close` and :meth:`CanvasView.close`, which dropping
+        `SceneManager.close` and `CanvasView.close`, which dropping
         references cannot substitute for.
 
         Parameters
@@ -1671,7 +1672,7 @@ class RenderManager:
         All three are counters rather than random draws, so rewinding them is
         what turns "draw N frames" into a reproducible picture.
 
-        Called before a capture (see ``cellier.render._capture``).  The visual
+        Called before a capture (``CellierController.screenshot``).  The visual
         counters are shared state -- the scene graph is shared across canvases
         -- so this also rewinds the jitter sequence any live canvas is drawing.
         That is harmless: the sequence is dither, not content.
@@ -2026,7 +2027,7 @@ class RenderManager:
     ) -> tuple[np.ndarray, float]:
         """A rendered-space plane in a visual's level-0 data coordinates.
 
-        The inverse of :meth:`reduce_clipping_plane`.
+        The inverse of `reduce_clipping_plane`.
 
         Parameters
         ----------
@@ -2124,7 +2125,7 @@ class RenderManager:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """A rendered-space frame on three named world axes.
 
-        The inverse of :meth:`reduce_render_plane`: world to rendered is a
+        The inverse of `reduce_render_plane`: world to rendered is a
         reorder of the displayed axes.
 
         Raises

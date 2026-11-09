@@ -1,9 +1,9 @@
 """The render-layer mesh visual: level children loaded by the chunk scheduler.
 
 ``GFXMeshVisual`` loads through ``ChunkScheduler`` (``chunked = True``): a
-plan is a :class:`~cellier.render.scheduling.DesiredSet` of whole levels, the
+plan is a `DesiredSet` of whole levels, the
 read runs in an executor (``MeshMemoryStore.get_data``), and
-:class:`~cellier.render._level_residency.LevelResidency` decides what is
+`LevelResidency` decides what is
 uploaded and what may be drawn.
 
 One display rule holds everywhere: **the mesh never draws a position other

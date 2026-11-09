@@ -2,7 +2,7 @@
 
 The notebook twin of ``cellier.gui.qt.render._base``.  Both front ends draw
 their controls from the same spec
-(:data:`cellier.gui._render_controls.RENDER_CONTROLS`), so the labels,
+(`cellier.gui._render_controls.RENDER_CONTROLS`), so the labels,
 ranges and explanations exist once and neither toolkit can quietly grow a
 control the other lacks.
 
@@ -82,7 +82,7 @@ def _read_dotted(model: Any, field: str) -> Any:
 class AnywidgetRenderConfigPanel(anywidget.AnyWidget):
     """Base for a notebook panel driving one section of the render config.
 
-    Subclasses set :attr:`section` and pass the live config section to
+    Subclasses set `section` and pass the live config section to
     ``super().__init__``.
 
     Wire to the controller after construction::
@@ -198,7 +198,7 @@ class AnywidgetRenderConfigPanel(anywidget.AnyWidget):
         return 0
 
     def _add_readout(self, label: str, read) -> None:
-        """Register a read-only line, refreshed by :meth:`refresh_readouts`."""
+        """Register a read-only line, refreshed by `refresh_readouts`."""
         self._readout_sources.append((label, read))
         self.refresh_readouts()
 

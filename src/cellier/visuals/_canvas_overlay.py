@@ -38,7 +38,7 @@ class CanvasOverlay(CellierEventedModel):
 
 
 class CenteredAxes2DAppearance(CellierEventedModel):
-    """Appearance model for a :class:`CenteredAxes2D` overlay.
+    """Appearance model for a `CenteredAxes2D` overlay.
 
     Parameters
     ----------
@@ -131,7 +131,7 @@ class DrawStatusOverlay(CanvasOverlay):
     user is looking, one line per visual:
     ``Not shown: <name> (OBLIQUE)``.  It draws nothing while every
     visual draws.  The full reason is on
-    :meth:`~cellier.CellierController.draw_status`.
+    `draw_status`.
 
     The convenience viewers add one to every canvas by default
     (``draw_status_overlay=True``).

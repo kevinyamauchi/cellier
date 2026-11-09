@@ -298,7 +298,7 @@ def data_full_extent_box(dataset_size: np.ndarray) -> np.ndarray:
     *outer edges* of the boundary voxels spans ``[-0.5, N-0.5]`` on each
     axis.  This is the single source of truth for the multiscale bounding
     box; both the ``NormSizedVolume`` bounds and the AABB wireframe derive
-    from it (via :func:`norm_full_extent_box`).
+    from it (via `norm_full_extent_box`).
 
     Parameters
     ----------
@@ -318,9 +318,9 @@ def norm_full_extent_box(
     dataset_size: np.ndarray,
     norm_size: np.ndarray,
 ) -> np.ndarray:
-    """Map :func:`data_full_extent_box` into normalized (proxy-box) space.
+    """Map `data_full_extent_box` into normalized (proxy-box) space.
 
-    Inverts the normalized -> data map (see :func:`_norm_to_data_params`)
+    Inverts the normalized -> data map (see `_norm_to_data_params`)
     so the returned box, once pushed through ``compose_world_transform``,
     lands exactly on the data-space full voxel extent ``[-0.5, N-0.5]``.
     Used for the ``NormSizedVolume`` local bounds and the 3D AABB wireframe,
@@ -424,7 +424,7 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         Slab projection of a 2D view's slice node: ``"max"``, ``"min"``,
         ``"mean"``, or ``"none"`` (default) to draw the plane.  A
         template variable: ``"none"`` compiles the slab out.  The window
-        and the step are uniforms (:meth:`set_slab`).
+        and the step are uniforms (`set_slab`).
     """
 
     uniform_type: ClassVar[dict] = dict(
@@ -581,8 +581,8 @@ class MultiscaleVolumeBrickMaterial(gfx.VolumeIsoMaterial):
         The seed is a counter rather than a random draw, so N ticks from
         zero always produce the same sequence of ray-start offsets.  Rewinding
         it is therefore what turns "draw N frames" into a reproducible
-        picture, and it is the only reason this method exists -- see
-        ``cellier.render._capture``.
+        picture, and it is the only reason this method exists: screenshots
+        (``CellierController.screenshot``) rewind it before drawing.
         """
         self._frame_index = 0
         buf_data = self.vol_params_buffer.data

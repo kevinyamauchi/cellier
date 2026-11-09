@@ -73,6 +73,7 @@ nav = [
         { "Data" = "api/data.md" },
         { "Visuals" = "api/visuals.md" },
         { "GUI" = "api/gui.md" },
+        { "Events" = "api/events.md" },
         { "Transform" = "api/transform.md" },
         { "Scene" = "api/scene.md" },
         { "Render" = "api/render.md" },

@@ -137,7 +137,7 @@ class LutIndirectionManager2D:
             tiles are clipped to the viewport so out-of-view stale data is
             not referenced.
         loop_below : int
-            See :func:`paint_lut`.
+            See `paint_lut`.
         """
         slot_grid_pos = np.asarray(slot_grid_pos, dtype=np.int64).reshape(-1, 2)
         levels = np.asarray(levels, dtype=np.int64)

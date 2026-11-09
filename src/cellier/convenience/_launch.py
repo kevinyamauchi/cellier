@@ -40,10 +40,10 @@ def launch(
 
     Creates a ``QApplication`` if one does not already exist, then starts the
     Qt + asyncio event loop via ``PySide6.QtAsyncio``.  Intended for scripts
-    and the CLI.  For interactive / Jupyter use, call :func:`show` instead.
+    and the CLI.  For interactive / Jupyter use, call `show` instead.
 
     The initial camera fit and data load are deferred to the canvas's first
-    rendered frame (see :meth:`CellierController.on_canvas_first_frame`), so
+    rendered frame (see `CellierController.on_canvas_first_frame`), so
     they run only once the canvas has its final size and the event loop is
     live — no timer required.
 
@@ -53,11 +53,14 @@ def launch(
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
     layout_or_window : Layout or QMainWindow or QWidget
-        Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
+        Either a `Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
         window.
     fit : "ready", "immediate", "none" or None
-        Camera-fit policy applied at startup.  See :func:`_init_view`.
+        Camera-fit policy applied at startup.  ``"ready"`` fits the camera
+        on the first frame and again once the data has loaded (a geometry
+        visual's bounds are known only then); ``"immediate"`` fits on the
+        first frame only; ``"none"`` never fits.
         ``None`` (the default) is ``"ready"``, except for a scene whose
         cameras were all placed from their models (a viewer loaded with
         ``from_file``), which keeps its view.
@@ -103,11 +106,14 @@ def show(
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
     layout_or_window : Layout or QMainWindow or QWidget
-        Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
+        Either a `Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
         window.
     fit : "ready", "immediate", "none" or None
-        Camera-fit policy applied at startup.  See :func:`_init_view`.
+        Camera-fit policy applied at startup.  ``"ready"`` fits the camera
+        on the first frame and again once the data has loaded (a geometry
+        visual's bounds are known only then); ``"immediate"`` fits on the
+        first frame only; ``"none"`` never fits.
         ``None`` (the default) is ``"ready"``, except for a scene whose
         cameras were all placed from their models (a viewer loaded with
         ``from_file``), which keeps its view.
@@ -133,13 +139,13 @@ def show(
 
 
 class DisplayHandle:
-    """Inert teardown handle returned by :func:`display`.
+    """Inert teardown handle returned by `display`.
 
     Rendering is performed imperatively by the host inside ``present()``; this
     handle is the cell's return value but has no representation of its own (its
     ``_repr_mimebundle_`` is empty), so the viewer is rendered exactly once.
 
-    Call :meth:`close` to unsubscribe the control panel(s) from the bus,
+    Call `close` to unsubscribe the control panel(s) from the bus,
     cancel any pending slices, and close the sidecar panel (if any) -- e.g.
     before re-running a cell so the prior panel and in-flight reads do not
     leak.
@@ -196,10 +202,9 @@ def display(
 ) -> object:
     """Compose and present an anywidget viewer non-blockingly.
 
-    The notebook counterpart of :func:`launch`.  Resolves the anywidget host
-    (Jupyter or marimo), renders the *layout* spec through the host's
-    :class:`~cellier.convenience._hosts.LayoutHost`, presents the result, and
-    arms first-frame startup.
+    The notebook counterpart of `launch`.  Resolves the anywidget host
+    (Jupyter or marimo), renders the *layout* spec for that host, presents
+    the result, and arms first-frame startup.
 
     Parameters
     ----------
@@ -207,10 +212,13 @@ def display(
         The viewer whose controller drives fit / reslice.
     layout : Layout
         Declarative layout spec -- center canvas(es) plus optional dock
-        controls.  Build with :class:`~cellier.convenience.layout.Layout` or
+        controls.  Build with `Layout` or
         its preset (``Layout.single``).
     fit : "ready", "immediate", "none" or None
-        Camera-fit policy applied at startup.  See :func:`_init_view`.
+        Camera-fit policy applied at startup.  ``"ready"`` fits the camera
+        on the first frame and again once the data has loaded (a geometry
+        visual's bounds are known only then); ``"immediate"`` fits on the
+        first frame only; ``"none"`` never fits.
         ``None`` (the default) is ``"ready"``, except for a scene whose
         cameras were all placed from their models (a viewer loaded with
         ``from_file``), which keeps its view.
@@ -224,7 +232,7 @@ def display(
         ``viewer.on_startup_stalled``.  ``None`` disables the check.
     sidecar : True, SidecarOptions, or None
         Present the viewer in a ``jupyterlab-sidecar`` tab instead of below
-        the cell.  ``True`` uses :class:`~cellier.convenience.SidecarOptions`
+        the cell.  ``True`` uses `SidecarOptions`
         defaults.
         Requires the optional ``sidecar`` package and the Jupyter host (not
         marimo, which already places cell output in its own tab).
@@ -232,8 +240,8 @@ def display(
     Returns
     -------
     object
-        For imperative hosts (Jupyter) an inert :class:`DisplayHandle` whose
-        :meth:`DisplayHandle.close` tears down the controls, cancels pending
+        For imperative hosts (Jupyter) an inert `DisplayHandle` whose
+        `DisplayHandle.close` tears down the controls, cancels pending
         slices, and closes the sidecar panel (if any).  For return-value hosts
         (marimo) the host-native renderable (so the cell renders it), with a
         best-effort ``close`` attached.
@@ -284,13 +292,13 @@ def run(
 ) -> object:
     """Show a viewer, dispatching to the right host based on ``viewer.gui``.
 
-    The portable entry point: replaces separate :func:`display` / :func:`launch`
+    The portable entry point: replaces separate `display` / `launch`
     calls so notebook and script code can be identical up to the ``gui=``
-    argument on :class:`~cellier.convenience.Viewer`.
+    argument on `Viewer`.
 
-    * ``gui="anywidget"`` -- calls :func:`display` (non-blocking; returns a
-      :class:`DisplayHandle` for Jupyter or the renderable for marimo).
-    * ``gui="qt"`` -- calls :func:`launch` (blocking; returns ``None`` after
+    * ``gui="anywidget"`` -- calls `display` (non-blocking; returns a
+      `DisplayHandle` for Jupyter or the renderable for marimo).
+    * ``gui="qt"`` -- calls `launch` (blocking; returns ``None`` after
       the window is closed).
 
     Parameters
@@ -311,7 +319,7 @@ def run(
     Returns
     -------
     object
-        :class:`DisplayHandle` (or marimo renderable) for anywidget; ``None``
+        `DisplayHandle` (or marimo renderable) for anywidget; ``None``
         for Qt (after the window closes).
     """
     from cellier.convenience._backend import backend_for
@@ -346,8 +354,8 @@ def _init_view(
 ) -> StartupTracker:
     """Arm startup (fit + reslice) for every scene, and track its progress.
 
-    Supports both the single-scene :class:`Viewer` (which exposes ``scene``)
-    and the multi-panel :class:`OrthoViewer` (which exposes ``scenes``).
+    Supports both the single-scene `Viewer` (which exposes ``scene``)
+    and the multi-panel `OrthoViewer` (which exposes ``scenes``).
 
     Startup runs in stages, each observable through the returned tracker and
     through ``viewer.startup_state``: the canvas must reach the front end,
