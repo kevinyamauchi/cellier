@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import ConfigDict
+
 from cellier._model import CellierEventedModel
 
 RGBA = tuple[float, float, float, float]
@@ -48,6 +50,8 @@ class BackgroundAppearance(CellierEventedModel):
         RGBA color at the top of the canvas when ``mode`` is
         ``"vertical_gradient"``.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     visible: bool = True
     mode: Literal["uniform", "vertical_gradient"] = "vertical_gradient"

@@ -122,7 +122,13 @@ class SyncPaintController(AbstractPaintController):
         self._teardown()
 
     def abort(self) -> None:
-        """Revert all strokes by replaying the undo stack in reverse."""
+        """Revert the undoable strokes by replaying the undo stack in reverse.
+
+        Only what the undo stack holds is reverted: it keeps the last
+        ``history_depth`` strokes, so older strokes stay painted.  A stroke
+        that has not been released yet is not on the stack either, and also
+        stays painted.
+        """
         while self._history.can_undo:
             command = self._history.undo()
             if command is not None:

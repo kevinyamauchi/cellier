@@ -57,7 +57,8 @@ class MultiscalePaintController(AbstractPaintController):
     """Paint controller for OME-Zarr / multiscale-zarr data stores.
 
     Stages all writes in a tensorstore transaction (RAM-only) until the
-    user commits or aborts the session.  Visible feedback is provided by
+    user commits or aborts the session, or an autosave flushes them (see
+    *autosave_interval_s*).  Visible feedback is provided by
     writing directly into the GPU paint cache; the shader composites paint
     over the base sample so painted voxels are visible immediately without
     a slicer round-trip.
@@ -87,7 +88,9 @@ class MultiscalePaintController(AbstractPaintController):
     autosave_interval_s :
         If set, a ``QTimer`` fires every this many seconds to flush staged
         paint to disk, rebuild the pyramid, and reset the GPU paint
-        textures.  ``None`` disables autosave.
+        textures.  A flushed write is permanent: :meth:`abort` then
+        discards only the paint staged after it.  ``None`` disables
+        autosave.
     """
 
     def __init__(
@@ -234,7 +237,13 @@ class MultiscalePaintController(AbstractPaintController):
         self._teardown()
 
     def abort(self) -> None:
-        """Discard staged paint and clear the GPU paint textures."""
+        """Discard staged paint and clear the GPU paint textures.
+
+        Only paint staged since the last flush is discarded.  With
+        ``autosave_interval_s`` set, each autosave writes the staged paint
+        to disk and starts a new transaction, so paint from before the most
+        recent autosave is already on disk and stays.
+        """
         # 1. Discard staged writes (disk untouched).
         self._write_buffer.abort()
 

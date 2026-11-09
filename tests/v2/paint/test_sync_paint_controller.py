@@ -210,3 +210,36 @@ async def test_add_paint_controller_unsupported_visual_raises(qtbot):
             visual_id=visual.id,
             canvas_id=canvas_id,
         )
+
+
+async def test_undo_restores_label_ids_above_float32_precision(paint_setup):
+    """A brushed stroke's history keeps int32 ids exact (not via float32)."""
+    from uuid import uuid4
+
+    from cellier.events._events import (
+        CanvasMousePress2DEvent,
+        CanvasMouseRelease2DEvent,
+    )
+
+    controller, paint_ctrl, store, canvas_id = paint_setup
+    big = 2**24 + 1
+    store.data[:] = big
+    paint_ctrl.brush_value = big + 2
+    scene_id = controller._canvas_to_scene[canvas_id]
+    coord = np.array([16.0, 16.0])
+    paint_ctrl._on_mouse_press(
+        CanvasMousePress2DEvent(
+            source_id=uuid4(), scene_id=scene_id, world_coordinate=coord, pick_info=None
+        )
+    )
+    paint_ctrl._on_mouse_release(
+        CanvasMouseRelease2DEvent(
+            source_id=uuid4(), scene_id=scene_id, world_coordinate=coord, pick_info=None
+        )
+    )
+    assert store.data[16, 16] == big + 2
+
+    paint_ctrl.undo()
+
+    assert store.data[16, 16] == big
+    assert np.all(store.data == big)

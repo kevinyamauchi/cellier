@@ -3,29 +3,43 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union
 from uuid import uuid4
 
 import numpy as np
-from pydantic import UUID4, AfterValidator, ConfigDict, Field
+from pydantic import UUID4, AfterValidator, ConfigDict, Field, PrivateAttr
 
 from cellier._model import CellierEventedModel
 from cellier.types import NumpyFloat32Array
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from psygnal import EmissionInfo
 
 
 class BaseCameraController(CellierEventedModel):
     """Base model for camera controllers.
 
+    The model of the mouse/keyboard controller that drives a canvas camera.
+    The controller type follows the camera: a perspective (3D) camera is
+    driven by an orbit controller and an orthographic (2D) camera by a
+    pan/zoom controller, and each camera model only accepts its own kind.
+
     Parameters
     ----------
     id : UUID4
         Unique identifier. Auto-generated.
     enabled : bool
-        Whether the controller responds to input. Default True.
+        Whether mouse and keyboard input moves the camera.  Assigning it
+        on a canvas's camera model turns the live controller on or off;
+        ``CellierController.set_camera_controller_enabled`` sets it on all
+        of a canvas's cameras.  Read when a canvas is created from the
+        model.  Default True.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
@@ -34,7 +48,9 @@ class BaseCameraController(CellierEventedModel):
 
 
 class OrbitCameraController(BaseCameraController):
-    """Config for a 3D orbit camera controller.
+    """Orbit controller of a 3D perspective camera.
+
+    See :class:`BaseCameraController`.
 
     Parameters
     ----------
@@ -46,7 +62,9 @@ class OrbitCameraController(BaseCameraController):
 
 
 class PanZoomCameraController(BaseCameraController):
-    """Config for a 2D pan/zoom camera controller.
+    """Pan/zoom controller of a 2D orthographic camera.
+
+    See :class:`BaseCameraController`.
 
     Parameters
     ----------
@@ -66,38 +84,120 @@ CameraControllerType = Annotated[
 class BaseCamera(CellierEventedModel):
     """Base model for cameras.
 
+    The model of one of a canvas's cameras (``Canvas.cameras``), kept in
+    step with the live camera both ways:
+
+    * After every camera move (mouse input, ``set_camera_state``, a fit)
+      the controller writes the pose fields of the camera that moved:
+      ``position``, ``rotation``, ``zoom``, the clipping planes, and
+      ``fov`` / ``up_direction`` / ``frustum`` or ``width`` / ``height``.
+    * Assigning a field moves the live camera.  For the camera the canvas
+      is showing this is a camera **jump**, as with
+      ``CellierController.set_camera_state``: camera-sensitive visuals
+      reslice at once.  Each assignment is its own jump; to set several
+      fields in one move use ``set_camera_state``.  Assigning to the
+      camera of the other dimensionality (the 3D camera of a canvas
+      showing 2D) places it for when the canvas switches to it, and the
+      switch then does not fit it (``Viewer.set_displayed_dimensions``
+      fits the camera after every switch all the same).
+
+    When a canvas is created from a model (``add_canvas_model``,
+    ``from_model``, ``from_file``), each camera starts at the model's
+    pose, unless the pose is the default one (``position`` all zeros and
+    ``rotation`` the identity), which a camera that was never placed has;
+    such a camera is fitted to the data as usual.
+
+    The pose fields are in the renderer's ``(x, y, z)`` frame, in which
+    ``x`` is the **last** displayed world axis, not in the order of the
+    scene's world coordinate system.
+
+    Only field assignments are followed: replacing a camera model in
+    ``Canvas.cameras`` after the canvas was created does not reach the
+    live camera.
+
     Parameters
     ----------
     id : UUID4
         Unique identifier. Auto-generated.
     controller : CameraControllerType
-        Discriminated union of camera controllers.
+        The camera's controller model: an :class:`OrbitCameraController`
+        for a perspective camera, a :class:`PanZoomCameraController` for an
+        orthographic one.  Replacing it applies the new one's ``enabled``.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
     )
     controller: CameraControllerType
 
+    # True while the controller writes the live camera's state into the
+    # model, so the writes are not taken for assignments to apply.
+    _mirroring: bool = PrivateAttr(default=False)
+
+    #: Fields only the live camera writes; assigning them raises.
+    _DERIVED_FIELDS: ClassVar[frozenset[str]] = frozenset()
+
     def model_post_init(self, __context: Any) -> None:
         """Wire controller event relay after model initialization."""
         self.controller.events.all.connect(self._on_controller_updated)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse derived fields; keep the controller relay on a new controller."""
+        if name in self._DERIVED_FIELDS and not self._mirroring:
+            raise AttributeError(
+                f"{type(self).__name__}.{name} is derived from the live "
+                "camera and cannot be assigned."
+            )
+        if name != "controller":
+            super().__setattr__(name, value)
+            return
+        old = self.controller
+        old.events.all.disconnect(self._on_controller_updated)
+        try:
+            super().__setattr__(name, value)
+        finally:
+            self.controller.events.all.connect(self._on_controller_updated)
+
+    @contextmanager
+    def _mirror_writes(self) -> Iterator[None]:
+        """Mark field writes as coming from the live camera (controller use)."""
+        previous = self._mirroring
+        self._mirroring = True
+        try:
+            yield
+        finally:
+            self._mirroring = previous
+
+    @property
+    def has_pose(self) -> bool:
+        """Whether the pose differs from the default one of an unplaced camera.
+
+        ``False`` when ``position`` is all zeros and ``rotation`` the
+        identity quaternion.  A canvas created from the model starts such a
+        camera unplaced (it is fitted to the data); any other pose is
+        applied.
+        """
+        return bool(
+            np.any(np.asarray(self.position) != 0)
+            or not np.array_equal(np.asarray(self.rotation), [0.0, 0.0, 0.0, 1.0])
+        )
 
     def _on_controller_updated(self, info: EmissionInfo) -> None:
         self.events.controller.emit(self.controller)
 
 
 class PerspectiveCamera(BaseCamera):
-    """3D perspective camera state.
+    """A canvas's 3D perspective camera; see :class:`BaseCamera`.
 
     Parameters
     ----------
     camera_type : Literal["perspective"]
         Discriminator field. Always ``"perspective"``.
     fov : float
-        Field of view in degrees. Default 70.0.
+        Field of view in degrees. Default 70.0.  0 is an orthographic
+        projection.
     zoom : float
         Zoom level. Default 1.0.
     near_clipping_plane : float
@@ -105,14 +205,27 @@ class PerspectiveCamera(BaseCamera):
     far_clipping_plane : float
         Far clipping distance. Default 8000.0.
     position : NumpyFloat32Array
-        World-space camera position, shape (3,).
+        Camera position in the renderer's ``(x, y, z)`` frame, shape (3,).
     rotation : NumpyFloat32Array
         Quaternion [x, y, z, w], shape (4,).
     up_direction : NumpyFloat32Array
-        World-space up vector, shape (3,).
+        The camera's up vector in the renderer's ``(x, y, z)`` frame, shape
+        (3,); the live camera writes the one its rotation gives.  Assigning
+        it turns the camera about its view direction to bring its up as
+        close to the vector as it goes, and makes it the up the orbit
+        controller keeps.  All zeros until the camera is first written.
     frustum : NumpyFloat32Array
-        Near and far plane corners, shape (2, 4, 3).
+        Corners of the view frustum in the renderer's frame, shape
+        (2, 4, 3): the near plane's four corners, then the far plane's.
+        Written by the live camera; assigning it raises ``AttributeError``.
+        All zeros until the camera is first written.
+    controller : OrbitCameraController
+        Must be an orbit controller.
     """
+
+    _DERIVED_FIELDS: ClassVar[frozenset[str]] = frozenset({"frustum"})
+
+    controller: OrbitCameraController
 
     camera_type: Literal["perspective"] = "perspective"
     fov: float = 70.0
@@ -134,7 +247,7 @@ class PerspectiveCamera(BaseCamera):
 
 
 class OrthographicCamera(BaseCamera):
-    """2D orthographic camera state.
+    """A canvas's 2D orthographic camera; see :class:`BaseCamera`.
 
     Parameters
     ----------
@@ -151,12 +264,15 @@ class OrthographicCamera(BaseCamera):
     far_clipping_plane : float
         Far clipping distance. Default 500.0.
     position : NumpyFloat32Array
-        World-space camera position, shape (3,).
+        Camera position in the renderer's ``(x, y, z)`` frame, shape (3,).
     rotation : NumpyFloat32Array
         Quaternion [x, y, z, w], shape (4,).
+    controller : PanZoomCameraController
+        Must be a pan/zoom controller.
     """
 
     camera_type: Literal["orthographic"] = "orthographic"
+    controller: PanZoomCameraController
     width: float = 10.0
     height: float = 10.0
     zoom: float = 1.0

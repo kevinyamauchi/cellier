@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import UUID4, AfterValidator, Field
@@ -21,8 +21,8 @@ class Canvas(CellierEventedModel):
     id : UUID4
         Unique identifier. Auto-generated.
     cameras : dict[str, CameraType]
-        Mapping of ``"2d"`` and/or ``"3d"`` to camera models.
-        At least one entry is required.
+        Mapping of ``"2d"`` and/or ``"3d"`` to camera models.  At least
+        one entry is required, and no other keys are accepted.
     overlays : list[CanvasOverlayType]
         Screen-space overlays attached to this canvas.  Rendered as
         post-passes on top of the main scene.  Default empty list.
@@ -41,7 +41,7 @@ class Canvas(CellierEventedModel):
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
     )
-    cameras: dict[str, CameraType]
+    cameras: dict[Literal["2d", "3d"], CameraType] = Field(min_length=1)
     overlays: list[CanvasOverlayType] = Field(default_factory=list)
     size: tuple[int, int] | None = None
     fit_view_direction_3d: dict[UUID4, float] | None = None

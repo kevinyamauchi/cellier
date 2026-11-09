@@ -490,6 +490,20 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
 
         For a progress bar over a slow or remote dataset, where the gap
         between "shown" and "loaded" is long enough to need reporting.
+
+        Must be called after ``display``/``show``/``launch``, which is when
+        the startup tracker exists.  ``launch`` blocks until the window
+        closes, so with it register from code that runs in the event loop.
+
+        Parameters
+        ----------
+        callback : Callable[[int, int], None]
+            Called with the number of scenes ready and the total.
+
+        Raises
+        ------
+        RuntimeError
+            If the viewer has not been started yet.
         """
         tracker = getattr(self, "_startup", None)
         if tracker is None:
@@ -508,8 +522,24 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         stopped in, so the report can say *what* it was waiting for.
 
         Stalling is not an error -- slow remote data legitimately takes a
-        while -- it is the cue that something is worth looking at.  Tune the
-        window with ``display(..., stall_timeout=)``.
+        while -- it is the cue that something is worth looking at.  The
+        window is 30 s by default.  ``display(..., stall_timeout=)`` tunes it
+        (``None`` turns the check off); ``run``, ``launch`` and ``show`` take
+        no ``stall_timeout`` and always use the default.
+
+        Must be called after ``display``/``show``/``launch``, which is when
+        the startup tracker exists.
+
+        Parameters
+        ----------
+        callback : Callable[[dict], None]
+            Called with ``{scene key: StartupState}`` for every scene that
+            has not finished.
+
+        Raises
+        ------
+        RuntimeError
+            If the viewer has not been started yet.
         """
         tracker = getattr(self, "_startup", None)
         if tracker is None:
@@ -987,9 +1017,13 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
     def to_file(self, path: str | Path) -> None:
         """Serialize the viewer model state to a JSON file.
 
-        The file captures scenes, visuals, data stores, canvas camera state,
-        and the render pipeline configuration. Pass the path to
-        :meth:`from_file` to restore an equivalent ``Viewer``.
+        The file captures scenes, visuals, data stores, canvases with their
+        camera models, and the render pipeline configuration.  Pass the
+        path to :meth:`from_file` to restore an equivalent ``Viewer``.
+
+        The cameras are saved with their pose, which :meth:`from_file`
+        restores.  The ``gui`` toolkit is not saved; pass it to
+        :meth:`from_file`.
 
         Parameters
         ----------
@@ -999,17 +1033,30 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         self._controller.to_file(path)
 
     @classmethod
-    def from_file(cls, path: str | Path) -> Viewer:
+    def from_file(
+        cls,
+        path: str | Path,
+        *,
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
+    ) -> Viewer:
         """Restore a ``Viewer`` from a previously serialized file.
 
-        The render pipeline configuration, scenes, visuals, data stores, and
-        canvas camera state are all restored from the file. No extra arguments
-        are required.
+        The render pipeline configuration, scenes, visuals, data stores and
+        canvases are restored from the file, and each camera starts at its
+        saved pose.  ``launch`` / ``show`` / ``display`` keep that view
+        (their default ``fit=None`` does not fit placed cameras); pass
+        ``fit="ready"`` to fit to the data instead.  A camera that was never
+        shown before saving (the 3D camera of a viewer saved in 2D) has no
+        pose and is fitted the first time it is shown.
 
         Parameters
         ----------
         path : str or Path
             Path to a JSON file written by :meth:`to_file`.
+        gui : {"qt", "anywidget", "offscreen"}
+            Toolkit to build the canvases with; the file does not record
+            one.  The canvases are built during this call, so ``"qt"`` (the
+            default) needs a ``QApplication`` first.
 
         Returns
         -------
@@ -1020,7 +1067,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         ValueError
             If the file contains zero or more than one scene.
         """
-        controller = CellierController.from_file(path)
+        controller = CellierController.from_file(path, gui=gui)
         scenes = list(controller._model.scenes.values())
         if len(scenes) != 1:
             raise ValueError(

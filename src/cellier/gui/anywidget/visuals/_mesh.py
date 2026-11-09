@@ -153,8 +153,9 @@ class AnywidgetMeshSectionControls(VisualIdGroup, anywidget.AnyWidget):
     section :
         The current config, as ``MeshSectionConfig.model_dump()``.
     displayed_dimensions :
-        Scene id to how many dimensions it displays now
-        (``section_display_seed``).  The control follows these scenes'
+        Scene id to how many dimensions it displays now (2 or 3, from
+        ``len(scene.dims.selection.displayed_axes)`` of each scene the
+        visuals are in).  The control follows these scenes'
         ``DimsChangedEvent``.  Empty (the default) keeps it always shown.
     """
 

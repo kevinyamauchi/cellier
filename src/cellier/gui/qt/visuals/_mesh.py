@@ -159,8 +159,9 @@ class QtMeshSectionControls(VisualIdGroup):
     title :
         The group's name.  Defaults to :data:`DEFAULT_TITLE`.
     displayed_dimensions :
-        Scene id to how many dimensions it displays now
-        (``section_display_seed``).  The control follows these scenes'
+        Scene id to how many dimensions it displays now (2 or 3, from
+        ``len(scene.dims.selection.displayed_axes)`` of each scene the
+        visuals are in).  The control follows these scenes'
         ``DimsChangedEvent``.  Empty (the default) keeps it always shown.
     parent :
         Optional Qt parent widget.

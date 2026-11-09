@@ -168,11 +168,20 @@ class RenderManager:
     """Single top-level render-layer object.
 
     Owns the scene registry, canvas registry, chunk scheduler, pick-value
-    reader and slice coordinator.  Exposes three reslicing entry points that cover
-    the common triggers: all scenes, one scene, or one visual.
+    reader and slice coordinator.  Exposes two reslicing entry points:
+    :meth:`reslice_scene` and :meth:`reslice_visual`.  Reslicing every
+    scene is ``CellierController.reslice_all``.
 
-    Construction is parameter-free; scenes, canvases, and visuals are
-    registered via the ``add_*`` methods.
+    Scenes, canvases, and visuals are registered via the ``add_*``
+    methods.
+
+    Parameters
+    ----------
+    config : RenderManagerConfig or None
+        The render pipeline configuration (scheduler, camera, outline,
+        ambient occlusion, temporal accumulation).  ``None`` uses
+        ``RenderManagerConfig()``.  The object is kept and mutated by the
+        live setters, so it reflects the current state.
     """
 
     def __init__(self, config: RenderManagerConfig | None = None) -> None:

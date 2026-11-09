@@ -11,7 +11,15 @@ import warnings
 import weakref
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generator, Literal, NamedTuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generator,
+    Literal,
+    NamedTuple,
+)
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -1163,7 +1171,24 @@ class CellierController:
     """The main class for constructing and controlling a cellier visualization.
 
     Wraps a ViewerModel (model layer) and a RenderManager (render layer) and
-    performs the synchronization between both.
+    performs the synchronization between both: scenes, visuals, canvases
+    and data stores are added here, and changes to their models are
+    forwarded to the renderer.  The convenience viewers (``Viewer``,
+    ``OrthoViewer``) build one of these and expose it as ``controller``.
+
+    Parameters
+    ----------
+    widget_parent : object or None
+        Qt parent for the canvas widgets.  Only used by the ``"qt"`` gui;
+        ignored otherwise.  Default None.
+    render_config : RenderManagerConfig or None
+        Render manager settings.  None uses the defaults.  The object is
+        shared with ``model.render_config``, so later changes to it are
+        saved with the model.
+    gui : {"qt", "anywidget", "offscreen"}
+        Toolkit for the render canvases: ``"qt"`` widgets (needs a
+        ``QApplication``), ``"anywidget"`` for notebooks, or
+        ``"offscreen"`` for headless rendering.  Default ``"qt"``.
     """
 
     def __init__(
@@ -1361,6 +1386,9 @@ class CellierController:
         # closes over ``self`` -- keeps the whole controller reachable from
         # the scene's psygnal signal for the lifetime of the process.
         self._scene_psygnal_handlers: dict[UUID, list[tuple]] = {}
+        # Per canvas: the handlers that apply camera-model assignments to the
+        # live cameras, with the signal each is connected to.
+        self._canvas_psygnal_handlers: dict[UUID, list[tuple]] = {}
         # The BackgroundAppearance object each scene's background bridge is
         # currently attached to, with its handler.  Needed to move the bridge
         # when the whole model is replaced (scene.background = ...), which
@@ -1550,6 +1578,8 @@ class CellierController:
         model: ViewerModel,
         widget_parent: QWidget | None = None,
         render_config: RenderManagerConfig | None = None,
+        *,
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> CellierController:
         """Construct a controller from a serialized ViewerModel.
 
@@ -1559,7 +1589,13 @@ class CellierController:
         1. Data stores  — registered before visuals reference them.
         2. Scenes       — registered with render_modes and lighting from model.
         3. Visuals      — added per scene; data stores must already be present.
-        4. Canvases     — restored with camera state from model.
+        4. Canvases     — restored with their cameras: field of view,
+                          clipping planes, controller ``enabled`` and, where
+                          the model has one, the pose; see
+                          :meth:`add_canvas_model`.
+
+        The model does not record a GUI toolkit; pass the one to build the
+        canvases with as *gui*.
 
         Parameters
         ----------
@@ -1569,6 +1605,9 @@ class CellierController:
             Qt parent for canvas widgets. Defaults to None.
         render_config : RenderManagerConfig or None
             Render pipeline configuration. Defaults to None (uses defaults).
+        gui : {"qt", "anywidget", "offscreen"}
+            Toolkit for the restored canvases.  ``"qt"`` (the default) needs
+            a ``QApplication``.
 
         Returns
         -------
@@ -1579,6 +1618,7 @@ class CellierController:
             render_config=render_config
             if render_config is not None
             else model.render_config,
+            gui=gui,
         )
 
         # 1. Register all data stores.
@@ -1611,8 +1651,12 @@ class CellierController:
         path: str | pathlib.Path,
         widget_parent: QWidget | None = None,
         render_config: RenderManagerConfig | None = None,
+        *,
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> CellierController:
         """Deserialize a ViewerModel from disk and construct a controller.
+
+        See :meth:`from_model` for what is restored.
 
         Parameters
         ----------
@@ -1622,6 +1666,8 @@ class CellierController:
             Qt parent for canvas widgets.
         render_config : RenderManagerConfig or None
             Render pipeline configuration.
+        gui : {"qt", "anywidget", "offscreen"}
+            Toolkit for the restored canvases.  Default ``"qt"``.
 
         Returns
         -------
@@ -1632,6 +1678,7 @@ class CellierController:
             model,
             widget_parent=widget_parent,
             render_config=render_config,
+            gui=gui,
         )
 
     # ------------------------------------------------------------------
@@ -2827,7 +2874,8 @@ class CellierController:
             Human-readable label. Default ``"image"``.
         render_config : MultiscaleImageRenderConfig or None
             GPU cache configuration.  The budget is split evenly between the
-            visual's slots: one without a channel axis, ``max_channels`` with.
+            channels the visual draws (its ``channels``); a visual with no
+            channel axis, or with no channels, gets all of it.
         transform : AffineTransform or None
             Data-to-world transform. Defaults to identity when None.
         single : MultiscaleImageSingleAppearance or None
@@ -4451,9 +4499,15 @@ class CellierController:
         """Register a pre-built Canvas model with a scene.
 
         Used by ``from_model`` to restore canvases from a serialized
-        ViewerModel, and called internally by ``add_canvas``.  Camera state
-        (position, rotation, fov, depth range) is read from the camera models
-        stored in ``canvas_model.cameras``.
+        ViewerModel, and called internally by ``add_canvas``.  Each camera
+        in ``canvas_model.cameras`` gets its model's field of view, clipping
+        planes and controller ``enabled``.  A camera whose model has a pose
+        (``position``/``rotation`` other than the defaults; see
+        :attr:`~cellier.scene.cameras.BaseCamera.has_pose`) starts at it,
+        with its zoom, extent and up, and is not fitted when its dim is
+        first shown; any other camera is fitted as usual.  From then on,
+        assigning a camera model's fields moves its camera; see
+        :class:`~cellier.scene.cameras.BaseCamera`.
 
         Parameters
         ----------
@@ -4463,9 +4517,9 @@ class CellierController:
             Pre-built canvas model.  Must have at least one entry in
             ``canvas_model.cameras``.
         initial_dim : str or None
-            Which dim to activate first.  When ``None``, the first key in
-            ``canvas_model.cameras`` is used (insertion order is preserved by
-            Python dicts, so this is deterministic for serialized models).
+            Which dim to activate first.  When ``None``, the one the scene
+            shows (``"3d"`` with three displayed axes, ``"2d"`` with two) if
+            ``canvas_model.cameras`` has it, otherwise its first key.
         canvas_size : tuple[int, int] or None
             Initial CSS pixel size for the anywidget canvas.  Ignored for the
             Qt gui.  Defaults to ``(600, 600)`` for the anywidget gui.
@@ -4485,7 +4539,13 @@ class CellierController:
             raise ValueError("canvas_model.cameras must not be empty.")
 
         if initial_dim is None:
-            initial_dim = next(iter(canvas_model.cameras))
+            displayed = self._model.scenes[scene_id].dims.selection.displayed_axes
+            shown = "3d" if len(displayed) == 3 else "2d"
+            initial_dim = (
+                shown
+                if shown in canvas_model.cameras
+                else next(iter(canvas_model.cameras))
+            )
 
         if initial_dim not in canvas_model.cameras:
             raise ValueError(
@@ -4549,6 +4609,9 @@ class CellierController:
             if reserve_range[0] == reserve_range[1]:
                 reserve_range = None
             canvas_view.set_depth_range_for_dim(dim_key, reserve_range)
+
+        self._restore_camera_models(canvas_model.id, canvas_model)
+        self._connect_camera_models(canvas_model.id, canvas_model)
 
         self._canvas_to_scene[canvas_model.id] = scene_id
         self._scene_to_canvases[scene_id].append(canvas_model.id)
@@ -11509,7 +11572,19 @@ class CellierController:
         camera_model = canvas_model.cameras.get(active_dim)
         if camera_model is None:
             return
+        # The writes mirror the live camera; they are not assignments for
+        # the camera-model handler to apply back to it.
+        with camera_model._mirror_writes():
+            self._write_camera_model(camera_model, camera_state)
+            if isinstance(camera_model, PerspectiveCamera) and canvas_view is not None:
+                camera_model.frustum = canvas_view.camera_frustum(active_dim)
 
+    @staticmethod
+    def _write_camera_model(
+        camera_model: PerspectiveCamera | OrthographicCamera,
+        camera_state: CameraState,
+    ) -> None:
+        """Copy *camera_state* into *camera_model*'s fields."""
         # Common fields present on both camera model types.
         camera_model.position = np.array(camera_state.position, dtype=np.float32)
         camera_model.rotation = np.array(camera_state.rotation, dtype=np.float32)
@@ -11527,6 +11602,150 @@ class CellierController:
         elif isinstance(camera_model, OrthographicCamera):
             camera_model.width = camera_state.extent[0]
             camera_model.height = camera_state.extent[1]
+
+    # ------------------------------------------------------------------
+    # Camera models -> live cameras
+    # ------------------------------------------------------------------
+
+    #: Camera-model fields that are part of the pose, and so place a camera.
+    _CAMERA_POSE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"position", "rotation", "zoom", "width", "height", "up_direction"}
+    )
+
+    def _restore_camera_models(self, canvas_id: UUID, canvas_model: Canvas) -> None:
+        """Start a new canvas's cameras from its camera models.
+
+        Each camera's controller gets the model's ``enabled``.  A camera
+        whose model has a pose (:attr:`BaseCamera.has_pose`) is placed at
+        it and counts as fitted, so the first switch to its dim keeps it;
+        one without is left to be fitted.  The field of view and depth
+        ranges were applied when the canvas was built.
+        """
+        canvas_view = self._render_manager._canvases[canvas_id]
+        for dim, camera_model in canvas_model.cameras.items():
+            canvas_view.set_controller_enabled_for_dim(
+                dim, camera_model.controller.enabled
+            )
+            if not camera_model.has_pose:
+                continue
+            # ``up_direction`` before the rotation: turning the camera to its
+            # up moves it, and the rotation then puts it back.
+            for name in ("up_direction", "width", "height"):
+                if self._camera_field_applies(dim, camera_model, name):
+                    canvas_view.set_camera_field(dim, name, getattr(camera_model, name))
+            canvas_view.set_camera_field(dim, "position", camera_model.position)
+            canvas_view.set_camera_field(dim, "rotation", camera_model.rotation)
+            canvas_view.set_camera_field(dim, "zoom", camera_model.zoom)
+            canvas_view.mark_placed(dim)
+        # The placed camera is where the canvas starts, not a move.
+        canvas_view.accept_camera_state()
+
+    @staticmethod
+    def _camera_field_applies(
+        dim: str, camera_model: PerspectiveCamera | OrthographicCamera, name: str
+    ) -> bool:
+        """Whether *camera_model*'s field *name* is one *dim*'s camera has.
+
+        The 2D camera is orthographic and the 3D one perspective, whatever
+        the model under the key is; a field only the other kind has (and
+        an all-zero ``up_direction``, which says nothing) is not applied.
+        """
+        if not hasattr(camera_model, name):
+            return False
+        if name in ("width", "height"):
+            return dim == "2d"
+        if name == "fov":
+            return dim == "3d"
+        if name == "up_direction":
+            return dim == "3d" and bool(np.any(camera_model.up_direction))
+        return True
+
+    def _canvas_camera_placed(self, canvas_id: UUID) -> bool:
+        """Whether *canvas_id*'s shown camera was placed from its model.
+
+        Startup (``fit=None``) keeps such a camera where it is.
+        """
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        return canvas_view is not None and canvas_view.camera_placed
+
+    def _connect_camera_models(self, canvas_id: UUID, canvas_model: Canvas) -> None:
+        """Make assignments to *canvas_model*'s camera models move its cameras."""
+        handlers = self._canvas_psygnal_handlers.setdefault(canvas_id, [])
+        for dim, camera_model in canvas_model.cameras.items():
+            handler = self._make_camera_model_handler(canvas_id, dim, camera_model)
+            camera_model.events.connect(handler)
+            handlers.append((camera_model.events, handler))
+
+    def _disconnect_camera_models(self, canvas_id: UUID) -> None:
+        """Undo :meth:`_connect_camera_models` for *canvas_id*."""
+        for signal, handler in self._canvas_psygnal_handlers.pop(canvas_id, []):
+            with suppress(Exception):
+                signal.disconnect(handler)
+
+    def _make_camera_model_handler(
+        self,
+        canvas_id: UUID,
+        dim: str,
+        camera_model: PerspectiveCamera | OrthographicCamera,
+    ) -> Callable:
+        """Return the psygnal handler applying *camera_model*'s assignments."""
+
+        def _on_camera_model(info: EmissionInfo) -> None:
+            if camera_model._mirroring:
+                return
+            self._apply_camera_model_field(
+                canvas_id, dim, camera_model, info.signal.name
+            )
+
+        return _on_camera_model
+
+    def _apply_camera_model_field(
+        self,
+        canvas_id: UUID,
+        dim: str,
+        camera_model: PerspectiveCamera | OrthographicCamera,
+        name: str,
+    ) -> None:
+        """Apply an assignment to *camera_model*'s field *name* to the camera.
+
+        A move of the camera shown is a jump (reslicing at once), reported
+        as for :meth:`set_camera_state`, which also writes the model back.
+        A move of the other camera only places it; its model is written
+        back here, since nothing reports that camera.
+        """
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        if canvas_view is None:
+            return
+        if name == "controller":
+            canvas_view.set_controller_enabled_for_dim(
+                dim, camera_model.controller.enabled
+            )
+            return
+        if name in ("near_clipping_plane", "far_clipping_plane"):
+            near = camera_model.near_clipping_plane
+            far = camera_model.far_clipping_plane
+            # An empty range is how an automatic one is saved.
+            canvas_view.set_camera_field(
+                dim, "depth_range", None if near == far else (near, far)
+            )
+        elif name in ("fov", *self._CAMERA_POSE_FIELDS):
+            if not self._camera_field_applies(dim, camera_model, name):
+                return
+            canvas_view.set_camera_field(dim, name, getattr(camera_model, name))
+        else:
+            return
+        if name in self._CAMERA_POSE_FIELDS:
+            canvas_view.mark_placed(dim)
+        if dim == canvas_view._dim:
+            self._after_programmatic_camera_move(canvas_id)
+            return
+        # The other camera: write back what the change did to the rest of
+        # its state (``up_direction`` turns it).
+        state = canvas_view.capture_camera_state(dim)
+        with camera_model._mirror_writes():
+            self._write_camera_model(camera_model, state)
+            if isinstance(camera_model, PerspectiveCamera):
+                camera_model.frustum = canvas_view.camera_frustum(dim)
 
     # ------------------------------------------------------------------
     # Camera operations
@@ -11786,6 +12005,7 @@ class CellierController:
 
         # 3b. Bus cleanup for canvases and the scene itself.
         for canvas_id in self._scene_to_canvases.pop(scene_id, []):
+            self._disconnect_camera_models(canvas_id)
             self._outgoing_events.unsubscribe_all(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
             self._forget_rendered(canvas_id)
@@ -11841,7 +12061,9 @@ class CellierController:
         # 1. Drop the canvas's camera motion state (no event; timer cancelled).
         self._forget_camera_interaction(canvas_id)
 
-        # 2. Remove bus subscriptions owned by this canvas.
+        # 2. Remove bus subscriptions owned by this canvas, and the camera
+        #    model handlers.
+        self._disconnect_camera_models(canvas_id)
         self._outgoing_events.unsubscribe_all(canvas_id)
         self._pick_subscriber_counts.pop(canvas_id, None)
         for key in [key for key in self._pick_event_counts if key[0] == canvas_id]:
@@ -12923,6 +13145,9 @@ class CellierController:
     def set_camera_controller_enabled(self, canvas_id: UUID, enabled: bool) -> None:
         """Enable or disable the camera controller for one canvas.
 
+        Sets ``controller.enabled`` on every camera model of the canvas,
+        so both its 2D and 3D cameras follow, and applies it to the canvas.
+
         Parameters
         ----------
         canvas_id : UUID
@@ -12931,7 +13156,13 @@ class CellierController:
             False disables the controller (paint session active).
             True restores normal camera interaction (session ended).
         """
-        self._render_manager._canvases[canvas_id].set_controller_enabled(enabled)
+        canvas_view = self._render_manager._canvases[canvas_id]
+        canvas_model = self._model.scenes[self._canvas_to_scene[canvas_id]].canvases[
+            canvas_id
+        ]
+        for camera_model in canvas_model.cameras.values():
+            camera_model.controller.enabled = enabled
+        canvas_view.set_controller_enabled(enabled)
 
     def _invalidate_painted_regions(self, store_id: UUID, regions: tuple) -> list[int]:
         """Drop GPU data painted over, so the next reslice fetches it again.
@@ -13502,7 +13733,11 @@ class CellierController:
         self._scene_to_canvases.clear()
         self._canvases_awaiting_fit.clear()
 
-        for registry in (self._visual_psygnal_handlers, self._scene_psygnal_handlers):
+        for registry in (
+            self._visual_psygnal_handlers,
+            self._scene_psygnal_handlers,
+            self._canvas_psygnal_handlers,
+        ):
             for handlers in registry.values():
                 for signal, handler in handlers:
                     # A signal whose model is already gone, or a handler

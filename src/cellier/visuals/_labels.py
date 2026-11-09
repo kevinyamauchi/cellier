@@ -91,7 +91,6 @@ class MultiscaleLabelsAppearance(BaseLabelsAppearance):
 
 
 class MultiscaleLabelRenderConfig(CellierModel):
-    model_config = ConfigDict(frozen=True)
     """Render-layer configuration for a multiscale label visual.
 
     Parameters
@@ -111,6 +110,8 @@ class MultiscaleLabelRenderConfig(CellierModel):
         The coarse backstop loaded ahead of the target level.  Changing
         only this reslices; the other fields reallocate GPU resources.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     block_size: int = 32
     gpu_budget_bytes: int = 1 * 1024**3

@@ -28,6 +28,11 @@ class StubController:
         self.reslice_calls: list = []
         self._first_frame_cbs: list = []
         self._connected_cbs: list = []
+        # Canvases whose shown camera was placed from its model.
+        self.placed: set = set()
+
+    def _canvas_camera_placed(self, canvas_id):
+        return canvas_id in self.placed
 
     def get_canvas_ids(self, scene_id):
         return self._canvas_ids.get(scene_id, [])
@@ -159,6 +164,57 @@ def test_fit_none_never_fits():
     controller.fire_first_frames()
 
     assert controller.fit_calls == []
+
+
+def test_default_fit_is_ready_for_unplaced_cameras():
+    canvas_id = uuid4()
+    scene_id = uuid4()
+    controller = StubController({scene_id: [canvas_id]})
+    viewer, _ = _single_scene_viewer(controller)
+    viewer.scene.id = scene_id
+
+    _init_view(viewer)
+    controller.fire_first_frames()
+
+    assert controller.fit_calls == [scene_id, scene_id]
+
+
+def test_default_fit_keeps_cameras_placed_from_their_models():
+    """A restored viewer keeps its saved view; an unplaced scene still fits."""
+    placed_canvas, other_canvas = uuid4(), uuid4()
+    placed_scene, other_scene = uuid4(), uuid4()
+    controller = StubController(
+        {placed_scene: [placed_canvas], other_scene: [other_canvas]}
+    )
+    controller.placed.add(placed_canvas)
+    viewer = SimpleNamespace(
+        controller=controller,
+        scenes={
+            "a": SimpleNamespace(id=placed_scene),
+            "b": SimpleNamespace(id=other_scene),
+        },
+        gui="qt",
+        _ready_callbacks=[],
+    )
+
+    _init_view(viewer)
+    controller.fire_first_frames()
+
+    assert controller.fit_calls == [other_scene, other_scene]
+
+
+def test_an_explicit_fit_overrides_placed_cameras():
+    canvas_id = uuid4()
+    scene_id = uuid4()
+    controller = StubController({scene_id: [canvas_id]})
+    controller.placed.add(canvas_id)
+    viewer, _ = _single_scene_viewer(controller)
+    viewer.scene.id = scene_id
+
+    _init_view(viewer, fit="immediate")
+    controller.fire_first_frames()
+
+    assert controller.fit_calls == [scene_id]
 
 
 def test_empty_scene_list_fires_startup_immediately():

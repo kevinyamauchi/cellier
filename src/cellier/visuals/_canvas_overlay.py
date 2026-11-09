@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import UUID4, AfterValidator, Field
+from pydantic import UUID4, AfterValidator, ConfigDict, Field
 
 from cellier._model import CellierEventedModel
 
@@ -27,6 +27,8 @@ class CanvasOverlay(CellierEventedModel):
     visible : bool
         Whether the overlay is rendered.  Default ``True``.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
@@ -65,6 +67,8 @@ class CenteredAxes2DAppearance(CellierEventedModel):
     label_color : tuple[float, float, float, float]
         RGBA color for axis text labels.  Default white ``(1.0, 1.0, 1.0, 1.0)``.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     axis_a_color: tuple[float, float, float, float] = (0.23, 0.67, 0.23, 1.0)
     axis_b_color: tuple[float, float, float, float] = (0.80, 0.40, 0.00, 1.0)

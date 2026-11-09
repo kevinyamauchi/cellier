@@ -28,8 +28,9 @@ class StartupState(str, Enum):
     ``Viewer.scene_startup_states`` (per scene; one per panel of an
     ``OrthoViewer``).  A scene goes ``IDLE`` -> ``WAITING_FOR_CANVAS`` ->
     ``WAITING_FOR_FRAME`` -> ``LOADING`` -> ``READY``, or ends in
-    ``STALLED`` when it makes no progress within ``stall_timeout`` (an
-    argument of ``display`` and ``run``).
+    ``STALLED`` when it makes no progress within the stall window: 30 s by
+    default, set with ``display(..., stall_timeout=)``.  ``run``, ``launch``
+    and ``show`` always use the default.
 
     Ordered: a viewer's aggregate state is the least-advanced of its scenes,
     so one stuck panel is never hidden behind three finished ones.

@@ -544,6 +544,20 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
 
         For a progress bar over a slow or remote dataset, where the gap
         between "shown" and "loaded" is long enough to need reporting.
+
+        Must be called after ``display``/``show``/``launch``, which is when
+        the startup tracker exists.  ``launch`` blocks until the window
+        closes, so with it register from code that runs in the event loop.
+
+        Parameters
+        ----------
+        callback : Callable[[int, int], None]
+            Called with the number of scenes ready and the total.
+
+        Raises
+        ------
+        RuntimeError
+            If the viewer has not been started yet.
         """
         tracker = getattr(self, "_startup", None)
         if tracker is None:
@@ -562,8 +576,24 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         stopped in, so the report can say *what* it was waiting for.
 
         Stalling is not an error -- slow remote data legitimately takes a
-        while -- it is the cue that something is worth looking at.  Tune the
-        window with ``display(..., stall_timeout=)``.
+        while -- it is the cue that something is worth looking at.  The
+        window is 30 s by default.  ``display(..., stall_timeout=)`` tunes it
+        (``None`` turns the check off); ``run``, ``launch`` and ``show`` take
+        no ``stall_timeout`` and always use the default.
+
+        Must be called after ``display``/``show``/``launch``, which is when
+        the startup tracker exists.
+
+        Parameters
+        ----------
+        callback : Callable[[dict], None]
+            Called with ``{scene key: StartupState}`` for every scene that
+            has not finished.
+
+        Raises
+        ------
+        RuntimeError
+            If the viewer has not been started yet.
         """
         tracker = getattr(self, "_startup", None)
         if tracker is None:
@@ -820,9 +850,11 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         """Serialize the orthoviewer model state to a JSON file.
 
         Captures the four scenes (dims, slice positions), visuals, data stores,
-        canvas camera state, and the render pipeline configuration.  The live
-        dims mirroring is *not* serialized -- the panels are saved in agreement
-        -- and :meth:`from_file` re-establishes it.
+        canvases with their camera models, and the render pipeline
+        configuration.  The live dims mirroring is *not* serialized -- the
+        panels are saved in agreement -- and :meth:`from_file` re-establishes
+        it.  The cameras are saved with their poses, which :meth:`from_file`
+        restores; the ``gui`` toolkit is not saved.
 
         Parameters
         ----------
@@ -839,6 +871,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         link_axes: bool = True,
         link_clipping_planes: ClippingLinkMode = "all",
         render_config: RenderManagerConfig | None = None,
+        gui: Literal["qt", "anywidget", "offscreen"] = "qt",
     ) -> OrthoViewer:
         """Restore an ``OrthoViewer`` from a previously serialized file.
 
@@ -856,6 +889,9 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         them (saved in ``"2d"`` with the 3D panel's planes moved, loaded
         with ``"all"``) is refused.
 
+        Each panel camera starts at its saved pose, which ``launch`` /
+        ``show`` / ``display`` keep with their default ``fit=None``.
+
         Parameters
         ----------
         path : str or Path
@@ -867,6 +903,10 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             mode the viewer was saved in.
         render_config : RenderManagerConfig or None
             Override the serialized render pipeline configuration.
+        gui : {"qt", "anywidget", "offscreen"}
+            Toolkit to build the canvases with; the file does not record
+            one.  The canvases are built during this call, so ``"qt"`` (the
+            default) needs a ``QApplication`` first.
 
         Returns
         -------
@@ -879,7 +919,9 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             or the panels of a dataset carry different clipping planes
             where *link_clipping_planes* links them.
         """
-        controller = CellierController.from_file(path, render_config=render_config)
+        controller = CellierController.from_file(
+            path, render_config=render_config, gui=gui
+        )
         scenes_by_name = {
             scene.name: scene for scene in controller._model.scenes.values()
         }

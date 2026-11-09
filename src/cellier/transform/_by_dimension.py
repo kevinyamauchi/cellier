@@ -866,9 +866,12 @@ class ByDimensionTransform(BaseTransform):
         region : ConvexRegion
             A region in the output coordinate system.
         output_coordinate_system : CoordinateSystem
-            This transform's **input** system, which the result is
-            expressed in.  Named for the abstract signature, which reads
-            from the caller's side.
+            This transform's **output** system, the one *region* is in, as
+            for :meth:`AffineTransform.imap_region`.  A region that is not
+            axis-aligned is pulled back through the equivalent affine,
+            which checks it and raises ``ValueError`` for any other
+            system.  The result is always in this transform's input
+            system.
 
         Returns
         -------

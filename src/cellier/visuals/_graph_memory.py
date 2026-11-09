@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from cellier._model import CellierEventedModel
 from cellier.visuals._base_visual import BaseAppearance, BaseVisual
@@ -64,6 +64,8 @@ class TrailConfig(CellierEventedModel):
         exactly 0.0 regardless, so a dangling edge fades to nothing at
         the boundary rather than being cut square.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     before: float = 0.5
     after: float = 0.5

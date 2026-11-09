@@ -172,6 +172,7 @@ class AbstractPaintController(ABC):
             visual_id=self._visual_id,
             data_store_id=self._data_store_id,
             gesture_id=event.gesture_id,
+            dtype=self._store_dtype,
         )
         self._apply_brush(event.world_coordinate)
 
@@ -322,5 +323,9 @@ class AbstractPaintController(ABC):
 
     @abstractmethod
     def abort(self) -> None:
-        """End the session, reverting all painted data."""
+        """End the session, discarding the session's paint.
+
+        What can be discarded depends on the controller: see the subclass
+        ``abort`` for its limits.
+        """
         ...

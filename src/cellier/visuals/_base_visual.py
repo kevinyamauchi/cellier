@@ -24,6 +24,8 @@ class AABBParams(CellierEventedModel):
         Line thickness in screen pixels. Default ``2.0``.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     color: str = "#ffffff"
     line_width: float = 2.0
@@ -97,6 +99,8 @@ class BaseDrawAppearance(CellierEventedModel):
         The pygfx alpha mode.  Default ``"blend"``.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     visible: bool = True
     render_order: int = 0
     depth_test: bool = True
@@ -165,6 +169,8 @@ class BaseVisual(CellierEventedModel):
     Image visuals also carry a ``single`` appearance and per-channel
     ``channels`` appearances.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     name: str
     data_store_id: str

@@ -36,6 +36,8 @@ class SceneOverlay(CellierEventedModel):
         Whether the overlay is rendered.  Default ``True``.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     id: UUID4 | Annotated[str, AfterValidator(lambda x: uuid.UUID(x, version=4))] = (
         Field(frozen=True, default_factory=lambda: uuid4())
     )

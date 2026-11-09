@@ -32,7 +32,7 @@ def launch(
     viewer: ViewerLike,
     layout_or_window: object,
     *,
-    fit: FitMode = "ready",
+    fit: FitMode | None = None,
     on_ready: Callable[[], None] | None = None,
     handle_sigint: bool = True,
 ) -> None:
@@ -56,8 +56,11 @@ def launch(
         Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
         window.
-    fit : "ready", "immediate", or "none"
+    fit : "ready", "immediate", "none" or None
         Camera-fit policy applied at startup.  See :func:`_init_view`.
+        ``None`` (the default) is ``"ready"``, except for a scene whose
+        cameras were all placed from their models (a viewer loaded with
+        ``from_file``), which keeps its view.
     on_ready : Callable[[], None] or None
         Optional zero-argument callback fired once, after every scene's startup
         data has committed to the GPU.  Fires in addition to any callbacks
@@ -85,7 +88,7 @@ def show(
     viewer: ViewerLike,
     layout_or_window: object,
     *,
-    fit: FitMode = "ready",
+    fit: FitMode | None = None,
     on_ready: Callable[[], None] | None = None,
 ) -> None:
     """Show a viewer window without blocking.
@@ -103,8 +106,11 @@ def show(
         Either a :class:`~cellier.convenience.layout.Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
         window.
-    fit : "ready", "immediate", or "none"
+    fit : "ready", "immediate", "none" or None
         Camera-fit policy applied at startup.  See :func:`_init_view`.
+        ``None`` (the default) is ``"ready"``, except for a scene whose
+        cameras were all placed from their models (a viewer loaded with
+        ``from_file``), which keeps its view.
     on_ready : Callable[[], None] or None
         Optional zero-argument callback fired once, after every scene's startup
         data has committed to the GPU.
@@ -182,7 +188,7 @@ def display(
     viewer: ViewerLike,
     layout: Layout,
     *,
-    fit: FitMode = "ready",
+    fit: FitMode | None = None,
     on_ready: Callable[[], None] | None = None,
     host: str | None = None,
     sidecar: bool | SidecarOptions | None = None,
@@ -203,8 +209,11 @@ def display(
         Declarative layout spec -- center canvas(es) plus optional dock
         controls.  Build with :class:`~cellier.convenience.layout.Layout` or
         its preset (``Layout.single``).
-    fit : "ready", "immediate", or "none"
+    fit : "ready", "immediate", "none" or None
         Camera-fit policy applied at startup.  See :func:`_init_view`.
+        ``None`` (the default) is ``"ready"``, except for a scene whose
+        cameras were all placed from their models (a viewer loaded with
+        ``from_file``), which keeps its view.
     on_ready : Callable[[], None] or None
         Optional zero-argument callback fired once every scene's startup data
         has committed to the GPU.
@@ -270,7 +279,7 @@ def run(
     viewer: ViewerLike,
     layout: Layout,
     *,
-    fit: FitMode = "ready",
+    fit: FitMode | None = None,
     on_ready: Callable[[], None] | None = None,
 ) -> object:
     """Show a viewer, dispatching to the right host based on ``viewer.gui``.
@@ -290,8 +299,11 @@ def run(
         The viewer whose ``gui`` attribute selects the dispatch target.
     layout : Layout
         Declarative layout spec.
-    fit : "ready", "immediate", or "none"
-        Camera-fit policy applied at startup.
+    fit : "ready", "immediate", "none" or None
+        Camera-fit policy applied at startup.  ``None`` (the default) is
+        ``"ready"``, except for a scene whose cameras were all placed from
+        their models (a viewer loaded with ``from_file``), which keeps its
+        view.
     on_ready : Callable[[], None] or None
         Optional zero-argument callback fired once every scene's startup data
         has committed to the GPU.
@@ -328,7 +340,7 @@ def _resolve_qt_window(layout_or_window: object, viewer: object) -> object:
 def _init_view(
     viewer: ViewerLike,
     *,
-    fit: FitMode = "ready",
+    fit: FitMode | None = None,
     on_ready: Callable[[], None] | None = None,
     stall_timeout: float | None = _DEFAULT_STALL_TIMEOUT,
 ) -> StartupTracker:
@@ -352,6 +364,10 @@ def _init_view(
       no-op (their bounds are pinned at construction).
     * ``"immediate"`` — fit on the first frame only; no re-fit after load.
     * ``"none"`` — never fit; just trigger the initial data load.
+    * ``None`` (default) — ``"none"`` for a scene whose canvases all show a
+      camera placed from its model (a viewer restored with ``from_file``,
+      or a camera model's pose assigned before startup), ``"ready"`` for
+      every other scene.
 
     Any callbacks registered on the viewer via ``viewer.on_ready`` plus the
     *on_ready* argument fire once, after the *last* scene becomes ready.
@@ -366,8 +382,8 @@ def _init_view(
     ----------
     viewer : Viewer or OrthoViewer
         The viewer to start.
-    fit : "ready", "immediate", or "none"
-        Camera-fit policy.
+    fit : "ready", "immediate", "none" or None
+        Camera-fit policy; ``None`` picks it per scene, as above.
     on_ready : Callable[[], None] or None
         Fired once, after every scene is ready.
     stall_timeout : float or None
@@ -430,11 +446,18 @@ def _init_view(
 
         def _start(s=scene, k=key) -> None:
             tracker.advance(k, StartupState.LOADING)
-            if fit != "none":
+            scene_fit = fit
+            if scene_fit is None:
+                placed = all(
+                    controller._canvas_camera_placed(cid)
+                    for cid in controller.get_canvas_ids(s.id)
+                )
+                scene_fit = "none" if placed else "ready"
+            if scene_fit != "none":
                 controller.fit_camera(s.id)
 
-            def _ready(s=s, k=k) -> None:
-                if fit == "ready":
+            def _ready(s=s, k=k, scene_fit=scene_fit) -> None:
+                if scene_fit == "ready":
                     # The re-fit is a camera jump, and a jump reslices at
                     # once or not at all: with camera reslicing still off
                     # the re-fitted view would never load.  So it is on for

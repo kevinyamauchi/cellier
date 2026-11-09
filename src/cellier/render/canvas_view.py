@@ -244,6 +244,11 @@ class CanvasView:
             "key_up",
         )
 
+        # Whether each dim's controller takes input while that dim is shown
+        # (the camera models' ``controller.enabled``).  The controller of
+        # the dim not shown is always off.
+        self._controller_enabled: dict[str, bool] = {"2d": True, "3d": True}
+
         # Activate the initial dim; disable the other controller.
         if dim == "2d":
             self._camera = self._camera_2d
@@ -256,6 +261,9 @@ class CanvasView:
 
         # Track which dims have been fitted to the scene.
         self._fitted: set[str] = set()
+        # The dims whose camera was placed from its camera model (restored
+        # or assigned) rather than fitted.
+        self._placed: set[str] = set()
         # The orientation of a 3D fit, in rendered (x, y, z) order.  The
         # controller resolves it from the canvas model's axis-keyed vectors.
         self._fit_view_dir_3d: tuple[float, float, float] = (-1.0, -1.0, -1.0)
@@ -1190,6 +1198,83 @@ class CanvasView:
         camera.zoom = state.zoom
         self.set_depth_range_for_dim(self._dim, state.depth_range)
 
+    def set_camera_field(self, dim: str, name: str, value: object) -> None:
+        """Apply one camera-model field to the 2D or 3D pygfx camera.
+
+        Targets *dim*'s camera whether or not it is the one shown.  The
+        caller reports a move of the shown camera; see
+        :meth:`accept_camera_state`.
+
+        Parameters
+        ----------
+        dim : str
+            ``"2d"`` or ``"3d"``.
+        name : str
+            ``"position"``, ``"rotation"``, ``"zoom"``, ``"width"``,
+            ``"height"``, ``"depth_range"`` (``(near, far)`` or ``None``),
+            and for the 3D camera ``"fov"`` and ``"up_direction"``.
+            ``"up_direction"`` turns the camera about its view direction
+            so its up is as close to the vector as it goes, and makes the
+            vector the camera's reference up (the up the orbit controller
+            keeps); a zero vector is ignored.
+        value : object
+            The field's value, as the camera model holds it.
+
+        Raises
+        ------
+        ValueError
+            If *name* is not a field of *dim*'s camera.
+        """
+        camera = self._camera_2d if dim == "2d" else self._camera_3d
+        if name == "position":
+            camera.world.position = tuple(float(v) for v in value)
+        elif name == "rotation":
+            camera.world.rotation = tuple(float(v) for v in value)
+        elif name == "zoom":
+            camera.zoom = float(value)
+        elif name in ("width", "height") and dim == "2d":
+            setattr(camera, name, float(value))
+        elif name == "depth_range":
+            self.set_depth_range_for_dim(dim, value)
+        elif name == "fov" and dim != "2d":
+            camera.fov = float(value)
+            self._sync_depth_range_3d()
+        elif name == "up_direction" and dim != "2d":
+            up = np.asarray(value, dtype=np.float64)
+            if not np.any(up):
+                return
+            forward = np.asarray(camera.world.forward, dtype=np.float64)
+            position = np.asarray(camera.world.position, dtype=np.float64)
+            camera.world.reference_up = tuple(up)
+            camera.look_at(tuple(position + forward))
+        else:
+            raise ValueError(f"{name!r} is not a field of the {dim} camera.")
+
+    def camera_frustum(self, dim: str | None = None) -> np.ndarray:
+        """Corners of *dim*'s camera frustum, shape (2, 4, 3), in world space.
+
+        Parameters
+        ----------
+        dim : str or None
+            ``"2d"`` or ``"3d"``; ``None`` is the dim shown.
+        """
+        dim = self._dim if dim is None else dim
+        camera = self._camera_2d if dim == "2d" else self._camera_3d
+        return np.asarray(camera.frustum, dtype=np.float32)
+
+    def mark_placed(self, dim: str) -> None:
+        """Record that *dim*'s camera was placed from its camera model.
+
+        It then counts as fitted, so the first switch to *dim* keeps it.
+        """
+        self._fitted.add(dim)
+        self._placed.add(dim)
+
+    @property
+    def camera_placed(self) -> bool:
+        """Whether the camera shown was placed from its camera model."""
+        return self._dim in self._placed
+
     def set_event_bus(self, event_bus: EventBus) -> None:
         """Wire the EventBus after construction."""
         self._event_bus = event_bus
@@ -1201,13 +1286,34 @@ class CanvasView:
         controller (``_controller_2d`` or ``_controller_3d`` depending on
         the canvas dim), so this correctly targets whichever type is in use.
 
+        Sets both dims' controllers: the one shown at once, the other for
+        when the canvas switches to it.
+
         Parameters
         ----------
         enabled : bool
             False disables the controller (paint mode active).
             True restores normal camera interaction.
         """
-        self._controller.enabled = enabled
+        for dim in ("2d", "3d"):
+            self.set_controller_enabled_for_dim(dim, enabled)
+
+    def set_controller_enabled_for_dim(self, dim: str, enabled: bool) -> None:
+        """Enable or disable *dim*'s camera controller.
+
+        Applied at once when *dim* is shown, and when the canvas switches to
+        it otherwise; the controller of the dim not shown is always off.
+
+        Parameters
+        ----------
+        dim : str
+            ``"2d"`` or ``"3d"``.
+        enabled : bool
+            Whether the controller takes input.
+        """
+        self._controller_enabled[dim] = bool(enabled)
+        if dim == self._dim:
+            self._controller.enabled = bool(enabled)
 
     def switch_dim(self, new_dim: str) -> bool:
         """Switch the canvas between ``"2d"`` and ``"3d"`` rendering modes.
@@ -1242,7 +1348,7 @@ class CanvasView:
             self._camera = self._camera_3d
             self._controller = self._controller_3d
             self._accum_pass.enabled = True
-        self._controller.enabled = True
+        self._controller.enabled = self._controller_enabled[new_dim]
         self._dim = new_dim
         self._apply_ssao_enabled()
         # Caching the state of the camera we just swapped *to* means the diff
@@ -1340,8 +1446,11 @@ class CanvasView:
         """
         self._ssao_pass.set_scene_extent(diagonal)
 
-    def capture_camera_state(self) -> CameraState:
+    def capture_camera_state(self, dim: str | None = None) -> CameraState:
         """Snapshot the current pygfx camera into a CameraState NamedTuple.
+
+        *dim* (``"2d"`` or ``"3d"``) picks the camera; ``None`` is the one
+        shown.
 
         ``depth_range`` is ``None`` where the camera's range is automatic,
         which the 2D camera's is until one is set.  For the 3D camera it is
@@ -1350,15 +1459,16 @@ class CanvasView:
         width and height at a field of view of 0 and ``(0.0, 0.0)`` above
         it.
         """
-        cam = self._camera
-        if self._dim != "2d":
+        dim = self._dim if dim is None else dim
+        cam = self._camera_2d if dim == "2d" else self._camera_3d
+        if dim != "2d":
             self._sync_depth_range_3d()
         pos = cam.world.position
         rot = cam.world.rotation  # quaternion (x, y, z, w)
         dr = cam.depth_range
         depth_range = (float(dr[0]), float(dr[1])) if dr is not None else None
 
-        if self._dim == "2d":
+        if dim == "2d":
             return CameraState(
                 camera_type="orthographic",
                 position=(float(pos[0]), float(pos[1]), float(pos[2])),

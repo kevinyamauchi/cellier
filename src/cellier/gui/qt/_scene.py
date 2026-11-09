@@ -816,8 +816,11 @@ class QtCanvasWidget:
         knowledge not available on the dims model itself).  The 2D/3D toggle
         is included automatically when the scene renders both ways and has
         an axis to add to a 2D view.  It starts from the scene's displayed
-        axes; the mode not shown yet gets a default
-        (:func:`cellier.gui._dims.default_toggle_axes`).
+        axes; the mode not shown yet gets a default.  From 2D, the
+        3D set adds the last remaining ``"space"`` axis in world order (any
+        remaining axis when no space axis is left); from 3D, the 2D set is
+        the last two displayed axes in world order.  The default is replaced
+        once the scene has shown that mode.
 
         Call ``controller.connect_widget`` on the returned widget's
         ``dims_control`` after construction to wire subscriptions.

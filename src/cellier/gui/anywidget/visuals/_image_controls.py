@@ -55,7 +55,14 @@ class AnywidgetImageControls(VisualIdGroup, anywidget.AnyWidget):
     visual_id :
         The visual, or an ``OrthoViewer``'s panel siblings, driven together.
     values :
-        The seed from :func:`cellier.gui._image_controls.image_control_values`.
+        The control's starting state: a dict of the visual's current
+        appearance values, page by page (``"shared"``, ``"single"`` and
+        ``"channels"``), the ``"fields"`` to show, and the widgets' ranges
+        and choices.  Its layout is internal.  The
+        convenience viewers build it when an ``ImageControl`` is in a
+        visual's ``controls=`` list; code that builds this widget directly
+        gets it from ``cellier.gui._image_controls.image_control_values``
+        (private, and may change).
     title :
         The heading.  Defaults to :data:`DEFAULT_TITLE`.
     n_displayed_dimensions :

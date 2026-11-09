@@ -181,8 +181,11 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
 
         Includes the 2D/3D toggle when the scene declares both render modes
         *and* has an axis to add to a 2D view.  It starts from the scene's
-        displayed axes; the mode not shown yet gets a default
-        (:func:`cellier.gui._dims.default_toggle_axes`).  A scene that
+        displayed axes; the mode not shown yet gets a default.  From 2D, the
+        3D set adds the last remaining ``"space"`` axis in world order (any
+        remaining axis when no space axis is left); from 3D, the 2D set is
+        the last two displayed axes in world order.  The default is replaced
+        once the scene has shown that mode.  A scene that
         renders only one way -- each panel of an ``OrthoViewer`` -- gets no
         toggle, because there is nothing to switch to.
         """

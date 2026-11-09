@@ -59,3 +59,60 @@ def test_orthographic_camera_roundtrip(tmp_path):
     path.write_text(original.model_dump_json())
     deserialized = OrthographicCamera.model_validate_json(path.read_text())
     assert original.model_dump_json() == deserialized.model_dump_json()
+
+
+def test_frustum_is_derived_and_cannot_be_assigned():
+    import pytest
+
+    camera = PerspectiveCamera(controller=OrbitCameraController())
+    with pytest.raises(AttributeError, match="frustum"):
+        camera.frustum = np.ones((2, 4, 3), dtype=np.float32)
+    with camera._mirror_writes():
+        camera.frustum = np.ones((2, 4, 3), dtype=np.float32)
+    assert camera.frustum.sum() == 24
+
+
+def test_camera_controller_kind_follows_the_camera():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PerspectiveCamera(controller=PanZoomCameraController())
+    with pytest.raises(ValidationError):
+        OrthographicCamera(controller=OrbitCameraController())
+    camera = PerspectiveCamera(controller=OrbitCameraController())
+    with pytest.raises(ValidationError):
+        camera.controller.controller_type = "pan_zoom"
+
+
+def test_camera_assignment_is_validated():
+    import pytest
+    from pydantic import ValidationError
+
+    camera = OrthographicCamera(controller=PanZoomCameraController())
+    with pytest.raises(ValidationError):
+        camera.zoom = "far"
+    camera.position = [1, 2, 3]
+    assert camera.position.dtype == np.float32
+
+
+def test_a_replaced_controller_still_relays_its_changes():
+    camera = PerspectiveCamera(controller=OrbitCameraController())
+    seen = []
+    camera.events.controller.connect(lambda controller: seen.append(controller.enabled))
+    replacement = OrbitCameraController(enabled=True)
+
+    camera.controller = replacement
+    replacement.enabled = False
+
+    assert seen == [True, False]
+
+
+def test_has_pose_is_false_only_for_the_default_pose():
+    camera = PerspectiveCamera(controller=OrbitCameraController())
+    assert not camera.has_pose
+    camera.position = [0.0, 0.0, 5.0]
+    assert camera.has_pose
+    camera = OrthographicCamera(controller=PanZoomCameraController())
+    camera.rotation = [0.0, 0.0, 0.7071068, 0.7071068]
+    assert camera.has_pose
