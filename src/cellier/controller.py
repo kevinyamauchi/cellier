@@ -12429,8 +12429,9 @@ class CellierController:
         Parameters
         ----------
         displayed_data_coord : Sequence[float]
-            Level-0 data position on the displayed axes only, in pygfx
-            ``(x, y[, z])`` order.
+            Level-0 data position on the drawn axes only, in pygfx
+            ``(x, y[, z])`` order of the visual's texture: its drawn data
+            axes ascending, last first, whatever the display order.
         displayed_axes : Sequence[int]
             The scene's displayed world axes, in the order the canvas draws
             them.
@@ -12452,12 +12453,9 @@ class CellierController:
         tuple[float, ...]
             One coordinate per data axis, ascending.
         """
-        # The render layer decodes displayed-axis coordinates in pygfx
-        # (x, y[, z]) order, which is the reverse of cellier's ascending
-        # ``displayed_axes`` (..., row, col) order.  Reverse so each value lands
-        # on its true axis (e.g. the column coordinate on the x axis, not on the
-        # first displayed axis) -- otherwise the displayed axes come out
-        # transposed.
+        # The render layer decodes the texture index in pygfx (x, y[, z])
+        # order.  The texture holds the drawn data axes ascending, so
+        # reversing gives one value per drawn data axis, ascending.
         decoded = tuple(displayed_data_coord)[::-1]
 
         visual = (
@@ -12468,7 +12466,7 @@ class CellierController:
         transform = getattr(visual, "transform", None)
         if transform is None:
             coordinate = np.zeros(world_ndim, dtype=np.float64)
-            for slot, world_axis in enumerate(displayed_axes):
+            for slot, world_axis in enumerate(sorted(displayed_axes)):
                 coordinate[world_axis] = decoded[slot]
             for world_axis, world_position in slice_indices.items():
                 coordinate[world_axis] = float(world_position)
@@ -12491,10 +12489,16 @@ class CellierController:
             for slot, data_axis in enumerate(retained[: len(decoded)]):
                 coordinate[data_axis] = decoded[slot]
         elif self._pick_axes_paired(transform, displayed_axes, data_axis_of_world):
-            for slot, world_axis in enumerate(displayed_axes):
-                data_axis = data_axis_of_world.get(world_axis)
-                if data_axis is not None:
-                    coordinate[data_axis] = decoded[slot]
+            # The texture is in fetch order (data axes ascending) whatever the
+            # display order; only the node matrix permutes it.  So the decode
+            # follows the paired data axes ascending, not ``displayed_axes``.
+            paired = sorted(
+                data_axis
+                for data_axis in map(data_axis_of_world.get, displayed_axes)
+                if data_axis is not None
+            )
+            for slot, data_axis in enumerate(paired[: len(decoded)]):
+                coordinate[data_axis] = decoded[slot]
         else:
             # Rotated or sheared among the displayed axes: no displayed
             # world axis names a data axis, and the decoded position is in
@@ -12576,16 +12580,16 @@ class CellierController:
 
         if event.camera_type == "2d":
             world_coord = np.empty(n_dims, dtype=np.float64)
-            # Embed pygfx position_2d into world_coord verbatim:
-            #   world_coord[displayed_axes[0]] = position_2d[0]  (pygfx-x)
-            #   world_coord[displayed_axes[1]] = position_2d[1]  (pygfx-y)
-            # Both image visuals render data[r, c] at pygfx (x=c, y=r), so
-            # world_coord[ax_row] == pygfx_x (column) and
-            # world_coord[ax_col] == pygfx_y (row) after this assignment.
-            # Paint controllers swap ax_row ↔ ax_col to recover (row, col)
-            # voxel order before calling imap_coordinates.
-            for i, axis in enumerate(displayed_axes):
-                world_coord[axis] = event.position_2d[i]  # type: ignore[index]
+            # position_2d is pygfx (x, y).  The canvas's rendered system is
+            # the displayed axes in display order and pygfx reverses it, so
+            # pygfx x is the last displayed axis and pygfx y the one before
+            # (the same selection `_build_rendered_embedding` builds).
+            for axis, value in zip(
+                displayed_axes,
+                event.position_2d[::-1],  # type: ignore[index]
+                strict=True,
+            ):
+                world_coord[axis] = value
             for axis, idx in slice_indices.items():
                 world_coord[axis] = float(idx)
 

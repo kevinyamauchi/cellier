@@ -69,24 +69,6 @@ class SyncPaintController(AbstractPaintController):
             history_depth=history_depth,
         )
 
-    def _apply_brush(self, world_coord: np.ndarray) -> None:
-        """Swap displayed axes before delegating to the base brush logic.
-
-        ``CellierController._on_raw_pointer_event`` embeds the mouse position
-        as ``world_coord[0] = pygfx_x``, ``world_coord[1] = pygfx_y``.
-        ``GFXImageMemoryVisual`` renders ``data[r, c]`` at pygfx ``(x=c, y=r)``,
-        so the row index arrives in ``world_coord[ax_col]`` and the column index
-        in ``world_coord[ax_row]``.  Swapping them here produces the correct
-        voxel address before the identity ``imap_coordinates`` call in the base.
-        """
-        ax_row, ax_col = self._displayed_axes
-        swapped = world_coord.copy()
-        swapped[ax_row], swapped[ax_col] = (
-            float(world_coord[ax_col]),
-            float(world_coord[ax_row]),
-        )
-        super()._apply_brush(swapped)
-
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read directly from the backing numpy array."""
         idx = tuple(voxel_indices[:, i] for i in range(voxel_indices.shape[1]))

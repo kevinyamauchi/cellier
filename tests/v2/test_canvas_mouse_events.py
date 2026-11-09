@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import numpy as np
+import pytest
 
 from cellier.controller import CellierController
 from cellier.data.image._image_memory_store import ImageMemoryStore
@@ -101,6 +102,36 @@ def test_context_fields_propagate_to_public_event():
     assert event.modifiers == ("Control", "Shift")
     assert event.gesture_id == gid
     assert isinstance(event.pick_info, CanvasPickInfo)
+
+
+@pytest.mark.parametrize(
+    ("displayed", "expected_y", "expected_x"),
+    [
+        # pygfx x is the last displayed axis, pygfx y the one before it.
+        (("y", "x"), 20.0, 10.0),
+        # A transposed display puts world y on pygfx x.
+        (("x", "y"), 10.0, 20.0),
+    ],
+)
+def test_2d_world_coordinate_is_in_world_axis_order(displayed, expected_y, expected_x):
+    controller = CellierController()
+    cs = world_coordinate_system(spatial_axes("z", "y", "x"), name="world")
+    scene = controller.add_scene(
+        displayed_axes=displayed, coordinate_system=cs, name="main"
+    )
+    canvas_id = uuid4()
+    received: list = []
+    controller.on_mouse_press_2d(canvas_id, received.append, owner_id=uuid4())
+
+    raw = _raw_2d(canvas_id, scene.id, "press")._replace(
+        position_2d=np.array([10.0, 20.0], dtype=np.float64)
+    )
+    controller._on_raw_pointer_event(raw)
+
+    z = scene.dims.selection.slice_indices[0]
+    np.testing.assert_array_equal(
+        received[0].world_coordinate, [z, expected_y, expected_x]
+    )
 
 
 def test_gesture_id_threads_through_phases():

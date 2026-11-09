@@ -2224,8 +2224,9 @@ class _CanvasRawPointerEvent(NamedTuple):
         ``"2d"`` or ``"3d"``.  Determines which of ``position_2d`` / ``ray``
         is populated.
     position_2d : np.ndarray or None
-        2D world position for the displayed axes, already unprojected through
-        the active orthographic camera.  Shape (2,), float64.
+        The pointer in the pygfx scene ``(x, y)``, already unprojected through
+        the active orthographic camera: ``x`` is the last displayed axis and
+        ``y`` the one before it.  Shape (2,), float64.
         Set iff ``camera_type == "2d"``.
     ray : ViewRay or None
         View ray unprojected through the active perspective camera.

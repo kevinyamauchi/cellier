@@ -196,21 +196,12 @@ class AbstractPaintController(ABC):
         self._apply_brush(event.world_coordinate)
 
     def _coord_within_data_bounds(self, world_coord: np.ndarray) -> bool:
-        """True if *world_coord* maps to a valid voxel in the data array.
-
-        Performs the same axis swap as `_apply_brush` so the bounds
-        check uses data-array (row, col) order rather than pygfx world
-        (x, y) order.
-        """
-        ax_row, ax_col = self._displayed_axes
-        swapped = world_coord.copy()
-        swapped[ax_row], swapped[ax_col] = (
-            float(world_coord[ax_col]),
-            float(world_coord[ax_row]),
-        )
+        """True if *world_coord* maps to a valid voxel in the data array."""
         scene_model = self._controller._model.scenes[self._scene_id]
         visual_model = next(v for v in scene_model.visuals if v.id == self._visual_id)
-        voxel_coord = visual_model.transform.imap_coordinates(np.atleast_2d(swapped))[0]
+        voxel_coord = visual_model.transform.imap_coordinates(
+            np.atleast_2d(world_coord)
+        )[0]
         voxel = np.round(voxel_coord).astype(np.int64)
         return all(0 <= int(voxel[i]) < self._data_shape[i] for i in range(len(voxel)))
 

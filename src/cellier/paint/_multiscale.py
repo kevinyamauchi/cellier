@@ -164,24 +164,6 @@ class MultiscalePaintController(AbstractPaintController):
     # AbstractPaintController hooks
     # ------------------------------------------------------------------
 
-    def _apply_brush(self, world_coord: np.ndarray) -> None:
-        """Re-order world_coord from pygfx (x, y) to data (row, col) order.
-
-        The labels visuals render ``data[r, c]`` at pygfx world ``(x=c, y=r)``.
-        ``CellierController._on_raw_pointer_event`` embeds the mouse position
-        verbatim: ``world_coord[ax_row] = pygfx_x`` (column index),
-        ``world_coord[ax_col] = pygfx_y`` (row index).  Swapping them here
-        produces the correct voxel address before the identity
-        ``imap_coordinates`` call in the base.
-        """
-        ax_row, ax_col = self._displayed_axes
-        swapped = world_coord.copy()
-        swapped[ax_row], swapped[ax_col] = (
-            float(world_coord[ax_col]),
-            float(world_coord[ax_row]),
-        )
-        super()._apply_brush(swapped)
-
     def _read_old_values(self, voxel_indices: np.ndarray) -> np.ndarray:
         """Read pre-paint values through the open transaction."""
         return self._write_buffer.read_staged(voxel_indices)
