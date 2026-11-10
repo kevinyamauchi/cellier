@@ -220,8 +220,10 @@ def build_canvas_widget(
 ) -> QtCanvasWidget | AnywidgetCanvasView:
     """Build a canvas widget with wired dims sliders for the viewer.
 
-    Creates a canvas attached to the viewer's scene and connects its dims
-    sliders to the controller event bus.  For ``gui="qt"`` this returns a
+    Reuses the viewer's scene's canvas if it has one -- one restored by
+    ``from_file``, or added with ``add_canvas`` -- with its camera state, and
+    otherwise creates one.  Either way the dims sliders are connected to the
+    controller event bus.  For ``gui="qt"`` this returns a
     ``QtCanvasWidget`` (canvas above a dims slider panel); for
     ``gui="anywidget"`` it returns an `AnywidgetCanvasView` holding the
     canvas and control-panel leaves plus a ``compose(host)`` method.
@@ -241,11 +243,13 @@ def build_canvas_widget(
         GUI toolkit.  Defaults to ``viewer.gui`` when ``None``; raises if it
         conflicts with ``viewer.gui``.
     render_modes : set[str] or None
-        Which camera modes to prepare on the canvas.  Defaults to the scene's
-        own ``render_modes``.
+        Which camera modes to prepare on a new canvas.  Defaults to the
+        scene's own ``render_modes``.  This and the arguments below up to
+        *fit_up_3d* are ignored when an existing canvas is reused, except
+        *canvas_size*, which still sizes the anywidget view.
     initial_dim : str or None
-        Which mode is active first.  Inferred from the scene's current
-        ``displayed_axes`` when ``None``.
+        Which mode is active first on a new canvas.  Inferred from the
+        scene's current ``displayed_axes`` when ``None``.
     fov : float
         Vertical field-of-view in degrees for the 3D perspective camera.
         Default ``70.0``.

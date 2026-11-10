@@ -112,10 +112,23 @@ class _LabelsDisplayedDataCoord(NamedTuple):
 
     Same semantics as ``_ImageDisplayedDataCoord``; separate type so the
     controller can produce the correct public ``LabelsPickInfo``.
+
+    Parameters
+    ----------
+    displayed_data_coord : tuple[float, ...]
+        As on ``_ImageDisplayedDataCoord``.
+    collapsed_data_indices : tuple[tuple[int, int], ...] or None
+        As on ``_ImageDisplayedDataCoord``.
+    drawn_level : int or None
+        The 1-based pyramid level (1 is the finest) drawn at a 3D hit.  The
+        hit is on that level's surface, so the controller reads the label
+        there rather than at level 0.  ``None`` for a 2D hit or an in-memory
+        visual, which read level 0.
     """
 
     displayed_data_coord: tuple[float, ...]
     collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
+    drawn_level: int | None = None
 
 
 #: Render modes that project along the ray instead of finding a surface.
@@ -1530,8 +1543,13 @@ class RenderManager:
             tuple(sorted(collapsed.items())) if collapsed is not None else None
         )
         if isinstance(gfx_visual, _LABELS_TYPES):
+            drawn_level = getattr(gfx_visual, "pick_drawn_level", None)
             return _LabelsDisplayedDataCoord(
-                displayed_data_coord=coord, collapsed_data_indices=collapsed_pairs
+                displayed_data_coord=coord,
+                collapsed_data_indices=collapsed_pairs,
+                drawn_level=(
+                    None if drawn_level is None else drawn_level(hit_object, coord)
+                ),
             )
         return _ImageDisplayedDataCoord(
             displayed_data_coord=coord,

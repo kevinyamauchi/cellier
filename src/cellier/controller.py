@@ -663,6 +663,35 @@ def _voxel_index(
     return index
 
 
+def _level_voxel_index(
+    coordinate: tuple[float, ...], store: Any, level: int
+) -> tuple[int, ...] | None:
+    """The voxel of pyramid *level* that holds a level-0 data point.
+
+    *level* is 1-based (1 is the finest).  The rule is the one the shaders
+    sample with (``level_mapping.wgsl``): with ``p = v - 0.5`` the point in
+    centred level-0 coordinates, level voxel ``i`` is centred on
+    ``p = s * i + t``, and the nearest voxel is ``floor((p - t) / s + 0.5)``.
+    The index is clamped into the level, so a hit on the far face of a
+    dilated coarse voxel still reads that voxel.
+
+    Returns ``None`` when the store does not describe *level*.
+    """
+    k = level - 1
+    scales, translations = store.level_scales, store.level_translations
+    if not 0 <= k < min(len(scales), len(translations), len(store.level_shapes)):
+        return None
+    shape = store.level_shapes[k]
+    if not len(coordinate) == len(shape) == len(scales[k]) == len(translations[k]):
+        return None
+    return tuple(
+        min(max(int(np.floor((v - 0.5 - t) / s + 0.5)), 0), int(size) - 1)
+        for v, s, t, size in zip(
+            coordinate, scales[k], translations[k], shape, strict=True
+        )
+    )
+
+
 def _image_pick_positions(
     visual: Any,
     coordinate: tuple[float, ...],
@@ -3077,7 +3106,7 @@ class CellierController:
         self,
         data: BaseDataStore,
         scene_id: UUID,
-        appearance: MultiscaleLabelsAppearance,
+        appearance: MultiscaleLabelsAppearance | None = None,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: AffineTransform | None = None,
@@ -3098,8 +3127,9 @@ class CellierController:
             The backing label data store (e.g. ``OMEZarrLabelDataStore``).
         scene_id : UUID
             ID of an existing scene.
-        appearance : MultiscaleLabelsAppearance
-            Visual appearance parameters.
+        appearance : MultiscaleLabelsAppearance or None
+            Visual appearance parameters.  Defaults to
+            ``MultiscaleLabelsAppearance()`` when ``None``.
         name : str
             Human-readable label. Default ``"labels"``.
         render_config : MultiscaleLabelRenderConfig or None
@@ -3162,6 +3192,8 @@ class CellierController:
         -------
         MultiscaleLabelVisual
         """
+        if appearance is None:
+            appearance = MultiscaleLabelsAppearance()
         if render_config is None:
             render_config = MultiscaleLabelRenderConfig()
 
@@ -12786,8 +12818,10 @@ class CellierController:
         Points, lines, mesh and graph details are complete as decoded.  Image
         and labels picks are promoted to full-rank data coordinates first, and
         carry the values under them: read now from an in-memory store's array,
-        or at level 0 through the pick reader for any other store, in which
-        case the event is emitted when the read completes.
+        or through the pick reader for any other store, in which case the
+        event is emitted when the read completes.  The pick reader reads
+        level 0, except for a 3D labels hit, which reads the pyramid level
+        that was drawn at the hit.
         """
         from cellier.render.render_manager import (
             _ImageDisplayedDataCoord,
@@ -12848,8 +12882,16 @@ class CellierController:
             return
         shape = tuple(int(size) for size in store.level_shapes[0])
 
+        scale_index = 0
         if isinstance(raw_pick, _LabelsDisplayedDataCoord):
             index = _voxel_index(coordinate, shape)
+            # A 3D hit is on the surface of the level that was drawn, which can
+            # sit a voxel of that level off the level-0 surface: read the label
+            # that level shows.
+            if index is not None and (raw_pick.drawn_level or 1) > 1:
+                coarse = _level_voxel_index(coordinate, store, raw_pick.drawn_level)
+                if coarse is not None:
+                    index, scale_index = coarse, raw_pick.drawn_level - 1
             reads = {} if index is None else {0: index}
             labels_coordinate = coordinate
 
@@ -12884,7 +12926,7 @@ class CellierController:
                     ),
                 )
 
-        self._read_pick_values(event, store, reads, build)
+        self._read_pick_values(event, store, reads, build, scale_index=scale_index)
 
     def _read_masked_pick(
         self,
@@ -12934,16 +12976,19 @@ class CellierController:
         store: Any,
         reads: dict[int, tuple[int, ...]],
         build: Callable[[dict], Any],
+        *,
+        scale_index: int = 0,
     ) -> None:
         """Read the voxels in *reads* from *store* and emit ``build(values)``.
 
-        See `_read_store_values` for when the event is emitted.
+        See `_read_store_values` for when the event is emitted and for
+        *scale_index*.
         """
 
         def emit(values: dict) -> None:
             self._outgoing_events.emit(build(values))
 
-        self._read_store_values(event, store, reads, emit)
+        self._read_store_values(event, store, reads, emit, scale_index=scale_index)
 
     def _read_store_values(
         self,
@@ -12951,13 +12996,17 @@ class CellierController:
         store: Any,
         reads: dict[Any, tuple[int, ...]],
         on_values: Callable[[dict], None],
+        *,
+        scale_index: int = 0,
     ) -> None:
         """Read the voxels in *reads* from *store* and call ``on_values(values)``.
 
         An in-memory store holds a plain array, so the read and the call
-        happen here.  Any other store is read at level 0 through the render
-        layer's cancellable pick reader, and *on_values* is called when every
-        value has arrived -- never, if the read is cancelled.
+        happen here.  Any other store is read through the render layer's
+        cancellable pick reader, at level 0 unless *scale_index* names
+        another (0-based) level whose indices *reads* holds, and *on_values*
+        is called when every value has arrived -- never, if the read is
+        cancelled.
         """
         array = getattr(store, "data", None)
         if not reads or isinstance(array, np.ndarray):
@@ -12976,7 +13025,7 @@ class CellierController:
             request = ChunkRequest(
                 chunk_request_id=uuid4(),
                 slice_request_id=read_id,
-                scale_index=0,
+                scale_index=scale_index,
                 axis_selections=index,
             )
             keys[request.chunk_request_id] = key

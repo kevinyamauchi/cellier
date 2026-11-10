@@ -1967,7 +1967,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
     def add_labels_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleLabelsAppearance,
+        appearance: MultiscaleLabelsAppearance | None = None,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: BaseTransform | None = None,
@@ -1984,8 +1984,9 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         ----------
         data : BaseDataStore or UUID
             Backing multiscale label store or UUID of an already-registered store.
-        appearance : MultiscaleLabelsAppearance
-            Appearance parameters.
+        appearance : MultiscaleLabelsAppearance or None
+            Appearance parameters.  Defaults to ``MultiscaleLabelsAppearance()``
+            when ``None``, one per panel.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
         render_config : MultiscaleLabelRenderConfig or None

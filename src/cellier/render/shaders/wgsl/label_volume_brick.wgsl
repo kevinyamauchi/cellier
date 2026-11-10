@@ -859,8 +859,43 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
                                    norm_size, dataset_size);
     let pick_coord = (pick_norm / norm_size) + vec3<f32>(0.5);
     $$ else
-    // surface_pos is in centred normalised object space; encode as [0, 1].
-    let pick_coord = (surface_pos / norm_size) + vec3<f32>(0.5);
+    // Report a point safely inside the voxel this fragment drew, not on its
+    // face.
+    //
+    // The hit sits on a voxel face to within the bisection bracket, and the
+    // encode below truncates to 14 bits per axis -- ``dim / 16383`` voxels --
+    // which moves the point *down* by up to one quantum.  On a low face that
+    // is outside the label (the consumer's ``floor`` reads the background
+    // cell in front of the surface); on a high face it happens to land
+    // inside.  Rounding instead would just swap which faces fail.
+    //
+    // So start from ``surface_hi_p``, the foreground end of the bisection
+    // bracket (inside the label by construction; the midpoint
+    // ``surface_pos`` can be a hundredth of a voxel on the background side
+    // after a skipped brick), find the voxel of the drawn level it is in, and
+    // clamp it to that voxel's interior, ``4 * quantum`` from every face
+    // (at most a quarter of the voxel).  This is inside on every axis, edges
+    // and corners included, where a step along the ray would leave through
+    // the face next to the one it entered by.  The voxel is found by the rule
+    // sample_atlas_label samples with (cellier.level_mapping.wgsl).  Only the
+    // pick coordinate moves: colour, depth and the normal use the exact
+    // surface.
+    let pick_quantum = max(
+        max(dataset_size.x, dataset_size.y), dataset_size.z
+    ) / 16383.0;
+    let pick_offset  = get_level_offset(i32(surface_lut_entry.w));
+    let pick_voxel   = norm_to_voxel(surface_hi_p, norm_size, dataset_size);
+    let pick_index   = floor(
+        (pick_voxel - vec3<f32>(0.5) - pick_offset) / surface_lod_scale
+        + vec3<f32>(0.5)
+    );
+    let pick_centre  = surface_lod_scale * pick_index + pick_offset + vec3<f32>(0.5);
+    let pick_room    = 0.5 * surface_lod_scale
+                     - min(vec3<f32>(4.0 * pick_quantum), 0.25 * surface_lod_scale);
+    let pick_inside  = clamp(pick_voxel, pick_centre - pick_room, pick_centre + pick_room);
+    let pick_pos     = voxel_to_norm(pick_inside, norm_size, dataset_size);
+    // pick_pos is in centred normalised object space; encode as [0, 1].
+    let pick_coord = (pick_pos / norm_size) + vec3<f32>(0.5);
     $$ endif
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +

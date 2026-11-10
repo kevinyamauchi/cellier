@@ -2231,7 +2231,7 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
     def add_labels_multiscale(
         self,
         data: BaseDataStore | UUID,
-        appearance: MultiscaleLabelsAppearance,
+        appearance: MultiscaleLabelsAppearance | None = None,
         name: str = "labels",
         render_config: MultiscaleLabelRenderConfig | None = None,
         transform: BaseTransform | None = None,
@@ -2251,8 +2251,9 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         ----------
         data : BaseDataStore or UUID
             Backing multiscale label store or UUID of an already-registered store.
-        appearance : MultiscaleLabelsAppearance
-            Visual appearance parameters.
+        appearance : MultiscaleLabelsAppearance or None
+            Visual appearance parameters.  Defaults to
+            ``MultiscaleLabelsAppearance()`` when ``None``.
         name : str
             Human-readable label. Default ``"labels"``.
         render_config : MultiscaleLabelRenderConfig or None

@@ -1441,6 +1441,13 @@ class LabelsPickInfo(NamedTuple):
     value : int
         The label id at ``floor(data_coordinate)``; in 3D, the label at the
         hit voxel.  ``0`` when the voxel lies outside the data.
+
+        On a multiscale visual drawn in 3D the hit is on the surface of the
+        pyramid level that was drawn, and ``value`` is the label that level
+        holds there: the label you see.  A coarse voxel covers several level-0
+        voxels and can stand a voxel or more beyond the level-0 surface, so
+        reading level 0 at the same point could return the background.  In 2D
+        and for in-memory labels the value is read at level 0.
     """
 
     data_coordinate: tuple[float, ...]

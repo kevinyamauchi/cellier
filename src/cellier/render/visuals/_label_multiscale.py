@@ -1926,6 +1926,40 @@ class GFXMultiscaleLabelVisual(
             )
         return None
 
+    def pick_drawn_level(self, hit_object, coordinate) -> int | None:
+        """The pyramid level drawn at a 3D pick, 1-based (1 is the finest).
+
+        Reads the brick table the shader reads: the level of the brick that
+        holds the hit.  A 3D pick lands on the surface of the level that was
+        drawn, which can sit up to a voxel of that level away from the
+        level-0 surface, so the label under the cursor is the one in that
+        level, not necessarily the one in level 0.
+
+        Parameters
+        ----------
+        hit_object : gfx.WorldObject
+            The picked node.
+        coordinate : sequence of float
+            The decoded hit on the drawn axes, as `pick_data_coordinate`
+            returns it.
+
+        Returns
+        -------
+        int or None
+            ``None`` for a 2D hit, or when no brick covers the hit.
+        """
+        manager = self._lut_manager_3d
+        if not isinstance(hit_object, NormSizedVolume) or manager is None:
+            return None
+        block = int(manager._base_layout.block_size)
+        grid = manager.lut_data.shape[:3]
+        # The decode is in pygfx (x, y, z) order; the table in (D, H, W).
+        cell = tuple(
+            min(max(int(coordinate[2 - k] // block), 0), grid[k] - 1) for k in range(3)
+        )
+        level = int(manager.lut_data[cell][3])
+        return level if level >= 1 else None
+
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all active materials."""
         for mat in (self.material_3d, self.material_2d):
