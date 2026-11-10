@@ -59,7 +59,8 @@ class CenteredAxes2DAppearance(CellierEventedModel):
         ``(x, y)`` offset in pixels from the anchor corner, where ``(0, 0)``
         is the corner itself.  The offset moves the origin inward (right for
         left corners, left for right corners; down for top corners, up for
-        bottom corners).  Default ``(20.0, 20.0)``.
+        bottom corners).  Ignored when *corner* is ``"center"``.  Default
+        ``(20.0, 20.0)``.
     show_labels : bool
         Whether to render text labels at the arrow tips.  Default ``True``.
     font_size_px : float
@@ -84,14 +85,15 @@ class CenteredAxes2DAppearance(CellierEventedModel):
 
 
 class CenteredAxes2D(CanvasOverlay):
-    """2D axis indicator rendered in screen space as a corner overlay.
+    """2D axis indicator rendered in screen space.
 
-    Displays two line segments anchored to a fixed canvas corner, one for
-    each displayed axis.  The screen-space directions of the segments are
-    computed from the world-space direction vectors supplied here and the
-    live camera matrix, so the indicator correctly reflects any camera
-    orientation.  Geometry is recomputed only when the canvas resizes or
-    the camera matrix changes — never on pan or zoom.
+    Displays two line segments from one anchor point, one for each displayed
+    axis.  The anchor is the canvas centre by default, or a canvas corner
+    (`CenteredAxes2DAppearance.corner`).  The screen-space directions of the
+    segments are computed from the world-space direction vectors supplied
+    here and the live camera rotation, so the indicator follows any camera
+    orientation.  Geometry is recomputed only when the canvas resizes or the
+    camera rotates; panning and zooming leave it unchanged.
 
     Parameters
     ----------

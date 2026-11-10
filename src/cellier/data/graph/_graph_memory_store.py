@@ -78,8 +78,6 @@ class GraphMemoryStore(BaseDataStore):
     a single ``GraphData`` per slice, so the two can never be committed to
     the GPU out of sync.
 
-    Field layout
-    ------------
     The flat numpy arrays are the **source of truth** and are what
     serializes; the ``spatial_graph`` index is a derived, lazily built
     private attribute reachable through `graph`.  A store used only
@@ -117,7 +115,7 @@ class GraphMemoryStore(BaseDataStore):
         vertices per edge at slice time.
     axis_scales : tuple[float, ...] | None
         A geff file's per-axis ``scale``.  ``None`` for a store built from
-        raw arrays.  ``Controller.add_graph`` turns these into the visual's
+        raw arrays.  ``CellierController.add_graph`` turns these into the visual's
         default ``data -> world`` transform when its own ``transform``
         argument is None -- raw numbers here rather than a transform,
         because a transform names the two coordinate systems it maps
@@ -356,10 +354,8 @@ class GraphMemoryStore(BaseDataStore):
 
         There is deliberately **no** ``transform`` parameter: the file's
         axes are the sole source of the store's scale and offset at
-        construction.  ``Controller.add_graph(transform=...)`` still wins
+        construction.  ``CellierController.add_graph(transform=...)`` still wins
         when passed explicitly, as it does for every other visual.
-
-        See `cellier.data.graph._geff_io` for the reader details.
 
         Parameters
         ----------
@@ -377,9 +373,9 @@ class GraphMemoryStore(BaseDataStore):
             ``"mask"`` or ``"roi"``.
         data_coordinate_system : DataCoordinateSystem | None
             The store's coordinate system.  ``None`` builds one from the
-            loaded axes' geff metadata; see
-            `data_axes_from_geff`.  A
-            system that is passed is used as-is, and the store adopts its
+            loaded axes' geff metadata: name and unit, and the type where the
+            file states it (otherwise inferred from the name).  A system that
+            is passed is used as-is, and the store adopts its
             ``datastore_id`` as its ``id``.
         name : str
             Human-readable label, and the name of a generated system.

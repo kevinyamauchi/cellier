@@ -62,7 +62,7 @@ def labelled_row(label_text: str, control, parent=None):
     Returns
     -------
     QWidget
-        The row, with `LABELLED_ROW_OBJECT_NAME` as its ``objectName``.
+        The row, with ``objectName`` ``"cellier-app-row"`` (for styling).
     """
     from qtpy.QtCore import Qt
     from qtpy.QtGui import QFontInfo

@@ -971,7 +971,7 @@ class CanvasConnectedEvent(NamedTuple):
 
 
 class CanvasSizeChangedEvent(NamedTuple):
-    """Emitted when the physical pixel size of a canvas changes.
+    """Emitted when the size of a canvas changes, in logical pixels.
 
     Fired by ``CanvasView`` whenever the underlying render surface is
     resized -- via the Qt ``resizeEvent`` on the Qt backend or via the

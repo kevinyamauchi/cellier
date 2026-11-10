@@ -401,31 +401,87 @@ class NonUniformAxisTransform(BaseTransform):
     # -- the operations a non-affine axis cannot answer -----------------
 
     def map_direction(self, direction: np.ndarray) -> np.ndarray:
-        """Not answerable: the Jacobian varies along the axis."""
+        """Not answerable: the Jacobian varies along the axis.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("map_direction"))
 
     def imap_direction(self, direction: np.ndarray) -> np.ndarray:
-        """Not answerable: the Jacobian varies along the axis."""
+        """Not answerable: the Jacobian varies along the axis.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("imap_direction"))
 
     def map_normal(self, normal: np.ndarray) -> np.ndarray:
-        """Not answerable: the Jacobian varies along the axis."""
+        """Not answerable: the Jacobian varies along the axis.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("map_normal"))
 
     def imap_normal(self, normal: np.ndarray) -> np.ndarray:
-        """Not answerable: the Jacobian varies along the axis."""
+        """Not answerable: the Jacobian varies along the axis.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("imap_normal"))
 
     def map_plane(self, plane):
-        """Not answerable: a plane needs a spatially constant Jacobian."""
+        """Not answerable: a plane needs a spatially constant Jacobian.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("map_plane"))
 
     def imap_plane(self, plane):
-        """Not answerable: a plane needs a spatially constant Jacobian."""
+        """Not answerable: a plane needs a spatially constant Jacobian.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("imap_plane"))
 
     def map_region(self, region: ConvexRegion) -> ConvexRegion:
-        """Not answerable: a half-space needs a constant normal."""
+        """Not answerable: a half-space needs a constant normal.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("map_region"))
 
     def imap_region(
@@ -433,7 +489,15 @@ class NonUniformAxisTransform(BaseTransform):
         region: ConvexRegion,
         output_coordinate_system: CoordinateSystem,
     ) -> ConvexRegion:
-        """Not answerable: a half-space needs a constant normal."""
+        """Not answerable: a half-space needs a constant normal.
+
+        Always raises.
+
+        Raises
+        ------
+        NonAffineTransformError
+            On every call.
+        """
         raise NonAffineTransformError(self._no_jacobian("imap_region"))
 
     def _no_jacobian(self, operation: str) -> str:

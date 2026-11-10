@@ -1461,6 +1461,18 @@ widget's id and a garbage-collected weak callback.  The one-shot helpers
 (`on_canvas_connected`, `on_canvas_first_frame`, `on_scene_ready`) return
 their handle too, so a pending callback can be cancelled.
 
+Two kinds of handle are not on the bus, and both are still a
+`SubscriptionHandle`, so every `on_*` method returns that one type:
+
+- The viewers' startup hooks (`on_ready`, `on_scene_ready`,
+  `on_startup_progress`, `on_startup_stalled`) keep their callbacks in plain
+  lists. Their handle removes the callback from its list. A one-shot callback
+  is removed just before it runs, so its handle reads as inactive from inside
+  the callback, as on the bus.
+- `OrthoViewer.on_reslice_progress` and `on_backstop_complete` subscribe once
+  per panel and return one handle for the group. Its `unsubscribe()` removes
+  every panel's subscription, and it reads as active while any one is left.
+
 ### Entity ID resolution
 
 The bus resolves the "canonical entity ID" of an event for `entity_id` filtering using a

@@ -99,9 +99,9 @@ class BaseTransform(CellierModel, ABC):
 
         Four checks: both ids match, and both axis counts match the wrapped
         transform's dimensionality, which is the one place the number of axes
-        is stored.  `compose` runs it on its second operand; anything
-        that files transforms under a pair of systems should run it too, rather
-        than invent its own rule.
+        is stored.  `AffineTransform.then` runs it on its second operand;
+        anything that files transforms under a pair of systems should run it
+        too, rather than invent its own rule.
 
         Parameters
         ----------
@@ -196,19 +196,35 @@ class BaseTransform(CellierModel, ABC):
 
     @abstractmethod
     def map_direction(self, direction: np.ndarray) -> np.ndarray:
-        """Map displacement vectors forward (contravariant)."""
+        """Map displacement vectors forward (contravariant).
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def imap_direction(self, direction: np.ndarray) -> np.ndarray:
-        """Map displacement vectors back (contravariant)."""
+        """Map displacement vectors back (contravariant).
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def map_normal(self, normal: np.ndarray) -> np.ndarray:
-        """Map plane normals forward (covariant)."""
+        """Map plane normals forward (covariant).
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def imap_normal(self, normal: np.ndarray) -> np.ndarray:
-        """Map plane normals back (covariant)."""
+        """Map plane normals back (covariant).
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     # -- regions -------------------------------------------------------
 
@@ -226,15 +242,27 @@ class BaseTransform(CellierModel, ABC):
 
     @abstractmethod
     def map_plane(self, plane: Plane) -> Plane:
-        """Map a plane forward."""
+        """Map a plane forward.
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def imap_plane(self, plane: Plane) -> Plane:
-        """Map a plane back."""
+        """Map a plane back.
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def map_region(self, region: ConvexRegion) -> ConvexRegion:
-        """Map a convex region forward."""
+        """Map a convex region forward.
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     @abstractmethod
     def imap_region(
@@ -242,7 +270,11 @@ class BaseTransform(CellierModel, ABC):
         region: ConvexRegion,
         output_coordinate_system: CoordinateSystem,
     ) -> ConvexRegion:
-        """Map a convex region back, dropping broadcast constraints."""
+        """Map a convex region back, dropping broadcast constraints.
+
+        A transform without a constant Jacobian raises
+        ``NonAffineTransformError``.
+        """
 
     # -- structure ------------------------------------------------------
 

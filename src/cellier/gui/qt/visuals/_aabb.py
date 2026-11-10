@@ -52,10 +52,7 @@ class QtAABBWidget(VisualIdGroup):
     DEFAULT_TITLE = "Bounding box"
     """Name shown when no ``title=`` is given.
 
-    The renderer passes the title from the shared control vocabulary; this
-    is what a directly-constructed widget calls itself, and
-    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the
-    two together.
+    The same title the built-in viewers pass when they build this widget.
     """
 
     changed: Signal = Signal(object)

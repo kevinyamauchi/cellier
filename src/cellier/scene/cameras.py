@@ -79,6 +79,7 @@ CameraControllerType = Annotated[
     Union[OrbitCameraController, PanZoomCameraController],
     Field(discriminator="controller_type"),
 ]
+"""A camera controller (orbit or pan/zoom), told apart by ``controller_type``."""
 
 
 class BaseCamera(CellierEventedModel):
@@ -290,3 +291,4 @@ CameraType = Annotated[
     Union[PerspectiveCamera, OrthographicCamera],
     Field(discriminator="camera_type"),
 ]
+"""A camera model (perspective or orthographic), told apart by ``camera_type``."""

@@ -10,6 +10,7 @@ import sys
 from typing import TYPE_CHECKING, Callable, Literal
 
 from cellier.convenience._startup import StartupState, StartupTracker
+from cellier.events._bus import fire_registered
 
 if TYPE_CHECKING:
     from sidecar import Sidecar
@@ -36,7 +37,7 @@ def launch(
     on_ready: Callable[[], None] | None = None,
     handle_sigint: bool = True,
 ) -> None:
-    """Show *window* and block until it is closed.
+    """Show *layout_or_window* and block until it is closed.
 
     Creates a ``QApplication`` if one does not already exist, then starts the
     Qt + asyncio event loop via ``PySide6.QtAsyncio``.  Intended for scripts
@@ -49,7 +50,7 @@ def launch(
 
     Parameters
     ----------
-    viewer : Viewer
+    viewer : Viewer or OrthoViewer
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
     layout_or_window : Layout or QMainWindow or QWidget
@@ -102,7 +103,7 @@ def show(
 
     Parameters
     ----------
-    viewer : Viewer
+    viewer : Viewer or OrthoViewer
         The viewer whose controller is used for ``fit_camera`` /
         ``reslice_scene``.
     layout_or_window : Layout or QMainWindow or QWidget
@@ -321,6 +322,11 @@ def run(
     object
         `DisplayHandle` (or marimo renderable) for anywidget; ``None``
         for Qt (after the window closes).
+
+    Raises
+    ------
+    ValueError
+        If ``viewer.gui`` is ``"offscreen"``, which has no window to show.
     """
     from cellier.convenience._backend import backend_for
 
@@ -378,7 +384,9 @@ def _init_view(
       every other scene.
 
     Any callbacks registered on the viewer via ``viewer.on_ready`` plus the
-    *on_ready* argument fire once, after the *last* scene becomes ready.
+    *on_ready* argument fire once, after the *last* scene becomes ready.  A
+    ``viewer.on_ready`` callback fires on the first startup only; it is
+    dropped once it has run.
 
     Camera-driven reslicing is suppressed for the duration of the startup load
     and restored once every scene is ready.  Without this, the initial
@@ -413,9 +421,9 @@ def _init_view(
     tracker = StartupTracker([key for key, _ in scene_items])
     viewer._startup = tracker
 
-    user_callbacks = list(getattr(viewer, "_ready_callbacks", []))
-    if on_ready is not None:
-        user_callbacks.append(on_ready)
+    # Read when startup finishes, not now: ``viewer.on_ready`` may add to it
+    # or cancel from it until then.
+    ready_callbacks = getattr(viewer, "_ready_callbacks", None)
 
     # Suppress camera reslices during startup (the initial ``fit_camera`` is a
     # jump, which reslices) so the initial load is a single generation;
@@ -428,8 +436,10 @@ def _init_view(
     def _finish_startup() -> None:
         aggregate["fired"] = True
         controller.camera_reslice_enabled = prev_reslice_enabled
-        for cb in user_callbacks:
-            cb()
+        if ready_callbacks is not None:
+            fire_registered(ready_callbacks, once=True)
+        if on_ready is not None:
+            on_ready()
 
     def _scene_ready(key: str) -> None:
         tracker.advance(key, StartupState.READY)

@@ -207,11 +207,11 @@ class LinesMemoryStore(BaseDataStore):
     def read(self, request: LinesSliceRequest) -> LinesData:
         """The filter of `get_data`, run on the calling thread.
 
-        Inclusion rule
-        --------------
-        A segment survives when **both** of its endpoints pass the
-        proximity test on every non-displayed axis:
-            ``slice_index - thickness <= coord <= slice_index + thickness``
+        A segment survives when **both** of its endpoints lie inside the
+        request's region: the slab around the current slice, which is tilted
+        in a rotated view.  When the request carries clipping planes, each
+        surviving segment is then cut at the planes; a segment entirely on the
+        clipped side is dropped.
 
         Parameters
         ----------

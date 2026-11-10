@@ -10,7 +10,7 @@ from cellier.visuals._loading import ProgressiveLoadingConfig
 from cellier.visuals._render_plane import PLANE_RENDER_MODE, RenderPlane
 
 OutlineMode = Literal["per_label", "whole_object", "all_boundaries", "depth_threshold"]
-"""How a labels visual is outlined; see ``BaseLabelsVisual``."""
+"""How a labels visual is outlined; see ``LabelMemoryVisual.outline_mode``."""
 
 DEFAULT_OUTLINE_DEPTH_RANGE: tuple[float, float] = (0.01, 0.06)
 """The default ``outline_depth_range`` of a labels visual."""

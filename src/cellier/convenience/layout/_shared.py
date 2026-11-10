@@ -368,7 +368,7 @@ def _field_specs(
     """One single-field control per name, in the order of *item*'s list."""
     from cellier.gui._appearance_fields import (
         APPEARANCE_FIELD_WIDGETS,
-        literal_choices,
+        selectable_field_values,
     )
 
     carried = set(_carried_fields(visual, item.fields))
@@ -383,7 +383,7 @@ def _field_specs(
         # A Literal field's options come from the model's own annotation,
         # so the in-memory and multiscale variants of a field each offer
         # their own set without a list restated here.
-        choices = literal_choices(app, field)
+        choices = selectable_field_values(app, field)
         if choices:
             values["choices"] = choices
         stem_title = APPEARANCE_FIELD_WIDGETS.get(kind)
@@ -970,7 +970,7 @@ def overlay_control_specs(overlay: object) -> list[ControlSpec]:
     initial value read off the model and, for a ``Literal`` field, the
     choices it admits.
     """
-    from cellier.gui._appearance_fields import literal_choices
+    from cellier.gui._appearance_fields import selectable_field_values
     from cellier.gui._overlay_fields import (
         OVERLAY_CONTROLS,
         OVERLAY_FIELD_WIDGETS,
@@ -984,7 +984,7 @@ def overlay_control_specs(overlay: object) -> list[ControlSpec]:
         }
         parent_path, _, attribute = field.rpartition(".")
         if parent_path:
-            choices = literal_choices(
+            choices = selectable_field_values(
                 overlay_field_value(overlay, parent_path), attribute
             )
             if choices:

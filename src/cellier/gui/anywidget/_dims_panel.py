@@ -44,8 +44,8 @@ _STATIC = Path(__file__).parent / "static"
 class AnywidgetDimsPanel(anywidget.AnyWidget):
     """Renders per-axis slice sliders and an optional 2D/3D toggle button.
 
-    Satisfies the `cellier.gui._protocol.WidgetView` contract so
-    ``CellierController.connect_widget`` wires it the same way as Qt widgets.
+    ``CellierController.connect_widget`` wires it the same way as the Qt
+    ``QtDimsControl``.
     The toggle button is included automatically when constructed with
     *axes_2d*/*axes_3d* (see `from_scene`), e.g. omitted for a scene
     with fewer than 3 axes.
@@ -97,9 +97,8 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
     throttle_ms = traitlets.Int(DIMS_SLIDER_THROTTLE_MS).tag(sync=True)
     """How often a slider drag reaches the bus, in ms.
 
-    Synced rather than hard-coded in ``dims_panel.js`` so this and the Qt
-    front end coalesce drags at the same rate -- see
-    `cellier.gui._constants.DIMS_SLIDER_THROTTLE_MS`.
+    Synced rather than hard-coded in the front end, so this panel and the
+    Qt ``QtDimsControl`` coalesce drags at the same rate by default.
     """
 
     has_toggle = traitlets.Bool(False).tag(sync=True)
@@ -231,8 +230,7 @@ class AnywidgetDimsPanel(anywidget.AnyWidget):
         """Unsubscribe from the bus and release the widget.
 
         ``closed`` tells the controller to drop this widget's subscriptions;
-        the rest actually releases the widget.  See
-        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        the rest actually releases the widget.  Both are needed:
         ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
         process-global table that only ``close()`` clears.
         """

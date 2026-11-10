@@ -11,7 +11,7 @@ canvas, and pytest-asyncio (mode=auto) installs a running loop for the slicer.
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 
@@ -113,3 +113,74 @@ async def test_reslice_events_carry_canvas_id(qtbot):
     assert all(ev.canvas_id == canvas_id for ev in started)
     assert completed, "expected a ResliceCompletedEvent"
     assert all(ev.canvas_id == canvas_id for ev in completed)
+
+
+async def test_on_ready_fires_when_a_loading_visual_is_removed(qtbot):
+    """Removing a visual mid-load does not stall the callback (B10)."""
+    controller = CellierController()
+    scene, img, _pts = _build_mixed_scene(controller)
+
+    calls: list[int] = []
+    handle = controller.on_scene_ready(scene.id, lambda: calls.append(1))
+    assert calls == []
+
+    controller.remove_visual(img.id)
+    await drain_loading(controller)
+
+    assert calls == [1]
+    assert not handle.active
+
+
+def test_on_ready_fires_at_removal_of_the_last_loading_visual(qtbot):
+    """With nothing left to load, removing the visual fires the callback."""
+    controller = CellierController()
+    scene, img, pts = _build_mixed_scene(controller)
+
+    calls: list[int] = []
+    controller.on_scene_ready(scene.id, lambda: calls.append(1))
+    controller.remove_visual(img.id)
+    assert calls == []
+    controller.remove_visual(pts.id)
+
+    assert calls == [1]
+
+
+async def test_on_ready_fires_when_a_loading_visual_is_hidden(qtbot):
+    """Hiding a visual mid-load does not stall the callback."""
+    controller = CellierController()
+    scene, img, _pts = _build_mixed_scene(controller)
+
+    calls: list[int] = []
+    controller.on_scene_ready(scene.id, lambda: calls.append(1))
+    img.appearance.visible = False
+    await drain_loading(controller)
+
+    assert calls == [1]
+
+
+async def test_on_ready_fires_when_a_loading_store_changes_shape(qtbot):
+    """A store whose shape changes mid-load does not stall the callback."""
+    controller = CellierController()
+    scene, img, _pts = _build_mixed_scene(controller)
+    store = controller._model.data.stores[UUID(img.data_store_id)]
+
+    calls: list[int] = []
+    controller.on_scene_ready(scene.id, lambda: calls.append(1))
+    store.data = np.random.rand(20, 12, 8).astype(np.float32)
+    await drain_loading(controller)
+
+    assert calls == [1]
+
+
+async def test_on_ready_never_fires_for_a_removed_scene(qtbot):
+    """Removing the scene cancels its pending callback and its subscriptions."""
+    controller = CellierController()
+    scene, _img, _pts = _build_mixed_scene(controller)
+
+    calls: list[int] = []
+    handle = controller.on_scene_ready(scene.id, lambda: calls.append(1))
+    controller.remove_scene(scene.id)
+    await drain_loading(controller)
+
+    assert calls == []
+    assert not handle.active

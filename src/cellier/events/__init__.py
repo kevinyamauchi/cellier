@@ -1,6 +1,6 @@
 """The event bus and event type catalogue."""
 
-from cellier._state import CameraState, DimsState
+from cellier._state import AxisAlignedSelectionState, CameraState, DimsState
 from cellier.events._bus import EventBus, SubscriberInfo, SubscriptionHandle
 from cellier.events._events import (
     PICK_EVENT_TYPES,
@@ -102,6 +102,7 @@ __all__ = [
     "AABBUpdateEvent",
     "AppearanceChangedEvent",
     "AppearanceUpdateEvent",
+    "AxisAlignedSelectionState",
     "BackgroundChangedEvent",
     "BackgroundUpdateEvent",
     "BackstopCompleteEvent",

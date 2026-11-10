@@ -45,7 +45,7 @@ class MeshMemoryStore(BaseDataStore):
     positions : np.ndarray
         (n_vertices, N) float32 vertex positions for any world
         dimensionality N ≥ 2.  For a 3-D scene use shape (n_vertices, 3);
-        for a 5-D scene (t, z, y, x, c) use shape (n_vertices, 5).
+        for a 4-D scene (t, z, y, x) use shape (n_vertices, 4).
     indices : np.ndarray
         (n_faces, 3) int32 triangle face indices.
         **Must be int32** — pygfx rejects int64 at upload time.

@@ -173,12 +173,13 @@ def _owned(controller, owner) -> int:
     )
 
 
-def test_scene_ready_handle_cancels_both_tracker_subscriptions(controller):
+def test_scene_ready_handle_cancels_every_tracker_subscription(controller):
+    # Started, completed and visual-removed.
     scene_id, owner = uuid4(), uuid4()
     fired: list = []
     handle, completed = _arm_readiness(controller, scene_id, owner, fired)
     assert handle.active
-    assert _owned(controller, owner) == 2
+    assert _owned(controller, owner) == 3
 
     handle.unsubscribe()
     controller._outgoing_events.emit(completed)

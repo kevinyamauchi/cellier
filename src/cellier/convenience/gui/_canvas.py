@@ -38,12 +38,8 @@ class AnywidgetCanvasView:
     Returned by `build_canvas_widget` for ``gui="anywidget"``.  Composes
     to a single column: canvas above the dims sliders.
 
-    Appearance controls are **not** part of this view.  An earlier design put
-    them in a left column here as well as in a dock; nothing ever reached that
-    path -- ``build_canvas_widget`` never forwarded the parameters it needed --
-    and ``Layout(left_dock=AppearanceControls())`` already produces the same
-    ``[controls | canvas]`` arrangement through the supported path, on both
-    toolkits.
+    Appearance controls are not part of this view; put them beside the
+    canvas with ``Layout(left_dock=AppearanceControls())``.
 
     Attributes
     ----------
@@ -71,7 +67,11 @@ class AnywidgetCanvasView:
         return self.dims
 
     def compose(self, host: LayoutHost) -> object:
-        """Arrange canvas above dims, floored at ``canvas_size[0]``."""
+        """Arrange canvas above dims, floored at ``canvas_size[0]``.
+
+        Called by the viewer's layout, which supplies *host* (an internal
+        layout backend); not meant to be called from user code.
+        """
         return host.stack(
             [host.leaf(self.canvas), host.leaf(self.dims)],
             min_width=self.canvas_size[0],

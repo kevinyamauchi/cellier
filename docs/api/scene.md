@@ -29,3 +29,4 @@ define what is rendered and how it is viewed.
 ## Scene
 
 ::: cellier.scene.Scene
+::: cellier.scene.BackgroundAppearance

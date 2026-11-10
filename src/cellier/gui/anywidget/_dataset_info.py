@@ -61,10 +61,8 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
 
     Shows ``(label, value)`` rows as a table inside a collapsible
     ``<details>`` block.  A sectioned `DatasetInfo` passed to
-    `from_info` additionally draws nested blocks and matrix tables, so
-    the anywidget front end renders everything Qt does -- before this it
-    could only draw a flat row list, and a store's affine or per-level
-    shapes were reachable from Qt alone.
+    `from_info` also draws nested blocks and matrix tables (a store's
+    affine, its per-level shapes), the same content `QtDatasetInfo` shows.
 
     The rows cross to the front end as data and are written with
     ``textContent``, not as markup: a value carrying ``<`` or ``&`` -- a path,
@@ -83,10 +81,7 @@ class AnywidgetDatasetInfo(anywidget.AnyWidget):
     DEFAULT_TITLE = "Dataset info"
     """Name shown when no ``title=`` is given.
 
-    The renderer passes the title from the shared control vocabulary; this is
-    what a directly-constructed widget calls itself, and
-    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the two
-    together.
+    The same title the built-in viewers pass when they build this widget.
     """
 
     title = traitlets.Unicode(DEFAULT_TITLE).tag(sync=True)

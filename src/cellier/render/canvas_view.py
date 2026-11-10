@@ -107,11 +107,26 @@ class CanvasView:
         Scene dimensionality: ``"2d"`` or ``"3d"``.  Controls which
         camera type and interaction controller are used.
     parent : QWidget or None
-        Parent widget for the underlying ``QRenderWidget``.
+        Parent widget for the underlying ``QRenderWidget``.  Ignored by the
+        anywidget and offscreen backends.
     fov : float
         Vertical field of view in degrees (3D perspective only).
     depth_range : tuple[float, float]
         Near and far clip distances ``(near, far)``.
+    event_bus : EventBus or None
+        The bus the canvas reports camera changes, resizes and pointer
+        events on.  ``None`` (the default) reports nothing; a controller
+        passes its own.
+    gui : {"qt", "anywidget", "offscreen"}
+        Which backend draws the canvas: a ``QRenderWidget``, an
+        ``AnywidgetRenderCanvas`` for notebooks, or an
+        ``OffscreenRenderCanvas`` with no window.  Default ``"qt"``.
+        ``ValueError`` for anything else.
+    size : tuple[int, int] or None
+        Initial CSS pixel size of an anywidget canvas, or the exact
+        framebuffer size of an offscreen one.  ``None`` (the default) is
+        ``(600, 600)``.  Ignored by the Qt backend, which its parent layout
+        sizes.
     outline_enabled : bool
         When ``True``, install a blender carrying the ``outline_id`` render
         target so label outlines have a per-pixel label key.  Costs 4 bytes

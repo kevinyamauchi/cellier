@@ -249,8 +249,7 @@ class QtBoundedSlider(QtAppearanceField):
     The range comes from the field's ``ge``/``le`` metadata and there is
     deliberately no keyword to widen it: a wider slider would build a control
     that emits values pydantic then rejects. Layer 3 binds ``_default_range``
-    by calling ``cellier.gui._appearance_fields.field_bounds`` on the model,
-    so the two cannot drift.
+    by reading those bounds off the model, so the two cannot drift.
 
     One documented exception: ``QtIsoThresholdSlider``.  ``iso_threshold``
     carries no ``ge``/``le`` -- a threshold is bounded relative to the data's
@@ -410,12 +409,9 @@ class QtIntSpin(QtAppearanceField):
 class QtChoice(QtAppearanceField):
     """Layer 2: a combo box for a ``Literal`` field.
 
-    Options come from the model's own annotation rather than a list restated
-    here, so a mode added to a model appears automatically and the in-memory
-    and multiscale variants of a field need no separate lists.  Pass
-    ``choices=`` when constructing from a model instance
-    (``literal_choices(appearance, field)``); ``_default_choices`` is the
-    fallback for a widget built without one.
+    Each subclass writes its options out in ``_default_choices``; a test
+    checks every list against its model's ``Literal`` so the two cannot
+    drift.  ``choices=`` replaces the list for one widget.
     """
 
     _default_value: ClassVar[Any] = ""

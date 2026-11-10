@@ -37,9 +37,12 @@ if TYPE_CHECKING:
 #: The ``render_mode`` value, on image and labels, that draws render planes.
 PLANE_RENDER_MODE = "plane"
 
-#: The most render planes a visual may carry: the shader's uniforms hold
-#: this many, so adding or removing one is a uniform write, not a compile.
 MAX_RENDER_PLANES = 4
+"""The most render planes a visual may carry.
+
+The shader's uniforms hold this many, so adding or removing a plane is a
+uniform write, not a shader compile.
+"""
 
 #: How far from orthogonal (as a dot product of unit vectors) the in-plane
 #: axes may be.

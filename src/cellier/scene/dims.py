@@ -283,7 +283,7 @@ class AxisAlignedSelection(CellierEventedModel):
 
 
 class DimsManager(CellierEventedModel):
-    """Tracks which axes are displayed and the slice index for non-displayed axes.
+    """Tracks which axes are displayed and the world position of every axis.
 
     Single source of truth for render dimensionality, and the owner of
     the scene's world coordinate system.  One ``DimsManager`` per

@@ -542,8 +542,11 @@ class ProjectionRefusalReason(str, Enum):
     """Why a projection setting draws the plane instead."""
 
     MULTIPLE_AXES = "multiple_axes"
+    """More than one projection axis was named; one is supported."""
     DISPLAYED_AXIS = "displayed_axis"
+    """The projection axis is displayed in this view, so it is not sliced."""
     UNKNOWN_AXIS = "unknown_axis"
+    """A projection axis name is not a world axis of the scene."""
 
 
 @dataclass(frozen=True)
@@ -615,16 +618,28 @@ class SliceRoute(str, Enum):
     """Which path draws a raster visual in a view."""
 
     PLANAR = "planar"
+    """A 2D texture of the slice: aligned slices that do not project, and
+    every 3D view."""
     BRICK = "brick"
+    """The 3D brick path: a tilted slice through three data axes, or a
+    projection over a three-axis slab."""
     NONE = "none"
+    """Nothing is drawn; `RouteDecision.reason` says why."""
 
 
 class RouteRefusalReason(str, Enum):
     """Why a raster visual draws nothing in a view."""
 
     PULLBACK_NOT_2D = "pullback_not_2d"
+    """The slice pulls back to a set of the wrong dimension in the data: not
+    a plane for a slice (a line or a point, e.g. a flat store seen edge-on),
+    or, for a projection, a slab that is not 3-D."""
     TOO_MANY_VARYING_AXES = "too_many_varying_axes"
+    """The slice (or projection slab) moves along a number of data axes other
+    than the three the brick path draws through: too many, or too few."""
     NORMAL_NOT_ONE_AXIS = "normal_not_one_axis"
+    """A tilted slice whose normal reads more or fewer than one sliced world
+    axis, so there is no single depth axis to draw along."""
 
 
 @dataclass(frozen=True)
@@ -652,8 +667,8 @@ class RouteDecision:
     normal_world_axis: int | None = None
 
 
-#: The number of data axes the brick route can draw a slice through.
 BRICK_ROUTE_AXES = 3
+"""The number of data axes the brick route can draw a slice through."""
 
 
 def choose_slice_route(

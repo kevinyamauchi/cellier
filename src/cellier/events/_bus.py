@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import weakref
 from collections import defaultdict
 from dataclasses import dataclass
@@ -198,6 +199,12 @@ class SubscriptionHandle:
     The handle holds only a weak reference to its bus, so a handle kept after
     the controller is gone does not keep the controller alive; it then reads
     as inactive and ``unsubscribe()`` does nothing.
+
+    The viewers' startup hooks (``on_ready``, ``on_scene_ready``,
+    ``on_startup_progress``, ``on_startup_stalled``) do not go through the
+    bus, and an ``OrthoViewer`` subscription can span all four panels.  Their
+    handles behave the same way: ``unsubscribe()`` removes the whole
+    subscription, and ``active`` says whether any of it is left.
     """
 
     __slots__ = ("_bus_ref", "_id")
@@ -231,6 +238,118 @@ class SubscriptionHandle:
     def __repr__(self) -> str:
         state = "active" if self.active else "inactive"
         return f"SubscriptionHandle({self._id}, {state})"
+
+
+class _CallbackHandle(SubscriptionHandle):
+    """A handle for a callback kept in a plain list instead of on a bus.
+
+    *entry* is the object stored in *registry*; the subscription is active
+    while that exact object is in the list.  Whoever fires the list removes a
+    one-shot entry before calling it (see ``fire_registered``).  A
+    *registry* of ``None`` gives a handle that was never registered: the
+    callback already ran.
+
+    Not constructed directly; use ``register_callback``.
+    """
+
+    __slots__ = ("_entry", "_registry")
+
+    def __init__(self, registry: list | None, entry: Callable | None) -> None:
+        # The base slots: ``_id`` keeps ``EventBus.unsubscribe`` a no-op for
+        # this handle, as for any handle from another bus.
+        self._id = uuid4()
+        self._registry = registry
+        self._entry = entry
+
+    @property
+    def active(self) -> bool:
+        """Whether the callback is still registered."""
+        if self._registry is None:
+            return False
+        return any(item is self._entry for item in self._registry)
+
+    def unsubscribe(self) -> None:
+        """Remove the callback.  Safe to call more than once."""
+        if self._registry is not None:
+            _remove_identical(self._registry, self._entry)
+
+
+class _HandleGroup(SubscriptionHandle):
+    """One handle over several subscriptions, such as one per panel.
+
+    ``unsubscribe()`` removes every member; ``active`` is ``True`` while any
+    member is.
+    """
+
+    __slots__ = ("_members",)
+
+    def __init__(self, members: list[SubscriptionHandle]) -> None:
+        self._id = uuid4()
+        self._members = members
+
+    @property
+    def active(self) -> bool:
+        """Whether any member subscription is still registered."""
+        return any(member.active for member in self._members)
+
+    def unsubscribe(self) -> None:
+        """Remove every member subscription.  Safe to call more than once."""
+        for member in self._members:
+            member.unsubscribe()
+
+
+def _remove_identical(registry: list, entry: object) -> bool:
+    """Remove *entry* from *registry* by identity; report whether it was there.
+
+    ``list.remove`` compares with ``==``, and two bound methods of one
+    object compare equal, so it could remove another registration.
+    """
+    for index, item in enumerate(registry):
+        if item is entry:
+            del registry[index]
+            return True
+    return False
+
+
+def register_callback(registry: list, callback: Callable) -> SubscriptionHandle:
+    """Append *callback* to *registry* and return a handle that removes it.
+
+    The callback is stored behind a fresh wrapper, so registering the same
+    callable twice gives two independent subscriptions.
+    """
+    entry = functools.partial(callback)
+    registry.append(entry)
+    return _CallbackHandle(registry, entry)
+
+
+def group_handles(members: list[SubscriptionHandle]) -> SubscriptionHandle:
+    """One handle over *members*, such as one subscription per panel.
+
+    The list is kept, not copied, so members appended later still count.
+    """
+    return _HandleGroup(members)
+
+
+def inactive_handle() -> SubscriptionHandle:
+    """A handle for a callback that already ran and was never registered."""
+    return _CallbackHandle(None, None)
+
+
+def fire_registered(registry: list, *args: Any, once: bool = False) -> None:
+    """Call every callback in *registry* with *args*.
+
+    Iterates a snapshot, so a callback may register or unsubscribe others.
+    A callback unsubscribed by an earlier one in the same pass is skipped,
+    as on the bus.  With *once*, each callback is removed before it runs,
+    so its handle already reads inactive inside the callback.
+    """
+    for entry in list(registry):
+        if once:
+            if not _remove_identical(registry, entry):
+                continue
+        elif not any(item is entry for item in registry):
+            continue
+        entry(*args)
 
 
 class _Subscription:

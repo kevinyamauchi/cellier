@@ -139,12 +139,10 @@ class AnywidgetFlatShadingToggle(AnywidgetToggle):
 class AnywidgetMeshSectionControls(VisualIdGroup, anywidget.AnyWidget):
     """How a mesh is drawn in a 2D view: every ``MeshSectionConfig`` field.
 
-    Mirrors ``QtMeshSectionControls``.  The front end is the settings-rows
-    module the loading settings use (``loading_config.js``): it draws one
-    row per entry of ``fields`` from the values in ``config``, and reports
-    an edit by setting ``edit``; a refused edit comes back as ``error``,
-    with ``config`` unchanged.  ``hidden`` is true while none of the
-    scenes in ``displayed_dimensions`` displays two dimensions.
+    The notebook counterpart of `cellier.gui.qt.visuals.QtMeshSectionControls`: one
+    row per field.  An edit the model refuses is shown as an error and the
+    row keeps its previous value.  The control hides itself while none of
+    the scenes in ``displayed_dimensions`` displays two dimensions.
 
     Parameters
     ----------

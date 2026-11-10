@@ -26,6 +26,11 @@ class Canvas(CellierEventedModel):
     overlays : list[CanvasOverlayType]
         Screen-space overlays attached to this canvas.  Rendered as
         post-passes on top of the main scene.  Default empty list.
+    size : tuple[int, int] or None
+        The canvas size as ``(width, height)`` in logical pixels.  Written by
+        the controller whenever the canvas widget is resized; assigning it
+        does not resize the widget.  ``None`` (default) until the first
+        resize is reported.
     fit_view_direction_3d : dict[UUID4, float] or None
         The direction the 3D camera looks along when it is fitted to the
         scene, as the component along each world axis, by axis id.  An axis

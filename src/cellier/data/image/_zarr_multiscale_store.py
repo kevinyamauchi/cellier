@@ -165,8 +165,8 @@ class MultiscaleZarrDataStore(TensorStoreCacheMixin, BaseDataStore):
         Human-readable name for the store (inherited from
         ``BaseDataStore``; defaults to ``"multiscale zarr data store"``).
 
-    Attributes (read-only properties)
-    ------------------------------------
+    Attributes
+    ----------
     n_levels :
         Number of scale levels (length of ``scale_names``).
     level_shapes :
@@ -207,8 +207,10 @@ class MultiscaleZarrDataStore(TensorStoreCacheMixin, BaseDataStore):
     def model_post_init(self, __context: Any) -> None:
         """Open all tensorstore handles.
 
-        Called automatically by pydantic after ``__init__``.
-        Must run before ``QtAsyncio.run()`` starts the event loop.
+        Called automatically by pydantic after ``__init__``.  The handles
+        open synchronously, on the constructing thread, so construction
+        blocks until every level is open; build the store before the event
+        loop has work to keep responsive.
         """
         self._reopen_ts_stores()
         # After the handles: the base checks the systems against the level

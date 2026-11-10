@@ -467,7 +467,7 @@ def image_control_values(
         colormap; a toolkit that needs the real thing reads it from there,
         while the page dicts keep the JSON-safe name.
     """
-    from cellier.gui._appearance_fields import literal_choices
+    from cellier.gui._appearance_fields import selectable_field_values
 
     appearance = visual.appearance
     # In-memory appearances carry the brick route's LOD fields too; only
@@ -511,7 +511,7 @@ def image_control_values(
             _masked_values(visual.single, clim_range, threshold_range, thickness_range)
         )
         extra["choices"]["target_bricks"] = list(
-            literal_choices(appearance, "target_bricks")
+            selectable_field_values(appearance, "target_bricks")
         )
     elif threshold_range is not None:
         extra["threshold_range"] = [
@@ -534,7 +534,7 @@ def image_control_values(
         "single": mode_values(visual.single),
         "channels": channels,
         "channel_labels": {k: labels.get(k, f"Channel {k}") for k in channels},
-        "render_modes": list(literal_choices(visual.single, "render_mode")),
+        "render_modes": list(selectable_field_values(visual.single, "render_mode")),
         "transparency_modes": list(TRANSPARENCY_CHOICES),
         "interpolations": list(INTERPOLATION_CHOICES),
         "colormap_names": list(colormap_names)
@@ -584,7 +584,7 @@ def _masked_values(
     ``masked`` switches the row rule, ``labels`` names each slider's units,
     and the ranges and choices build the surface and band rows.
     """
-    from cellier.gui._appearance_fields import literal_choices
+    from cellier.gui._appearance_fields import selectable_field_values
 
     if threshold_range is None:
         threshold_range = default_threshold_range(single.iso_threshold)
@@ -598,7 +598,7 @@ def _masked_values(
         "min_width_range": list(MIN_WIDTH_RANGE),
         "int_ranges": {k: list(v) for k, v in INT_FIELD_RANGES.items()},
         "choices": {
-            field: list(literal_choices(single, field))
+            field: list(selectable_field_values(single, field))
             for field in ("surface_placement", "surface_projection")
         },
     }

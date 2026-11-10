@@ -45,8 +45,8 @@ def screenshot_window(
     Parameters
     ----------
     window : QWidget
-        The top-level window to capture, e.g. the ``QMainWindow`` returned by
-        `launch`.
+        The top-level window to capture, e.g. a ``QMainWindow`` you built
+        and passed to `show` (`launch` and `show` return ``None``).
     controller : CellierController
         The controller owning the canvases inside *window*.  Every canvas
         whose widget belongs to this window and is visible is composited in.

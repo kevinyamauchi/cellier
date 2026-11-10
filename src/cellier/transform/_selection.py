@@ -23,12 +23,10 @@ if TYPE_CHECKING:
 class RegionSelection(CellierModel):
     """A slice position and its extent, as one frozen artifact.
 
-    This is the authoritative artifact the slicer consumes.  A
-    ``DimsManager`` becomes an *editor* that holds the ergonomic
-    parameterization -- an index and a thickness, the thing a GUI binds
-    to -- and emits one of these; an oblique editor holds a plane and a
-    thickness and emits the same type.  The slicer consumes one thing and
-    does not know which editor produced it.
+    This is what the slicer consumes.  A ``DimsManager`` is an *editor*:
+    it holds the form a GUI binds to (a position and a thickness per axis)
+    and its ``to_selection`` builds one of these from it.  The slicer consumes
+    this one type and does not know which editor produced it.
 
     **The region is absolute and the translation is a point inside it.**
     The transform's constant column holds the slice **position**, exactly
@@ -43,11 +41,6 @@ class RegionSelection(CellierModel):
     region's bounds can miss it by an ulp, and a zero-thickness plane put
     there excludes the translation -- use `with_planes_at_slice` to
     narrow a slab to a plane.
-
-    A region relative to the translation (an extent around the position,
-    stored once) would make that mistake impossible to write; it is to be
-    revisited with the oblique raster editor, whose plane and thickness
-    are that form already.
 
     The region is in **world** coordinates, not rendered.  Rendered space
     has only the two or three displayed axes and so cannot express a

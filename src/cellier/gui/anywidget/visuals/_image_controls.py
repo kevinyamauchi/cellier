@@ -50,6 +50,30 @@ _STATIC = Path(__file__).parent / "static"
 class AnywidgetImageControls(VisualIdGroup, anywidget.AnyWidget):
     """Bidirectional image appearance control for the anywidget GUI.
 
+    One control per image visual (or per group of ``OrthoViewer`` panel
+    siblings).  From the top:
+
+    - a shared section: visibility, blending and interpolation;
+    - a "Composite channels" switch, shown only when the visual has a
+      channel axis;
+    - one page per mode: the single appearance's rows, or, when
+      compositing, one group of rows per channel.
+
+    Each page shows the rows its *values* ask for (colormap, contrast,
+    opacity, render mode, ...).  A row that only means something for some
+    render modes, or only in 3D, hides itself; *n_displayed_dimensions* and
+    *scene_ids* keep the 3D rule current.  A MaskedImage adds its surface
+    and 2D band rows to the single page.
+
+    Build the starting state with `cellier.gui.image_control_values`, then
+    wire to the controller after construction::
+
+        values = image_control_values(visual, fields=["color_map", "clim"])
+        control = AnywidgetImageControls(visual.id, values, scene_ids=[scene.id])
+        controller.connect_widget(
+            control, subscription_specs=control.subscription_specs()
+        )
+
     Parameters
     ----------
     visual_id :

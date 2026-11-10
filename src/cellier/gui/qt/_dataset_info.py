@@ -126,8 +126,7 @@ class QtDatasetInfo:
     Uses ``qtpy`` for PyQt6/PySide6 compatibility.  Follows the widget
     pattern: a non-``QWidget`` class exposing a ``.widget`` property.
     It is a pure-output control with nothing on the bus, so it carries no
-    ``changed``/``closed`` signals and is never passed to ``connect_widget``
-    (``layout._shared.STATIC_CONTROL_KINDS``).
+    ``changed``/``closed`` signals and is never passed to ``connect_widget``.
 
     Parameters
     ----------
@@ -144,10 +143,7 @@ class QtDatasetInfo:
     DEFAULT_TITLE = "Dataset info"
     """Name shown when no ``title=`` is given.
 
-    The renderer passes the title from the shared control vocabulary; this is
-    what a directly-constructed widget calls itself, and
-    ``test_composite_default_titles_match_the_shared_vocabulary`` pins the two
-    together.
+    The same title the built-in viewers pass when they build this widget.
     """
 
     def __init__(

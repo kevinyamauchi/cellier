@@ -1360,6 +1360,9 @@ class CellierController:
         # subscription leaves this set through its bus ``on_remove`` cleanup,
         # whichever route removes it.
         self._pick_subscriptions: dict[UUID, set[SubscriptionHandle]] = {}
+        # Per scene, the handle of each pending readiness tracker
+        # (`_notify_when_resliced`), so `remove_scene` can cancel them.
+        self._readiness_trackers: dict[UUID, set[SubscriptionHandle]] = {}
         # The count per (canvas, pick event type): a pick event is built,
         # and image and labels values are read, only while its type has one.
         self._pick_event_counts: dict[tuple[UUID, type], int] = {}
@@ -1551,10 +1554,10 @@ class CellierController:
     def incoming_events(self) -> EventBus:
         """Incoming event bus for GUI-driven model mutations.
 
-        Emit ``AppearanceUpdateEvent``, ``DimsUpdateEvent``,
-        ``AABBUpdateEvent`` or ``BackgroundUpdateEvent`` onto this bus to
-        request model changes.
-        The controller dispatches each event to the corresponding
+        Emit any of the 19 ``*UpdateEvent`` types in `cellier.events`
+        (``AppearanceUpdateEvent``, ``DimsUpdateEvent``,
+        ``ClippingPlanesUpdateEvent``, ...) onto this bus to request a model
+        change.  The controller dispatches each event to the corresponding
         ``update_*`` method, preserving ``source_id`` end-to-end.
         """
         return self._incoming_events
@@ -1565,6 +1568,12 @@ class CellierController:
         Only meaningful for a controller built with ``gui="qt"``; the
         anywidget and offscreen guis ignore the parent (their canvases are
         not laid out by a Qt parent).
+
+        Parameters
+        ----------
+        parent : QWidget or None
+            The parent of every canvas widget created after this call.
+            ``None`` creates parentless widgets.
         """
         self._widget_parent = parent
 
@@ -1686,7 +1695,14 @@ class CellierController:
     # ------------------------------------------------------------------
 
     def to_file(self, path: str | pathlib.Path) -> None:
-        """Serialize the current model state to a JSON file."""
+        """Serialize the current model state to a JSON file.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to write; overwritten if it exists.  Read it back with
+            `from_file`.
+        """
         self._model.to_file(path)
 
     def to_model(self) -> ViewerModel:
@@ -2319,7 +2335,7 @@ class CellierController:
         Parameters
         ----------
         data : LabelMemoryStore
-            Backing int32 label store.
+            Backing label store (int8, int16 or int32).
         scene_id : UUID
             ID of an existing scene.
         appearance : BaseLabelsAppearance or None
@@ -2432,8 +2448,8 @@ class CellierController:
         Parameters
         ----------
         data : MeshMemoryStore
-            In-memory mesh.  Normals are auto-computed if not supplied;
-            indices are coerced to int32.
+            In-memory mesh.  Normals are always computed from the faces (the
+            store has no normals field); indices are coerced to int32.
         scene_id : UUID
             ID of an existing scene.
         appearance : MeshFlatAppearance | MeshPhongAppearance
@@ -4229,6 +4245,16 @@ class CellierController:
     def get_overlay(self, overlay_id: UUID) -> CanvasOverlay | SceneOverlay:
         """Return the overlay model registered under *overlay_id*.
 
+        Parameters
+        ----------
+        overlay_id : UUID
+            The id of a canvas or scene overlay.
+
+        Returns
+        -------
+        CanvasOverlay or SceneOverlay
+            The live overlay model.
+
         Raises
         ------
         KeyError
@@ -4649,7 +4675,23 @@ class CellierController:
     # ------------------------------------------------------------------
 
     def get_scene(self, scene_id: UUID) -> Scene:
-        """Return the live Scene model for scene_id."""
+        """Return the live Scene model for *scene_id*.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The id of a scene added to this controller.
+
+        Returns
+        -------
+        Scene
+            The live model: assigning its fields updates the view.
+
+        Raises
+        ------
+        KeyError
+            If no scene has that id.
+        """
         return self._model.scenes[scene_id]
 
     def get_visual_scene_id(self, visual_id: UUID) -> UUID:
@@ -4740,7 +4782,20 @@ class CellierController:
     def get_scene_by_name(self, name: str) -> Scene:
         """Return the live Scene model for the given name.
 
-        Raises KeyError if no scene with that name exists.
+        Parameters
+        ----------
+        name : str
+            The scene's ``name``.
+
+        Returns
+        -------
+        Scene
+            The live model.
+
+        Raises
+        ------
+        KeyError
+            If no scene with that name exists.
         """
         for scene in self._model.scenes.values():
             if scene.name == name:
@@ -4954,10 +5009,23 @@ class CellierController:
             **capture_kwargs,
         )
 
-    def get_visual_model(self, visual_id: UUID) -> MultiscaleImageVisual:
-        """Return the live visual model for visual_id.
+    def get_visual_model(self, visual_id: UUID) -> BaseVisual:
+        """Return the live visual model for *visual_id*, from any scene.
 
-        Searches all scenes.  Raises KeyError if not found.
+        Parameters
+        ----------
+        visual_id : UUID
+            The id of a visual added to one of this controller's scenes.
+
+        Returns
+        -------
+        BaseVisual
+            The live model, of whatever visual type was added.
+
+        Raises
+        ------
+        KeyError
+            If no visual has that id.
         """
         for scene in self._model.scenes.values():
             for visual in scene.visuals:
@@ -5413,6 +5481,16 @@ class CellierController:
         coordinate systems, or the scene has no canvas and so no rendered
         system -- or the view does not draw it.  On the brick route they are
         the 2D slice node's own systems.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            The visual to ask about.
+
+        Returns
+        -------
+        RenderSpaces or None
+            The systems, or ``None`` as above.
         """
         scene_id = self._visual_to_scene.get(visual_id)
         if scene_id is None:
@@ -7837,6 +7915,17 @@ class CellierController:
 
         The slots a palette of *n_slots* entries cannot colour.  Useful to a
         GUI before it shrinks the palette, and to the palette route after.
+
+        Parameters
+        ----------
+        n_slots : int
+            The palette size to check against.
+
+        Returns
+        -------
+        list[tuple[str, int]]
+            The visual's name and its outline slot, for every outlined visual
+            whose slot is greater than ``n_slots``.  Empty when all fit.
         """
         return [
             (visual.name, visual.outline.slot)
@@ -8353,12 +8442,14 @@ class CellierController:
             Works uniformly for in-memory, multiscale, multichannel, and
             geometry visuals.  See `on_scene_ready`.
 
-            The callback tracks *this* reslice generation.  If a superseding
-            reslice (e.g. a camera-motion reload) cancels these in-flight reads
-            before they commit, the cancelled visual never reports completion
-            and the callback may not fire.  Callers that need a guaranteed
-            startup signal should suppress camera-driven reslicing during the
-            load (the convenience launchers do this automatically).
+            A reslice of the scene that starts before the callback fires
+            (a camera move, a dims change) adds its visuals to the wait, so
+            the callback fires once the scene has no load in flight.  A
+            visual removed while it loads stops counting.  The callback never
+            fires if its subscriptions are removed first
+            (`unsubscribe_owner` with *owner_id*) or the scene is removed.
+            `on_scene_ready` does the same and returns a handle that cancels
+            it.
         owner_id : UUID or None
             Owner under which the temporary ``on_ready`` subscriptions are
             registered (for teardown).  Defaults to the controller's own id.
@@ -8402,46 +8493,63 @@ class CellierController:
     ) -> SubscriptionHandle:
         """Arm a one-shot quiescence tracker, then run *trigger* to reslice.
 
-        The tracker counts visuals announced by ``ResliceStartedEvent`` and
-        decrements on each ``ResliceCompletedEvent`` for *scene_id*; *callback*
-        fires once the count drains to zero.  Because planning and the
-        synchronous ``ResliceStartedEvent`` emissions all run inside *trigger*
-        on a synchronous bus, the pending count is fully known the instant
-        *trigger* returns — so the "armed" flag suppresses any premature fire
-        from synchronous empty-batch completions until the full count is in.
+        The tracker holds the set of visuals a ``ResliceStartedEvent`` of
+        *scene_id* has named and that have not completed since; *callback*
+        fires once the set is empty.  A visual leaves the set on its first
+        ``ResliceCompletedEvent``: the coordinator answers every start
+        announced for a visual at once, when its latest pass is resident, so
+        one completion means all of them.  A visual also leaves the set when
+        it is removed from the scene (``VisualRemovedEvent``), since a
+        removed visual never completes.
 
-        The tracker is two subscriptions; removing either (through the
-        returned handle, or by owner) removes the other and disarms the
-        callback.  The returned handle is the ``ResliceStartedEvent`` one: it
-        is active until the callback fires or is cancelled.
+        Because planning and the synchronous ``ResliceStartedEvent``
+        emissions all run inside *trigger* on a synchronous bus, the set is
+        fully known the instant *trigger* returns -- so the "armed" flag
+        suppresses any premature fire from synchronous empty-batch
+        completions until it is.
+
+        The tracker is three subscriptions; removing any of them (through the
+        returned handle, by owner, or by `remove_scene`, which cancels the
+        scene's trackers before it removes the visuals) removes the others
+        and disarms the callback.  The returned handle is the
+        ``ResliceStartedEvent`` one: it is active until the callback fires or
+        is cancelled.
         """
-        state = {"pending": 0, "armed": True, "fired": False}
+        pending: set[UUID] = set()
+        state = {"armed": True, "fired": False}
         handles: list[SubscriptionHandle] = []
 
         def _cancel() -> None:
             state["fired"] = True
             for handle in handles:
                 self._outgoing_events.unsubscribe(handle)
+            trackers = self._readiness_trackers.get(scene_id)
+            if trackers is not None:
+                trackers.discard(handles[0])
+                if not trackers:
+                    del self._readiness_trackers[scene_id]
 
         def _finish() -> None:
             if state["fired"]:
                 return
-            state["fired"] = True
-            for handle in handles:
-                self._outgoing_events.unsubscribe(handle)
+            _cancel()
             callback()
 
         def _maybe_fire() -> None:
-            if not state["armed"] and not state["fired"] and state["pending"] <= 0:
+            if not state["armed"] and not state["fired"] and not pending:
                 _finish()
 
         def _on_started(event: ResliceStartedEvent) -> None:
-            state["pending"] += len(event.visual_ids)
+            pending.update(event.visual_ids)
 
         def _on_completed(event: ResliceCompletedEvent) -> None:
             if event.scene_id != scene_id:
                 return
-            state["pending"] -= 1
+            pending.discard(event.visual_id)
+            _maybe_fire()
+
+        def _on_visual_removed(event: VisualRemovedEvent) -> None:
+            pending.discard(event.visual_id)
             _maybe_fire()
 
         handles.append(
@@ -8463,11 +8571,21 @@ class CellierController:
                 on_remove=_cancel,
             )
         )
+        handles.append(
+            self._outgoing_events.subscribe(
+                VisualRemovedEvent,
+                _on_visual_removed,
+                entity_id=scene_id,
+                owner_id=owner_id,
+                on_remove=_cancel,
+            )
+        )
+        self._readiness_trackers.setdefault(scene_id, set()).add(handles[0])
 
         trigger()
 
         # All ResliceStartedEvents for this generation have now been emitted
-        # synchronously, so the pending count is complete.  Close the arming
+        # synchronously, so the pending set is complete.  Close the arming
         # window and fire immediately if there was nothing to load.
         state["armed"] = False
         _maybe_fire()
@@ -8479,6 +8597,11 @@ class CellierController:
         Not needed after changing a store: stores announce their own changes
         (reassigning a data field, or ``store.notify_changed``) and the
         controller reslices every visual reading them.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            The visual to reload, on every canvas showing its scene.
         """
         scene_id = self._visual_to_scene[visual_id]
         dims_state = self._dims_state_for_scene(scene_id)
@@ -9673,6 +9796,19 @@ class CellierController:
     def get_clipping_plane(self, visual_id: UUID, plane_id: UUID) -> ClippingPlane:
         """Return one clipping plane of a visual, by the plane's id.
 
+        Parameters
+        ----------
+        visual_id : UUID
+            The visual the plane clips.
+        plane_id : UUID
+            The plane's ``id``.
+
+        Returns
+        -------
+        ClippingPlane
+            The plane model.  It is frozen: change it with
+            `set_clipping_planes`.
+
         Raises
         ------
         KeyError
@@ -9801,6 +9937,18 @@ class CellierController:
 
     def get_render_plane(self, visual_id: UUID, plane_id: UUID) -> RenderPlane:
         """Return one render plane of a visual, by the plane's id.
+
+        Parameters
+        ----------
+        visual_id : UUID
+            The visual that draws the plane.
+        plane_id : UUID
+            The plane's ``id``.
+
+        Returns
+        -------
+        RenderPlane
+            The plane model.
 
         Raises
         ------
@@ -10590,6 +10738,16 @@ class CellierController:
         """The plane gizmo of a canvas, or ``None`` if it has none.
 
         Its ``kind`` is ``"clipping"`` or ``"render"``.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas to ask about.
+
+        Returns
+        -------
+        PlaneGizmoController or None
+            The canvas's gizmo, if it has one.
         """
         return self._plane_gizmos.get(canvas_id)
 
@@ -10599,6 +10757,14 @@ class CellierController:
         """Close a canvas's plane gizmo, of either kind; nothing if it has none.
 
         Emits ``PlaneGizmoChangedEvent`` stamped with *source_id*.
+
+        Parameters
+        ----------
+        canvas_id : UUID
+            The canvas whose gizmo to close.
+        source_id : UUID or None
+            UUID to stamp on the emitted event.  Defaults to the controller's
+            own ID.
         """
         session = self._plane_gizmos.get(canvas_id)
         if session is None:
@@ -12005,6 +12171,12 @@ class CellierController:
             If ``scene_id`` is not registered.
         """
         scene = self._model.scenes[scene_id]
+
+        # 0. Cancel pending readiness callbacks: removing the visuals below
+        #    would otherwise empty their pending sets and fire them for a
+        #    scene that is going away.
+        for handle in list(self._readiness_trackers.pop(scene_id, ())):
+            self._outgoing_events.unsubscribe(handle)
 
         # 1. Tear down all child visuals (psygnal + bus + render layer each).
         for visual_model in list(scene.visuals):
@@ -13958,7 +14130,9 @@ class CellierController:
         owner_id: UUID,
         weak: bool = False,
     ) -> SubscriptionHandle:
-        """Register a callback fired when a clipping plane drag starts or ends.
+        """Register a callback fired when a plane drag starts or ends.
+
+        Covers the visual's clipping planes and its render planes.
 
         Parameters
         ----------
@@ -14322,7 +14496,10 @@ class CellierController:
         *callback* exactly once, after all visuals loaded by that reslice have
         committed to the GPU across every attached canvas.  Visuals with no
         data in the current view (frustum-culled, empty slab, or hidden) do not
-        delay the callback.
+        delay the callback.  A reslice of the scene that starts before the
+        callback fires (a camera move, a dims change) adds its visuals to the
+        wait, and a visual removed while it loads stops counting.  Removing
+        the scene cancels the callback.
 
         Unlike `on_reslice_completed` (which fires per-visual on every
         cycle), this is a scene-level, one-shot readiness signal — the right

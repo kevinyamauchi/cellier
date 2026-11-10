@@ -280,3 +280,55 @@ def test_a_stall_timeout_of_none_arms_no_timer():
     tracker = _init_view(viewer, fit="none", stall_timeout=None)
 
     assert tracker.state is StartupState.READY
+
+
+# ---------------------------------------------------------------------------
+# Cancelling a startup hook
+# ---------------------------------------------------------------------------
+
+
+def test_a_scene_ready_handle_cancels_the_callback():
+    tracker = _tracker("scene")
+    fired: list[int] = []
+    handle = tracker.on_scene_ready("scene", lambda: fired.append(1))
+
+    handle.unsubscribe()
+    tracker.advance("scene", StartupState.READY)
+
+    assert fired == []
+    assert not handle.active
+
+
+def test_a_scene_ready_handle_goes_inactive_when_it_fires():
+    tracker = _tracker("scene")
+    handle = tracker.on_scene_ready("scene", lambda: None)
+    assert handle.active
+
+    tracker.advance("scene", StartupState.READY)
+
+    assert not handle.active
+
+
+def test_a_scene_ready_handle_is_inactive_when_the_scene_was_ready():
+    tracker = _tracker("scene")
+    tracker.advance("scene", StartupState.READY)
+
+    assert not tracker.on_scene_ready("scene", lambda: None).active
+
+
+def test_progress_and_stall_handles_stay_active_until_cancelled():
+    tracker = _tracker("a", "b")
+    seen: list = []
+    progress = tracker.on_progress(lambda done, total: seen.append(done))
+    stalled = tracker.on_stalled(seen.append)
+
+    tracker.advance("a", StartupState.READY)
+    assert progress.active  # fires more than once, so it stays
+    progress.unsubscribe()
+    stalled.unsubscribe()
+    tracker.mark_stalled()
+    tracker.advance("b", StartupState.READY)
+
+    assert seen == [1]
+    assert not progress.active
+    assert not stalled.active

@@ -376,7 +376,7 @@ class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
         Discriminator field. Always ``"ome_zarr_image"``.
     zarr_path : str
         URI to the root OME-Zarr group. Must start with ``file://``,
-        ``s3://``, ``gs://``, or ``https://``.
+        ``s3://``, ``gs://`` (or ``gcs://``), ``http://`` or ``https://``.
     multiscale_index : int
         Index into ``multiscales[]``. Defaults to 0.
     scale_names : list[str]
@@ -412,6 +412,21 @@ class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
     level_transforms : list[AffineTransform]
         Level ``k`` voxels -> level ``0`` voxels, one per system, built from
         ``level_scales`` and ``level_translations``.  Not normally passed.
+    anonymous : bool
+        When True, read an ``s3://`` store without signing requests (for
+        public buckets).  Default False.
+    cache_pool_bytes : int
+        Chunk cache cap for this store, in bytes, shared by all of its
+        resolution levels.  ``0`` disables caching.
+    request_concurrency : int
+        Requests outstanding at once against a remote kvstore.  No effect on
+        a local store.
+    file_io_concurrency : int or None
+        Reads outstanding at once against the local filesystem.  ``None``
+        (the default) leaves tensorstore's default.  No effect on a remote
+        store.
+    recheck_cached_data : bool
+        Revalidate cached chunks on every read.  Default False.
     """
 
     store_type: Literal["ome_zarr_image"] = "ome_zarr_image"
@@ -474,8 +489,9 @@ class OMEZarrImageDataStore(TensorStoreCacheMixin, BaseDataStore):
         Parameters
         ----------
         zarr_path : str
-            URI with a scheme prefix: ``file://``, ``s3://``, ``gs://``,
-            or ``https://``.  For local files use an absolute path, e.g.
+            URI with a scheme prefix: ``file://``, ``s3://``, ``gs://``
+            (or ``gcs://``), ``http://`` or ``https://``.  For local files use
+            an absolute path, e.g.
             ``file:///home/user/data/image.ome.zarr``.
         multiscale_index : int
             Which ``multiscales[]`` entry to use. Defaults to 0.

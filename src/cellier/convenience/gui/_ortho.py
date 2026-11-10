@@ -45,7 +45,11 @@ class OrthoCanvasGrid:
         self._widget = None
 
     def compose(self, host: LayoutHost) -> object:
-        """Arrange the four panels as a labelled 2x2 grid via *host*."""
+        """Arrange the four panels as a labelled 2x2 grid via *host*.
+
+        Called by the viewer's layout, which supplies *host* (an internal
+        layout backend); not meant to be called from user code.
+        """
         rows: list[list[object]] = [[None, None], [None, None]]
         for row, column, key, header in PANEL_LAYOUT:
             rows[row][column] = host.stack(

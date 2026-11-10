@@ -59,7 +59,8 @@ class MultiscaleLabelsAppearance(BaseLabelsAppearance):
         slow store, and is what keeps a tilted view at 30 fps at native
         zoom.  Default ``False``.
     force_level : int | None
-        Overrides automatic LOD selection when set. Default None.
+        1-based pyramid level to draw (1 is the finest), overriding the
+        automatic choice; clamped to the pyramid.  Default None.
     frustum_cull : bool
         Skip bricks outside the camera frustum. Default True.
     ray_steps_per_voxel : float

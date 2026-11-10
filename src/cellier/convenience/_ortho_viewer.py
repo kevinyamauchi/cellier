@@ -22,9 +22,14 @@ from cellier.convenience._ortho_clipping import (
 from cellier.convenience._ortho_dims import OrthoDimsController
 from cellier.convenience._ortho_planes import OrthoPlaneController
 from cellier.convenience._render_settings import RenderSettingsMixin
-from cellier.convenience._startup import StartupState
+from cellier.convenience._startup import (
+    StartupState,
+    on_viewer_ready,
+    started_tracker,
+)
 from cellier.convenience.gui._controls_config import validate_controls
 from cellier.events import CanvasAddedEvent
+from cellier.events._bus import group_handles
 from cellier.render._capture import write_png
 from cellier.scene._background import viewer_background
 from cellier.scene.dims import (
@@ -408,7 +413,11 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
 
     @property
     def gui(self) -> str:
-        """The GUI toolkit this viewer renders into (``"qt"`` or ``"anywidget"``)."""
+        """The GUI toolkit this viewer renders into.
+
+        ``"qt"``, ``"anywidget"`` or ``"offscreen"`` (no window: for
+        scripted screenshots and tests).
+        """
         return self._controller._gui
 
     @property
@@ -520,11 +529,13 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         """
         handle.unsubscribe()
 
-    def on_scene_ready(self, key: str, callback: Callable[[], None]) -> None:
+    def on_scene_ready(
+        self, key: str, callback: Callable[[], None]
+    ) -> SubscriptionHandle:
         """Fire *callback* when one scene's data is on the GPU.
 
         The per-scene counterpart of `on_ready`, which waits for *all*
-        of them.  Fires immediately if that scene is already ready.
+        of them.  Fires once; immediately if that scene is already ready.
 
         Must be called after ``display``/``launch``, which is when the
         startup tracker exists.
@@ -537,16 +548,24 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             ``OrthoViewer``.
         callback : Callable[[], None]
             Zero-argument callback.
-        """
-        tracker = getattr(self, "_startup", None)
-        if tracker is None:
-            raise RuntimeError(
-                "on_scene_ready requires a started viewer; call it after "
-                "display()/launch()/show()."
-            )
-        tracker.on_scene_ready(key, callback)
 
-    def on_startup_progress(self, callback: Callable[[int, int], None]) -> None:
+        Returns
+        -------
+        SubscriptionHandle
+            Active until *callback* fires; its ``unsubscribe()`` cancels the
+            callback.  Already inactive when the scene was ready and
+            *callback* ran before this returned.
+
+        Raises
+        ------
+        RuntimeError
+            If the viewer has not been started yet.
+        """
+        return started_tracker(self, "on_scene_ready").on_scene_ready(key, callback)
+
+    def on_startup_progress(
+        self, callback: Callable[[int, int], None]
+    ) -> SubscriptionHandle:
         """Fire ``callback(scenes_ready, scenes_total)`` as scenes load.
 
         For a progress bar over a slow or remote dataset, where the gap
@@ -561,20 +580,21 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         callback : Callable[[int, int], None]
             Called with the number of scenes ready and the total.
 
+        Returns
+        -------
+        SubscriptionHandle
+            Active until its ``unsubscribe()`` is called.
+
         Raises
         ------
         RuntimeError
             If the viewer has not been started yet.
         """
-        tracker = getattr(self, "_startup", None)
-        if tracker is None:
-            raise RuntimeError(
-                "on_startup_progress requires a started viewer; call it after "
-                "display()/launch()/show()."
-            )
-        tracker.on_progress(callback)
+        return started_tracker(self, "on_startup_progress").on_progress(callback)
 
-    def on_startup_stalled(self, callback: Callable[[dict], None]) -> None:
+    def on_startup_stalled(
+        self, callback: Callable[[dict], None]
+    ) -> SubscriptionHandle:
         """Fire ``callback({scene key: state})`` if startup does not finish.
 
         The signal that was missing entirely: startup could only ever report
@@ -597,18 +617,17 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             Called with ``{scene key: StartupState}`` for every scene that
             has not finished.
 
+        Returns
+        -------
+        SubscriptionHandle
+            Active until its ``unsubscribe()`` is called.
+
         Raises
         ------
         RuntimeError
             If the viewer has not been started yet.
         """
-        tracker = getattr(self, "_startup", None)
-        if tracker is None:
-            raise RuntimeError(
-                "on_startup_stalled requires a started viewer; call it after "
-                "display()/launch()/show()."
-            )
-        tracker.on_stalled(callback)
+        return started_tracker(self, "on_startup_stalled").on_stalled(callback)
 
     # ------------------------------------------------------------------
     # Capture
@@ -770,7 +789,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
     # Readiness
     # ------------------------------------------------------------------
 
-    def on_ready(self, callback: Callable[[], None]) -> None:
+    def on_ready(self, callback: Callable[[], None]) -> SubscriptionHandle:
         """Register a callback fired once *all* panels' startup data is on the GPU.
 
         The callback runs after the initial reslice triggered by
@@ -779,16 +798,24 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         hide a loading indicator, capture a screenshot, or enable controls once
         the first view is fully loaded.
 
-        Must be called before ``launch``/``show``.  For per-scene readiness,
-        use `on_scene_ready`
-        directly.
+        Fires once, on the first startup.  Register it before or after
+        ``display``/``launch``/``show``: before startup has finished it
+        waits, and after that it runs at once.  For one panel, use
+        `on_scene_ready`.
 
         Parameters
         ----------
         callback : Callable[[], None]
             Zero-argument callback.
+
+        Returns
+        -------
+        SubscriptionHandle
+            Active until *callback* fires; its ``unsubscribe()`` cancels the
+            callback.  Already inactive when startup had finished and
+            *callback* ran before this returned.
         """
-        self._ready_callbacks.append(callback)
+        return on_viewer_ready(self, callback)
 
     @property
     def spatial_axes(self) -> tuple[int, int, int]:
@@ -1466,7 +1493,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         ----------
         data : MeshMemoryStore or UUID
             Backing data store or the UUID of an already-registered store.
-        appearance : MeshFlatAppearance, MeshPhongAppearance,
+        appearance : MeshFlatAppearance or MeshPhongAppearance
             Appearance parameters.  When passing a dict, include the
             ``appearance_type`` key (``"flat"`` or ``"phong"``).
         name : str
@@ -1553,7 +1580,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         data : MultiscaleMeshStore or UUID
             The mesh's levels, finest first, or the UUID of an
             already-registered store.
-        appearance : MeshFlatAppearance, MeshPhongAppearance,
+        appearance : MeshFlatAppearance or MeshPhongAppearance
             Appearance parameters, shared by both levels.
         name : str
             Base label; each panel's visual is named ``f"{name}_{key}"``.
@@ -2105,7 +2132,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         *,
         owner_id: UUID | None = None,
         weak: bool = False,
-    ) -> list[SubscriptionHandle]:
+    ) -> SubscriptionHandle:
         """Register a callback fired as a multiscale visual's panels load.
 
         Mirrors `CellierController.on_reslice_progress` over the panel
@@ -2128,26 +2155,33 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
 
         Returns
         -------
-        list[SubscriptionHandle]
-            One per panel; call ``unsubscribe()`` on each to remove the
-            subscription.
+        SubscriptionHandle
+            One handle for the subscriptions on every panel: its
+            ``unsubscribe()`` removes them all, and it reads as active while
+            any panel's is left.  With ``weak=True`` it goes inactive at the
+            first event after *callback* is garbage-collected.
         """
         group = self.image_group(visual)
         callback_ref = _callback_ref(callback, weak)
+        handles: list[SubscriptionHandle] = []
 
         def _on_progress(event: ResliceProgressEvent) -> None:
             target = callback_ref()
             if target is None:
+                # A collected weak callback: drop every panel's subscription,
+                # as the bus does for a weak subscription of its own.
+                group_handles(handles).unsubscribe()
                 return
             total = self.loading_progress(group[0])
             target(event._replace(progress=total) if total is not None else event)
 
-        return [
+        handles.extend(
             self._controller.on_reslice_progress(
                 vid, _on_progress, owner_id=vid if owner_id is None else owner_id
             )
             for vid in group
-        ]
+        )
+        return group_handles(handles)
 
     def on_backstop_complete(
         self,
@@ -2156,7 +2190,7 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         *,
         owner_id: UUID | None = None,
         weak: bool = False,
-    ) -> list[SubscriptionHandle]:
+    ) -> SubscriptionHandle:
         """Register a callback fired when every panel's backstop is in.
 
         Mirrors `CellierController.on_backstop_complete` over the
@@ -2177,27 +2211,32 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
 
         Returns
         -------
-        list[SubscriptionHandle]
-            One per panel; call ``unsubscribe()`` on each to remove the
-            subscription.
+        SubscriptionHandle
+            One handle for the subscriptions on every panel: its
+            ``unsubscribe()`` removes them all, and it reads as active while
+            any panel's is left.  With ``weak=True`` it goes inactive at the
+            first event after *callback* is garbage-collected.
         """
         group = self.image_group(visual)
         callback_ref = _callback_ref(callback, weak)
+        handles: list[SubscriptionHandle] = []
 
         def _on_backstop(event: BackstopCompleteEvent) -> None:
             target = callback_ref()
             if target is None:
+                group_handles(handles).unsubscribe()
                 return
             progress = [self._controller.loading_progress(vid) for vid in group]
             if all(p is not None and p.backstop_complete for p in progress):
                 target(event)
 
-        return [
+        handles.extend(
             self._controller.on_backstop_complete(
                 vid, _on_backstop, owner_id=vid if owner_id is None else owner_id
             )
             for vid in group
-        ]
+        )
+        return group_handles(handles)
 
     def set_loading(self, visual: object, **fields: Any) -> ProgressiveLoadingConfig:
         """Change how every panel of a multiscale visual loads.

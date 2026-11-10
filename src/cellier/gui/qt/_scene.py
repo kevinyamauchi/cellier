@@ -272,6 +272,11 @@ class QtDimsControl:
     initial_thickness :
         Starting half-thicknesses; typically
         ``scene.dims.selection.thickness``.  An axis absent from it is 0.
+    debounce_ms :
+        The slider rate limit in milliseconds.  While a slider is dragged, the
+        new position is sent at most once per interval, and the last position
+        is always sent when the drag stops (a throttle, despite the name).
+        ``None`` (the default) is 50 ms.
     axes_2d :
         Axis indices the toggle displays in 2D until the scene has shown a
         2D set; after that it returns to the last 2D set shown.  ``None``
@@ -465,7 +470,10 @@ class QtDimsControl:
         self.closed.emit()
 
     def subscription_specs(self) -> list[SubscriptionSpec]:
-        """Return the inbound subscription this widget requires.
+        """Return the inbound subscriptions this widget requires.
+
+        One for ``DimsChangedEvent`` and one for ``SliderAxesChangedEvent``,
+        both routed by the scene id.
 
         Pass the result to ``CellierController.connect_widget``.
         """
@@ -758,8 +766,9 @@ class QtCanvasWidget:
 
     Composes the two elements in a ``QVBoxLayout`` so that the canvas expands
     to fill available space while the dims control sits below it at a fixed
-    height.  The dims control includes the 2D/3D toggle button (when the
-    scene has 3+ axes), so no separate toggle widget is needed.
+    height.  The dims control includes the 2D/3D toggle button when the
+    scene can be shown both ways (see `from_scene_and_canvas`), so no
+    separate toggle widget is needed.
 
     Prefer constructing via `from_scene_and_canvas` rather than calling
     ``__init__`` directly.

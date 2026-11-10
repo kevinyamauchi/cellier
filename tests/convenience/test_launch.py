@@ -14,6 +14,7 @@ import pytest
 
 from cellier.convenience import _launch
 from cellier.convenience._launch import DisplayHandle, _init_view, run
+from cellier.convenience._startup import on_viewer_ready
 
 
 class StubController:
@@ -103,6 +104,72 @@ def test_viewer_ready_callbacks_and_on_ready_both_fire():
     _init_view(viewer, on_ready=lambda: order.append("arg"))
 
     assert order == ["viewer", "arg"]
+
+
+def _canvas_viewer():
+    """A one-scene viewer whose startup waits for a first frame."""
+    canvas_id = uuid4()
+    scene_id = uuid4()
+    controller = StubController({scene_id: [canvas_id]})
+    viewer = SimpleNamespace(
+        controller=controller,
+        scene=SimpleNamespace(id=scene_id),
+        gui="qt",
+        _ready_callbacks=[],
+    )
+    return viewer, controller
+
+
+def test_on_ready_cancelled_after_startup_began_does_not_fire():
+    """The launcher reads the viewer's callbacks when startup finishes."""
+    viewer, controller = _canvas_viewer()
+    fired: list[int] = []
+    handle = on_viewer_ready(viewer, lambda: fired.append(1))
+
+    _init_view(viewer, fit="none")
+    handle.unsubscribe()
+    controller.fire_first_frames()
+
+    assert fired == []
+    assert not handle.active
+
+
+def test_on_ready_registered_during_startup_fires_at_the_end():
+    viewer, controller = _canvas_viewer()
+    fired: list[int] = []
+
+    _init_view(viewer, fit="none")
+    handle = on_viewer_ready(viewer, lambda: fired.append(1))
+    assert fired == []
+    assert handle.active
+
+    controller.fire_first_frames()
+
+    assert fired == [1]
+    assert not handle.active
+
+
+def test_on_ready_after_startup_runs_at_once():
+    viewer, controller = _canvas_viewer()
+    _init_view(viewer, fit="none")
+    controller.fire_first_frames()
+    fired: list[int] = []
+
+    handle = on_viewer_ready(viewer, lambda: fired.append(1))
+
+    assert fired == [1]
+    assert not handle.active
+
+
+def test_on_ready_fires_on_the_first_startup_only():
+    viewer, _controller = _single_scene_viewer(StubController())
+    fired: list[int] = []
+    on_viewer_ready(viewer, lambda: fired.append(1))
+
+    _init_view(viewer)
+    _init_view(viewer)
+
+    assert fired == [1]
 
 
 # ---------------------------------------------------------------------------

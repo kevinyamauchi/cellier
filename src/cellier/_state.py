@@ -13,19 +13,19 @@ NO_THICKNESS: Mapping[int, float] = MappingProxyType({})
 
 
 class AxisAlignedSelectionState(NamedTuple):
-    """Immutable snapshot of an axis-aligned selection.
+    """Immutable snapshot of a scene's displayed axes and slab thickness.
 
-    ``thickness`` is a per-axis world-unit **half**-thickness; an axis absent
-    from it has thickness 0, a plane.
+    **There are no slice positions here.**  A ``DimsChangedEvent`` carries
+    them in its own ``slice_indices`` field, and the editable positions are
+    on the scene's ``dims.selection`` (an ``AxisAlignedSelection``).
 
-    **There are no slice positions here.**  Every consumer takes the
-    ``RegionSelection`` the controller emits instead of a mapping of world
-    axis to world position: it says the same thing in a form that survives a
-    slab, a viewport crop or an oblique plane, and it is pulled back through
-    each visual's own transform rather than compared against data coordinates
-    as though it were already in them.  The editable positions are still on
-    ``cellier.scene.dims.AxisAlignedSelection``, which is what the sliders
-    write to and what the region is built from.
+    Attributes
+    ----------
+    displayed_axes : tuple[int, ...]
+        The world axes the view shows, in display order.
+    thickness : Mapping[int, float]
+        Per world axis, the half-thickness of the slab around the slice, in
+        world units.  An axis absent from it has thickness 0, a plane.
     """
 
     displayed_axes: tuple[int, ...]
@@ -40,7 +40,8 @@ class DimsState(NamedTuple):
     axis_labels : tuple[str, ...]
         The name of each world axis, in world order.
     selection : AxisAlignedSelectionState
-        The displayed axes and every axis's position and thickness.
+        The displayed axes and the per-axis slab thickness.  The slice
+        positions are not here: see ``DimsChangedEvent.slice_indices``.
     """
 
     axis_labels: tuple[str, ...]

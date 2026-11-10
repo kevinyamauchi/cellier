@@ -13,6 +13,12 @@ import pytest
 
 from cellier._state import AxisAlignedSelectionState, DimsState
 from cellier.events import DimsChangedEvent, EventBus, SubscriptionHandle
+from cellier.events._bus import (
+    fire_registered,
+    group_handles,
+    inactive_handle,
+    register_callback,
+)
 
 
 def _dims_event(scene_id=None) -> DimsChangedEvent:
@@ -184,3 +190,97 @@ def test_a_handle_that_was_never_registered_is_inactive():
     assert not handle.active
     handle.unsubscribe()  # must not raise
     assert "inactive" in repr(handle)
+
+
+# ---------------------------------------------------------------------------
+# Handles that are not on a bus: list-backed callbacks and groups
+# ---------------------------------------------------------------------------
+
+
+def test_a_registered_callback_handle_removes_its_callback():
+    registry: list = []
+    received: list = []
+    handle = register_callback(registry, received.append)
+
+    assert isinstance(handle, SubscriptionHandle)
+    assert handle.active
+    fire_registered(registry, 1)
+    handle.unsubscribe()
+    handle.unsubscribe()  # safe to repeat
+    fire_registered(registry, 2)
+
+    assert received == [1]
+    assert not handle.active
+    assert registry == []
+
+
+def test_one_callable_registered_twice_is_two_subscriptions():
+    """Bound methods of one object compare equal; removal must not mix them up."""
+    registry: list = []
+    listener = _Listener()
+    first = register_callback(registry, listener.on_event)
+    second = register_callback(registry, listener.on_event)
+
+    first.unsubscribe()
+
+    assert not first.active
+    assert second.active
+    fire_registered(registry, "x")
+    assert listener.received == ["x"]
+
+
+def test_a_one_shot_callback_is_inactive_inside_itself():
+    registry: list = []
+    seen: list[bool] = []
+    handle = register_callback(registry, lambda: seen.append(handle.active))
+
+    fire_registered(registry, once=True)
+    fire_registered(registry, once=True)
+
+    assert seen == [False]
+    assert not handle.active
+
+
+@pytest.mark.parametrize("once", [False, True])
+def test_a_registered_callback_unsubscribed_mid_pass_is_not_called(once):
+    registry: list = []
+    received: list[str] = []
+    register_callback(registry, lambda: (received.append("a"), later.unsubscribe()))
+    later = register_callback(registry, lambda: received.append("b"))
+
+    fire_registered(registry, once=once)
+
+    assert received == ["a"]
+
+
+def test_the_bus_ignores_a_handle_that_is_not_its_own():
+    bus = EventBus()
+    handle = register_callback([], print)
+
+    bus.unsubscribe(handle)  # must not raise
+
+    assert handle.active
+
+
+def test_an_inactive_handle_reads_inactive():
+    handle = inactive_handle()
+
+    assert not handle.active
+    handle.unsubscribe()  # must not raise
+    assert "inactive" in repr(handle)
+
+
+def test_a_group_is_active_while_any_member_is():
+    bus = EventBus()
+    registry: list = []
+    on_bus = bus.subscribe(DimsChangedEvent, print)
+    in_list = register_callback(registry, print)
+    group = group_handles([on_bus, in_list])
+
+    on_bus.unsubscribe()
+    assert group.active
+
+    group.unsubscribe()
+    assert not group.active
+    assert not in_list.active
+    group.unsubscribe()  # safe to repeat

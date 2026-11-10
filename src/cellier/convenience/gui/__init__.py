@@ -2,7 +2,6 @@
 
 from cellier.convenience.gui._canvas import (
     AnywidgetCanvasView,
-    build_canvas_view,
     build_canvas_widget,
 )
 from cellier.convenience.gui._controls_config import (
@@ -24,7 +23,6 @@ from cellier.convenience.gui._controls_config import (
     TrailControl,
 )
 from cellier.convenience.gui._ortho import (
-    PANEL_LAYOUT,
     OrthoAnywidgetCanvases,
     OrthoCanvasGrid,
     OrthoCanvasWidgets,
@@ -32,7 +30,6 @@ from cellier.convenience.gui._ortho import (
 )
 
 __all__ = [
-    "PANEL_LAYOUT",
     "AmbientOcclusionControl",
     "AnywidgetCanvasView",
     "BoundingBoxControl",
@@ -53,7 +50,6 @@ __all__ = [
     "PickingControl",
     "RenderPlanesControl",
     "TrailControl",
-    "build_canvas_view",
     "build_canvas_widget",
     "build_ortho_grid_widget",
 ]

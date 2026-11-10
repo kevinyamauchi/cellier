@@ -45,8 +45,9 @@ class SliceCoordinator:
     ----------
     scenes : dict[UUID, SceneManager]
         Shared scene registry from ``RenderManager``.
-    data_stores : dict[UUID, MultiscaleZarrDataStore]
-        Mapping of ``visual_model_id`` to the data store for that visual.
+    data_stores : dict[UUID, BaseDataStore]
+        Mapping of ``visual_model_id`` to the data store for that visual,
+        of any store type.
     scheduler : ChunkScheduler
         The chunk scheduler every visual loads through.
     """

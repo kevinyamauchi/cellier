@@ -15,10 +15,14 @@ a blank panel diagnosable from a notebook cell instead of from a debugger.
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+from cellier.events._bus import fire_registered, inactive_handle, register_callback
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+    from cellier.events import SubscriptionHandle
 
 
 class StartupState(str, Enum):
@@ -149,11 +153,9 @@ class StartupTracker:
         self._states[key] = state
         self._stalled_at.pop(key, None)
         if state is StartupState.READY:
-            for callback in self._scene_callbacks.get(key, []):
-                callback()
+            fire_registered(self._scene_callbacks.get(key, []), once=True)
             ready, total = self.progress
-            for callback in self._progress_callbacks:
-                callback(ready, total)
+            fire_registered(self._progress_callbacks, ready, total)
 
     def mark_stalled(self) -> None:
         """Record every scene that has not finished as stalled, and report."""
@@ -165,8 +167,7 @@ class StartupTracker:
         if not stalled:
             return
         self._stalled_at = stalled
-        for callback in self._stalled_callbacks:
-            callback(dict(stalled))
+        fire_registered(self._stalled_callbacks, dict(stalled))
 
     def set_canvas(self, key: str, canvas_id: UUID) -> None:
         """Record which canvas serves *key*, for diagnostics."""
@@ -179,17 +180,53 @@ class StartupTracker:
 
     # ── subscribing ──────────────────────────────────────────────────────────
 
-    def on_scene_ready(self, key: str, callback: Callable[[], None]) -> None:
-        """Fire *callback* when scene *key* is ready; immediately if it is."""
+    def on_scene_ready(
+        self, key: str, callback: Callable[[], None]
+    ) -> SubscriptionHandle:
+        """Fire *callback* once when scene *key* is ready; now if it is.
+
+        The handle is active until the callback runs.
+        """
         if self._states.get(key) is StartupState.READY:
             callback()
-            return
-        self._scene_callbacks.setdefault(key, []).append(callback)
+            return inactive_handle()
+        return register_callback(self._scene_callbacks.setdefault(key, []), callback)
 
-    def on_progress(self, callback: Callable[[int, int], None]) -> None:
+    def on_progress(self, callback: Callable[[int, int], None]) -> SubscriptionHandle:
         """Fire ``callback(ready, total)`` each time a scene becomes ready."""
-        self._progress_callbacks.append(callback)
+        return register_callback(self._progress_callbacks, callback)
 
-    def on_stalled(self, callback: Callable[[dict], None]) -> None:
+    def on_stalled(self, callback: Callable[[dict], None]) -> SubscriptionHandle:
         """Fire ``callback({scene key: state})`` if startup times out."""
-        self._stalled_callbacks.append(callback)
+        return register_callback(self._stalled_callbacks, callback)
+
+
+# ── the viewers' hooks ───────────────────────────────────────────────────────
+
+
+def started_tracker(viewer: Any, hook: str) -> StartupTracker:
+    """The viewer's startup tracker; raise if the viewer has not started.
+
+    Shared by the ``Viewer`` and ``OrthoViewer`` hooks that need a tracker.
+    """
+    tracker = getattr(viewer, "_startup", None)
+    if tracker is None:
+        raise RuntimeError(
+            f"{hook} requires a started viewer; call it after "
+            "display()/launch()/show()."
+        )
+    return tracker
+
+
+def on_viewer_ready(viewer: Any, callback: Callable[[], None]) -> SubscriptionHandle:
+    """Register *callback* for when every scene of *viewer* is ready.
+
+    Before startup has finished the callback joins the viewer's
+    ``_ready_callbacks``, which the launcher fires once, when the last scene
+    is ready.  After that it runs now, and the handle is already inactive.
+    """
+    tracker = getattr(viewer, "_startup", None)
+    if tracker is not None and tracker.state is StartupState.READY:
+        callback()
+        return inactive_handle()
+    return register_callback(viewer._ready_callbacks, callback)

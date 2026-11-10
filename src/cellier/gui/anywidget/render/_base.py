@@ -91,6 +91,21 @@ class AnywidgetRenderConfigPanel(anywidget.AnyWidget):
             controller.render_config.ambient_occlusion
         )
         controller.connect_widget(panel, subscription_specs=panel.subscription_specs())
+
+    Parameters
+    ----------
+    config :
+        The live config section this panel drives (for example
+        ``controller.render_config.outline``).  The panel's controls start
+        from its current values.
+    title :
+        Heading drawn above the panel.  Empty (the default) draws none.
+    slot_usage :
+        Zero-argument callable returning ``{slot: how many visuals use it}``,
+        annotating the outline palette swatches.  ``None`` (the default)
+        draws no annotation.  Only the outline panel uses it.
+    **kwargs :
+        Passed to ``anywidget.AnyWidget``.
     """
 
     #: Which render-config section this panel drives.
@@ -215,8 +230,9 @@ class AnywidgetRenderConfigPanel(anywidget.AnyWidget):
         """Unsubscribe from the bus and release the widget.
 
         ``closed`` tells the controller to drop this widget's
-        subscriptions; the rest actually releases the widget.  See
-        ``cellier.gui.anywidget._teardown`` for why both steps are needed.
+        subscriptions; the rest actually releases the widget.  Both are
+        needed: ``ipywidgets`` holds every widget, and every widget's
+        ``layout``, in a process-global table that only ``close()`` clears.
         """
         self.closed.emit()
         close_aux_widgets(self)

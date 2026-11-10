@@ -132,8 +132,7 @@ class AnywidgetAppearanceField(anywidget.AnyWidget):
         """Unsubscribe from the bus and release the widget.
 
         ``closed`` tells the controller to drop this widget's subscriptions;
-        the rest actually releases the widget.  See
-        ``cellier.gui.anywidget._teardown`` for why both steps are needed --
+        the rest actually releases the widget.  Both are needed:
         ``ipywidgets`` holds every widget, and every widget's ``layout``, in a
         process-global table that only ``close()`` clears.
         """
@@ -347,8 +346,9 @@ class AnywidgetIntSpin(AnywidgetAppearanceField):
 class AnywidgetChoice(AnywidgetAppearanceField):
     """Layer 2: a select for a ``Literal`` field.
 
-    ``choices`` is a synced list, filled from the model's own annotation, so
-    ``choice.js`` builds the options without knowing which field it serves.
+    Each subclass writes its options out in ``_default_choices``; a test
+    checks every list against its model's ``Literal`` so the two cannot
+    drift.  ``choices=`` replaces the list for one widget.
     """
 
     _esm = _STATIC / "choice.js"

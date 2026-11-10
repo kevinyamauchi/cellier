@@ -495,7 +495,7 @@ class RenderManager:
         """Recompute the auto occlusion radius for one scene.
 
         Reads the scene's world bounding box once and hands its diagonal to
-        every canvas showing that scene.  An explicit ``ssao.radius``
+        every canvas showing that scene.  An explicit ``ambient_occlusion.radius``
         overrides the result, so this is safe to call unconditionally.
 
         Parameters
@@ -1027,7 +1027,8 @@ class RenderManager:
     ) -> CanvasView:
         """Create a ``CanvasView``, register it, and return it.
 
-        The caller embeds ``canvas_view.widget`` in their Qt layout.
+        The caller embeds ``canvas_view.widget`` in their layout: a Qt
+        layout for ``gui="qt"``, a notebook cell for ``gui="anywidget"``.
 
         Parameters
         ----------
@@ -1036,7 +1037,8 @@ class RenderManager:
         scene_id : UUID
             ID of the scene this canvas should render.
         parent : QWidget or None
-            Parent widget for the underlying ``QRenderWidget``.
+            Parent widget for the underlying ``QRenderWidget``.  Ignored by
+            the anywidget and offscreen backends.
         **canvas_view_kwargs
             Additional keyword arguments forwarded to ``CanvasView.__init__``
             (e.g. ``dim``, ``fov``, ``depth_range``, ``gui``, ``size``).

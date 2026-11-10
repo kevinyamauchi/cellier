@@ -59,9 +59,10 @@ class ContinuousAxisValues(CellierModel):
     Parameters
     ----------
     min : float
-        Lowest world position the slider reaches.
+        Lowest world position the slider reaches.  Must be finite.
     max : float
-        Highest world position the slider reaches.  Must be ``>= min``.
+        Highest world position the slider reaches.  Must be finite and
+        ``>= min``.
     decimals : int
         Decimal places the slider's position readout shows.  Default 2.
         Display only: the slider stays continuous and the model receives the
@@ -99,24 +100,32 @@ class DiscreteAxisValues(CellierModel):
 
     The slider steps through ``values`` by position, so irregular spacing is
     fine.  A position set from elsewhere that falls between two values is
-    shown as the nearest one (see `nearest_value_index`); it is not
-    written back, because the renderer resolves it with the same rule.
+    shown as the nearest one (a position exactly halfway between two values
+    goes to the higher one); it is not written back, because the renderer
+    resolves it with the same rule.
 
     Parameters
     ----------
     values : tuple[float, ...]
-        World positions, strictly increasing.  A tuple rather than an array
+        World positions: at least one, all finite, strictly increasing.
+        A tuple rather than an array
         so that equality stays total -- an ndarray field makes ``__eq__``
         return an array, which breaks every containing model's comparison.
     labels : tuple[str, ...] or None
-        Readout text for each value, e.g. channel names.  ``None`` shows the
-        value itself.
+        Readout text for each value, e.g. channel names; one entry per value.
+        ``None`` shows the value itself.
     draw_ticks : bool
         Whether the slider marks each value with a tick.  Default ``False``:
         one mark per value is only affordable on a short axis, and nothing
         turns it on by itself.  Set it on an axis that has few enough values
-        to be worth marking, such as a channel axis.  Warns above
-        `TICK_WARNING_LIMIT` marks.
+        to be worth marking, such as a channel axis.  Warns (``UserWarning``)
+        above 50 marks, where dragging the slider becomes unresponsive.
+
+    Raises
+    ------
+    ValueError
+        When *values* is empty, not finite or not strictly increasing, or
+        *labels* does not have one entry per value.
     """
 
     model_config = ConfigDict(frozen=True)
