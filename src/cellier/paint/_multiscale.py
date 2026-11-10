@@ -240,7 +240,7 @@ class MultiscalePaintController(AbstractPaintController):
         self._teardown()
 
     def _teardown(self) -> None:
-        """Stop autosave timer, unsubscribe bus events, re-enable camera."""
+        """Stop autosave timer, unsubscribe bus events, release the camera."""
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
             self._autosave_timer = None

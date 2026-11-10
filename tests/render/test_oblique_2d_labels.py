@@ -26,7 +26,7 @@ from cellier.data import ImageMemoryStore
 from cellier.render import RenderManagerConfig
 from cellier.render._config import OutlineConfig, OutlineLayerConfig
 from cellier.scene.dims import spatial_axes
-from cellier.transform import slice_footprint
+from cellier.transform._slice_plane import slice_footprint
 from cellier.visuals import (
     InMemoryImageSingleAppearance,
     MultiscaleLabelRenderConfig,

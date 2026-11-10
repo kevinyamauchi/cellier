@@ -205,27 +205,29 @@ from cellier.scene.scene import Scene
 from cellier.transform import (
     AffineTransform,
     CoordinateSystemType,
-    DepthAlignment,
     NonAffineTransformError,
     NonInvertibleTransformError,
-    ProjectionRefusal,
-    ProjectionRefusalReason,
     RegionSelection,
     RenderedCoordinateSystem,
-    RouteDecision,
-    RouteRefusalReason,
     SliceAlignment,
-    SliceRoute,
     ViewClassification,
     VisualCoordinateSystem,
-    choose_slice_route,
-    classify_projection,
     classify_view,
     effective_transform,
+)
+from cellier.transform._alignment import _rank_of_rows
+from cellier.transform._slice_plane import (
+    DepthAlignment,
+    ProjectionRefusal,
+    ProjectionRefusalReason,
+    RouteDecision,
+    RouteRefusalReason,
+    SliceRoute,
+    choose_slice_route,
+    classify_projection,
     projection_axis,
     slice_footprint,
 )
-from cellier.transform._alignment import _rank_of_rows
 from cellier.viewer_model import DataManager, ViewerModel
 
 if TYPE_CHECKING:
@@ -5687,7 +5689,7 @@ class CellierController:
                     drawable=False,
                     reason=refusal,
                 )
-        decision = self.slice_route(visual.id)
+        decision = self._slice_route(visual.id)
         route = self._slice_routes.get(visual.id)
         if decision is not None and decision.route is SliceRoute.NONE:
             # The route table refuses it.
@@ -5876,7 +5878,7 @@ class CellierController:
             return None, None
         return geometry, None
 
-    def slice_route(self, visual_id: UUID) -> RouteDecision | None:
+    def _slice_route(self, visual_id: UUID) -> RouteDecision | None:
         """Which path draws a raster visual in its 2D view.
 
         Parameters
@@ -12010,9 +12012,11 @@ class CellierController:
         visual_id : UUID
             Visual to paint on.
         canvas_id : UUID
-            Canvas to bind to.  Its camera controller is disabled for
-            the session.  Pass ``controller.get_canvas_ids(scene_id)[0]``
-            for the common single-canvas case.
+            Canvas to bind to.  Its camera is held still for the session
+            (its camera models' ``controller.enabled`` is left as it is, so
+            saving during the session saves the user's setting).  Pass
+            ``controller.get_canvas_ids(scene_id)[0]`` for the common
+            single-canvas case.
         brush_value : int
             Integer label ID written to every painted voxel.
         brush_radius_voxels : float
@@ -13381,8 +13385,10 @@ class CellierController:
         canvas_id : UUID
             The canvas whose controller state should change.
         enabled : bool
-            False disables the controller (paint session active).
-            True restores normal camera interaction (session ended).
+            Whether mouse and keyboard input moves the camera.  This is the
+            user's setting, saved with the canvas: a paint session holds the
+            camera still without changing it, and the setting applies again
+            when the session ends.
         """
         canvas_view = self._render_manager._canvases[canvas_id]
         canvas_model = self._model.scenes[self._canvas_to_scene[canvas_id]].canvases[
@@ -13391,6 +13397,25 @@ class CellierController:
         for camera_model in canvas_model.cameras.values():
             camera_model.controller.enabled = enabled
         canvas_view.set_controller_enabled(enabled)
+
+    def _lock_camera_input(self, canvas_id: UUID, owner_id: UUID) -> None:
+        """Hold *canvas_id*'s camera still for *owner_id* (a paint session).
+
+        Runtime only: the camera models' ``controller.enabled`` -- the
+        user's setting, which a saved file records -- is left alone, so
+        saving during a session does not save a frozen camera, and the
+        user's setting applies again on `_unlock_camera_input`.
+        """
+        self._render_manager._canvases[canvas_id]._lock_input(owner_id)
+
+    def _unlock_camera_input(self, canvas_id: UUID, owner_id: UUID) -> None:
+        """Release *owner_id*'s hold from `_lock_camera_input`.
+
+        A no-op if the canvas has been removed or *owner_id* holds none.
+        """
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        if canvas_view is not None:
+            canvas_view._unlock_input(owner_id)
 
     def _invalidate_painted_regions(self, store_id: UUID, regions: tuple) -> list[int]:
         """Drop GPU data painted over, so the next reslice fetches it again.

@@ -46,6 +46,9 @@ class StubController:
         self.reslice_calls.append(scene_id)
         callback()
 
+    def on_scene_removed(self, scene_id, callback, owner_id=None):
+        return SimpleNamespace(unsubscribe=lambda: None)
+
     def on_canvas_first_frame(self, canvas_id, cb, owner_id=None):
         self._first_frame_cbs.append(cb)
 

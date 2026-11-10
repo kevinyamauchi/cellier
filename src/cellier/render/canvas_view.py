@@ -263,6 +263,10 @@ class CanvasView:
         # (the camera models' ``controller.enabled``).  The controller of
         # the dim not shown is always off.
         self._controller_enabled: dict[str, bool] = {"2d": True, "3d": True}
+        # Owners (paint sessions) holding camera input off, whatever the
+        # models say.  Runtime only: never written to the camera models, so
+        # a saved file does not record it.
+        self._input_locks: set = set()
 
         # Activate the initial dim; disable the other controller.
         if dim == "2d":
@@ -1305,8 +1309,9 @@ class CanvasView:
         Parameters
         ----------
         enabled : bool
-            False disables the controller (paint mode active).
-            True restores normal camera interaction.
+            Whether the controllers take input.  While a paint session is
+            active they stay off regardless, and take this setting when it
+            ends.
         """
         for dim in ("2d", "3d"):
             self.set_controller_enabled_for_dim(dim, enabled)
@@ -1326,7 +1331,40 @@ class CanvasView:
         """
         self._controller_enabled[dim] = bool(enabled)
         if dim == self._dim:
-            self._controller.enabled = bool(enabled)
+            self._controller.enabled = self._controller_takes_input(dim)
+
+    def _lock_input(self, owner) -> None:
+        """Hold both camera controllers off on behalf of *owner*.
+
+        For a paint session: the drag paints instead of moving the camera.
+        Kept apart from the per-dim enabled state (the camera models'
+        ``controller.enabled``), so the models keep the user's setting and
+        it comes back when the last lock is released.  Locking twice with
+        one owner is the same as once.
+
+        Parameters
+        ----------
+        owner : Hashable
+            Who holds the lock; ``_unlock_input`` with the same owner
+            releases it.
+        """
+        self._input_locks.add(owner)
+        self._controller.enabled = self._controller_takes_input(self._dim)
+
+    def _unlock_input(self, owner) -> None:
+        """Release *owner*'s lock from ``_lock_input``; no-op if none held.
+
+        Parameters
+        ----------
+        owner : Hashable
+            The owner passed to ``_lock_input``.
+        """
+        self._input_locks.discard(owner)
+        self._controller.enabled = self._controller_takes_input(self._dim)
+
+    def _controller_takes_input(self, dim: str) -> bool:
+        """*dim*'s controller is on: enabled for *dim* and not locked."""
+        return self._controller_enabled[dim] and not self._input_locks
 
     def switch_dim(self, new_dim: str) -> bool:
         """Switch the canvas between ``"2d"`` and ``"3d"`` rendering modes.
@@ -1361,7 +1399,7 @@ class CanvasView:
             self._camera = self._camera_3d
             self._controller = self._controller_3d
             self._accum_pass.enabled = True
-        self._controller.enabled = self._controller_enabled[new_dim]
+        self._controller.enabled = self._controller_takes_input(new_dim)
         self._dim = new_dim
         self._apply_ssao_enabled()
         # Caching the state of the camera we just swapped *to* means the diff

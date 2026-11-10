@@ -61,8 +61,10 @@ class AbstractPaintController(ABC):
     visual_id : UUID
     scene_id : UUID
     canvas_id : UUID
-        Mouse subscriptions are scoped to this canvas; its camera
-        controller is disabled for the session duration.
+        Mouse subscriptions are scoped to this canvas; its camera is held
+        still for the session (in 2D and 3D), without changing the camera
+        models' ``controller.enabled``, so saving during a session saves
+        the user's setting.
     data_store_id : UUID
         Recorded on every `PaintStrokeCommand` for history
         attribution.
@@ -133,9 +135,10 @@ class AbstractPaintController(ABC):
             owner_id=self._id,
         )
 
-        # Disable camera controller last so a construction failure leaves
-        # the camera enabled.
-        cellier_controller.set_camera_controller_enabled(canvas_id, False)
+        # Hold the camera still last, so a construction failure leaves it
+        # free.  A runtime lock, not the camera models' ``enabled`` (which a
+        # saved file records).
+        cellier_controller._lock_camera_input(canvas_id, self._id)
 
     # ------------------------------------------------------------------
     # Brush parameter accessors
@@ -303,9 +306,9 @@ class AbstractPaintController(ABC):
     # ------------------------------------------------------------------
 
     def _teardown(self) -> None:
-        """Unsubscribe bus events and re-enable the camera controller."""
+        """Unsubscribe bus events and release the camera."""
         self._controller._outgoing_events.unsubscribe_all(self._id)
-        self._controller.set_camera_controller_enabled(self._canvas_id, True)
+        self._controller._unlock_camera_input(self._canvas_id, self._id)
 
     # ------------------------------------------------------------------
     # Abstract storage hooks

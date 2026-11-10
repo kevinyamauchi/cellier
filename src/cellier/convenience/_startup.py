@@ -169,6 +169,25 @@ class StartupTracker:
         self._stalled_at = stalled
         fire_registered(self._stalled_callbacks, dict(stalled))
 
+    def forget(self, key: str) -> None:
+        """Drop scene *key*, which was removed: it no longer counts.
+
+        The aggregate state, progress and stall report then cover the
+        remaining scenes only, and *key*'s pending ``on_scene_ready``
+        callbacks are dropped unfired (the controller cancels its own
+        readiness callbacks for a removed scene the same way).  Progress
+        callbacks fire with the new totals.
+        """
+        if key not in self._states:
+            return
+        del self._states[key]
+        self._stalled_at.pop(key, None)
+        self._canvas_ids.pop(key, None)
+        # Clear in place: the handles hold this list, so they go inactive.
+        self._scene_callbacks.pop(key, []).clear()
+        ready, total = self.progress
+        fire_registered(self._progress_callbacks, ready, total)
+
     def set_canvas(self, key: str, canvas_id: UUID) -> None:
         """Record which canvas serves *key*, for diagnostics."""
         self._canvas_ids[key] = canvas_id

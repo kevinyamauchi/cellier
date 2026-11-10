@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from cellier.convenience._sidecar import SidecarOptions
     from cellier.convenience._viewer import Viewer
     from cellier.convenience.layout._spec import Layout
+    from cellier.events import SubscriptionHandle
 
     ViewerLike = Viewer | OrthoViewer
 
@@ -386,7 +387,9 @@ def _init_view(
     Any callbacks registered on the viewer via ``viewer.on_ready`` plus the
     *on_ready* argument fire once, after the *last* scene becomes ready.  A
     ``viewer.on_ready`` callback fires on the first startup only; it is
-    dropped once it has run.
+    dropped once it has run.  A scene removed (``remove_scene``) before it
+    is ready counts as done, so the remaining scenes can still finish
+    startup; removing the last one finishes it at once.
 
     Camera-driven reslicing is suppressed for the duration of the startup load
     and restored once every scene is ready.  Without this, the initial
@@ -433,8 +436,12 @@ def _init_view(
 
     aggregate = {"remaining": len(scene_items), "fired": False}
 
+    removal_handles: list[SubscriptionHandle] = []
+
     def _finish_startup() -> None:
         aggregate["fired"] = True
+        for handle in removal_handles:
+            handle.unsubscribe()
         controller.camera_reslice_enabled = prev_reslice_enabled
         if ready_callbacks is not None:
             fire_registered(ready_callbacks, once=True)
@@ -447,9 +454,30 @@ def _init_view(
         if aggregate["remaining"] <= 0 and not aggregate["fired"]:
             _finish_startup()
 
+    def _scene_removed(key: str) -> None:
+        # Removing a scene cancels its readiness callback, so a scene removed
+        # before it was ready would hold startup open for good: no
+        # ``on_ready``, and camera reslicing left off for every other scene.
+        # Count it as done instead.  (Only armed until startup finishes.)
+        counted = tracker.scene_states.get(key) is StartupState.READY
+        tracker.forget(key)
+        if not counted:
+            aggregate["remaining"] -= 1
+            if aggregate["remaining"] <= 0 and not aggregate["fired"]:
+                _finish_startup()
+
     if not scene_items:
         _finish_startup()
         return tracker
+
+    for key, scene in scene_items:
+        removal_handles.append(
+            controller.on_scene_removed(
+                scene.id,
+                lambda _event, k=key: _scene_removed(k),
+                owner_id=controller._id,
+            )
+        )
 
     for key, scene in scene_items:
         canvas_ids = controller.get_canvas_ids(scene.id)

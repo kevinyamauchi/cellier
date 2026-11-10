@@ -22,7 +22,7 @@ from cellier.data import ImageMemoryStore, PointsMemoryStore
 from cellier.render import _render_planes
 from cellier.render.visuals._chunked import viewport_prism
 from cellier.scene.dims import spatial_axes
-from cellier.transform import slice_footprint
+from cellier.transform._slice_plane import slice_footprint
 from cellier.visuals import (
     InMemoryImageSingleAppearance,
     MultiscaleImageAppearance,
