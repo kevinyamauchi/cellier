@@ -37,16 +37,6 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 
-class _UnsetType:
-    """Sentinel distinguishing "no initial value given" from ``None``."""
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return "UNSET"
-
-
-_UNSET = _UnsetType()
-
-
 class QtAppearanceField:
     """Bidirectional control for **one** appearance field on one or more visuals.
 
@@ -75,7 +65,8 @@ class QtAppearanceField:
         UUIDs to drive as one group.
     initial_value :
         Starting value -- typically read off the visual's appearance model.
-        Defaults to the control type's ``_default_value``.
+        ``None`` (the default) starts the control at its type's default
+        (``_default_value``).
     parent :
         Optional Qt parent widget.
     """
@@ -91,14 +82,14 @@ class QtAppearanceField:
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         parent=None,
     ) -> None:
         self._id = uuid4()
         self._visual_ids = normalize_visual_ids(visual_id)
         self._spec = self._make_spec()
 
-        value = self._default_value if initial_value is _UNSET else initial_value
+        value = self._default_value if initial_value is None else initial_value
         self._control = self._build(value, parent)
         # ``_build`` is left alone: layer 2 keeps building exactly the control
         # it always did and knows nothing about being labelled.
@@ -265,7 +256,7 @@ class QtBoundedSlider(QtAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         decimals: int | None = None,
         parent=None,
     ) -> None:
@@ -314,7 +305,7 @@ class QtFloatSpin(QtAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         value_range: tuple[float, float] | None = None,
         step: float | None = None,
         decimals: int | None = None,
@@ -362,7 +353,7 @@ class QtIntSpin(QtAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         value_range: tuple[int, int] | None = None,
         step: int | None = None,
         parent=None,
@@ -421,7 +412,7 @@ class QtChoice(QtAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         choices: Sequence[str] | None = None,
         parent=None,
     ) -> None:

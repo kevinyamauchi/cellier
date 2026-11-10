@@ -41,16 +41,6 @@ if TYPE_CHECKING:
 _STATIC = Path(__file__).parent / "static"
 
 
-class _UnsetType:
-    """Sentinel distinguishing "no initial value given" from ``None``."""
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return "UNSET"
-
-
-_UNSET = _UnsetType()
-
-
 class AnywidgetAppearanceField(anywidget.AnyWidget):
     """Bidirectional control for **one** appearance field on one or more visuals.
 
@@ -71,7 +61,8 @@ class AnywidgetAppearanceField(anywidget.AnyWidget):
         UUIDs to drive as one group.
     initial_value :
         Starting value -- typically read off the visual's appearance model.
-        Defaults to the control type's ``_default_value``.
+        ``None`` (the default) starts the control at its type's default
+        (``_default_value``).
     """
 
     _field: ClassVar[str]
@@ -87,10 +78,10 @@ class AnywidgetAppearanceField(anywidget.AnyWidget):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         **kwargs,
     ) -> None:
-        value = self._default_value if initial_value is _UNSET else initial_value
+        value = self._default_value if initial_value is None else initial_value
         super().__init__(value=self._coerce(value), label=self._label, **kwargs)
 
         self._id = uuid4()
@@ -247,7 +238,7 @@ class AnywidgetBoundedSlider(AnywidgetAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         **kwargs,
     ) -> None:
         low, high = self._default_range
@@ -284,7 +275,7 @@ class AnywidgetFloatSpin(AnywidgetAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         value_range: tuple[float, float] | None = None,
         step: float | None = None,
         **kwargs,
@@ -326,7 +317,7 @@ class AnywidgetIntSpin(AnywidgetAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         value_range: tuple[int, int] | None = None,
         step: int | None = None,
         **kwargs,
@@ -364,7 +355,7 @@ class AnywidgetChoice(AnywidgetAppearanceField):
         self,
         visual_id: UUID | Sequence[UUID],
         *,
-        initial_value: Any = _UNSET,
+        initial_value: Any = None,
         choices: Sequence[str] | None = None,
         **kwargs,
     ) -> None:

@@ -1,4 +1,4 @@
-"""Tests for scene-level readiness: reslice_scene(on_ready=...) / on_scene_ready.
+"""Tests for scene-level readiness: on_scene_ready.
 
 These exercise the armed-quiescence tracker that fires a single callback once
 every visual loaded by a reslice has committed to the GPU, across mixed
@@ -46,32 +46,19 @@ def _build_mixed_scene(controller: CellierController):
 
 
 async def test_on_ready_fires_once_after_mixed_geometry_commits(qtbot):
-    """reslice_scene(on_ready=...) fires exactly once after image + points load."""
-    controller = CellierController()
-    scene, _img, _pts = _build_mixed_scene(controller)
-
-    calls: list[int] = []
-    controller.reslice_scene(scene.id, on_ready=lambda: calls.append(1))
-
-    # Not ready yet: the async brick/tile reads have not been driven.
-    assert calls == []
-
-    await drain_loading(controller)
-
-    assert calls == [1], "on_ready must fire exactly once after all data commits"
-
-
-async def test_on_scene_ready_is_equivalent(qtbot):
-    """on_scene_ready triggers the load and fires the callback once."""
+    """on_scene_ready fires exactly once after image + points load."""
     controller = CellierController()
     scene, _img, _pts = _build_mixed_scene(controller)
 
     calls: list[int] = []
     controller.on_scene_ready(scene.id, lambda: calls.append(1))
 
+    # Not ready yet: the async brick/tile reads have not been driven.
+    assert calls == []
+
     await drain_loading(controller)
 
-    assert calls == [1]
+    assert calls == [1], "the callback must fire exactly once after all data commits"
 
 
 def test_on_ready_fires_immediately_when_nothing_to_load(qtbot):
@@ -81,7 +68,7 @@ def test_on_ready_fires_immediately_when_nothing_to_load(qtbot):
     controller.add_canvas(scene_id=scene.id)
 
     calls: list[int] = []
-    controller.reslice_scene(scene.id, on_ready=lambda: calls.append(1))
+    controller.on_scene_ready(scene.id, lambda: calls.append(1))
 
     # No visuals -> no ResliceStartedEvent -> pending stays 0 -> fires
     # synchronously when the arming window closes (no event loop needed).

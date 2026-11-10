@@ -574,7 +574,7 @@ def _route_refusal_reason(
 ) -> str:
     """Why the route table refuses a raster view."""
     noun = _FAMILY_NOUN[family]
-    if decision.reason is RouteRefusalReason.PULLBACK_NOT_2D:
+    if decision.reason is RouteRefusalReason.PULLBACK_WRONG_DIMENSION:
         # A slab over a 2D store meets it along a line too.
         if (decision.dimension or 0) < (3 if projecting else 2):
             return f"this view cuts the {noun} along a line; nothing to draw"
@@ -582,7 +582,7 @@ def _route_refusal_reason(
             f"this view's slice runs through {decision.dimension} data "
             f"dimensions of the {noun}; {noun}s can draw slices through a plane"
         )
-    if decision.reason is RouteRefusalReason.TOO_MANY_VARYING_AXES:
+    if decision.reason is RouteRefusalReason.VARYING_AXES_NOT_THREE:
         return (
             f"this view's slice runs through {decision.dimension} data axes of "
             f"the {noun}; {noun}s can draw slices through at most 3"
@@ -5820,7 +5820,7 @@ class CellierController:
                 # also reads a pinned one): nothing it can draw.
                 decision = RouteDecision(
                     SliceRoute.NONE,
-                    RouteRefusalReason.TOO_MANY_VARYING_AXES,
+                    RouteRefusalReason.VARYING_AXES_NOT_THREE,
                     len(retained),
                 )
                 axes = None
@@ -8421,67 +8421,22 @@ class CellierController:
             selections[canvas_id] = scene.dims.to_selection(rendered, embedding)
         return selections
 
-    def reslice_scene(
-        self,
-        scene_id: UUID,
-        *,
-        on_ready: Callable[[], None] | None = None,
-        owner_id: UUID | None = None,
-    ) -> None:
+    def reslice_scene(self, scene_id: UUID) -> None:
         """Trigger a data load for all visuals in one scene.
+
+        To be called back once the loaded data is on the GPU, use
+        `on_scene_ready`, which starts the same reslice.
 
         Parameters
         ----------
         scene_id : UUID
             ID of the scene to reslice.
-        on_ready : Callable[[], None] or None
-            If provided, a zero-argument callback fired exactly once after
-            *all* visuals loaded by this reslice have committed to the GPU
-            (across every canvas attached to the scene).  Visuals with no data
-            in the current view (culled, empty, or hidden) do not delay it.
-            Works uniformly for in-memory, multiscale, multichannel, and
-            geometry visuals.  See `on_scene_ready`.
-
-            A reslice of the scene that starts before the callback fires
-            (a camera move, a dims change) adds its visuals to the wait, so
-            the callback fires once the scene has no load in flight.  A
-            visual removed while it loads stops counting.  The callback never
-            fires if its subscriptions are removed first
-            (`unsubscribe_owner` with *owner_id*) or the scene is removed.
-            `on_scene_ready` does the same and returns a handle that cancels
-            it.
-        owner_id : UUID or None
-            Owner under which the temporary ``on_ready`` subscriptions are
-            registered (for teardown).  Defaults to the controller's own id.
         """
-        self._reslice_scene(scene_id, on_ready=on_ready, owner_id=owner_id)
-
-    def _reslice_scene(
-        self,
-        scene_id: UUID,
-        *,
-        on_ready: Callable[[], None] | None,
-        owner_id: UUID | None,
-    ) -> SubscriptionHandle | None:
-        """Run `reslice_scene`; return the readiness handle, if any."""
         dims_state = self._dims_state_for_scene(scene_id)
         visual_configs = self._build_visual_configs_for_scene(scene_id)
-
         selections = self._selections_for_scene(scene_id)
-
-        if on_ready is None:
-            self._render_manager.reslice_scene(
-                scene_id, dims_state, visual_configs, selections=selections
-            )
-            return None
-
-        return self._notify_when_resliced(
-            scene_id,
-            on_ready,
-            owner_id or self._id,
-            lambda: self._render_manager.reslice_scene(
-                scene_id, dims_state, visual_configs, selections=selections
-            ),
+        self._render_manager.reslice_scene(
+            scene_id, dims_state, visual_configs, selections=selections
         )
 
     def _notify_when_resliced(
@@ -14514,8 +14469,9 @@ class CellierController:
         callback : Callable[[], None]
             Zero-argument callback fired once the scene's data is resident.
         owner_id : UUID or None
-            Owner under which the temporary subscriptions are registered.
-            Defaults to the controller's own id.
+            Owner under which the temporary subscriptions are registered;
+            `unsubscribe_owner` with it cancels the callback too.  Defaults
+            to the controller's own id.
 
         Returns
         -------
@@ -14525,9 +14481,12 @@ class CellierController:
             the scene had nothing to load and *callback* ran before this
             returned.
         """
-        handle = self._reslice_scene(scene_id, on_ready=callback, owner_id=owner_id)
-        assert handle is not None
-        return handle
+        return self._notify_when_resliced(
+            scene_id,
+            callback,
+            owner_id or self._id,
+            lambda: self.reslice_scene(scene_id),
+        )
 
     def on_canvas_connected(
         self,

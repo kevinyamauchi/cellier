@@ -386,8 +386,8 @@ class QtClippingPlanesControls(VisualIdGroup):
         """The reason the last edit was refused, or ""."""
         return self._error.text()
 
-    def row(self, index: int) -> _PlaneRow:
-        """The widgets of plane *index* (for tests and scripting)."""
+    def _row(self, index: int) -> _PlaneRow:
+        """The widgets of plane *index* (for tests)."""
         return self._rows[index]
 
     def close(self) -> None:

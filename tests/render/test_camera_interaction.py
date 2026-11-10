@@ -688,7 +688,7 @@ async def test_on_ready_fires_once_when_a_jump_follows_the_reslice(make_rig):
     await rig.settle_first_frames()
     state = controller.get_camera_state(rig.canvas_id)
     fired: list[int] = []
-    controller.reslice_scene(rig.scene.id, on_ready=lambda: fired.append(1))
+    controller.on_scene_ready(rig.scene.id, lambda: fired.append(1))
     controller.set_camera_state(
         rig.canvas_id, state._replace(position=tuple(p + 5 for p in state.position))
     )

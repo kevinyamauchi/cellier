@@ -271,7 +271,7 @@ def test_a_stall_timeout_of_none_arms_no_timer():
         _id=uuid4(),
         camera_reslice_enabled=True,
         get_canvas_ids=lambda scene_id: [],
-        reslice_scene=lambda scene_id, on_ready=None: on_ready and on_ready(),
+        on_scene_ready=lambda scene_id, callback: callback(),
     )
     viewer = SimpleNamespace(
         controller=controller, scene=SimpleNamespace(id=uuid4()), _ready_callbacks=[]

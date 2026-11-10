@@ -630,11 +630,11 @@ class SliceRoute(str, Enum):
 class RouteRefusalReason(str, Enum):
     """Why a raster visual draws nothing in a view."""
 
-    PULLBACK_NOT_2D = "pullback_not_2d"
+    PULLBACK_WRONG_DIMENSION = "pullback_wrong_dimension"
     """The slice pulls back to a set of the wrong dimension in the data: not
     a plane for a slice (a line or a point, e.g. a flat store seen edge-on),
     or, for a projection, a slab that is not 3-D."""
-    TOO_MANY_VARYING_AXES = "too_many_varying_axes"
+    VARYING_AXES_NOT_THREE = "varying_axes_not_three"
     """The slice (or projection slab) moves along a number of data axes other
     than the three the brick path draws through: too many, or too few."""
     NORMAL_NOT_ONE_AXIS = "normal_not_one_axis"
@@ -714,7 +714,7 @@ def choose_slice_route(
     if classification.pullback_dim < 2:
         return RouteDecision(
             SliceRoute.NONE,
-            RouteRefusalReason.PULLBACK_NOT_2D,
+            RouteRefusalReason.PULLBACK_WRONG_DIMENSION,
             classification.pullback_dim,
         )
     if classification.alignment is not SliceAlignment.OBLIQUE:
@@ -743,11 +743,11 @@ def _brick_or_refusal(
 ) -> RouteDecision:
     if pullback_dim != expected_dim:
         return RouteDecision(
-            SliceRoute.NONE, RouteRefusalReason.PULLBACK_NOT_2D, pullback_dim
+            SliceRoute.NONE, RouteRefusalReason.PULLBACK_WRONG_DIMENSION, pullback_dim
         )
     if len(varying) != BRICK_ROUTE_AXES:
         return RouteDecision(
-            SliceRoute.NONE, RouteRefusalReason.TOO_MANY_VARYING_AXES, len(varying)
+            SliceRoute.NONE, RouteRefusalReason.VARYING_AXES_NOT_THREE, len(varying)
         )
     return RouteDecision(SliceRoute.BRICK)
 

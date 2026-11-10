@@ -8,6 +8,8 @@ slice-result types used to fetch data for the current view.
 ::: cellier.data.BaseDataStore
 ::: cellier.data.DataStoreType
 ::: cellier.data.DatasetInfo
+::: cellier.data.RowSection
+::: cellier.data.MatrixSection
 
 ## Images
 

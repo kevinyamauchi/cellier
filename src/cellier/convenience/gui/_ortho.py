@@ -76,12 +76,6 @@ class OrthoCanvasGrid:
             view.close()
 
 
-#: Kept as the toolkit-specific names the two builders used to return.  They
-#: are one class now, so an ``isinstance`` check against either still holds.
-OrthoCanvasWidgets = OrthoCanvasGrid
-OrthoAnywidgetCanvases = OrthoCanvasGrid
-
-
 def build_ortho_grid_widget(
     ortho: OrthoViewer,
     axis_values: Mapping[int, AxisValues],

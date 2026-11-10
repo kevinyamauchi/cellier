@@ -499,8 +499,8 @@ class QtRenderPlanesControls(VisualIdGroup):
         """Why the control is disabled now, or ""."""
         return self._editor.blocked
 
-    def row(self, index: int) -> _PlaneRow:
-        """The widgets of plane *index* (for tests and scripting)."""
+    def _row(self, index: int) -> _PlaneRow:
+        """The widgets of plane *index* (for tests)."""
         return self._rows[index]
 
     def refresh(self) -> None:

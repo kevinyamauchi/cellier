@@ -52,7 +52,7 @@ def launch(
     ----------
     viewer : Viewer or OrthoViewer
         The viewer whose controller is used for ``fit_camera`` /
-        ``reslice_scene``.
+        ``on_scene_ready``.
     layout_or_window : Layout or QMainWindow or QWidget
         Either a `Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
@@ -105,7 +105,7 @@ def show(
     ----------
     viewer : Viewer or OrthoViewer
         The viewer whose controller is used for ``fit_camera`` /
-        ``reslice_scene``.
+        ``on_scene_ready``.
     layout_or_window : Layout or QMainWindow or QWidget
         Either a `Layout` spec (rendered to
         a ``QMainWindow`` by the Qt renderer) or a pre-built top-level Qt
@@ -456,7 +456,7 @@ def _init_view(
         if not canvas_ids:
             # No canvas attached yet; still load data so the model is populated.
             tracker.advance(key, StartupState.LOADING)
-            controller.reslice_scene(scene.id, on_ready=lambda k=key: _scene_ready(k))
+            controller.on_scene_ready(scene.id, lambda k=key: _scene_ready(k))
             continue
 
         tracker.set_canvas(key, canvas_ids[0])
@@ -487,7 +487,7 @@ def _init_view(
                         controller.camera_reslice_enabled = False
                 _scene_ready(k)
 
-            controller.reslice_scene(s.id, on_ready=_ready)
+            controller.on_scene_ready(s.id, _ready)
 
         # ``start=_start`` is bound now, not looked up later: ``_connected``
         # runs asynchronously, and without the default it would close over the

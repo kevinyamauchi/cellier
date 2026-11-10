@@ -42,10 +42,9 @@ class StubController:
         self.fit_calls.append(scene_id)
         self.reslice_enabled_at_fit.append(self.camera_reslice_enabled)
 
-    def reslice_scene(self, scene_id, on_ready=None):
+    def on_scene_ready(self, scene_id, callback, owner_id=None):
         self.reslice_calls.append(scene_id)
-        if on_ready is not None:
-            on_ready()
+        callback()
 
     def on_canvas_first_frame(self, canvas_id, cb, owner_id=None):
         self._first_frame_cbs.append(cb)

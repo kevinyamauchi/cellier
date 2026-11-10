@@ -272,11 +272,11 @@ class QtDimsControl:
     initial_thickness :
         Starting half-thicknesses; typically
         ``scene.dims.selection.thickness``.  An axis absent from it is 0.
-    debounce_ms :
+    throttle_ms :
         The slider rate limit in milliseconds.  While a slider is dragged, the
         new position is sent at most once per interval, and the last position
-        is always sent when the drag stops (a throttle, despite the name).
-        ``None`` (the default) is 50 ms.
+        is always sent when the drag stops.  ``None`` (the default) is
+        50 ms, the same as ``AnywidgetDimsPanel.throttle_ms``.
     axes_2d :
         Axis indices the toggle displays in 2D until the scene has shown a
         2D set; after that it returns to the last 2D set shown.  ``None``
@@ -304,7 +304,7 @@ class QtDimsControl:
         slider_axes: tuple[int, ...] | None = None,
         thickness_axes: Collection[int] | None = None,
         initial_thickness: Mapping[int, float] | None = None,
-        debounce_ms: int | None = None,
+        throttle_ms: int | None = None,
         axes_2d: tuple[int, ...] | None = None,
         axes_3d: tuple[int, ...] | None = None,
         parent: QWidget | None = None,
@@ -334,7 +334,7 @@ class QtDimsControl:
         self._rate_limit_timer = QTimer()
         self._rate_limit_timer.setSingleShot(True)
         self._rate_limit_timer.setInterval(
-            DIMS_SLIDER_THROTTLE_MS if debounce_ms is None else debounce_ms
+            DIMS_SLIDER_THROTTLE_MS if throttle_ms is None else throttle_ms
         )
         self._rate_limit_timer.timeout.connect(self._on_rate_limit_tick)
         self._slider_dirty = False

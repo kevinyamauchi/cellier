@@ -27,7 +27,13 @@ if TYPE_CHECKING:
 
 _STATIC = Path(__file__).parent / "static"
 
-__all__ = ["AnywidgetDatasetInfo", "DatasetInfo", "dataset_info_from_path"]
+__all__ = [
+    "AnywidgetDatasetInfo",
+    "DatasetInfo",
+    "MatrixSection",
+    "RowSection",
+    "dataset_info_from_path",
+]
 
 
 def _section_payload(section: Section) -> dict:

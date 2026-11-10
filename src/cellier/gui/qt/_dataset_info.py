@@ -17,8 +17,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DatasetInfo",
+    "MatrixSection",
     "QtDatasetInfo",
-    "QtOmeZarrMetadataWidget",
+    "RowSection",
     "dataset_info_from_path",
 ]
 
@@ -362,11 +363,3 @@ class QtDatasetInfo:
         for an OME-Zarr pyramid.
         """
         return cls.from_info(store.dataset_info(), title=title, parent=parent)
-
-
-QtOmeZarrMetadataWidget = QtDatasetInfo
-"""Deprecated alias.
-
-The widget renders any ``(label, value)`` rows, not only OME-Zarr metadata,
-so the name moved with the capability.
-"""

@@ -365,7 +365,7 @@ async def test_a_failed_read_completes_and_is_read_again_after_a_change(
     reads.fail = RuntimeError("the store changed under the filter")
     ready: list[int] = []
     with caplog.at_level(logging.WARNING, logger="cellier"):
-        rig.controller.reslice_scene(rig.scene.id, on_ready=lambda: ready.append(1))
+        rig.controller.on_scene_ready(rig.scene.id, lambda: ready.append(1))
         await rig.settle()
         for _ in range(2):
             rig.controller.reslice_all()

@@ -23,9 +23,7 @@ from cellier.convenience.gui._controls_config import (
     TrailControl,
 )
 from cellier.convenience.gui._ortho import (
-    OrthoAnywidgetCanvases,
     OrthoCanvasGrid,
-    OrthoCanvasWidgets,
     build_ortho_grid_widget,
 )
 
@@ -43,9 +41,7 @@ __all__ = [
     "LoadingIndicator",
     "MeshLodControl",
     "MeshSectionControl",
-    "OrthoAnywidgetCanvases",
     "OrthoCanvasGrid",
-    "OrthoCanvasWidgets",
     "OutlineControl",
     "PickingControl",
     "RenderPlanesControl",

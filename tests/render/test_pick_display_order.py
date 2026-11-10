@@ -12,21 +12,31 @@ swap of ``y`` and ``x`` misses it by 8 voxels.
 
 from __future__ import annotations
 
+import asyncio
+from uuid import uuid4
+
 import numpy as np
 import pytest
 
 from cellier.convenience import Viewer
+from cellier.convenience.capture import _wait_until_loaded
+from cellier.data import ImageMemoryStore
+from cellier.events import MaskedImagePickEvent, ViewRay
+from cellier.events._events import _CanvasRawPointerEvent
 from cellier.scene import BackgroundAppearance
 from cellier.scene.dims import spatial_axes
+from cellier.visuals import MaskedImageSingleAppearance
 from tests.render._affine import (
     P0,
     RASTER,
     add_landmark,
+    block_volume,
     drawn,
     load,
     render,
     world_matrix,
 )
+from tests.render._masked import masked_config
 
 ORDERS = [
     ("y", "x"),
@@ -79,6 +89,88 @@ def test_picks_land_on_the_landmark_in_any_display_order(tmp_path, family, displ
                 hit_visual_id=visual.id,
             )
             voxel = np.floor(np.asarray(full))
+            assert np.all(np.abs(voxel - P0) <= 2.0), (voxel, P0)
+    finally:
+        viewer.controller.close()
+
+
+def _masked_pick_events(viewer: Viewer, frame, renderer, n_picks: int = 20) -> list:
+    """Pick drawn pixels and send each through the controller's pick path."""
+    controller = viewer.controller
+    scene_id = viewer.scene.id
+    canvas_id = controller.get_canvas_ids(scene_id)[0]
+    manager = controller._render_manager
+    camera = "2d" if len(viewer.scene.dims.selection.displayed_axes) == 2 else "3d"
+    events: list[MaskedImagePickEvent] = []
+    controller.on_pick(canvas_id, MaskedImagePickEvent, events.append, owner_id=uuid4())
+
+    rows, cols = np.nonzero(drawn(frame))
+    assert rows.size > 0
+    rng = np.random.default_rng(0)
+    raw_events = []
+    for index in rng.choice(rows.size, size=min(n_picks, rows.size), replace=False):
+        info = renderer.get_pick_info((cols[index] + 0.5, rows[index] + 0.5))
+        hit = info.get("world_object")
+        assert hit is not None
+        details = manager._extract_pick_details(scene_id, hit, info)
+        assert details is not None
+        raw_events.append(
+            _CanvasRawPointerEvent(
+                canvas_id=canvas_id,
+                scene_id=scene_id,
+                action="press",
+                camera_type=camera,
+                position_2d=np.array([1.0, 2.0]) if camera == "2d" else None,
+                ray=(
+                    ViewRay(origin=np.zeros(3), direction=np.array([0.0, 0.0, 1.0]))
+                    if camera == "3d"
+                    else None
+                ),
+                hit_visual_id=manager._scenes[scene_id].get_visual_id_for_node(hit),
+                button=1,
+                modifiers=(),
+                buttons=(1,),
+                gesture_id=uuid4(),
+                pick_details=details,
+            )
+        )
+
+    async def _run() -> None:
+        for raw in raw_events:
+            controller._on_raw_pointer_event(raw)
+        await _wait_until_loaded(controller)
+
+    asyncio.run(_run())
+    assert len(events) == len(raw_events)
+    return events
+
+
+@pytest.mark.parametrize(
+    "displayed", [("x", "y"), ("x", "z", "y"), ("y", "x", "z")], ids="".join
+)
+def test_masked_image_picks_land_on_the_landmark_in_a_permuted_order(displayed):
+    """A MaskedImage pick goes through the same promotion as an image pick.
+
+    In 3D that is the paired branch the transposed display broke.  A 2D
+    MaskedImage always draws through the slice node, whose decode is laid out
+    by its own branch; ``xy`` checks that one in a permuted order.
+    """
+    viewer = _viewer(displayed)
+    try:
+        landmark = block_volume(np.float32)
+        viewer.controller.add_masked_image(
+            ImageMemoryStore(data=landmark, name="mask"),
+            ImageMemoryStore(data=landmark, name="value"),
+            viewer.scene.id,
+            single=MaskedImageSingleAppearance(
+                color_map="gray", clim=(0.0, 1.0), iso_threshold=0.5
+            ),
+            render_config=masked_config(),
+        )
+        load(viewer, slice_z=float(P0[0]) if len(displayed) == 2 else None)
+        frame, renderer, _ = render(viewer, 480)
+        for event in _masked_pick_events(viewer, frame, renderer):
+            voxel = np.floor(np.asarray(event.pick_info.data_coordinate))
             assert np.all(np.abs(voxel - P0) <= 2.0), (voxel, P0)
     finally:
         viewer.controller.close()

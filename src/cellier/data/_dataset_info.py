@@ -114,12 +114,12 @@ class DatasetInfo:
 
     Parameters
     ----------
-    sections : list[Section]
+    sections : list[RowSection | MatrixSection]
         The blocks, in display order.  Conventionally the first is an
         unlabelled `RowSection` carrying the store's identity.
     """
 
-    sections: list[Section]
+    sections: list[RowSection | MatrixSection]
 
     @property
     def rows(self) -> list[tuple[str, str]]:
