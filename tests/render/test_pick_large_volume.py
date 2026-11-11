@@ -66,7 +66,7 @@ def _volume(
     return data, centre
 
 
-def _add(viewer, family, data, tmp_path):
+def _add(viewer, family, data, tmp_path, render_mode=None):
     identity = np.eye(4)
     if family == "labels":
         store = LabelMemoryStore(data=data, name="long")
@@ -80,7 +80,10 @@ def _add(viewer, family, data, tmp_path):
         return viewer.add_image(
             store,
             single=InMemoryImageSingleAppearance(
-                color_map="gray", clim=(0.0, 1.0), render_mode="iso", iso_threshold=0.5
+                color_map="gray",
+                clim=(0.0, 1.0),
+                render_mode=render_mode or "iso",
+                iso_threshold=0.5,
             ),
             transform=bind(viewer, store, identity),
         )
@@ -99,18 +102,21 @@ def _add(viewer, family, data, tmp_path):
         appearance=MultiscaleImageAppearance(force_level=0),
         render_config=MultiscaleImageRenderConfig(**BUDGETS, block_size=64),
         single=MultiscaleImageSingleAppearance(
-            color_map="gray", clim=(0.0, 1.0), render_mode="iso", iso_threshold=0.5
+            color_map="gray",
+            clim=(0.0, 1.0),
+            render_mode=render_mode or "iso",
+            iso_threshold=0.5,
         ),
         transform=bind(viewer, store, identity),
     )
 
 
-def _run(tmp_path, family, length, x_centre=None):
+def _run(tmp_path, family, length, x_centre=None, render_mode=None):
     viewer = _viewer(DISPLAYED)
     try:
         dtype = np.int32 if family.startswith("labels") else np.float32
         data, centre = _volume(length, dtype, x_centre)
-        visual = _add(viewer, family, data, tmp_path)
+        visual = _add(viewer, family, data, tmp_path, render_mode)
         load(viewer)
         wrong = []
 
@@ -142,3 +148,26 @@ def test_surface_picks_read_the_block_on_a_long_axis(tmp_path, family, length):
 @pytest.mark.parametrize("family", ["labels_multiscale", "image_multiscale"])
 def test_surface_picks_next_to_a_brick_boundary(tmp_path, family, length, offset):
     _run(tmp_path, family, length, (length // 128) * 64 + 64 + offset + 1)
+
+
+#: A maximum intensity projection reports where the peak sample is: the first
+#: sample that reaches the peak, which with nearest sampling sits at the face
+#: the ray entered the block by.  The multiscale shader truncated that point
+#: and read the neighbour (1% of picks at 1024 voxels, 30% at 10000).
+_MIP_CASES = [
+    ("image", "mip", 1024),
+    ("image", "mip", 2048),
+    *[
+        (family, mode, n)
+        for family, mode in (
+            ("image_multiscale", "mip"),
+            ("image_multiscale", "attenuated_mip"),
+        )
+        for n in (1024, 4096, 8192, 10000)
+    ],
+]
+
+
+@pytest.mark.parametrize(("family", "mode", "length"), _MIP_CASES)
+def test_mip_picks_read_the_block_on_a_long_axis(tmp_path, family, mode, length):
+    _run(tmp_path, family, length, render_mode=mode)

@@ -99,6 +99,7 @@ from cellier.render.visuals._chunked import (
     viewport_2d,
     viewport_prism,
 )
+from cellier.render.visuals._drawn_level import DrawnLevels
 from cellier.render.visuals._image_memory import (
     _box_wireframe_positions,
     _make_aabb_line,
@@ -1731,6 +1732,8 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
         # ── 3D GPU resources (only when volume_geometry is provided) ───
         self._block_cache_3d: BlockCache3D | None = None
         self._lut_manager_3d: LutIndirectionManager3D | None = None
+        # Which table version each canvas last drew with (pick_drawn_level).
+        self._drawn_levels = DrawnLevels()
         if volume_geometry is not None:
             cache_parameters_3d = compute_block_cache_parameters_3d(
                 block_size=volume_geometry.block_size,
@@ -2998,6 +3001,27 @@ class _MultiscaleImageSlot(MultiscaleRegionPlanner):
                 self._image_geometry_2d.base_layout.grid_dims,
             )
         return None
+
+    def note_drawn(self, canvas_id) -> None:
+        """Record the tables a frame of *canvas_id* is about to draw with."""
+        self._drawn_levels.note(canvas_id, self._lut_manager_3d, self._lut_manager_2d)
+
+    def pick_drawn_level(self, hit_object, coordinate, canvas_id=None) -> int | None:
+        """The pyramid level drawn at a pick, 1-based (1 is the finest).
+
+        The level of the brick (3D) or tile (2D) that holds the hit, read from
+        the table the shader reads; ``None`` when none covers it, or, given a
+        *canvas_id*, when the table changed since that canvas drew (the pick
+        buffer is the frame it drew, and the table no longer describes it).
+        See `cellier.render.visuals._drawn_level`.
+        """
+        return self._drawn_levels.level(
+            hit_object,
+            coordinate,
+            canvas_id,
+            self._lut_manager_3d,
+            self._lut_manager_2d,
+        )
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all active materials."""
@@ -4313,6 +4337,29 @@ class GFXMultiscaleImageVisual(RenderPlanesMixin, ClippingPlanesMixin):
         if slot is None:
             return None
         return slot.pick_data_coordinate(hit_object, pick_info)
+
+    def note_drawn(self, canvas_id) -> None:
+        """Record the tables a frame of *canvas_id* is about to draw with."""
+        for slot in self._slots:
+            slot.note_drawn(canvas_id)
+
+    def pick_drawn_levels(
+        self, hit_object, coordinate, canvas_id=None
+    ) -> tuple[tuple[int, int | None], ...]:
+        """The level each drawn channel shows at a pick: ``(key, level)`` pairs.
+
+        A key is a channel in composite mode and 0 otherwise.  A level is
+        1-based (1 is the finest) or ``None``: nothing covers the hit, or the
+        channel's table changed since *canvas_id* drew (see
+        `GFXMultiscaleImageVisual.pick_drawn_level` on a slot).
+        """
+        return tuple(
+            (
+                key,
+                self._slots[index].pick_drawn_level(hit_object, coordinate, canvas_id),
+            )
+            for key, index in sorted(self._drawn.items())
+        )
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on every slot."""

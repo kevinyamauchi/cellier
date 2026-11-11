@@ -746,6 +746,12 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var lod_debug_found = false;
 
     $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
+    // The level of the brick that holds ``max_pos``, for the pick coordinate:
+    // the voxel it is in is a voxel of that level.  Written only when the
+    // maximum changes.
+    var max_lod     = vec3<f32>(1.0);
+    var max_level_w = 1u;
+
     // ── DDA state for MIP brick traversal ─────────────────────────────────
     // Brick sizes are uniform in normalized space (the voxel→norm transform
     // is a linear scale), so all grid crossings can be precomputed once.
@@ -886,6 +892,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             if (density > max_density) {
                 max_density = density;
                 max_pos     = pos;
+                max_lod     = brick.lod_scale;
+                max_level_w = brick.lut_entry.w;
             }
             $$ elif render_mode == 'attenuated_mip'
             // Accumulate normalized brightness as a depth proxy.
@@ -902,6 +910,8 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             if (attenuated > max_density) {
                 max_density = attenuated;
                 max_pos     = pos;
+                max_lod     = brick.lod_scale;
+                max_level_w = brick.lut_entry.w;
             }
             $$ else
             // ISO: detect threshold crossing.
@@ -965,12 +975,34 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     out.depth = ndc_pos_m.z / ndc_pos_m.w;
 
     $$ if write_pick
-    let mip_pick_coord = (max_pos / norm_size) + vec3<f32>(0.5);
+    // Report a point safely inside the voxel of the maximum, not on its face.
+    // The maximum is the first sample that reaches the peak value, which with
+    // nearest sampling sits at the face the ray entered a block by, and the
+    // encode quantises each axis to 14 bits (steps of ``dim / 16383`` voxels,
+    // the quantum).  So find the voxel of the drawn level that holds the point
+    // with the rule sample_atlas samples with (cellier.level_mapping.wgsl),
+    // clamp the point one quantum inside it (at most to its centre) and let the
+    // encode round to the nearest step, which moves it by at most half a
+    // quantum.  Only the pick coordinate changes.
+    let mip_p        = norm_to_voxel(max_pos, norm_size, dataset_size);
+    let mip_offset   = get_level_offset(i32(max_level_w));
+    let mip_index    = floor((mip_p - mip_offset) / max_lod + vec3<f32>(0.5));
+    let mip_centre   = max_lod * mip_index + mip_offset;
+    let mip_quantum  = max(
+        max(dataset_size.x, dataset_size.y), dataset_size.z
+    ) / 16383.0;
+    let mip_room     = 0.5 * max_lod
+                     - min(vec3<f32>(mip_quantum), 0.5 * max_lod);
+    let mip_inside   = clamp(mip_p, mip_centre - mip_room, mip_centre + mip_room);
+    let mip_pick_coord = (
+        index_to_norm(mip_inside + vec3<f32>(0.5), norm_size, dataset_size)
+        / norm_size
+    ) + vec3<f32>(0.5);
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(clamp(mip_pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(mip_pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(mip_pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+        pick_pack(u32(clamp(mip_pick_coord.x * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(mip_pick_coord.y * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(mip_pick_coord.z * 16383.0 + 0.5, 0.0, 16383.0)), 14)
     );
     $$ endif
 

@@ -1106,9 +1106,9 @@ Timing:
 
 - Points, lines, mesh and graph events, and in-memory image and labels
   events, are synchronous: they arrive straight after the mouse event.
-- Multiscale image and labels values are read at level 0 as cancellable
-  pick reads (`CancellableReads`), so their events arrive when the read
-  completes.
+- Multiscale image and labels values are read as cancellable pick reads
+  (`CancellableReads`), at the pyramid level that was drawn at the hit, so
+  their events arrive when the read completes.
   A newer pointer event on the canvas cancels an in-flight `move` read;
   `press` and `release` reads always complete, and removing the visual
   cancels all of its reads.  Match events by `gesture_id` and `action`, not
@@ -1126,6 +1126,16 @@ picked voxel.  A visual without a channel axis reports `{0: value}`; single
 mode reports its drawn channel; composite mode reports every drawn (visible)
 channel on a 2D canvas and only the pick-buffer winner's channel on a 3D
 canvas.  `LabelsPickInfo.value` is the label id at the picked voxel.
+
+For a multiscale image or labels visual, "the picked voxel" is the voxel of
+the pyramid level that was drawn at the hit, so the value agrees with the
+screen.  A hit on a coarse level is on that level's surface, a voxel or more
+from the level-0 one, and the level-0 voxel under it can be background.  The
+render layer names the level from the brick (3D) or tile (2D) table the shaders
+read, per channel in composite mode.  It cannot say when the table was rewritten
+after the frame that was picked was drawn, and then the value is read at level
+0, the data.  An in-memory visual has one level.  `data_coordinate` is always
+the level-0 position of the hit.  A MaskedImage reads level 0 (below).
 
 A MaskedImage emits `MaskedImagePickEvent` only.  Its `MaskedImagePickInfo`
 holds the hit in the mask's data coordinates and in the value's

@@ -12819,9 +12819,10 @@ class CellierController:
         and labels picks are promoted to full-rank data coordinates first, and
         carry the values under them: read now from an in-memory store's array,
         or through the pick reader for any other store, in which case the
-        event is emitted when the read completes.  The pick reader reads
-        level 0, except for a 3D labels hit, which reads the pyramid level
-        that was drawn at the hit.
+        event is emitted when the read completes.  The pick reader reads the
+        pyramid level that was drawn at the hit, level 0 where the render layer
+        cannot say which (an in-memory visual, or a table that changed since
+        the frame was drawn).
         """
         from cellier.render.render_manager import (
             _ImageDisplayedDataCoord,
@@ -12885,7 +12886,7 @@ class CellierController:
         scale_index = 0
         if isinstance(raw_pick, _LabelsDisplayedDataCoord):
             index = _voxel_index(coordinate, shape)
-            # A 3D hit is on the surface of the level that was drawn, which can
+            # A hit is on the surface of the level that was drawn, which can
             # sit a voxel of that level off the level-0 surface: read the label
             # that level shows.
             if index is not None and (raw_pick.drawn_level or 1) > 1:
@@ -12908,11 +12909,25 @@ class CellierController:
             image_coordinate, positions = _image_pick_positions(
                 visual, coordinate, raw_pick, event.camera_type
             )
+            # Every channel is read at the level it is drawn at: a coarse
+            # level's surface can sit a voxel from the level-0 one, and the
+            # value under the cursor is the one on screen.  One level for a
+            # visual that shows one channel at a time.
+            levels = dict(raw_pick.drawn_levels)
+            if not visual.composite and len(levels) == 1:
+                levels = dict.fromkeys(positions, next(iter(levels.values())))
             reads = {}
+            scale_index = {}
             for channel, position in positions.items():
                 index = _voxel_index(position, shape)
-                if index is not None:
-                    reads[channel] = index
+                if index is None:
+                    continue
+                level = levels.get(channel) or 1
+                if level > 1:
+                    coarse = _level_voxel_index(position, store, level)
+                    if coarse is not None:
+                        index, scale_index[channel] = coarse, level - 1
+                reads[channel] = index
 
             def build(values: dict) -> ImagePickEvent:
                 return ImagePickEvent(
@@ -12977,7 +12992,7 @@ class CellierController:
         reads: dict[int, tuple[int, ...]],
         build: Callable[[dict], Any],
         *,
-        scale_index: int = 0,
+        scale_index: int | dict[Any, int] = 0,
     ) -> None:
         """Read the voxels in *reads* from *store* and emit ``build(values)``.
 
@@ -12997,15 +13012,17 @@ class CellierController:
         reads: dict[Any, tuple[int, ...]],
         on_values: Callable[[dict], None],
         *,
-        scale_index: int = 0,
+        scale_index: int | dict[Any, int] = 0,
     ) -> None:
         """Read the voxels in *reads* from *store* and call ``on_values(values)``.
 
         An in-memory store holds a plain array, so the read and the call
         happen here.  Any other store is read through the render layer's
         cancellable pick reader, at level 0 unless *scale_index* names
-        another (0-based) level whose indices *reads* holds, and *on_values*
-        is called when every value has arrived -- never, if the read is
+        another (0-based) level whose indices *reads* holds (one level for
+        every read, or a mapping from a read's key to its level, for the
+        channels of an image drawn at different levels), and *on_values* is
+        called when every value has arrived -- never, if the read is
         cancelled.
         """
         array = getattr(store, "data", None)
@@ -13025,7 +13042,11 @@ class CellierController:
             request = ChunkRequest(
                 chunk_request_id=uuid4(),
                 slice_request_id=read_id,
-                scale_index=scale_index,
+                scale_index=(
+                    scale_index.get(key, 0)
+                    if isinstance(scale_index, dict)
+                    else scale_index
+                ),
                 axis_selections=index,
             )
             keys[request.chunk_request_id] = key

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
+import zlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -20,6 +22,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from cellier.render.lut_indirection._layout_3d import BlockLayout3D
+
+#: Hands out ``LutIndirectionManager3D.version``.  One counter for every
+#: manager, so a version never repeats, whichever manager wrote it.
+_VERSIONS = itertools.count(1)
 
 
 class LutIndirectionManager3D:
@@ -113,6 +119,13 @@ class LutIndirectionManager3D:
             ):
                 _GPU_LOGGER.warning("brick_rule_padding  3d  %s", issue.describe())
         self.lut_data, self.lut_tex = build_lut_texture(base_layout)
+        # Changes whenever a write changes ``lut_data``; a rewrite to the same
+        # table (every camera move repaints it) keeps it.  A reader of the CPU
+        # table that answers for a drawn frame compares it with the version it
+        # saw when that frame was drawn
+        # (``GFXMultiscaleLabelVisual.pick_drawn_level``).
+        self.version = next(_VERSIONS)
+        self._checksum = zlib.crc32(self.lut_data)
         self.brick_max_data, self.brick_max_tex = build_brick_max_texture(base_layout)
         # The one cell -> brick rule, shared with the shaders through the
         # block-scales buffer.  See _cell_brick_rule.
@@ -203,6 +216,10 @@ class LutIndirectionManager3D:
             )
         self.lut_tex.update_range((0, 0, 0), self.lut_tex.size)
         self.brick_max_tex.update_range((0, 0, 0), self.brick_max_tex.size)
+        checksum = zlib.crc32(self.lut_data)
+        if checksum != self._checksum:
+            self._checksum = checksum
+            self.version = next(_VERSIONS)
 
 
 def build_lut_texture(base_layout: BlockLayout3D) -> tuple[np.ndarray, gfx.Texture]:

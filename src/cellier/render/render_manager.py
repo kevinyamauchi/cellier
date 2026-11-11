@@ -99,12 +99,19 @@ class _ImageDisplayedDataCoord(NamedTuple):
         visual has no channel slots or the node is not one of them.
     drawn_channels : tuple[int, ...]
         The channel indices the visual's last plan draws, ascending.
+    drawn_levels : tuple[tuple[int, int | None], ...]
+        ``(key, level)`` for each drawn channel (key 0 when the visual has no
+        channels or shows one at a time): the 1-based pyramid level drawn
+        at the hit, or ``None`` when it cannot be said (an in-memory visual,
+        a table that changed since the frame was drawn).  The controller reads
+        the value at that level.
     """
 
     displayed_data_coord: tuple[float, ...]
     collapsed_data_indices: tuple[tuple[int, int], ...] | None = None
     channel_index: int | None = None
     drawn_channels: tuple[int, ...] = ()
+    drawn_levels: tuple[tuple[int, int | None], ...] = ()
 
 
 class _LabelsDisplayedDataCoord(NamedTuple):
@@ -1276,7 +1283,7 @@ class RenderManager:
             # needed for visual-level hits and misses.
             if self._pick_details_enabled.get(canvas_id, False):
                 pick_details = self._extract_pick_details(
-                    scene_id, hit_object, event.pick_info
+                    scene_id, hit_object, event.pick_info, canvas_id
                 )
 
         _ACTION = {
@@ -1444,6 +1451,7 @@ class RenderManager:
         scene_id: UUID,
         hit_object: gfx.WorldObject,
         pick_info: dict,
+        canvas_id: UUID | None = None,
     ) -> (
         _ImageDisplayedDataCoord | _LabelsDisplayedDataCoord | VisualPickDetails | None
     ):
@@ -1470,6 +1478,10 @@ class RenderManager:
             The picked world object from the pick buffer.
         pick_info : dict
             The pygfx pick payload (``event.pick_info``).
+        canvas_id : UUID, optional
+            The canvas that was picked.  A labels visual that reads the drawn
+            level gives none if its brick table changed since this canvas
+            last drew.
 
         Returns
         -------
@@ -1548,12 +1560,20 @@ class RenderManager:
                 displayed_data_coord=coord,
                 collapsed_data_indices=collapsed_pairs,
                 drawn_level=(
-                    None if drawn_level is None else drawn_level(hit_object, coord)
+                    None
+                    if drawn_level is None
+                    else drawn_level(hit_object, coord, canvas_id)
                 ),
             )
+        drawn_levels = getattr(gfx_visual, "pick_drawn_levels", None)
         return _ImageDisplayedDataCoord(
             displayed_data_coord=coord,
             collapsed_data_indices=collapsed_pairs,
+            drawn_levels=(
+                ()
+                if drawn_levels is None
+                else drawn_levels(hit_object, coord, canvas_id)
+            ),
             # The pick-buffer winner in composite mode; the controller
             # reads channel values from these.
             channel_index=gfx_visual.pick_channel_index(hit_object),
@@ -1733,6 +1753,9 @@ class RenderManager:
             for vid in sm.visual_ids:
                 vis = sm.get_visual(vid)
                 vis.tick()
+                note_drawn = getattr(vis, "note_drawn", None)
+                if note_drawn is not None:
+                    note_drawn(canvas_id)
                 prepare_draw = getattr(vis, "prepare_draw", None)
                 if prepare_draw is not None:
                     # A capture canvas is never told of a scrub or of a

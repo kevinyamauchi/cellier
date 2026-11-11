@@ -1395,8 +1395,13 @@ class ImagePickInfo(NamedTuple):
         drawn plane in single mode, and the pick-buffer winner in composite
         mode.
     channel_values : dict[int, float]
-        Index along ``channel_axis`` -> the value at the picked voxel.  A
-        visual with ``channel_axis=None`` reports ``{0: value}``.  Single mode
+        Index along ``channel_axis`` -> the value at the picked voxel.  On a
+        multiscale visual that voxel is the one of the pyramid level drawn at
+        the hit (per channel), so the value agrees with what is on screen: a
+        coarse level's surface can sit a voxel from the level-0 one.  The value
+        is level 0's where the level cannot be said (an in-memory visual, or a
+        brick table rewritten since the frame was drawn).  A visual with
+        ``channel_axis=None`` reports ``{0: value}``.  Single mode
         reports its drawn channel.  Composite mode reports every drawn
         (visible) channel on a 2D canvas and only the pick-buffer winner on a
         3D canvas.  Empty when the voxel lies outside the data.
@@ -1442,12 +1447,13 @@ class LabelsPickInfo(NamedTuple):
         The label id at ``floor(data_coordinate)``; in 3D, the label at the
         hit voxel.  ``0`` when the voxel lies outside the data.
 
-        On a multiscale visual drawn in 3D the hit is on the surface of the
-        pyramid level that was drawn, and ``value`` is the label that level
-        holds there: the label you see.  A coarse voxel covers several level-0
-        voxels and can stand a voxel or more beyond the level-0 surface, so
-        reading level 0 at the same point could return the background.  In 2D
-        and for in-memory labels the value is read at level 0.
+        On a multiscale visual, in 2D and 3D, the hit is on the pyramid level
+        that was drawn, and ``value`` is the label that level holds there: the
+        label you see.  A coarse voxel covers several level-0 voxels and can
+        stand a voxel or more beyond the level-0 surface, so reading level 0 at
+        the same point could return the background.  The value is level 0's
+        where the level cannot be said (a brick or tile table rewritten since
+        the frame was drawn) and for in-memory labels, which have one level.
     """
 
     data_coordinate: tuple[float, ...]
@@ -1826,10 +1832,11 @@ class ImagePickEvent(NamedTuple):
     """An image visual was hit on a canvas.
 
     Emitted only for a hit, after the mouse event for the same pointer event:
-    at once for an in-memory image, and when the level-0 value read completes
-    for a multiscale image.  A newer pointer event on the canvas cancels an
-    in-flight ``move`` read; ``press`` and ``release`` reads always complete,
-    so match events by ``gesture_id`` and ``action``, not arrival order.
+    at once for an in-memory image, and when the value read completes for a
+    multiscale image (at the level drawn at the hit).  A newer pointer event on
+    the canvas cancels an in-flight ``move`` read; ``press`` and ``release``
+    reads always complete, so match events by ``gesture_id`` and ``action``, not
+    arrival order.
 
     Attributes
     ----------

@@ -15,14 +15,16 @@ hashed the full text; its digests were converted once, while the full text
 still matched ``7e1b683f`` byte for byte, so they are the comment-free hashes
 of that commit's code.
 
-One deliberate exception: the digests of the ``iso_nearest`` and
+Deliberate exceptions, all for the B12 pick fixes in
+``multiscale_volume_brick.wgsl``.  The digests of the ``iso_nearest`` and
 ``smooth_iso_linear`` scenes were replaced by hand three times, on 2026-11-10
-and twice on 2026-11-11, all for the B12 fix to the iso pick in
-``multiscale_volume_brick.wgsl`` (first to sit inside its voxel, then to clamp
-one quantum in and round the 14-bit encode, which holds on long axes, then to
-resume a brick a fraction of a voxel on instead of a fixed ``1e-4`` and to
-choose the voxel along the gradient).  Only those two digests changed, and the
-other nine entries still match ``7e1b683f``.
+and twice on 2026-11-11 (first so the iso pick coordinate sits inside its
+voxel, then to clamp one quantum in and round the 14-bit encode, which holds on
+long axes, then to resume a brick a fraction of a voxel on instead of a fixed
+``1e-4`` and to choose the voxel along the gradient).  The digests of the
+``mip_linear`` and ``attenuated_mip_linear`` scenes were replaced by hand once,
+on 2026-11-11, when the MIP pick got the same clamp and rounding.  Only those
+four digests changed, and the other seven entries still match ``7e1b683f``.
 """
 
 from __future__ import annotations

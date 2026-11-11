@@ -85,6 +85,7 @@ from cellier.render.visuals._chunked import (
     viewport_2d,
     viewport_prism,
 )
+from cellier.render.visuals._drawn_level import DrawnLevels
 from cellier.render.visuals._image import (
     MultiscaleBrickLayout3D,
     MultiscaleRegionPlanner,
@@ -332,6 +333,8 @@ class GFXMultiscaleLabelVisual(
         # ── 3D GPU resources ──────────────────────────────────────────────
         self._block_cache_3d: BlockCache3D | None = None
         self._lut_manager_3d: LutIndirectionManager3D | None = None
+        # Which table version each canvas last drew with (pick_drawn_level).
+        self._drawn_levels = DrawnLevels()
         if volume_geometry is not None:
             # overlap=2 matches the shader BORDER=2 constant
             cache_parameters_3d = compute_block_cache_parameters_3d(
@@ -1926,14 +1929,28 @@ class GFXMultiscaleLabelVisual(
             )
         return None
 
-    def pick_drawn_level(self, hit_object, coordinate) -> int | None:
-        """The pyramid level drawn at a 3D pick, 1-based (1 is the finest).
+    def note_drawn(self, canvas_id) -> None:
+        """Record the tables a frame of *canvas_id* is about to draw with.
 
-        Reads the brick table the shader reads: the level of the brick that
-        holds the hit.  A 3D pick lands on the surface of the level that was
-        drawn, which can sit up to a voxel of that level away from the
-        level-0 surface, so the label under the cursor is the one in that
+        Called in the frame, just before it renders, after the commit round
+        that writes them.  `pick_drawn_level` compares against it.
+        """
+        self._drawn_levels.note(canvas_id, self._lut_manager_3d, self._lut_manager_2d)
+
+    def pick_drawn_level(self, hit_object, coordinate, canvas_id=None) -> int | None:
+        """The pyramid level drawn at a pick, 1-based (1 is the finest).
+
+        Reads the brick or tile table the shader reads: the level of the brick
+        (3D) or tile (2D) that holds the hit.  A hit on a coarse level is on
+        that level's surface, which can sit up to a voxel of that level away
+        from the level-0 one, so the label under the cursor is the one in that
         level, not necessarily the one in level 0.
+
+        The pick buffer is the last frame that was drawn, and the table can
+        have been rewritten since (a commit round whose frame has not been
+        drawn yet).  Then it no longer says what that frame drew, and the
+        answer is ``None``: a wrong level reads a wrong label, where level 0
+        reads the data.
 
         Parameters
         ----------
@@ -1942,23 +1959,24 @@ class GFXMultiscaleLabelVisual(
         coordinate : sequence of float
             The decoded hit on the drawn axes, as `pick_data_coordinate`
             returns it.
+        canvas_id : UUID, optional
+            The canvas whose frame was picked.  Given, the answer is ``None``
+            unless the table is the one that canvas last drew with.  Omitted,
+            the table is read as it is.
 
         Returns
         -------
         int or None
-            ``None`` for a 2D hit, or when no brick covers the hit.
+            ``None`` when no brick or tile covers the hit, or when the table
+            has changed since the frame was drawn.
         """
-        manager = self._lut_manager_3d
-        if not isinstance(hit_object, NormSizedVolume) or manager is None:
-            return None
-        block = int(manager._base_layout.block_size)
-        grid = manager.lut_data.shape[:3]
-        # The decode is in pygfx (x, y, z) order; the table in (D, H, W).
-        cell = tuple(
-            min(max(int(coordinate[2 - k] // block), 0), grid[k] - 1) for k in range(3)
+        return self._drawn_levels.level(
+            hit_object,
+            coordinate,
+            canvas_id,
+            self._lut_manager_3d,
+            self._lut_manager_2d,
         )
-        level = int(manager.lut_data[cell][3])
-        return level if level >= 1 else None
 
     def on_pick_write_changed(self, event: PickWriteChangedEvent) -> None:
         """Update pick_write on all active materials."""
