@@ -16,9 +16,12 @@ still matched ``7e1b683f`` byte for byte, so they are the comment-free hashes
 of that commit's code.
 
 One deliberate exception: the digests of the ``iso_nearest`` and
-``smooth_iso_linear`` scenes were replaced by hand on 2026-11-10, when the
-iso pick coordinate was changed to sit inside its voxel (the B12 fix, in
-``multiscale_volume_brick.wgsl``).  Only those two digests changed, and the
+``smooth_iso_linear`` scenes were replaced by hand three times, on 2026-11-10
+and twice on 2026-11-11, all for the B12 fix to the iso pick in
+``multiscale_volume_brick.wgsl`` (first to sit inside its voxel, then to clamp
+one quantum in and round the 14-bit encode, which holds on long axes, then to
+resume a brick a fraction of a voxel on instead of a fixed ``1e-4`` and to
+choose the voxel along the gradient).  Only those two digests changed, and the
 other nine entries still match ``7e1b683f``.
 """
 

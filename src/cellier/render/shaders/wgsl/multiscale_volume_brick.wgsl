@@ -697,6 +697,20 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     var t             = t_start;
 
+    $$ if render_mode != 'mip' and render_mode != 'attenuated_mip'
+    // How far past a brick's exit to start the next brick, so setup_brick names
+    // the next brick rather than this one again.  It has to be a fraction of a
+    // voxel, not a fixed distance: the normalised volume is one unit long, so
+    // 1e-4 is 0.8 of a voxel on an 8192-voxel axis, and skipping that much of
+    // the next brick loses a surface within it.  It also has to stay well
+    // above the float32 resolution of ``t``.
+    let t_eps = max(
+        0.005 * min(min(norm_size.x / dataset_size.x, norm_size.y / dataset_size.y),
+                    norm_size.z / dataset_size.z),
+        5e-7
+    );
+    $$ endif
+
     // ISO state
     var surface_found = false;
     var surface_pos:  vec3<f32>;
@@ -806,7 +820,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             $$ if render_mode == 'mip' or render_mode == 'attenuated_mip'
             continue;   // DDA already advanced t; just skip to next brick.
             $$ else
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
             prev_density = 0.0;
             t_sample_carry = t;   // Fix 1: reset carry after skip.
             continue;
@@ -822,7 +836,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         $$ else
         // ISO early-out: skip bricks that are entirely below the isosurface.
         if (brick.brick_max < iso_threshold) {
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
             prev_density = 0.0;
             t_sample_carry = t;   // Fix 1: reset carry after skip.
             continue;
@@ -914,7 +928,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         if (!surface_found) {
             // Epsilon ensures setup_brick advances to the next brick.
             // Sampling continuity is handled by t_sample_carry, not t.
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
         }
         $$ endif
         // MIP/attenuated_mip: t already advanced by DDA at the top of this iteration.
@@ -1120,15 +1134,17 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // Report a point safely inside the voxel the hit is in, not on its face.
     //
     // A linearly interpolated surface can sit exactly on a voxel face (a 0/1
-    // mask at threshold 0.5), and the encode below truncates to 14 bits per
-    // axis -- ``dim / 16383`` voxels -- which moves the point *down* by up to
-    // one quantum: out of the voxel on a low face, so the consumer's
-    // ``floor`` reads the neighbour.  Start from ``hi``, the above-threshold
+    // mask at threshold 0.5), and the encode below quantises each axis to 14
+    // bits -- steps of ``dim / 16383`` voxels, the quantum -- so the point can
+    // land on either side of the face and the consumer's ``floor`` reads the
+    // neighbour.  Start from ``hi``, the above-threshold
     // end of the bisection bracket (the midpoint can be on the other side of
     // the face), find the voxel of the drawn level that holds it with the
     // rule sample_atlas samples with (cellier.level_mapping.wgsl), and clamp
-    // the point to that voxel's interior, ``4 * quantum`` from every face (at
-    // most a quarter of the voxel).  A point further in does not move; a cut
+    // the point to that voxel's interior, one quantum from every face (at most
+    // the voxel's centre); the encode rounds to the nearest step, which moves
+    // the point by at most half a quantum, so it stays in the voxel for any
+    // axis shorter than 16383 voxels.  A point further in does not move; a cut
     // face keeps its own position.  Only the pick coordinate changes.
     let pick_in_prev = hi < brick_boundary_t;
     let pick_lod     = select(surface_lod_scale, prev_lod_scale, pick_in_prev);
@@ -1137,13 +1153,21 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     let pick_p       = norm_to_voxel(
         ray_origin + ray_dir * select(hi, clip_t0, on_cut_face),
         norm_size, dataset_size);
-    let pick_index   = floor((pick_p - pick_offset) / pick_lod + vec3<f32>(0.5));
+    // The gradient points into the denser side; a hit a hair past a voxel face
+    // (a 0/1 mask at threshold 0.5) is put back on that side before the voxel
+    // is chosen.  Only the choice of voxel moves, not the point.
+    let pick_lean    = select(
+        0.02 * normalize(gradient),
+        vec3<f32>(0.0),
+        on_cut_face || length(gradient) < 1e-6
+    );
+    let pick_index   = floor((pick_p - pick_offset) / pick_lod + vec3<f32>(0.5) + pick_lean);
     let pick_centre  = pick_lod * pick_index + pick_offset;
     let pick_quantum = max(
         max(dataset_size.x, dataset_size.y), dataset_size.z
     ) / 16383.0;
     let pick_room    = 0.5 * pick_lod
-                     - min(vec3<f32>(4.0 * pick_quantum), 0.25 * pick_lod);
+                     - min(vec3<f32>(pick_quantum), 0.5 * pick_lod);
     let pick_inside  = clamp(pick_p, pick_centre - pick_room, pick_centre + pick_room);
     let iso_pick_coord = (
         index_to_norm(pick_inside + vec3<f32>(0.5), norm_size, dataset_size)
@@ -1151,9 +1175,9 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     ) + vec3<f32>(0.5);
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(clamp(iso_pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(iso_pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(iso_pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+        pick_pack(u32(clamp(iso_pick_coord.x * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(iso_pick_coord.y * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(iso_pick_coord.z * 16383.0 + 0.5, 0.0, 16383.0)), 14)
     );
     $$ endif
     $$ endif

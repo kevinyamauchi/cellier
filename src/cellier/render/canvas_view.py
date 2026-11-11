@@ -1168,12 +1168,29 @@ class CanvasView:
             ``True`` if the camera differs from the last reported state.
             ``False`` if nothing moved, in which case nothing is changed.
         """
+        self._adopt_camera_in_controllers()
         current = self.capture_camera_state()
         if current == self._last_camera_state:
             return False
         self._last_camera_state = current
         self.invalidate_accumulation()
         return True
+
+    def _adopt_camera_in_controllers(self) -> None:
+        """Give each pygfx controller with a running action the camera's state.
+
+        A controller with a running action works from the camera state it saw
+        when the action began, and writes it back on its next tick.  A click
+        leaves a finished drag that the next frame still ticks, so a camera
+        moved programmatically between the click and that frame went back to
+        where it was at the click.  Handing the controller the camera's state
+        makes the action carry on from the new pose (a drag held through the
+        move continues from it).  A controller with no action reads the camera
+        itself and needs nothing.
+        """
+        for controller in (self._controller_2d, self._controller_3d):
+            if controller._actions and controller._cameras:
+                controller._set_camera_state(controller._cameras[0][0].get_state())
 
     @property
     def last_camera_state(self) -> CameraState:

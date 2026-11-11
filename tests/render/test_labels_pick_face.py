@@ -11,10 +11,10 @@ The block's six faces are all hit from the eight octant directions, and every
 pick must decode to a voxel that holds the label.  Level 0 is forced, so the
 drawn surface is the level-0 one the controller reads.
 
-Only the multiscale (brick) shader is covered.  The in-memory labels shader
-has its own step along the ray (``label_volume.wgsl``) and still reads
-background on about 0.3% of edge hits in this test (a ray grazing a block
-edge); that is not part of B12's face bug and is left out.
+Both labels shaders are covered.  The in-memory one (``label_volume.wgsl``)
+first stepped along the ray, which read background on about 0.3% of the hits on
+a ray grazing a block edge; it now clamps into the foreground cell its DDA
+names.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from tests.render._affine import (
     render,
 )
 
-FAMILIES = ("labels_multiscale",)
+FAMILIES = ("labels", "labels_multiscale")
 ORDERS = [("z", "y", "x"), ("x", "z", "y"), ("y", "x", "z")]
 #: Octant directions plus the two horizontal axes (a camera looking along the
 #: up vector cannot be aimed with ``look_at``).
@@ -63,17 +63,20 @@ def _viewer(displayed: tuple[str, ...]) -> Viewer:
     return viewer
 
 
-def _pick_every_view(viewer, visual, displayed, check) -> int:
+def _pick_every_view(viewer, visual, displayed, check, centre=P0) -> int:
     """Pick drawn pixels from every direction; ``check(...)`` judges each one.
 
-    Returns the number of picks made.
+    *centre* is the block's centre in ``(z, y, x)``.  Returns the number of picks
+    made.
     """
     view = canvas_view(viewer)
     gfx_visual = viewer.controller._render_manager._scenes[viewer.scene.id].get_visual(
         visual.id
     )
     # Render axis k is the k-th last displayed axis.
-    target = np.array([P0["zyx".index(name)] for name in reversed(displayed)])
+    target = np.array(
+        [np.asarray(centre)["zyx".index(name)] for name in reversed(displayed)]
+    )
     rng = np.random.default_rng(0)
     n_picks = 0
     for direction in DIRECTIONS:
@@ -114,7 +117,8 @@ def test_surface_picks_read_the_label_on_every_face(tmp_path, family, displayed)
         wrong = []
 
         def check(direction, level, full):
-            assert level == 1
+            # An in-memory node has one level and reports none.
+            assert level == (None if family == "labels" else 1)
             voxel = tuple(int(v) for v in np.floor(np.asarray(full)))
             if labels[voxel] != 1:
                 wrong.append((direction.round(2).tolist(), full))

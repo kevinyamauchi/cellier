@@ -558,6 +558,18 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     var on_cut_face = false;
 
     var t             = t_start;
+
+    // How far past a brick's exit to start the next brick, so setup_brick names
+    // the next brick rather than this one again.  It has to be a fraction of a
+    // voxel, not a fixed distance: the normalised volume is one unit long, so
+    // 1e-4 is 0.8 of a voxel on an 8192-voxel axis, and skipping that much of
+    // the next brick loses a surface within it.  It also has to stay well
+    // above the float32 resolution of ``t``.
+    let t_eps = max(
+        0.005 * min(min(norm_size.x / dataset_size.x, norm_size.y / dataset_size.y),
+                    norm_size.z / dataset_size.z),
+        5e-7
+    );
     var surface_found = false;
     // surface_pos: midpoint after bisection (used for depth).
     var surface_pos   = vec3<f32>(0.0);
@@ -594,7 +606,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             // rounding range (BORDER = 2) — so sample_atlas_label cannot
             // snap it into the first foreground voxel of the next brick.
             prev_t = (t + brick.t_end) * 0.5;
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
             continue;
         }
 
@@ -602,7 +614,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         if (brick.brick_max < 0.5) {
             // Same reasoning as the invalid-brick case above.
             prev_t = (t + brick.t_end) * 0.5;
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
             continue;
         }
 
@@ -635,7 +647,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             if (on_cut_face) { surface_pos = ray_origin + ray_dir * clip_t0; }
             break;
         }
-        t = brick.t_end + 0.0001;
+        t = brick.t_end + t_eps;
         $$ else
 
         // prev_t is intentionally carried forward unchanged here.  Fix 1
@@ -732,7 +744,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             t_sample += brick.step_size;
         }
         if (!surface_found) {
-            t = brick.t_end + 0.0001;
+            t = brick.t_end + t_eps;
         }
         $$ endif
     }
@@ -863,18 +875,17 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // face.
     //
     // The hit sits on a voxel face to within the bisection bracket, and the
-    // encode below truncates to 14 bits per axis -- ``dim / 16383`` voxels --
-    // which moves the point *down* by up to one quantum.  On a low face that
-    // is outside the label (the consumer's ``floor`` reads the background
-    // cell in front of the surface); on a high face it happens to land
-    // inside.  Rounding instead would just swap which faces fail.
+    // encode below quantises each axis to 14 bits -- steps of ``dim / 16383``
+    // voxels, the quantum.  A point on a face can land on either side of it.
     //
     // So start from ``surface_hi_p``, the foreground end of the bisection
     // bracket (inside the label by construction; the midpoint
     // ``surface_pos`` can be a hundredth of a voxel on the background side
     // after a skipped brick), find the voxel of the drawn level it is in, and
-    // clamp it to that voxel's interior, ``4 * quantum`` from every face
-    // (at most a quarter of the voxel).  This is inside on every axis, edges
+    // clamp it to that voxel's interior, one quantum from every face (at most
+    // the voxel's centre).  The encode rounds to the nearest step, which moves
+    // the point by at most half a quantum, so it stays in the voxel for any
+    // axis shorter than 16383 voxels.  This is inside on every axis, edges
     // and corners included, where a step along the ray would leave through
     // the face next to the one it entered by.  The voxel is found by the rule
     // sample_atlas_label samples with (cellier.level_mapping.wgsl).  Only the
@@ -891,7 +902,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     );
     let pick_centre  = surface_lod_scale * pick_index + pick_offset + vec3<f32>(0.5);
     let pick_room    = 0.5 * surface_lod_scale
-                     - min(vec3<f32>(4.0 * pick_quantum), 0.25 * surface_lod_scale);
+                     - min(vec3<f32>(pick_quantum), 0.5 * surface_lod_scale);
     let pick_inside  = clamp(pick_voxel, pick_centre - pick_room, pick_centre + pick_room);
     let pick_pos     = voxel_to_norm(pick_inside, norm_size, dataset_size);
     // pick_pos is in centred normalised object space; encode as [0, 1].
@@ -899,9 +910,9 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     $$ endif
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(clamp(pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+        pick_pack(u32(clamp(pick_coord.x * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(pick_coord.y * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(pick_coord.z * 16383.0 + 0.5, 0.0, 16383.0)), 14)
     );
     $$ endif
     $$ endif

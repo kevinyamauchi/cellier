@@ -447,8 +447,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // by texture dimensions to get [0, 1].
     let vol_dimsf_pick = vec3<f32>(textureDimensions(t_img));
 
-    // Step a little way along the ray before encoding, so the reported point
-    // is inside the voxel this fragment drew rather than on its face.
+    // Report a point inside the voxel this fragment drew, not on its face.
     //
     // ``surface_pos`` is the *exact* crossing of the face between the
     // background cell and the foreground one.  Once the decode shifts it to
@@ -460,11 +459,14 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // the surface.  The consumer then reads the wrong label, silently, and
     // only on the axis whose face the ray entered through.
     //
-    // The step has to clear one quantisation step -- ``dim / 16383`` voxels --
-    // and stay well short of half a voxel, which is the nearest face on the
-    // other side.  Rounding instead of truncating is not enough on its own:
-    // it centres the error on zero rather than removing it, and the value is
-    // still sitting exactly on the boundary.
+    // The traversal above already names the foreground cell, ``v``, so clamp
+    // the point into that cell's interior, one quantum -- ``dim / 16383``
+    // voxels -- from every face (at most the cell's centre).  The encode
+    // rounds to the nearest 14-bit step, which moves the point by at most half
+    // a quantum, so it stays in the cell for any axis shorter than 16383
+    // voxels.  An earlier version stepped along the ray
+    // instead; on a ray grazing a block's edge the step leaves through the
+    // face next to the one the ray entered by, and reads the neighbour.
     //
     // Only the pick coordinate moves.  Colour, depth and the normal above all
     // use the exact surface, because those want the geometry and this wants
@@ -478,14 +480,19 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     // in the middle half of the nearest voxel that carries the label.
     let pick_pos = label_smooth_pick_point(surface_pos, surface_lid);
     $$ else
-    let pick_pos = surface_pos + ray_dir * min(4.0 * pick_quantum, 0.25);
+    let pick_room = min(pick_quantum, 0.5);
+    let pick_pos = clamp(
+        surface_pos,
+        vec3<f32>(v) - vec3<f32>(0.5 - pick_room),
+        vec3<f32>(v) + vec3<f32>(0.5 - pick_room)
+    );
     $$ endif
     let pick_coord = (pick_pos + vec3<f32>(0.5)) / vol_dimsf_pick;
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
-        pick_pack(u32(clamp(pick_coord.x, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(pick_coord.y, 0.0, 1.0) * 16383.0), 14) +
-        pick_pack(u32(clamp(pick_coord.z, 0.0, 1.0) * 16383.0), 14)
+        pick_pack(u32(clamp(pick_coord.x * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(pick_coord.y * 16383.0 + 0.5, 0.0, 16383.0)), 14) +
+        pick_pack(u32(clamp(pick_coord.z * 16383.0 + 0.5, 0.0, 16383.0)), 14)
     );
     $$ endif
 
