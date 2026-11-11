@@ -3,7 +3,7 @@
 The pick buffer holds each axis in 14 bits, so the quantum is ``dim / 16383``
 voxels of the longest axis (the in-memory shaders use the longest one for every
 axis).  The B12 face tests use a 40-voxel volume, where the quantum is 0.002 of
-a voxel.  Here the volume is 24 x 32 x ``L`` with ``L`` up to 10000, so the
+a voxel.  Here the volume is 24 x 32 x ``L`` with ``L`` up to 16000, so the
 quantum grows to 0.6 of a voxel while the volume stays cheap to hold.  The block
 is placed off the middle, where its faces would sit on the quantisation grid.
 
@@ -27,21 +27,28 @@ from cellier.visuals import (
     MultiscaleLabelRenderConfig,
     MultiscaleLabelsAppearance,
 )
-from tests.render._affine import bind, load, multiscale_store
+from tests.render._affine import bind, canvas_view, load, multiscale_store
 from tests.render.test_labels_pick_face import _pick_every_view, _viewer
 
 DISPLAYED = ("z", "y", "x")
 FAMILIES = ("labels", "labels_multiscale", "image", "image_multiscale")
-#: Room for every brick of the longest volume (157 bricks of 64 ** 3 voxels).
-BUDGETS = {"gpu_budget_bytes": 320 * 1024**2, "gpu_budget_bytes_2d": 16 * 1024**2}
+
+
+#: Room for every brick of the volume (250 bricks of 64 ** 3 voxels at the
+#: longest).  The cache is a cube of slots, so the budget moves in big steps: 320
+#: MiB is 215 usable slots, 512 MiB is 342.
+def _budgets(length: int) -> dict[str, int]:
+    mib = 320 if length <= 10000 else 512
+    return {"gpu_budget_bytes": mib * 1024**2, "gpu_budget_bytes_2d": 16 * 1024**2}
+
 
 #: A 3D texture is at most 2048 voxels on a side, which bounds the in-memory
 #: families; a multiscale one is bounded by its LUT (255 bricks per axis, so
-#: 16320 voxels at ``block_size=64``).  Up to 10000 here: above that the block
-#: is not drawn in this setup, which is not understood (section 3.12).  8192 is
-#: in on purpose, with 8000: the shader has to hold wherever the faces fall on
-#: the quantisation grid.
-_MULTISCALE = [1024, 4096, 5000, 8000, 8192, 10000]
+#: 16320 voxels at ``block_size=64``).  8192 is in on purpose, with 8000: the
+#: shader has to hold wherever the faces fall on the quantisation grid.  Above
+#: about 10500 the fitted camera's far plane (8000) leaves the block's bricks
+#: unplanned; ``_run`` widens it and reloads (see ``_widen_far_plane``).
+_MULTISCALE = [1024, 4096, 5000, 8000, 8192, 10000, 12000, 16000]
 LENGTHS = {
     "labels": [1024, 2048],
     "image": [1024, 2048],
@@ -94,13 +101,17 @@ def _add(viewer, family, data, tmp_path, render_mode=None):
             appearance=MultiscaleLabelsAppearance(
                 force_level=0, ray_steps_per_voxel=4.0
             ),
-            render_config=MultiscaleLabelRenderConfig(**BUDGETS, block_size=64),
+            render_config=MultiscaleLabelRenderConfig(
+                **_budgets(data.shape[-1]), block_size=64
+            ),
             transform=bind(viewer, store, identity),
         )
     return viewer.add_image_multiscale(
         store,
         appearance=MultiscaleImageAppearance(force_level=0),
-        render_config=MultiscaleImageRenderConfig(**BUDGETS, block_size=64),
+        render_config=MultiscaleImageRenderConfig(
+            **_budgets(data.shape[-1]), block_size=64
+        ),
         single=MultiscaleImageSingleAppearance(
             color_map="gray",
             clim=(0.0, 1.0),
@@ -111,6 +122,21 @@ def _add(viewer, family, data, tmp_path, render_mode=None):
     )
 
 
+def _widen_far_plane(viewer, length: int) -> None:
+    """Plan the whole volume, not only what the fitted camera's far plane reaches.
+
+    The default 3D depth range is ``(1, 8000)`` and the planner culls bricks
+    against the camera frustum.  The fitted camera of a volume longer than about
+    10500 voxels is more than 8000 from its near end, so those bricks are never
+    loaded, and the test camera, moved next to the block afterwards, sees an
+    empty lookup table.  Setting the range before loading is not enough (the
+    first load is what makes the camera), so the range is set and loaded again.
+    """
+    camera = canvas_view(viewer).camera
+    camera.depth_range = (1.0, 4.0 * length)
+    load(viewer)
+
+
 def _run(tmp_path, family, length, x_centre=None, render_mode=None):
     viewer = _viewer(DISPLAYED)
     try:
@@ -118,6 +144,7 @@ def _run(tmp_path, family, length, x_centre=None, render_mode=None):
         data, centre = _volume(length, dtype, x_centre)
         visual = _add(viewer, family, data, tmp_path, render_mode)
         load(viewer)
+        _widen_far_plane(viewer, length)
         wrong = []
 
         def check(direction, level, full):
@@ -163,7 +190,7 @@ _MIP_CASES = [
             ("image_multiscale", "mip"),
             ("image_multiscale", "attenuated_mip"),
         )
-        for n in (1024, 4096, 8192, 10000)
+        for n in (1024, 4096, 8192, 10000, 16000)
     ],
 ]
 
