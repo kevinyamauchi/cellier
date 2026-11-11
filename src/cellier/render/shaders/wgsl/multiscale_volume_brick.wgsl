@@ -1117,7 +1117,38 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
     $$ endif
 
     $$ if write_pick
-    let iso_pick_coord = (refined_pos / norm_size) + vec3<f32>(0.5);
+    // Report a point safely inside the voxel the hit is in, not on its face.
+    //
+    // A linearly interpolated surface can sit exactly on a voxel face (a 0/1
+    // mask at threshold 0.5), and the encode below truncates to 14 bits per
+    // axis -- ``dim / 16383`` voxels -- which moves the point *down* by up to
+    // one quantum: out of the voxel on a low face, so the consumer's
+    // ``floor`` reads the neighbour.  Start from ``hi``, the above-threshold
+    // end of the bisection bracket (the midpoint can be on the other side of
+    // the face), find the voxel of the drawn level that holds it with the
+    // rule sample_atlas samples with (cellier.level_mapping.wgsl), and clamp
+    // the point to that voxel's interior, ``4 * quantum`` from every face (at
+    // most a quarter of the voxel).  A point further in does not move; a cut
+    // face keeps its own position.  Only the pick coordinate changes.
+    let pick_in_prev = hi < brick_boundary_t;
+    let pick_lod     = select(surface_lod_scale, prev_lod_scale, pick_in_prev);
+    let pick_lut     = select(surface_lut_entry, prev_lut_entry, pick_in_prev);
+    let pick_offset  = get_level_offset(i32(pick_lut.w));
+    let pick_p       = norm_to_voxel(
+        ray_origin + ray_dir * select(hi, clip_t0, on_cut_face),
+        norm_size, dataset_size);
+    let pick_index   = floor((pick_p - pick_offset) / pick_lod + vec3<f32>(0.5));
+    let pick_centre  = pick_lod * pick_index + pick_offset;
+    let pick_quantum = max(
+        max(dataset_size.x, dataset_size.y), dataset_size.z
+    ) / 16383.0;
+    let pick_room    = 0.5 * pick_lod
+                     - min(vec3<f32>(4.0 * pick_quantum), 0.25 * pick_lod);
+    let pick_inside  = clamp(pick_p, pick_centre - pick_room, pick_centre + pick_room);
+    let iso_pick_coord = (
+        index_to_norm(pick_inside + vec3<f32>(0.5), norm_size, dataset_size)
+        / norm_size
+    ) + vec3<f32>(0.5);
     out.pick = (
         pick_pack(u32(u_wobject.global_id), 20) +
         pick_pack(u32(clamp(iso_pick_coord.x, 0.0, 1.0) * 16383.0), 14) +

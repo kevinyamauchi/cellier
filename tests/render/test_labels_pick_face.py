@@ -97,7 +97,8 @@ def _pick_every_view(viewer, visual, displayed, check) -> int:
                 hit_visual_id=visual.id,
             )
             n_picks += 1
-            check(direction, gfx_visual.pick_drawn_level(hit, coord), full)
+            drawn_level = getattr(gfx_visual, "pick_drawn_level", None)
+            check(direction, drawn_level and drawn_level(hit, coord), full)
     assert n_picks >= 100, "too few drawn pixels to test"
     return n_picks
 

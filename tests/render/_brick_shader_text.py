@@ -14,6 +14,12 @@ comment can be reworded without touching the baseline.  The record first
 hashed the full text; its digests were converted once, while the full text
 still matched ``7e1b683f`` byte for byte, so they are the comment-free hashes
 of that commit's code.
+
+One deliberate exception: the digests of the ``iso_nearest`` and
+``smooth_iso_linear`` scenes were replaced by hand on 2026-11-10, when the
+iso pick coordinate was changed to sit inside its voxel (the B12 fix, in
+``multiscale_volume_brick.wgsl``).  Only those two digests changed, and the
+other nine entries still match ``7e1b683f``.
 """
 
 from __future__ import annotations
