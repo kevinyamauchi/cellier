@@ -176,7 +176,7 @@ from cellier.render.visuals._lines_memory import GFXLinesMemoryVisual
 from cellier.render.visuals._masked_image import GFXMaskedImageVisual
 from cellier.render.visuals._mesh import GFXMeshVisual
 from cellier.render.visuals._points_memory import GFXPointsMemoryVisual
-from cellier.render.visuals._scene_overlay import GFXSceneBoundingBox
+from cellier.render.visuals._scene_overlay import GFXSceneBoundingBox, project_bounds
 from cellier.scene._background import BackgroundAppearance
 from cellier.scene._bounds import scene_world_bounds
 from cellier.scene._fit_orientation import (
@@ -375,6 +375,9 @@ def _projection_key(visual: Any, scene: Any) -> Any:
     )
     return (appearance.slab_projection, tuple(appearance.projection_axes), thick)
 
+
+#: Default of `_refresh_scene_overlays`'s *bounds*: measure them there.
+_MEASURE = object()
 
 #: Visuals that load nothing while they draw nothing; showing one reslices it.
 #: They are retired while hidden: their reads stop, and shown again at an
@@ -1933,7 +1936,7 @@ class CellierController:
                 self._render_manager.refresh_visual_axis_extents(visual_id)
                 self._refresh_brick_source(scene_id, visual_id)
             for scene_id in dict.fromkeys(scene_id for scene_id, _ in readers):
-                self._refresh_scene_overlays(scene_id)
+                self._on_scene_box_changed(scene_id)
             event: Any = DataStoreMetadataChangedEvent(
                 source_id=self._id, data_store_id=store_id
             )
@@ -3444,7 +3447,7 @@ class CellierController:
         # needing a post-hoc call.
         self._seed_visual_render(visual_model)
         self._check_slider_axes(scene_id)
-        self._refresh_scene_overlays(scene_id)
+        self._on_scene_box_changed(scene_id)
         self._refresh_plane_outlines(scene_id)
         self._accepted_transforms[visual_model.id] = visual_model.transform
         self._refresh_draw_status(scene_id)
@@ -4223,15 +4226,82 @@ class CellierController:
         # path asks for a frame.
         self._request_draw_for_scene(entry.scene_id)
 
+    def _on_scene_box_changed(self, scene_id: UUID, *, replan: bool = True) -> None:
+        """React to a change that can move the scene's data box.
+
+        Called wherever the box can change: a visual added or removed,
+        ``scene.visuals`` replaced, a store's extent, a transform, the
+        displayed axes.  Measures the box once (every visual, hidden ones
+        included), then, on each canvas of the scene:
+
+        * a canvas waiting for a fit (`fit_camera` or a first visit found no
+          box) is fitted now;
+        * any other canvas keeps its camera, and its 3D camera's far plane
+          grows if the box no longer fits in it (`CanvasView.grow_far_3d`).
+
+        A canvas whose camera changed reports it: a jump whose camera reslice
+        is queued, or, with *replan* ``False`` (the displayed-axes change,
+        which plans the scene itself afterwards), an announcement only.  Then
+        the occlusion radius follows the box, and the scene overlays are
+        rebuilt from the same bounds.
+
+        Parameters
+        ----------
+        scene_id : UUID
+            The scene whose box may have changed.  An unregistered scene is
+            ignored.
+        replan : bool
+            Whether a camera change reslices.
+        """
+        scene = self._model.scenes.get(scene_id)
+        if scene is None:
+            return
+        bounds = scene_world_bounds(scene, self.get_data_store)
+        box = project_bounds(bounds, scene.dims.selection.displayed_axes)
+        if box is not None:
+            for canvas_id in list(self._scene_to_canvases.get(scene_id, [])):
+                self._follow_scene_box(canvas_id, box, replan=replan)
+            self._push_scene_extent(scene_id, box)
+        self._refresh_scene_overlays(scene_id, bounds=bounds)
+
+    def _follow_scene_box(
+        self,
+        canvas_id: UUID,
+        box: tuple[np.ndarray, np.ndarray],
+        *,
+        replan: bool,
+    ) -> None:
+        """Fit a waiting canvas to *box*, or grow its 3D far plane for it."""
+        canvas_view = self._render_manager._canvases.get(canvas_id)
+        if canvas_view is None:
+            return
+        if canvas_id in self._canvases_awaiting_fit:
+            self._fit_canvas(canvas_id, box)
+        elif not canvas_view.grow_far_3d(box):
+            # Also the case in 2D: the box has two axes then, so a 3D camera
+            # is caught up when the displayed axes go back to 3D, which comes
+            # through here too.
+            return
+        if replan and canvas_view.is_fitted(canvas_view.dim):
+            self._after_programmatic_camera_move(canvas_id, queue=True)
+        else:
+            # A camera not fitted yet is planned by the fit to come; with
+            # *replan* off the caller plans.
+            self._announce_camera_move(canvas_id, interactive=False)
+
     def _refresh_scene_overlays(
-        self, scene_id: UUID, *, overlay_ids: set[UUID] | None = None
+        self,
+        scene_id: UUID,
+        *,
+        overlay_ids: set[UUID] | None = None,
+        bounds: tuple[np.ndarray, np.ndarray] | None | object = _MEASURE,
     ) -> None:
         """Rebuild the scene overlays of *scene_id* for its current contents.
 
-        Computes the scene's world bounds once -- every visual, hidden ones
-        included -- and hands them with the displayed axes to each visible
-        scene overlay whose last input differs.  A hidden overlay is skipped
-        and caught up when it is shown.
+        Uses the scene's world bounds -- every visual, hidden ones included --
+        and hands them with the displayed axes to each visible scene overlay
+        whose last input differs.  A hidden overlay is skipped and caught up
+        when it is shown.
 
         Parameters
         ----------
@@ -4240,6 +4310,9 @@ class CellierController:
             ignored.
         overlay_ids : set[UUID] or None
             Restrict the rebuild to these overlays.  ``None`` means all.
+        bounds : tuple[np.ndarray, np.ndarray] or None
+            The scene's world bounds when the caller already measured them
+            (`_on_scene_box_changed`).  Measured here when not given.
 
         Raises
         ------
@@ -4261,7 +4334,8 @@ class CellierController:
         if not entries:
             return
         displayed_axes = tuple(scene.dims.selection.displayed_axes)
-        bounds = scene_world_bounds(scene, self.get_data_store)
+        if bounds is _MEASURE:
+            bounds = scene_world_bounds(scene, self.get_data_store)
         key = (
             displayed_axes,
             None if bounds is None else (bounds[0].tobytes(), bounds[1].tobytes()),
@@ -4465,7 +4539,11 @@ class CellierController:
             Ignored when ``"3d"`` is not in ``render_modes``.  Default ``70.0``.
         depth_range_3d : tuple[float, float]
             ``(near, far)`` clip distances for the 3D perspective camera.
-            Default ``(1.0, 8000.0)``.
+            Default ``(1.0, 8000.0)``.  The range a fit starts from: a fit
+            (`fit_camera`) and a change to the scene's data box raise far
+            when the data needs more, so the whole box stays in view until
+            the camera is zoomed out 4 times the fitted distance.  Near and
+            a far that is already long enough are kept.
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D orthographic camera.
             Default ``(-500.0, 500.0)``.
@@ -4775,17 +4853,27 @@ class CellierController:
         canvas_id: UUID | None = None,
         *,
         interactive: bool = False,
+        only_visible_visuals: bool = False,
     ) -> None:
-        """Fit the camera to the current scene bounding box.
+        """Fit the camera to the box the scene's data occupies.
 
-        Safe to call immediately after ``add_image`` / ``add_image_multiscale``
-        and transform assignment — the node matrix is set at construction time
-        so no chunk data needs to be loaded first.
+        The box is measured from the stores and transforms (every visual's
+        store extent mapped into the world, projected onto the displayed
+        axes), not from what has been drawn, so it is safe to call right
+        after ``add_image`` / ``add_image_multiscale``, before any data has
+        loaded.  The camera is fitted to the box's sphere; a 3D camera's far
+        plane then grows, if it is short, to keep the box in view until the
+        user has zoomed out 4 times the fitted distance.  Near is never
+        changed.
 
         The move is a **jump**: camera-sensitive visuals (multiscale image
         and labels) reslice at once for the fitted view, and a camera motion
         in progress on the canvas ends.  A fit that leaves the camera where
         it is does nothing.  See `set_camera_state` for *interactive*.
+
+        A scene with no data yet (only empty stores, or no visuals) cannot
+        be fitted: its canvases are fitted when the scene first has a box,
+        unless the camera is moved before that.
 
         Parameters
         ----------
@@ -4796,22 +4884,73 @@ class CellierController:
             all canvases attached to *scene_id* are fitted.
         interactive : bool
             Whether the move is a tick of a camera motion instead of a jump.
+        only_visible_visuals : bool
+            Fit to the visuals that are shown only (``appearance.visible``).
+            The far plane still keeps every visual in view, so showing a
+            hidden one later is not clipped.  With nothing shown, nothing
+            happens.  Default ``False``: hidden visuals count.
         """
-        gfx_scene = self._render_manager.get_scene(scene_id)
         targets = (
             [canvas_id]
             if canvas_id is not None
             else list(self._scene_to_canvases.get(scene_id, []))
         )
+        far_box = self._displayed_scene_box(scene_id)
+        fit_box = (
+            self._displayed_scene_box(scene_id, only_visible=True)
+            if only_visible_visuals
+            else far_box
+        )
         for cid in targets:
             canvas = self._render_manager._canvases.get(cid)
-            if canvas is not None:
-                canvas.show_object(gfx_scene)
-                self._after_programmatic_camera_move(cid, interactive=interactive)
-        # A fit already walked the scene graph, so this is the cheapest
-        # moment to re-derive the ambient occlusion radius from the scene
-        # bounding box.
-        self._render_manager.update_ssao_radius(scene_id)
+            if canvas is None:
+                continue
+            if fit_box is None:
+                if not only_visible_visuals:
+                    self._canvases_awaiting_fit.add(cid)
+                continue
+            self._fit_canvas(cid, fit_box, far_box)
+            self._after_programmatic_camera_move(cid, interactive=interactive)
+        self._push_scene_extent(scene_id, far_box)
+
+    def _displayed_scene_box(
+        self, scene_id: UUID, *, only_visible: bool = False
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """The scene's data box on its displayed axes, in displayed order.
+
+        ``None`` when there is nothing to fit: no visual has an extent, or a
+        displayed axis has no finite extent.
+        """
+        scene = self._model.scenes.get(scene_id)
+        if scene is None:
+            return None
+        return project_bounds(
+            scene_world_bounds(scene, self.get_data_store, only_visible=only_visible),
+            scene.dims.selection.displayed_axes,
+        )
+
+    def _fit_canvas(
+        self,
+        canvas_id: UUID,
+        box: tuple[np.ndarray, np.ndarray],
+        far_box: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> None:
+        """Fit *canvas_id*'s active camera to *box*; in 3D grow far for *far_box*.
+
+        Only the fit: the caller reports the move, each in its own way (a
+        jump, an announcement without a reslice, or a queued reslice).
+        """
+        self._render_manager._canvases[canvas_id].fit_to_box(box, far_box=far_box)
+        self._canvases_awaiting_fit.discard(canvas_id)
+
+    def _push_scene_extent(
+        self, scene_id: UUID, box: tuple[np.ndarray, np.ndarray] | None
+    ) -> None:
+        """Hand the diagonal of the scene's *box* to its canvases' occlusion pass."""
+        if box is None:
+            return
+        diagonal = float(np.linalg.norm(np.asarray(box[1]) - np.asarray(box[0])))
+        self._render_manager.set_scene_extent(scene_id, diagonal)
 
     def get_scene_by_name(self, name: str) -> Scene:
         """Return the live Scene model for the given name.
@@ -5040,6 +5179,7 @@ class CellierController:
             scale=scale,
             frames=frames,
             dim=dim,
+            fit_box=self._displayed_scene_box(scene_id),
             **capture_kwargs,
         )
 
@@ -6838,7 +6978,7 @@ class CellierController:
             self._check_slider_axes(scene_id)
             # The same signal carries a wholesale ``scene.visuals``
             # reassignment, which changes the scene's extent.
-            self._refresh_scene_overlays(scene_id)
+            self._on_scene_box_changed(scene_id)
 
         return _on_slider_axes_input
 
@@ -6907,7 +7047,7 @@ class CellierController:
                 self._switch_canvas_cameras(
                     scene_id, new_state.selection.displayed_axes
                 )
-                self._refresh_scene_overlays(scene_id)
+                self._on_scene_box_changed(scene_id, replan=False)
             elif prev_slice != new_slice:
                 self._rebuild_rendered_embedding(scene_id)
                 self._push_slice_route_spaces(scene_id)
@@ -6979,20 +7119,21 @@ class CellierController:
     ) -> None:
         """Switch cameras on all canvases attached to *scene_id*.
 
-        Calls ``show_object`` on canvases that are being activated for the
-        first time in the new dimensionality.
+        Fits the canvases that are being activated for the first time in the
+        new dimensionality to the scene's data box.
         """
         new_dim = "3d" if len(displayed_axes) == 3 else "2d"
-        gfx_scene = self._render_manager.get_scene(scene_id)
+        box = self._displayed_scene_box(scene_id)
         for canvas_id in self._scene_to_canvases.get(scene_id, []):
             canvas_view = self._render_manager._canvases[canvas_id]
             first_visit = canvas_view.switch_dim(new_dim)
-            if first_visit and not canvas_view.show_object(gfx_scene):
-                # The visuals' geometry was rebuilt for the new axes a moment
-                # ago and the reslice that fills it has not committed yet, so
-                # there is nothing to fit to.  Take the fit when the data
-                # lands instead of raising here.
-                self._canvases_awaiting_fit.add(canvas_id)
+            if first_visit:
+                if box is None:
+                    # No data to fit to yet: fitted when the scene first has
+                    # a box (`_on_scene_box_changed`).
+                    self._canvases_awaiting_fit.add(canvas_id)
+                else:
+                    self._fit_canvas(canvas_id, box)
             # The switch replaces the view, so a motion in progress is
             # cancelled, and a first-visit fit is reported here instead of
             # being seen as motion on the next frame.  Neither reslices: the
@@ -7504,7 +7645,7 @@ class CellierController:
             self._refresh_draw_status(scene_id)
             self._push_render_spaces(scene_id)
             self._check_slider_axes(scene_id)
-            self._refresh_scene_overlays(scene_id)
+            self._on_scene_box_changed(scene_id)
             self._outgoing_events.emit(
                 TransformChangedEvent(
                     source_id=self._id,
@@ -11356,6 +11497,8 @@ class CellierController:
         """
         if self._announcing_camera_move:
             return  # this controller's own programmatic move: already handled
+        # The user placed the camera: a fit waiting for data must not undo it.
+        self._canvases_awaiting_fit.discard(event.source_id)
         self._update_camera_model(event.scene_id, event.source_id, event.camera_state)
         canvas_id = event.source_id
         interactive = event.interactive or self._camera_driver.scope_open(canvas_id)
@@ -11578,6 +11721,8 @@ class CellierController:
             ``True`` when called from inside a draw or a commit round; the
             jump's reslice is then queued (see `_camera_reslice`).
         """
+        # A camera placed on purpose is not waiting for a fit any more.
+        self._canvases_awaiting_fit.discard(canvas_id)
         interactive = interactive or self._camera_driver.scope_open(canvas_id)
         if not self._announce_camera_move(canvas_id, interactive=interactive):
             return
@@ -11938,7 +12083,13 @@ class CellierController:
         *,
         interactive: bool = False,
     ) -> None:
-        """Fit the camera to a visual's bounding box.
+        """Fit the camera to the box a visual's data occupies.
+
+        The box is the visual's store extent mapped into the world and
+        projected onto the displayed axes, as `fit_camera` measures the
+        whole scene.  A 3D camera's far plane grows, if it is short, to keep
+        the whole scene in view.  A visual with no data (an empty store)
+        leaves the camera where it is.
 
         A **jump**, like `fit_camera`: camera-sensitive visuals
         reslice at once for the new view.
@@ -11981,16 +12132,27 @@ class CellierController:
         up = normalize_axis_vector(world, up, "up")
         check_not_parallel(view_direction, up)
         canvas_view = self._render_manager._canvases[canvas_id]
-        if canvas_view.dim == "3d" and len(scene.dims.selection.displayed_axes) == 3:
-            self._render_manager.look_at_visual(
-                visual_id,
-                canvas_id,
-                *self._resolve_fit_orientation_3d(
+        displayed_axes = scene.dims.selection.displayed_axes
+        extent = self.visual_world_extent(visual_id)
+        box = project_bounds(
+            (
+                np.array([low for low, _ in extent], dtype=np.float64),
+                np.array([high for _, high in extent], dtype=np.float64),
+            ),
+            displayed_axes,
+        )
+        if box is None:
+            return  # no data on the displayed axes: nothing to look at
+        orientation: dict[str, Any] = {}
+        if canvas_view.dim == "3d" and len(displayed_axes) == 3:
+            orientation["view_dir"], orientation["up"] = (
+                self._resolve_fit_orientation_3d(
                     scene_id, canvas_id, view_direction, up
-                ),
+                )
             )
-        else:
-            self._render_manager.look_at_visual(visual_id, canvas_id)
+        canvas_view.fit_to_box(
+            box, far_box=self._displayed_scene_box(scene_id), **orientation
+        )
         self._after_programmatic_camera_move(canvas_id, interactive=interactive)
 
     def set_camera_depth_range(
@@ -12195,6 +12357,7 @@ class CellierController:
             self._outgoing_events.unsubscribe_all(canvas_id)
             self._remove_pick_subscriptions(canvas_id)
             self._canvas_to_scene.pop(canvas_id, None)
+            self._canvases_awaiting_fit.discard(canvas_id)
             self._forget_rendered(canvas_id)
         self._outgoing_events.unsubscribe_all(scene_id)
 
@@ -12266,6 +12429,7 @@ class CellierController:
         ]:
             self._forget_overlay(overlay_id)
         self._canvas_to_scene.pop(canvas_id)
+        self._canvases_awaiting_fit.discard(canvas_id)
         self._scene_to_canvases[scene_id].remove(canvas_id)
         self._forget_rendered(canvas_id)
 
@@ -12335,7 +12499,7 @@ class CellierController:
         # 5. Render-layer teardown.
         self._render_manager.remove_visual(visual_id)
         self._check_slider_axes(scene_id)
-        self._refresh_scene_overlays(scene_id)
+        self._on_scene_box_changed(scene_id)
 
         # 6. Notify external observers.
         self._outgoing_events.emit(
@@ -13847,25 +14011,11 @@ class CellierController:
         ``CanvasView.request_draw`` also discards the accumulation history,
         which is what these need: they all change the image, and a frame
         averaged with the previous content would show the change fading in.
-
-        Also the moment a deferred camera fit becomes possible: a canvas that
-        changed its displayed axes could not be fitted while the scene was
-        empty, and freshly committed data is exactly what it was waiting for.
         """
-        gfx_scene = None
         for canvas_id in self.get_canvas_ids(scene_id):
             canvas_view = self._render_manager._canvases.get(canvas_id)
-            if canvas_view is None:
-                continue
-            if canvas_id in self._canvases_awaiting_fit:
-                if gfx_scene is None:
-                    gfx_scene = self._render_manager.get_scene(scene_id)
-                if canvas_view.show_object(gfx_scene):
-                    self._canvases_awaiting_fit.discard(canvas_id)
-                    # A jump.  This can run in the commit round of a draw,
-                    # where planning must not: the reslice is queued.
-                    self._after_programmatic_camera_move(canvas_id, queue=True)
-            canvas_view.request_draw()
+            if canvas_view is not None:
+                canvas_view.request_draw()
 
     def on_scene_added(
         self,

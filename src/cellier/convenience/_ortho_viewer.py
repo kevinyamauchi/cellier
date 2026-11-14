@@ -1195,7 +1195,11 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
         )
 
     def fit_camera(
-        self, panel: str | None = None, *, interactive: bool = False
+        self,
+        panel: str | None = None,
+        *,
+        interactive: bool = False,
+        only_visible_visuals: bool = False,
     ) -> None:
         """Fit a panel's camera, or every panel's, to its scene.
 
@@ -1205,6 +1209,9 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
             The panel to fit.  ``None`` (default) fits all four.
         interactive : bool
             Whether the move is a tick of a camera motion instead of a jump.
+        only_visible_visuals : bool
+            Fit to the visuals that are shown only.  The far plane still keeps
+            every visual in view.  Default ``False``: hidden visuals count.
 
         Raises
         ------
@@ -1216,7 +1223,11 @@ class OrthoViewer(ControlsRegistryMixin, RenderSettingsMixin):
                 f"Unknown panel {panel!r}. Expected one of {list(_PANEL_KEYS)}."
             )
         for key in _PANEL_KEYS if panel is None else (panel,):
-            self._controller.fit_camera(self._scenes[key].id, interactive=interactive)
+            self._controller.fit_camera(
+                self._scenes[key].id,
+                interactive=interactive,
+                only_visible_visuals=only_visible_visuals,
+            )
 
     @contextmanager
     def camera_interaction(self, panel: str) -> Generator[None, None, None]:

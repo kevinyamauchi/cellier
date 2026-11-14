@@ -30,9 +30,10 @@ from cellier.render._requests import DimsState, ReslicingRequest
 from cellier.render._ssao import SSAOPass
 from cellier.render._temporal_accumulation import TemporalAccumulationPass
 from cellier.render.visuals._plane_gizmo import GFXPlaneGizmo, drop_stale_gizmo_capture
+from cellier.scene._camera_fit import fit_sphere, fitted_far, grow_far
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from PySide6.QtWidgets import QWidget
 
@@ -112,7 +113,8 @@ class CanvasView:
     fov : float
         Vertical field of view in degrees (3D perspective only).
     depth_range : tuple[float, float]
-        Near and far clip distances ``(near, far)``.
+        Near and far clip distances ``(near, far)``.  The 3D camera's far is
+        raised by `fit_to_box` and `grow_far_3d` when the data needs more.
     event_bus : EventBus or None
         The bus the canvas reports camera changes, resizes and pointer
         events on.  ``None`` (the default) reports nothing; a controller
@@ -830,32 +832,78 @@ class CanvasView:
         self._depth_range_3d = depth_range
         self._sync_depth_range_3d()
 
-    def show_object(self, scene: gfx.Scene) -> bool:
-        """Fit the camera to the scene bounding box, if there is one.
+    def fit_to_box(
+        self,
+        box: tuple[Sequence[float], Sequence[float]],
+        *,
+        far_box: tuple[Sequence[float], Sequence[float]] | None = None,
+        view_dir: Sequence[float] | None = None,
+        up: Sequence[float] | None = None,
+    ) -> None:
+        """Fit the active camera to *box* and, in 3D, grow far to keep it in view.
 
-        A scene with nothing in it has no bounding sphere, and pygfx raises
-        rather than guessing.  That happens for real: switching a scene's
-        displayed axes rebuilds its visuals' geometry and fits the camera
-        *before* the reslice that fills them has committed, so for one moment
-        the scene is empty.  Refusing to fit -- and, crucially, not marking
-        the dim as fitted -- lets the caller try again once data arrives.
+        The camera is fitted to the box's sphere (`fit_sphere`): its centre,
+        and half its diagonal as the radius.  The box comes from the stores
+        and models (``scene_world_bounds`` then ``project_bounds``), not
+        from the pygfx scene graph, so it exists before any data has loaded
+        and counts nothing but data.
+
+        In 3D the far plane then grows to `fitted_far` of *far_box* (see
+        `grow_far_3d`); near is never changed.
 
         Parameters
         ----------
-        scene : gfx.Scene
-            The scene to fit the camera to.
+        box : tuple[Sequence[float], Sequence[float]]
+            ``(low, high)`` on the displayed axes, in cellier displayed order.
+        far_box : tuple[Sequence[float], Sequence[float]] or None
+            The box the far plane must keep in view, in the same order.
+            ``None`` is *box*.
+        view_dir, up : Sequence[float] or None
+            The fit orientation, in rendered ``(x, y, z)`` order.  ``None``
+            is the canvas's own (`fit_orientation`).
+        """
+        centre, radius = fit_sphere(box)
+        fit_view_dir, fit_up = self.fit_orientation()
+        self._camera.show_object(
+            (*centre, radius),
+            view_dir=fit_view_dir if view_dir is None else tuple(view_dir),
+            up=fit_up if up is None else tuple(up),
+        )
+        self._fitted.add(self._dim)
+        if self._dim == "3d":
+            self.grow_far_3d(box if far_box is None else far_box)
+
+    def grow_far_3d(self, box: tuple[Sequence[float], Sequence[float]]) -> bool:
+        """Raise the 3D camera's far plane to keep *box* in view, if it is short.
+
+        The far plane the 3D camera would need had it just been fitted to
+        *box* with its fit orientation (`fitted_far`, margin
+        `FAR_MARGIN`).  Only far grows, and only when the configured range is
+        shorter; near, the camera and an automatic range are left alone.
+        Works whichever camera is active.
+
+        Parameters
+        ----------
+        box : tuple[Sequence[float], Sequence[float]]
+            ``(low, high)`` on the three displayed axes, in cellier displayed
+            order.
 
         Returns
         -------
         bool
-            ``True`` if the camera was fitted.  ``False`` if the scene had no
-            bounds yet, in which case nothing was changed.
+            Whether far grew.
         """
-        if scene.get_world_bounding_sphere() is None:
+        if len(box[0]) != 3:
             return False
-        view_dir, up = self.fit_orientation()
-        self._camera.show_object(scene, view_dir=view_dir, up=up)
-        self._fitted.add(self._dim)
+        self._sync_depth_range_3d()
+        current = self._depth_range_3d
+        grown = grow_far(
+            current,
+            fitted_far(box, float(self._camera_3d.fov), self._fit_view_dir_3d),
+        )
+        if grown == current:
+            return False
+        self.set_depth_range_for_dim("3d", grown)
         return True
 
     def fit_orientation(
@@ -880,7 +928,8 @@ class CanvasView:
     ) -> None:
         """Set the orientation the 3D camera is fitted with.
 
-        Nothing moves: the next `show_object` in 3D uses it.
+        Nothing moves: the next `fit_to_box` in 3D uses it, and so does
+        `grow_far_3d`.
 
         Parameters
         ----------
@@ -1308,6 +1357,16 @@ class CanvasView:
         self._fitted.add(dim)
         self._placed.add(dim)
 
+    def is_fitted(self, dim: str) -> bool:
+        """Whether *dim*'s camera has been fitted or placed from its model.
+
+        Parameters
+        ----------
+        dim : str
+            ``"2d"`` or ``"3d"``.
+        """
+        return dim in self._fitted
+
     @property
     def camera_placed(self) -> bool:
         """Whether the camera shown was placed from its camera model."""
@@ -1398,7 +1457,7 @@ class CanvasView:
         -------
         bool
             ``True`` if this is the first time ``new_dim`` has been activated
-            on this canvas (caller should call ``show_object`` to fit the
+            on this canvas (caller should call ``fit_to_box`` to fit the
             camera).  ``False`` if the camera pose was already set by a
             previous visit.
         """

@@ -11,7 +11,7 @@ from uuid import uuid4
 import numpy as np
 
 import cellier._qtasyncio_compat  # noqa: F401  (PySide6 task patches)
-from cellier.events._events import AABBChangedEvent, ViewRay, _CanvasRawPointerEvent
+from cellier.events._events import ViewRay, _CanvasRawPointerEvent
 from cellier.render._cancellable_reads import CancellableReads
 from cellier.render._clipping import expand_rendered_plane, reduce_clipping_planes
 from cellier.render._config import RenderManagerConfig
@@ -246,16 +246,6 @@ class RenderManager:
         self._event_bus = event_bus
         # Let the coordinator emit ResliceStartedEvent / ResliceCompletedEvent.
         self._slice_coordinator._event_bus = event_bus
-        # The ambient-occlusion radius is derived from the scene bounding
-        # box, so it has to be recomputed when that box moves.  Walking the
-        # scene graph per frame is not an option -- a multiscale visual is a
-        # gfx.Group with a child per brick -- so it happens here and on a
-        # camera fit, the only two moments the answer can change.
-        event_bus.subscribe(
-            AABBChangedEvent,
-            self._on_aabb_changed_for_ssao,
-            owner_id=self._id,
-        )
 
     @property
     def scheduler(self) -> ChunkScheduler:
@@ -511,47 +501,24 @@ class RenderManager:
         for canvas in self._canvases.values():
             canvas.apply_ambient_occlusion_config(self._config.ambient_occlusion)
 
-    def update_ssao_radius(self, scene_id: UUID) -> None:
-        """Recompute the auto occlusion radius for one scene.
+    def set_scene_extent(self, scene_id: UUID, diagonal: float) -> None:
+        """Give every canvas of a scene its box diagonal, for the occlusion radius.
 
-        Reads the scene's world bounding box once and hands its diagonal to
-        every canvas showing that scene.  An explicit ``ambient_occlusion.radius``
-        overrides the result, so this is safe to call unconditionally.
+        The controller measures the box from the stores and models (every
+        visual, hidden ones included) and calls this after a camera fit and
+        whenever that box changes.  An explicit ``ambient_occlusion.radius``
+        overrides the derived radius, so this is safe to call unconditionally.
 
         Parameters
         ----------
         scene_id : UUID
-            The scene whose bounding box should be measured.  Unknown ids
-            are ignored.
+            The scene the box belongs to.
+        diagonal : float
+            Length of the scene box diagonal, in world units.
         """
-        scene_manager = self._scenes.get(scene_id)
-        if scene_manager is None:
-            return
-        canvases = [
-            canvas
-            for canvas_id, canvas in self._canvases.items()
-            if self._canvas_to_scene.get(canvas_id) == scene_id
-        ]
-        if not canvases:
-            return
-        try:
-            box = scene_manager.scene.get_world_bounding_box()
-        except (AttributeError, IndexError, TypeError, ValueError):
-            # An empty or half-built scene graph is not an error here:
-            # the previous radius stays in place until the next fit.
-            return
-        if box is None:
-            return
-        box = np.asarray(box, dtype=np.float64)
-        diagonal = float(np.linalg.norm(box[1] - box[0]))
-        for canvas in canvases:
-            canvas.set_scene_extent(diagonal)
-
-    def _on_aabb_changed_for_ssao(self, event: AABBChangedEvent) -> None:
-        """Re-derive the auto occlusion radius when a visual's box moves."""
-        scene_id = self._visual_to_scene.get(event.visual_id)
-        if scene_id is not None:
-            self.update_ssao_radius(scene_id)
+        for canvas_id, canvas in self._canvases.items():
+            if self._canvas_to_scene.get(canvas_id) == scene_id:
+                canvas.set_scene_extent(diagonal)
 
     # ------------------------------------------------------------------
     # Screen-space outlines
@@ -1856,39 +1823,6 @@ class RenderManager:
                 target_visual_ids=frozenset({visual_id}),
             )
             self._slice_coordinator.submit(request, {visual_id: cfg})
-
-    def look_at_visual(
-        self,
-        visual_id: UUID,
-        canvas_id: UUID,
-        view_direction: tuple[float, float, float] | None = None,
-        up: tuple[float, float, float] | None = None,
-    ) -> None:
-        """Fit a canvas camera to a visual's bounding box.
-
-        Parameters
-        ----------
-        visual_id : UUID
-            ID of the target visual.
-        canvas_id : UUID
-            ID of the canvas whose camera should be fitted.
-        view_direction : tuple[float, float, float] or None
-            Camera look direction vector, in rendered ``(x, y, z)`` order
-            (need not be normalized).  ``None`` is the canvas's own fit
-            orientation.
-        up : tuple[float, float, float] or None
-            Camera up vector, in rendered ``(x, y, z)`` order.  ``None`` is
-            the canvas's own fit orientation.
-        """
-        scene_id = self._visual_to_scene[visual_id]
-        gfx_scene = self.get_scene(scene_id)
-        canvas_view = self._canvases[canvas_id]
-        fit_view_direction, fit_up = canvas_view.fit_orientation()
-        canvas_view._camera.show_object(
-            gfx_scene,
-            view_dir=fit_view_direction if view_direction is None else view_direction,
-            up=fit_up if up is None else up,
-        )
 
     def set_dims_scrubbing(self, scene_id: UUID, scrubbing: bool) -> None:
         """Record whether a scene's dims are being scrubbed.

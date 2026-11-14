@@ -204,7 +204,9 @@ class PerspectiveCamera(BaseCamera):
     near_clipping_plane : float
         Near clipping distance. Default 1.0.
     far_clipping_plane : float
-        Far clipping distance. Default 8000.0.
+        Far clipping distance. Default 8000.0.  A camera fit raises it when the
+        scene's data needs more (never lowers it), and the controller writes
+        the raised value here.
     position : NumpyFloat32Array
         Camera position in the renderer's ``(x, y, z)`` frame, shape (3,).
     rotation : NumpyFloat32Array

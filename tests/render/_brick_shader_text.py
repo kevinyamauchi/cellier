@@ -17,11 +17,13 @@ of that commit's code.
 
 Deliberate exceptions, all for the B12 pick fixes in
 ``multiscale_volume_brick.wgsl``.  The digests of the ``iso_nearest`` and
-``smooth_iso_linear`` scenes were replaced by hand three times, on 2026-11-10
-and twice on 2026-11-11 (first so the iso pick coordinate sits inside its
-voxel, then to clamp one quantum in and round the 14-bit encode, which holds on
-long axes, then to resume a brick a fraction of a voxel on instead of a fixed
-``1e-4`` and to choose the voxel along the gradient).  The digests of the
+``smooth_iso_linear`` scenes were replaced by hand four times, on 2026-11-10,
+twice on 2026-11-11 and on 2026-11-13 (first so the iso pick coordinate sits
+inside its voxel, then to clamp one quantum in and round the 14-bit encode,
+which holds on long axes, then to resume a brick a fraction of a voxel on
+instead of a fixed ``1e-4`` and to choose the voxel along the gradient, then to
+start the bisection at the crossing sample itself and reset ``prev_t`` past a
+skipped brick, so a pick no longer depends on the far plane).  The digests of the
 ``mip_linear`` and ``attenuated_mip_linear`` scenes were replaced by hand once,
 on 2026-11-11, when the MIP pick got the same clamp and rounding.  Only those
 four digests changed, and the other seven entries still match ``7e1b683f``.

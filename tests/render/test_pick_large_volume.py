@@ -46,8 +46,9 @@ def _budgets(length: int) -> dict[str, int]:
 #: families; a multiscale one is bounded by its LUT (255 bricks per axis, so
 #: 16320 voxels at ``block_size=64``).  8192 is in on purpose, with 8000: the
 #: shader has to hold wherever the faces fall on the quantisation grid.  Above
-#: about 10500 the fitted camera's far plane (8000) leaves the block's bricks
-#: unplanned; ``_run`` widens it and reloads (see ``_widen_far_plane``).
+#: about 10500 voxels the fitted camera is more than 8000 from the far end, so
+#: the fit grows the far plane to keep the whole volume in view; these lengths
+#: also check that the first load plans the block's bricks.
 _MULTISCALE = [1024, 4096, 5000, 8000, 8192, 10000, 12000, 16000]
 LENGTHS = {
     "labels": [1024, 2048],
@@ -122,38 +123,33 @@ def _add(viewer, family, data, tmp_path, render_mode=None):
     )
 
 
-def _widen_far_plane(viewer, length: int) -> None:
-    """Plan the whole volume, not only what the fitted camera's far plane reaches.
+def _run(tmp_path, family, length, x_centre=None, render_mode=None, far_planes=(None,)):
+    """Pick the block from every view; every pick must read it.
 
-    The default 3D depth range is ``(1, 8000)`` and the planner culls bricks
-    against the camera frustum.  The fitted camera of a volume longer than about
-    10500 voxels is more than 8000 from its near end, so those bricks are never
-    loaded, and the test camera, moved next to the block afterwards, sees an
-    empty lookup table.  Setting the range before loading is not enough (the
-    first load is what makes the camera), so the range is set and loaded again.
+    Each of *far_planes* (``None`` keeps the fitted camera's) is set as the
+    camera's far plane in turn and every view is picked again.
     """
-    camera = canvas_view(viewer).camera
-    camera.depth_range = (1.0, 4.0 * length)
-    load(viewer)
-
-
-def _run(tmp_path, family, length, x_centre=None, render_mode=None):
     viewer = _viewer(DISPLAYED)
     try:
         dtype = np.int32 if family.startswith("labels") else np.float32
         data, centre = _volume(length, dtype, x_centre)
         visual = _add(viewer, family, data, tmp_path, render_mode)
         load(viewer)
-        _widen_far_plane(viewer, length)
+        camera = canvas_view(viewer).camera
+        fitted = camera.depth_range
+        near = 1.0 if fitted is None else fitted[0]
         wrong = []
+        n_picks = 0
+        for far in far_planes:
+            camera.depth_range = fitted if far is None else (near, float(far))
 
-        def check(direction, level, full):
-            voxel = tuple(int(v) for v in np.floor(np.asarray(full)))
-            inside = all(0 <= v < s for v, s in zip(voxel, data.shape, strict=True))
-            if not inside or data[voxel] != 1:
-                wrong.append((direction.round(2).tolist(), full))
+            def check(direction, level, full, far=far):
+                voxel = tuple(int(v) for v in np.floor(np.asarray(full)))
+                inside = all(0 <= v < s for v, s in zip(voxel, data.shape, strict=True))
+                if not inside or data[voxel] != 1:
+                    wrong.append((far, direction.round(2).tolist(), full))
 
-        n_picks = _pick_every_view(viewer, visual, DISPLAYED, check, centre=centre)
+            n_picks += _pick_every_view(viewer, visual, DISPLAYED, check, centre=centre)
         assert not wrong, (
             f"{len(wrong)} of {n_picks} picks read background: {wrong[:3]}"
         )
@@ -198,3 +194,23 @@ _MIP_CASES = [
 @pytest.mark.parametrize(("family", "mode", "length"), _MIP_CASES)
 def test_mip_picks_read_the_block_on_a_long_axis(tmp_path, family, mode, length):
     _run(tmp_path, family, length, render_mode=mode)
+
+
+#: The far plane changes the projection in its last bits, and with it the ray
+#: directions, and so the jitter each ray is seeded with.  A ray whose
+#: threshold crossing was the first sample of a new brick began its bisection
+#: from the previous sample plus the new brick's step, which can stop short of
+#: the surface; the pick then read the voxel in front of it (1 grazing pick in
+#: 400 at some far planes and not others, at 4096 and 8192 voxels).
+FAR_PLANES = (8000, 12000, 20000, 25780, 30000, 32768, 50000, 100000)
+
+
+@pytest.mark.parametrize("length", [4096, 8192, 12000])
+def test_surface_picks_do_not_depend_on_the_far_plane(tmp_path, length):
+    _run(
+        tmp_path,
+        "image_multiscale",
+        length,
+        (length // 128) * 64 + 64,
+        far_planes=FAR_PLANES,
+    )

@@ -768,8 +768,9 @@ async def test_the_2d_3d_switch_cancels_and_its_reslice_sees_the_fitted_view(
 async def test_the_deferred_fit_is_a_jump_queued_on_the_loop(make_rig):
     """A scene empty at the toggle is fitted when it first has something to fit.
 
-    That happens on the way to a draw (a visual added, a commit round), where
-    planning must not run: the fit is a jump whose reslice is queued.
+    That is when its data box first exists: here, a visual is added.  The fit
+    is a jump whose reslice is queued, so it joins the reslice the same change
+    starts.
     """
     rig = make_rig(render_modes={"2d", "3d"}, with_image=False)
     controller = rig.controller

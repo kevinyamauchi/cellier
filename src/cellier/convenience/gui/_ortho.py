@@ -106,7 +106,8 @@ def build_ortho_grid_widget(
     fov : float
         Vertical field of view in degrees for the 3D camera.
     depth_range_3d, depth_range_2d : tuple[float, float]
-        ``(near, far)`` clip distances for the 3D / 2D cameras.
+        ``(near, far)`` clip distances for the 3D / 2D cameras.  The 3D far
+        is raised when the scene's data needs more.
     canvas_size : tuple[int, int] or None
         Initial CSS pixel size per panel.  Meaningful to anywidget only.
     fit_view_direction_3d, fit_up_3d : Mapping[AxisRef, float] or None

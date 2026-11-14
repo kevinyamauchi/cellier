@@ -123,7 +123,8 @@ def build_canvas_view(
     fov : float
         Vertical field of view in degrees for a new 3D camera.
     depth_range_3d, depth_range_2d : tuple[float, float]
-        ``(near, far)`` clip distances for a new 3D / 2D camera.
+        ``(near, far)`` clip distances for a new 3D / 2D camera.  The 3D far
+        is raised when the scene's data needs more.
     canvas_size : tuple[int, int] or None
         Initial CSS pixel size.  Meaningful to the anywidget backend only.
     fit_view_direction_3d, fit_up_3d : Mapping[AxisRef, float] or None
@@ -255,7 +256,8 @@ def build_canvas_widget(
         Default ``70.0``.
     depth_range_3d : tuple[float, float]
         ``(near, far)`` clip distances for the 3D camera.
-        Default ``(1.0, 8000.0)``.
+        Default ``(1.0, 8000.0)``.  Far is raised when the scene's data
+        needs more; near is kept.
     depth_range_2d : tuple[float, float]
         ``(near, far)`` clip distances for the 2D camera.
         Default ``(-500.0, 500.0)``.

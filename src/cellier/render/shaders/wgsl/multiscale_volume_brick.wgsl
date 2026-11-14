@@ -709,6 +709,10 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
                     norm_size.z / dataset_size.z),
         5e-7
     );
+    // Where the sample that crossed the threshold was taken.  It is the only
+    // point along the ray known to be at or above the threshold, so it is
+    // where the bisection's ``hi`` starts.
+    var surface_t: f32 = 0.0;
     $$ endif
 
     // ISO state
@@ -828,6 +832,11 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             $$ else
             t = brick.t_end + t_eps;
             prev_density = 0.0;
+            // The skipped stretch holds no surface, so the bisection's ``lo``
+            // starts where sampling resumes, in the next brick: an older
+            // sample would put probes in the skipped brick with another
+            // brick's atlas slot.
+            prev_t = t;
             t_sample_carry = t;   // Fix 1: reset carry after skip.
             continue;
             $$ endif
@@ -844,6 +853,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
         if (brick.brick_max < iso_threshold) {
             t = brick.t_end + t_eps;
             prev_density = 0.0;
+            prev_t = t;           // as for an unloaded brick above
             t_sample_carry = t;   // Fix 1: reset carry after skip.
             continue;
         }
@@ -917,6 +927,7 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
             // ISO: detect threshold crossing.
             if (prev_density < iso_threshold && density >= iso_threshold) {
                 surface_found   = true;
+                surface_t       = t_sample;
                 surface_pos     = pos;
                 surface_density = density;
                 break;
@@ -1012,8 +1023,17 @@ fn fs_main(varyings: Varyings) -> FragmentOutput {
 
     // ── Binary bisection refinement (4 iterations → 16× finer) ────────
     // Brick-aware bisection — select the correct atlas slot per probe.
+    //
+    // ``hi`` is the crossing sample itself, not ``prev_t`` plus this brick's
+    // step: a brick's step is its own length over its step count, so when the
+    // last sample below the threshold is in the previous brick the two
+    // differ, and ``prev_t + surface_step_size`` can stop short of the
+    // surface.  No probe then reaches it, ``hi`` stays outside, and the pick
+    // below reads the voxel in front of the surface (a grazing ray just past
+    // a brick boundary; whether it happens turns on the jitter, which the
+    // ray direction's last bits seed).
     var lo = prev_t;
-    var hi = prev_t + surface_step_size;
+    var hi = surface_t;
     // Whether every probe was inside the object: the refinement then
     // leaves the hit at the start of the step.
     var all_inside = true;

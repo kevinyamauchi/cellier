@@ -1156,7 +1156,9 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         fov : float
             Vertical field of view in degrees for the 3D camera. Default 70.
         depth_range_3d : tuple[float, float]
-            ``(near, far)`` clip distances for the 3D camera.
+            ``(near, far)`` clip distances for the 3D camera.  Far is raised
+            when the scene's data needs more (see `fit_camera`); near is
+            kept.
         depth_range_2d : tuple[float, float]
             ``(near, far)`` clip distances for the 2D camera.
         canvas_size : tuple[int, int] or None
@@ -1373,11 +1375,17 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         )
 
     def fit_camera(
-        self, *, canvas: UUID | None = None, interactive: bool = False
+        self,
+        *,
+        canvas: UUID | None = None,
+        interactive: bool = False,
+        only_visible_visuals: bool = False,
     ) -> None:
-        """Fit the camera to the scene.
+        """Fit the camera to the box the scene's data occupies.
 
-        A jump, like `set_camera_state`.
+        A jump, like `set_camera_state`.  See
+        `CellierController.fit_camera` for how the box and the far plane are
+        worked out.
 
         Parameters
         ----------
@@ -1386,6 +1394,9 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
             the viewer.
         interactive : bool
             Whether the move is a tick of a camera motion instead of a jump.
+        only_visible_visuals : bool
+            Fit to the visuals that are shown only.  The far plane still keeps
+            every visual in view.  Default ``False``: hidden visuals count.
 
         Raises
         ------
@@ -1394,7 +1405,12 @@ class Viewer(ControlsRegistryMixin, RenderSettingsMixin):
         """
         if canvas is not None:
             canvas = self._camera_canvas(canvas)
-        self._controller.fit_camera(self._scene.id, canvas, interactive=interactive)
+        self._controller.fit_camera(
+            self._scene.id,
+            canvas,
+            interactive=interactive,
+            only_visible_visuals=only_visible_visuals,
+        )
 
     @contextmanager
     def camera_interaction(
